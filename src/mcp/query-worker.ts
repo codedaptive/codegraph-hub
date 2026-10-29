@@ -19,21 +19,40 @@
  * MAIN thread keeps the catch-up gate, the watcher-state notices (staleness /
  * worktree), `codegraph_status`, and telemetry, none of which a watcher-less
  * read connection can answer.
+ *
+ * When the pool shrinks after a burst it sends `retire` to an idle worker: the
+ * worker closes every CodeGraph it opened, collects garbage (see
+ * src/worker-teardown.ts), answers `retired` and exits 0.
  */
 
 import { parentPort, workerData } from 'worker_threads';
 import type { ToolResult } from './tools';
+import { collectBeforeExit } from '../worker-teardown';
 
 interface WorkerInit {
   root: string | null;
 }
 
+/**
+ * Messages from the pool. `call` runs one read tool and is answered with
+ * `{ type: 'result', id, result }`. `retire` is sent only while no call is in
+ * flight; it is answered with `{ type: 'retired', closed }` and then exit code
+ * 0. `closed` is the handler's cached projects when closeAll() resolves (none
+ * of them if it rejects, even any it closed before rejecting), plus the
+ * default project if its close succeeds.
+ */
 interface CallMessage {
   type: 'call';
   id: number;
   toolName: string;
   args: Record<string, unknown>;
 }
+
+interface RetireMessage {
+  type: 'retire';
+}
+
+type PoolMessage = CallMessage | RetireMessage;
 
 // Mirror the engine's lazy-require of the heavy CodeGraph + tools chain. This
 // module is only ever loaded as a Worker, so the require runs once on spawn.
@@ -48,12 +67,14 @@ if (parentPort) {
 
   // Open the default project's READ connection once, if present. Other repos are
   // opened lazily on first cross-project (projectPath) call by the ToolHandler's
-  // own per-handler cache. openSync does not start a watcher — workers are pure
-  // readers; the single watcher/writer stays on the daemon's main thread.
+  // own per-handler cache. All of them are closed on retire. openSync does not
+  // start a watcher — workers are pure readers; the single watcher/writer stays
+  // on the daemon's main thread.
+  let cg: ReturnType<typeof import('../index').default.openSync> | null = null;
   let handler: InstanceType<typeof import('./tools').ToolHandler> | null = null;
   let initError: string | null = null;
   try {
-    const cg = root ? loadCodeGraph().openSync(root) : null;
+    cg = root ? loadCodeGraph().openSync(root) : null;
     handler = new (loadToolHandler())(cg);
   } catch (err) {
     initError = err instanceof Error ? err.message : String(err);
@@ -63,10 +84,44 @@ if (parentPort) {
   // against its crash budget (→ fall back to in-process) without hanging.
   port.postMessage({ type: 'ready', ok: initError === null, error: initError });
 
-  port.on('message', (msg: CallMessage) => {
-    if (!msg || msg.type !== 'call') return;
+  let retiring = false;
+  port.on('message', (msg: PoolMessage) => {
+    if (!msg) return;
+    if (msg.type === 'retire') {
+      if (retiring) return; // a second retire changes nothing
+      retiring = true;
+      void retire();
+      return;
+    }
+    if (msg.type !== 'call' || retiring) return;
     void serve(msg);
   });
+
+  // Close every CodeGraph this worker opened, then exit 0. closeAll() closes
+  // the handler's per-project cache (which also holds what extension tools
+  // opened through it) and resolves at once here: a worker's handler has no
+  // project lifecycle, and the pool never retires a worker with a call in
+  // flight. It never closes the default project, so that is closed here.
+  // `closed` is the cached projects, counted before closeAll() empties the
+  // cache and added only if it resolves: if it rejects none of them counts,
+  // even any it closed first (ToolHandler reports no per-project result).
+  // The default project adds one if its close succeeds.
+  const retire = async (): Promise<void> => {
+    let closed = 0;
+    if (handler) {
+      const cached = cachedProjectCount(handler);
+      try {
+        await handler.closeAll();
+        closed += cached;
+      } catch { /* exiting anyway; none of them counts as closed */ }
+    }
+    if (cg) {
+      try { cg.close(); closed++; } catch { /* exiting anyway */ }
+    }
+    collectBeforeExit();
+    port.postMessage({ type: 'retired', closed });
+    process.exit(0);
+  };
 
   const serve = async (msg: CallMessage): Promise<void> => {
     // Test-only crash hook so the pool's worker-recovery path is exercisable
@@ -96,6 +151,16 @@ if (parentPort) {
       });
     }
   };
+}
+
+/**
+ * How many projects the handler holds open besides the default: the ones
+ * closeAll() closes. ToolHandler keeps them in a private cache and exposes no
+ * count, so this reads the cache's size structurally (0 if it is not there).
+ */
+function cachedProjectCount(handler: object): number {
+  const cache = (handler as { projectCache?: unknown }).projectCache;
+  return cache instanceof Map ? cache.size : 0;
 }
 
 function errorResult(text: string): ToolResult {
