@@ -1,0 +1,114 @@
+blast radius — 101836517c^...HEAD (depth 2)
+  changed: 51 files in 5 areas, 413 seed symbols
+  impacted: 54 symbols in 21 areas
+
+✓ count — 6 changed files, 3/46 reached by a test
+✓ load — 13 changed files, 10/62 reached by a test
+✗ load — 1 changed file, 0/2 reached by a test
+✓ refusing — 8 changed files, 2/41 reached by a test
+✓ state — 8 changed files, 11/112 reached by a test
+
+AdvancedModeToggleView — 15 symbols in 12 files
+  calls ← AdvancedModeToggleView (apps/Mootx01-App/Sources/MootProUI/AdvancedModeToggle.swift:L16-L176) [depth 1]
+  calls ← CaptureView (apps/Mootx01-App/Sources/MootProUI/CaptureView.swift:L17-L154) [depth 1]
+  calls ← ContentView (apps/Mootx01-App/Sources/MootProUI/ContentView.swift:L39-L415) [depth 1]
+  calls ← EdgesView (apps/Mootx01-App/Sources/MootProUI/EdgesView.swift:L15-L121) [depth 1]
+  calls ← EngineView (apps/Mootx01-App/Sources/MootProUI/EngineView.swift:L17-L751) [depth 1]
+  calls ← IntelligenceView (apps/Mootx01-App/Sources/MootProUI/IntelligenceView.swift:L328-L573) [depth 1]
+  calls ← MenuBarView (apps/Mootx01-App/Sources/MootProUI/MenuBarView.swift:L42-L129) [depth 1]
+  calls ← sourceSection (apps/Mootx01-App/Sources/MootProUI/MinerSettingsView.swift:L92-L130) [depth 1]
+  calls ← OnboardingView (apps/Mootx01-App/Sources/MootProUI/OnboardingView.swift:L17-L264) [depth 1]
+  calls ← recallEchoPane (apps/Mootx01-App/Sources/MootProUI/OnboardingView.swift:L194-L232) [depth 1]
+  calls ← RecallView (apps/Mootx01-App/Sources/MootProUI/RecallView.swift:L16-L63) [depth 1]
+  calls ← SettingsView (apps/Mootx01-App/Sources/MootProUI/SettingsView.swift:L55-L340) [depth 1]
+  calls ← SurfaceMapView (apps/Mootx01-App/Sources/MootProUI/SurfaceMapView.swift:L15-L148) [depth 1]
+  calls ← destinationView (apps/Mootx01-App/Sources/MootProUI/ContentView.swift:L357-L388) [depth 2]
+  calls ← MinerSettingsView (apps/Mootx01-App/Sources/MootProUI/MinerSettingsView.swift:L62-L163) [depth 2]
+
+FederationPanelView — 5 symbols in 3 files
+  calls ← FederationPanelView (apps/Mootx01-App/Sources/MootProUI/Federation/FederationPanelView.swift:L37-L477) [depth 1]
+  calls ← KnownPeerRow (apps/Mootx01-App/Sources/MootProUI/Federation/FederationPanelView.swift:L548-L604) [depth 1]
+  calls ← PostureCard (apps/Mootx01-App/Sources/MootProUI/Federation/FederationPanelView.swift:L613-L704) [depth 1]
+  calls ← SASConfirmationView (apps/Mootx01-App/Sources/MootProUI/Federation/SASConfirmationView.swift:L35-L119) [depth 1]
+  calls ← QRPairingView (apps/Mootx01-App/Sources/MootProUI/Federation/QRPairingView.swift:L73-L461) [depth 2]
+
+load — 4 symbols in 3 files
+  calls ← load (packages/kits/FactExtractionKit/Sources/FactExtractionKitProviders/BonsaiJudge.swift:L43-L71) [depth 2]
+  calls ← CoreAIBonsaiHeadsJudge (packages/kits/FactExtractionKit/Sources/FactExtractionKitProviders/BonsaiJudge.swift:L152-L175) [depth 2]
+  calls ← CoreAIArcticSelectorBackend (packages/kits/FactExtractionKit/Sources/FactExtractionKitProviders/CoreAIArcticSelector.swift:L395-L404) [depth 2]
+  calls ← CoreAIGliclassWindowScorer (packages/kits/FactExtractionKit/Sources/FactExtractionKitProviders/CoreAIRuntimeClassifier.swift:L98-L114) [depth 2]
+
+CommunityContentView — 3 symbols in 2 files
+  calls ← CommunityContentView (apps/Mootx01-App/Sources/MootCommunityUI/CommunityContentView.swift:L25-L221) [depth 1]
+  calls ← CommunityOperationsWorkspaceView (apps/Mootx01-App/Sources/MootCommunityUI/CommunityOperationsWorkspaceView.swift:L173-L270) [depth 1]
+  calls ← destinationView (apps/Mootx01-App/Sources/MootCommunityUI/CommunityContentView.swift:L71-L80) [depth 2]
+
+ReviewCenterView — 3 symbols in 2 files
+  calls ← ReviewCenterView (apps/Mootx01-App/Sources/MootProUI/Review/ReviewCenterView.swift:L16-L123) [depth 1]
+  calls ← ReviewSectionView (apps/Mootx01-App/Sources/MootProUI/Review/ReviewReportView.swift:L272-L320) [depth 1]
+  calls ← ReviewReportView (apps/Mootx01-App/Sources/MootProUI/Review/ReviewReportView.swift:L25-L122) [depth 2]
+
+ReviewModeRowView — 3 symbols in 1 file
+  calls ← ReviewModeRowView (apps/Mootx01-App/Sources/MootCommunityUI/Review/ReviewCenterView.swift:L88-L196) [depth 1]
+  calls ← ReviewSessionView (apps/Mootx01-App/Sources/MootCommunityUI/Review/ReviewCenterView.swift:L202-L329) [depth 1]
+  calls ← dashboardList (apps/Mootx01-App/Sources/MootCommunityUI/Review/ReviewCenterView.swift:L68-L81) [depth 2]
+
+LANControlView — 2 symbols in 1 file
+  calls ← LANControlView (apps/Mootx01-App/Sources/MootCommunityUI/LAN/LANControlView.swift:L26-L354) [depth 1]
+  calls ← servingStatusContent (apps/Mootx01-App/Sources/MootCommunityUI/LAN/LANControlView.swift:L139-L233) [depth 1]
+
+messageView — 2 symbols in 1 file
+  calls ← messageView (apps/Mootx01-App/Sources/MootCommunityUI/Setup/CommunitySetupView.swift:L179-L197) [depth 1]
+  calls ← CommunitySetupView (apps/Mootx01-App/Sources/MootCommunityUI/Setup/CommunitySetupView.swift:L3-L198) [depth 2]
+
+NotepadView — 2 symbols in 2 files
+  calls ← NotepadView (examples/MootNotepad/App/NotepadView.swift:L281-L360) [depth 1]
+  calls ← MootNotepadApp (examples/MootNotepad/App/MootNotepadApp.swift:L47-L120) [depth 2]
+
+ObsidianSyncView — 2 symbols in 1 file
+  calls ← ObsidianSyncView (apps/Mootx01-App/Sources/MootCommunityUI/Obsidian/ObsidianSyncView.swift:L24-L409) [depth 1]
+  calls ← syncStatusContent (apps/Mootx01-App/Sources/MootCommunityUI/Obsidian/ObsidianSyncView.swift:L158-L272) [depth 1]
+
+reattemptEngine — 2 symbols in 2 files
+  calls ← reattemptEngine (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIPairInference.swift:L76-L78) [depth 2]
+  calls ← reattemptEngine (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAISpanInference.swift:L87-L89) [depth 2]
+
+SetupView — 2 symbols in 2 files
+  calls ← SetupView (apps/Mootx01-Setup/Sources/Mootx01Setup/SetupView.swift:L10-L249) [depth 1]
+  calls ← Mootx01SetupApp (apps/Mootx01-Setup/Sources/Mootx01Setup/Mootx01SetupApp.swift:L9-L19) [depth 2]
+
+body — 1 symbol in 1 file
+  calls ← body (apps/Mootx01-App/App/Mootx01App.swift:L97-L208) [depth 2]
+
+CommunityUITestHostApp — 1 symbol in 1 file
+  calls ← CommunityUITestHostApp (apps/Mootx01-App/CommunityUITestHost/CommunityUITestHostApp.swift:L5-L16) [depth 2]
+
+configured_extraction_cycle — 1 symbol in 1 file
+  calls ← configured_extraction_cycle (packages/kits/AriaMcpKit/rust/src/runtime.rs:L1524-L1686) [depth 2]
+
+installer_with_worker — 1 symbol in 1 file
+  calls ← installer_with_worker (apps/mootx01/rust/src/commands/models.rs:L710-L721) [depth 2]
+
+load — 1 symbol in 1 file
+  calls ← load (apps/mootx01/Sources/MootFactExtractorActivation/ProcessModelRuntime.swift:L864-L894) [depth 2]
+
+main — 1 symbol in 1 file
+  calls ← main (apps/mootx01/rust/src/bin/moot_nuextract_worker.rs:L1-L6) [depth 1]
+
+main — 1 symbol in 1 file
+  calls ← main (packages/kits/FactExtractionKit/rust-providers/src/bin/moot_nuextract_worker.rs:L1-L6) [depth 1]
+
+Mootx01CommunityApp — 1 symbol in 1 file
+  calls ← Mootx01CommunityApp (apps/Mootx01-App/CommunityApp/Mootx01CommunityApp.swift:L5-L33) [depth 2]
+
+TransferView — 1 symbol in 1 file
+  calls ← TransferView (apps/Mootx01-App/Sources/MootCommunityUI/Transfer/TransferView.swift:L30-L916) [depth 1]
+
+4 test suites also reference this code (not listed)
+
+who to tag
+  bob-codedaptive — 13 areas · 83 commits, last 2mo ago
+  Test — 3 areas · 23 commits, last 2mo ago
+  Newton — 4 areas · 14 commits, last 3mo ago
+
+⚠ 4 changed files not in the graph (Cargo.lock, apps/mootx01/rust/Cargo.toml, packages/kits/CorpusKit/rust-providers/Cargo.toml, packages/kits/FactExtractionKit/Tests/Conformance/worker_protocol_v6.json) — no parser claims the extension, or the index predates the file.

@@ -1,0 +1,21 @@
+file	commit	load_1_5_15	real_s	user_s	sys_s	exit	command
+g03-fixed-scoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	38.81 53.43 45.28	1.95	1.03	0.39	0	graft grep --json --fixed EstateOpening::REGISTERED --in packages/kits/AriaMcpKit
+g03-fixed-scoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	37.06 52.82 45.12	1.93	1.03	0.51	0	graft grep --fixed EstateOpening::REGISTERED --in packages/kits/AriaMcpKit
+g04-fixed-unscoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	37.06 52.82 45.12	4.39	1.50	0.75	0	graft grep --json --fixed remap\(verb:
+g04-fixed-unscoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	37.94 52.74 45.13	4.31	1.37	0.79	0	graft grep --fixed remap\(verb:
+g05-ignorecase-unscoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	37.38 52.38 45.05	3.50	1.42	0.75	0	graft grep --json -i backfill
+g05-ignorecase-unscoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.55 51.96 44.94	2.35	1.24	0.59	0	graft grep -i backfill
+g06-ignorecase-scoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.55 51.96 44.94	1.42	0.89	0.34	0	graft grep --json -i backfill --in packages/kits/ConvergenceKit
+g06-ignorecase-scoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.99 51.80 44.93	1.26	0.90	0.31	0	graft grep -i backfill --in packages/kits/ConvergenceKit
+g07-regex-scoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.99 51.80 44.93	2.21	0.92	0.31	0	graft grep --json K-\[0-9\]+\|R-\[0-9\]+\|CR-\[0-9\]+ --in packages/kits/SynapseKit/rust
+g07-regex-scoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.99 51.80 44.93	1.60	0.92	0.32	0	graft grep K-\[0-9\]+\|R-\[0-9\]+\|CR-\[0-9\]+ --in packages/kits/SynapseKit/rust
+g08-outside-symbols.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.51 51.45 44.85	1.63	0.91	0.31	0	graft grep --json //\!\|\`\`\` --in packages/kits/ConvergenceKit/rust/
+g08-outside-symbols.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.51 51.45 44.85	1.28	0.92	0.31	0	graft grep //\!\|\`\`\` --in packages/kits/ConvergenceKit/rust/
+g09-name-many-hits.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	36.51 51.45 44.85	1.90	1.24	0.54	0	graft grep --json Timestamp
+g09-name-many-hits.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	35.18 50.93 44.70	1.69	1.32	0.51	0	graft grep Timestamp
+g10-corpuskit-scoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	35.18 50.93 44.70	1.29	0.93	0.30	0	graft grep --json decodeRowHLC --in packages/kits/CorpusKit
+g10-corpuskit-scoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	35.18 50.93 44.70	1.07	0.91	0.30	0	graft grep decodeRowHLC --in packages/kits/CorpusKit
+g01-unscoped-many.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	33.44 47.19 43.74	3.04	1.32	0.56	0	graft grep --json temp_dir
+g01-unscoped-many.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	33.44 47.19 43.74	2.44	1.44	0.58	0	graft grep temp_dir
+g02-scoped.json	96acd65de890993aeeafa18ee4a46e1d7b87dade	33.40 46.96 43.68	1.50	1.04	0.35	0	graft grep --json EstateFormatStore --in packages/kits/GeniusLocusKit
+g02-scoped.txt	96acd65de890993aeeafa18ee4a46e1d7b87dade	33.40 46.96 43.68	1.53	1.08	0.38	0	graft grep EstateFormatStore --in packages/kits/GeniusLocusKit

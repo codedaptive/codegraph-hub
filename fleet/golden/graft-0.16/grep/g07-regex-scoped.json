@@ -1,0 +1,45 @@
+{
+  "pattern": "K-[0-9]+|R-[0-9]+|CR-[0-9]+",
+  "filesSearched": 53,
+  "totalHits": 4,
+  "groups": [
+    {
+      "symbol": null,
+      "path": "packages/kits/SynapseKit/rust/src/vector_store/hnsw_install_guard_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! SPEC B-13h install guard (K-330, R-161): a rebuild or a query-path load"
+        },
+        {
+          "line": 12,
+          "text": "//! Gate 5 (SPEC B-16a, R-251, K-345): a float batch into a shadow generation"
+        },
+        {
+          "line": 244,
+          "text": "/// Gate 5 (SPEC B-16a, R-251, K-345): a float batch into a shadow"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/SynapseKit/rust/tests/shadow_swap_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1259,
+          "text": "/// (SPEC B-13h: the batch path drops the model's lane, K-328): a kept graph"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 2,
+    "baselineChars": 92410
+  }
+}

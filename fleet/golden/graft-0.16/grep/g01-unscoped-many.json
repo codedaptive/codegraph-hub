@@ -1,0 +1,3340 @@
+{
+  "pattern": "temp_dir",
+  "filesSearched": 5478,
+  "totalHits": 209,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/tests.rs#tmp_dir",
+        "name": "tmp_dir",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/tests.rs",
+        "span": "L58-L64"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/tests.rs",
+      "inDegree": 46,
+      "hits": [
+        {
+          "line": 59,
+          "text": "let d = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/db.rs#configuration",
+        "name": "configuration",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/db.rs",
+        "span": "L960-L968"
+      },
+      "path": "apps/mootx01/rust/src/commands/db.rs",
+      "inDegree": 43,
+      "hits": [
+        {
+          "line": 962,
+          "text": "let dir = std::env::temp_dir().join(format!(\"mootx01-db-{tag}-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/tests/settings_tests.rs#tmp_dir",
+        "name": "tmp_dir",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/tests/settings_tests.rs",
+        "span": "L71-L86"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/tests/settings_tests.rs",
+      "inDegree": 40,
+      "hits": [
+        {
+          "line": 76,
+          "text": "let dir = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/VaultKit/rust/src/test_support.rs#dir",
+        "name": "dir",
+        "kind": "function",
+        "path": "packages/kits/VaultKit/rust/src/test_support.rs",
+        "span": "L36-L40"
+      },
+      "path": "packages/kits/VaultKit/rust/src/test_support.rs",
+      "inDegree": 27,
+      "hits": [
+        {
+          "line": 37,
+          "text": "let path = std::env::temp_dir().join(format!(\"{prefix}-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/export_rowid_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/export_rowid_tests.rs",
+        "span": "L35-L41"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/export_rowid_tests.rs",
+      "inDegree": 23,
+      "hits": [
+        {
+          "line": 36,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/install_key_tests.rs#fresh_dir",
+        "name": "fresh_dir",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/install_key_tests.rs",
+        "span": "L17-L26"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/install_key_tests.rs",
+      "inDegree": 23,
+      "hits": [
+        {
+          "line": 18,
+          "text": "let d = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/pre_encryption_orphan_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/pre_encryption_orphan_tests.rs",
+        "span": "L57-L63"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/pre_encryption_orphan_tests.rs",
+      "inDegree": 23,
+      "hits": [
+        {
+          "line": 58,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/fact_extraction_duty_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/fact_extraction_duty_tests.rs",
+        "span": "L27-L31"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/fact_extraction_duty_tests.rs",
+      "inDegree": 19,
+      "hits": [
+        {
+          "line": 28,
+          "text": "let dir = std::env::temp_dir().join(format!(\"{prefix}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/export_destination_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/export_destination_tests.rs",
+        "span": "L35-L41"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/export_destination_tests.rs",
+      "inDegree": 18,
+      "hits": [
+        {
+          "line": 36,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/tests/convert_cli.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/tests/convert_cli.rs",
+        "span": "L110-L116"
+      },
+      "path": "packages/libs/EstateEncryption/rust/tests/convert_cli.rs",
+      "inDegree": 18,
+      "hits": [
+        {
+          "line": 111,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/inverted_index_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/inverted_index_tests.rs",
+        "span": "L44-L48"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/inverted_index_tests.rs",
+      "inDegree": 17,
+      "hits": [
+        {
+          "line": 45,
+          "text": "let dir = std::env::temp_dir().join(format!(\"iix-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/merge_shard_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/merge_shard_tests.rs",
+        "span": "L43-L47"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/merge_shard_tests.rs",
+      "inDegree": 16,
+      "hits": [
+        {
+          "line": 44,
+          "text": "let dir = std::env::temp_dir().join(format!(\"merge-shard-{tag}-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/install_key_tests.rs#scratch",
+        "name": "scratch",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/install_key_tests.rs",
+        "span": "L55-L60"
+      },
+      "path": "apps/moot-mgr/rust/tests/install_key_tests.rs",
+      "inDegree": 14,
+      "hits": [
+        {
+          "line": 56,
+          "text": "let d = std::env::temp_dir().join(format!(\"moot-mgr-key-{tag}-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/examples/digest.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/examples/digest.rs",
+        "span": "L1166-L1171"
+      },
+      "path": "packages/libs/EstateEncryption/rust/examples/digest.rs",
+      "inDegree": 14,
+      "hits": [
+        {
+          "line": 1167,
+          "text": "let path = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/tests/encrypted_estate_scan.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/tests/encrypted_estate_scan.rs",
+        "span": "L52-L61"
+      },
+      "path": "packages/libs/EstateEncryption/rust/tests/encrypted_estate_scan.rs",
+      "inDegree": 13,
+      "hits": [
+        {
+          "line": 53,
+          "text": "let dir = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/ObserverSink/rust/tests/conformance.rs#make_temp_path",
+        "name": "make_temp_path",
+        "kind": "function",
+        "path": "packages/libs/ObserverSink/rust/tests/conformance.rs",
+        "span": "L64-L70"
+      },
+      "path": "packages/libs/ObserverSink/rust/tests/conformance.rs",
+      "inDegree": 13,
+      "hits": [
+        {
+          "line": 66,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/estate_admin_tests.rs#scratch_estates_dir",
+        "name": "scratch_estates_dir",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/estate_admin_tests.rs",
+        "span": "L27-L30"
+      },
+      "path": "apps/moot-mgr/rust/tests/estate_admin_tests.rs",
+      "inDegree": 12,
+      "hits": [
+        {
+          "line": 28,
+          "text": "let dir = std::env::temp_dir().join(format!(\"moot-mgr-rs-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/identifier_length_limit.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/identifier_length_limit.rs",
+        "span": "L25-L29"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/identifier_length_limit.rs",
+      "inDegree": 12,
+      "hits": [
+        {
+          "line": 26,
+          "text": "let path = std::env::temp_dir().join(format!(\"queuekit-idlimit-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/await_drain.rs#make_backend",
+        "name": "make_backend",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/await_drain.rs",
+        "span": "L16-L22"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/await_drain.rs",
+      "inDegree": 11,
+      "hits": [
+        {
+          "line": 17,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/identifier_validation.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/identifier_validation.rs",
+        "span": "L21-L27"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/identifier_validation.rs",
+      "inDegree": 11,
+      "hits": [
+        {
+          "line": 22,
+          "text": "let path = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/stream_scoped.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/stream_scoped.rs",
+        "span": "L235-L241"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/stream_scoped.rs",
+      "inDegree": 11,
+      "hits": [
+        {
+          "line": 236,
+          "text": "let path = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/shared_vector_store_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/shared_vector_store_tests.rs",
+        "span": "L55-L59"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/shared_vector_store_tests.rs",
+      "inDegree": 10,
+      "hits": [
+        {
+          "line": 56,
+          "text": "let dir = std::env::temp_dir().join(format!(\"corpuskit-shared-{tag}-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/src/pool_reducer.rs#setup_fixture",
+        "name": "setup_fixture",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/src/pool_reducer.rs",
+        "span": "L472-L480"
+      },
+      "path": "packages/libs/LatticeLib/rust/src/pool_reducer.rs",
+      "inDegree": 10,
+      "hits": [
+        {
+          "line": 473,
+          "text": "let pool_dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/encrypting_dir_guard_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/encrypting_dir_guard_tests.rs",
+        "span": "L54-L60"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/encrypting_dir_guard_tests.rs",
+      "inDegree": 9,
+      "hits": [
+        {
+          "line": 55,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/http_control_tests.rs#scratch_dir",
+        "name": "scratch_dir",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/http_control_tests.rs",
+        "span": "L25-L30"
+      },
+      "path": "apps/moot-mgr/rust/tests/http_control_tests.rs",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 26,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#make_scratch_storage",
+        "name": "make_scratch_storage",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L54-L70"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 55,
+          "text": "let dir = std::env::temp_dir().join(format!(\"corpuskit-reclaim-rust-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+        "span": "L37-L37"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 37,
+          "text": "fn new() -> Self { Self(std::env::temp_dir().join(format!(\"grant-wire-form-migration-{}.sqlite\", Uuid::new_v4()))) }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/tests/encrypted_format_fixtures.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/tests/encrypted_format_fixtures.rs",
+        "span": "L78-L87"
+      },
+      "path": "packages/libs/EstateEncryption/rust/tests/encrypted_format_fixtures.rs",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 79,
+          "text": "let dir = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-bridge/rust/tests/frame_rejection.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "apps/moot-bridge/rust/tests/frame_rejection.rs",
+        "span": "L361-L414"
+      },
+      "path": "apps/moot-bridge/rust/tests/frame_rejection.rs",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 364,
+          "text": "let root = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/http_control_tests.rs#scratch_socket",
+        "name": "scratch_socket",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/http_control_tests.rs",
+        "span": "L38-L43"
+      },
+      "path": "apps/moot-mgr/rust/tests/http_control_tests.rs",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 39,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs#make_scratch_storage",
+        "name": "make_scratch_storage",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs",
+        "span": "L69-L83"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 70,
+          "text": "let dir = std::env::temp_dir().join(format!(\"shadow-swap-rs-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/basis_owed_status_tests.rs#make_scratch_storage",
+        "name": "make_scratch_storage",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/basis_owed_status_tests.rs",
+        "span": "L201-L214"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/basis_owed_status_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 202,
+          "text": "let dir = std::env::temp_dir().join(format!(\"basis-owed-rs-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/typed_fact_identity_rederive_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/typed_fact_identity_rederive_tests.rs",
+        "span": "L32-L36"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/typed_fact_identity_rederive_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 33,
+          "text": "let dir = std::env::temp_dir().join(format!(\"typed-fact-rederive-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/brain/fact_qualification_derivation.rs#receiving",
+        "name": "receiving",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/brain/fact_qualification_derivation.rs",
+        "span": "L217-L241"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/brain/fact_qualification_derivation.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 218,
+          "text": "let dir=std::env::temp_dir().join(format!(\"acceptance-cursor-{}\",uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/cascade_rollback_tests.rs#fixture",
+        "name": "fixture",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/cascade_rollback_tests.rs",
+        "span": "L18-L27"
+      },
+      "path": "packages/kits/LocusKit/rust/src/cascade_rollback_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 19,
+          "text": "let path = sqlite.then(|| std::env::temp_dir().join(format!(\"cascade-{}.sqlite\", Uuid::new_v4())));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/NeuronKit/rust/tests/governor_stop_tests.rs#governor_with_counter",
+        "name": "governor_with_counter",
+        "kind": "function",
+        "path": "packages/kits/NeuronKit/rust/tests/governor_stop_tests.rs",
+        "span": "L50-L85"
+      },
+      "path": "packages/kits/NeuronKit/rust/tests/governor_stop_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 66,
+          "text": "std::env::temp_dir().join(format!(\"governor-stop-pool-{pid}-{fixture}\"));"
+        },
+        {
+          "line": 68,
+          "text": "std::env::temp_dir().join(format!(\"governor-stop-table-{pid}-{fixture}.bin\"));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/ladder_hole_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/ladder_hole_tests.rs",
+        "span": "L17-L20"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/ladder_hole_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 19,
+          "text": "TempDb { path: std::env::temp_dir().join(name).to_string_lossy().into_owned() }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/sqlcipher_key_form_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/sqlcipher_key_form_tests.rs",
+        "span": "L31-L35"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/sqlcipher_key_form_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 32,
+          "text": "let dir = std::env::temp_dir().join(format!(\"key-form-{tag}-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/watch_evented.rs#make_dir",
+        "name": "make_dir",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/watch_evented.rs",
+        "span": "L41-L46"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/watch_evented.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 42,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/tests/novel_token_effectiveness_test.rs#setup_fresh",
+        "name": "setup_fresh",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/tests/novel_token_effectiveness_test.rs",
+        "span": "L74-L81"
+      },
+      "path": "packages/libs/LatticeLib/rust/tests/novel_token_effectiveness_test.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 75,
+          "text": "let base = std::env::temp_dir().join(format!(\"lattice_eff_{}\", nonce()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/src/manager.rs#temp_manager",
+        "name": "temp_manager",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/src/manager.rs",
+        "span": "L1744-L1755"
+      },
+      "path": "apps/moot-mgr/rust/src/manager.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 1745,
+          "text": "let dir = std::env::temp_dir().join(format!(\"moot-mgr-rust-test-{}\", uuid_hex()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/manager_tests.rs#scratch_store",
+        "name": "scratch_store",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+        "span": "L31-L37"
+      },
+      "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 32,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/estate_catalog.rs#scratch_dir",
+        "name": "scratch_dir",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/estate_catalog.rs",
+        "span": "L1060-L1064"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/estate_catalog.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 1061,
+          "text": "let dir = normalize(&std::env::temp_dir().join(format!(\"estate-catalog-{}\", uuid::Uuid::new_v4())));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/derivation_sync_storage_forwarding.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/derivation_sync_storage_forwarding.rs",
+        "span": "L43-L47"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/derivation_sync_storage_forwarding.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 44,
+          "text": "let dir = std::env::temp_dir().join(format!(\"glk-derivation-sync-forward-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/watch_polling.rs#make_dir",
+        "name": "make_dir",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/watch_polling.rs",
+        "span": "L35-L40"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/watch_polling.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 36,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/export_key_tests.rs#tmp_dir",
+        "name": "tmp_dir",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/export_key_tests.rs",
+        "span": "L15-L20"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/export_key_tests.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 16,
+          "text": "let d = std::env::temp_dir().join(format!(\"estate-export-key-{tag}-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/sqlite_floor_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/sqlite_floor_tests.rs",
+        "span": "L68-L77"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/sqlite_floor_tests.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 69,
+          "text": "let dir = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/port_hunt_tests.rs#scratch",
+        "name": "scratch",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/port_hunt_tests.rs",
+        "span": "L18-L23"
+      },
+      "path": "apps/moot-mgr/rust/tests/port_hunt_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 19,
+          "text": "let d = std::env::temp_dir().join(format!(\"moot-mgr-hunt-{tag}-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/core/release.rs#verify_minisign_signature_with",
+        "name": "verify_minisign_signature_with",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/core/release.rs",
+        "span": "L327-L416"
+      },
+      "path": "apps/mootx01/rust/src/core/release.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 363,
+          "text": "let tmp_key = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/native_fact_package.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/native_fact_package.rs",
+        "span": "L71-L79"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/native_fact_package.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 74,
+          "text": "let root = std::env::temp_dir().join(format!(\"native-fact-package-{}-{stamp}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p03_fact_duty_acceptance_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p03_fact_duty_acceptance_tests.rs",
+        "span": "L94-L99"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p03_fact_duty_acceptance_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 95,
+          "text": "let dir = std::env::temp_dir().join(format!(\"p03-duty-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/audit_durability_grant_sensitivity.rs#make_sqlite",
+        "name": "make_sqlite",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/audit_durability_grant_sensitivity.rs",
+        "span": "L49-L61"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/audit_durability_grant_sensitivity.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 50,
+          "text": "let path = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/fold_in_parity_tests.rs#fixture",
+        "name": "fixture",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/fold_in_parity_tests.rs",
+        "span": "L33-L50"
+      },
+      "path": "packages/kits/LocusKit/rust/src/fold_in_parity_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 34,
+          "text": "let path = sqlite.then(|| std::env::temp_dir().join(format!(\"fold-in-{}.sqlite\", Uuid::new_v4())));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/rebuild_table_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/rebuild_table_tests.rs",
+        "span": "L21-L24"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/rebuild_table_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 23,
+          "text": "TempDb { path: std::env::temp_dir().join(name).to_string_lossy().into_owned() }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/watch_drain_errors.rs#make_dir",
+        "name": "make_dir",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/watch_drain_errors.rs",
+        "span": "L45-L49"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/watch_drain_errors.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 46,
+          "text": "let dir = std::env::temp_dir().join(format!(\"qk-watch-err-{}-{}\", tag, uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/src/open_raw_key_tests.rs#tmp_dir",
+        "name": "tmp_dir",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/src/open_raw_key_tests.rs",
+        "span": "L13-L18"
+      },
+      "path": "packages/libs/EstateEncryption/rust/src/open_raw_key_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 14,
+          "text": "let d = std::env::temp_dir().join(format!(\"estate-open-raw-{tag}-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/tests/pool_reducer_conflict_tests.rs#setup_fixture",
+        "name": "setup_fixture",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/tests/pool_reducer_conflict_tests.rs",
+        "span": "L66-L74"
+      },
+      "path": "packages/libs/LatticeLib/rust/tests/pool_reducer_conflict_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 68,
+          "text": "std::env::temp_dir().join(format!(\"pool_reducer_conflict_{}_{}\", label, nonce()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/aria-mcp-server/rust/src/main.rs#configuration",
+        "name": "configuration",
+        "kind": "function",
+        "path": "apps/aria-mcp-server/rust/src/main.rs",
+        "span": "L338-L345"
+      },
+      "path": "apps/aria-mcp-server/rust/src/main.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 340,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/bulk_reembed_tests.rs#scratch",
+        "name": "scratch",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/bulk_reembed_tests.rs",
+        "span": "L40-L50"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/bulk_reembed_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 41,
+          "text": "let dir = std::env::temp_dir().join(format!(\"bulk-reembed-rs-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/legacy_ledger_rename_on_open_tests.rs#legacy_sqlite_estate",
+        "name": "legacy_sqlite_estate",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/legacy_ledger_rename_on_open_tests.rs",
+        "span": "L71-L117"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/legacy_ledger_rename_on_open_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 72,
+          "text": "let dir = std::env::temp_dir().join(format!(\"corpuskit-ledger-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/tests/fact_judge_stage_conformance_tests.rs#package",
+        "name": "package",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/tests/fact_judge_stage_conformance_tests.rs",
+        "span": "L38-L72"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/tests/fact_judge_stage_conformance_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 40,
+          "text": "let root = std::env::temp_dir().join(format!(\"fact-judge-{}\", uuid()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p10_lattice_review_apply_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p10_lattice_review_apply_tests.rs",
+        "span": "L22-L27"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p10_lattice_review_apply_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 23,
+          "text": "let dir = std::env::temp_dir().join(format!(\"p10-filing-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/NeuronKit/rust/tests/governor_injected_clock_tests.rs#build_governor",
+        "name": "build_governor",
+        "kind": "function",
+        "path": "packages/kits/NeuronKit/rust/tests/governor_injected_clock_tests.rs",
+        "span": "L82-L121"
+      },
+      "path": "packages/kits/NeuronKit/rust/tests/governor_injected_clock_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 100,
+          "text": "std::env::temp_dir().join(format!(\"governor-clock-pool-{pid}-{fixture}\"));"
+        },
+        {
+          "line": 102,
+          "text": "std::env::temp_dir().join(format!(\"governor-clock-table-{pid}-{fixture}.bin\"));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/tests/installed_share_tests.rs#scratch",
+        "name": "scratch",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/tests/installed_share_tests.rs",
+        "span": "L6-L11"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/tests/installed_share_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 7,
+          "text": "let dir = std::env::temp_dir().join(format!(\"installed-share-{label}-{}-{}\", std::process::id(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/aria-mcp-server/rust/tests/estate_selection.rs#scratch_sqlite_path",
+        "name": "scratch_sqlite_path",
+        "kind": "function",
+        "path": "apps/aria-mcp-server/rust/tests/estate_selection.rs",
+        "span": "L48-L61"
+      },
+      "path": "apps/aria-mcp-server/rust/tests/estate_selection.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 57,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/core/release.rs#secure_upgrade_temp_dir",
+        "name": "secure_upgrade_temp_dir",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/core/release.rs",
+        "span": "L463-L491"
+      },
+      "path": "apps/mootx01/rust/src/core/release.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 463,
+          "text": "fn secure_upgrade_temp_dir() -> Result<PathBuf, ReleaseError> {"
+        },
+        {
+          "line": 464,
+          "text": "let base = std::env::temp_dir();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/test_scratch.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/test_scratch.rs",
+        "span": "L29-L32"
+      },
+      "path": "apps/mootx01/rust/src/test_scratch.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 31,
+          "text": "Self { path: std::env::temp_dir().join(name) }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/test_scratch.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/test_scratch.rs",
+        "span": "L27-L30"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/test_scratch.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 29,
+          "text": "Self { path: std::env::temp_dir().join(name) }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#default_cache_dir",
+        "name": "default_cache_dir",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+        "span": "L427-L434"
+      },
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 433,
+          "text": "std::env::temp_dir().join(\"mootx01-onnx-coreml\")"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/reindex_stale_vector_cleanup_tests.rs#scratch_path",
+        "name": "scratch_path",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/reindex_stale_vector_cleanup_tests.rs",
+        "span": "L50-L55"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/reindex_stale_vector_cleanup_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 51,
+          "text": "let dir = std::env::temp_dir().join(format!(\"corpuskit-stale-vec-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/shadow_reclaim_guard_engine_tests.rs#scratch_configuration",
+        "name": "scratch_configuration",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/shadow_reclaim_guard_engine_tests.rs",
+        "span": "L97-L109"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/shadow_reclaim_guard_engine_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 98,
+          "text": "let dir = std::env::temp_dir().join(format!(\"shadow-reclaim-engine-rs-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/sharded_import_key_tests.rs#estate",
+        "name": "estate",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/sharded_import_key_tests.rs",
+        "span": "L28-L39"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/sharded_import_key_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 29,
+          "text": "let dir = std::env::temp_dir().join(format!(\"sharded-import-key-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/brain/fact_qualification_commit_state_sweep_tests.rs#publish_at_state",
+        "name": "publish_at_state",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/brain/fact_qualification_commit_state_sweep_tests.rs",
+        "span": "L35-L57"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/brain/fact_qualification_commit_state_sweep_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 36,
+          "text": "let dir = std::env::temp_dir().join(format!(\"commit-state-sweep-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/wing_lexicon_duty.rs#open_sqlite",
+        "name": "open_sqlite",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/wing_lexicon_duty.rs",
+        "span": "L666-L680"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/wing_lexicon_duty.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 667,
+          "text": "let dir = TempDir(std::env::temp_dir().join(format!(\"glk-batch-fold-sqlite-{}\", uuid::Uuid::new_v4())));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs#coreml_cache",
+        "name": "coreml_cache",
+        "kind": "function",
+        "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+        "span": "L298-L301"
+      },
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 299,
+          "text": "std::env::var_os(\"HOME\").map(PathBuf::from).unwrap_or_else(std::env::temp_dir)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/audit_cursor_tests.rs#storage_with_log",
+        "name": "storage_with_log",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/audit_cursor_tests.rs",
+        "span": "L42-L61"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/audit_cursor_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 43,
+          "text": "let db = TempDb(std::env::temp_dir().join(format!(\"audit_cursor_{}.db\", Uuid::new_v4().simple())).to_string_lossy().into_owned());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/src/filesystem.rs#seed",
+        "name": "seed",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/src/filesystem.rs",
+        "span": "L834-L845"
+      },
+      "path": "packages/kits/QueueKit/rust/src/filesystem.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 835,
+          "text": "let root = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/checkpoints.rs#each_store",
+        "name": "each_store",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/checkpoints.rs",
+        "span": "L231-L243"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/checkpoints.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 234,
+          "text": "let path = std::env::temp_dir().join(format!(\"checkpoint-commit-{}.sqlite\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/payload_decode_refusal.rs#root",
+        "name": "root",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/payload_decode_refusal.rs",
+        "span": "L87-L91"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/payload_decode_refusal.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 88,
+          "text": "let p = std::env::temp_dir().join(format!(\"queuekit-payload-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/EstateEncryption/rust/tests/sqlcipher_engine_version_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/libs/EstateEncryption/rust/tests/sqlcipher_engine_version_tests.rs",
+        "span": "L67-L76"
+      },
+      "path": "packages/libs/EstateEncryption/rust/tests/sqlcipher_engine_version_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 68,
+          "text": "let dir = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-bridge/rust/tests/acceptance.rs#scratch_dir",
+        "name": "scratch_dir",
+        "kind": "function",
+        "path": "apps/moot-bridge/rust/tests/acceptance.rs",
+        "span": "L321-L325"
+      },
+      "path": "apps/moot-bridge/rust/tests/acceptance.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 322,
+          "text": "let dir = std::env::temp_dir().join(format!(\"moot-bridge-rs-acc-{}\", uuid_like()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/estates_route_union_tests.rs#scratch_dir",
+        "name": "scratch_dir",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/estates_route_union_tests.rs",
+        "span": "L37-L42"
+      },
+      "path": "apps/moot-mgr/rust/tests/estates_route_union_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 38,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/http_gate_tests.rs#scratch_dir",
+        "name": "scratch_dir",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/http_gate_tests.rs",
+        "span": "L55-L60"
+      },
+      "path": "apps/moot-mgr/rust/tests/http_gate_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 56,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/http_gate_tests.rs#scratch_socket",
+        "name": "scratch_socket",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/http_gate_tests.rs",
+        "span": "L64-L69"
+      },
+      "path": "apps/moot-mgr/rust/tests/http_gate_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 65,
+          "text": "std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/bin/mootai.rs#start",
+        "name": "start",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/bin/mootai.rs",
+        "span": "L199-L205"
+      },
+      "path": "apps/mootx01/rust/src/bin/mootai.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 200,
+          "text": "let file = std::env::temp_dir().join(format!(\"mootai-sample-{}-{}.txt\", std::process::id(), uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/core/release.rs#download_and_verify",
+        "name": "download_and_verify",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/core/release.rs",
+        "span": "L211-L278"
+      },
+      "path": "apps/mootx01/rust/src/core/release.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 225,
+          "text": "let tmp = secure_upgrade_temp_dir()?;"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/scratch/mod.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/scratch/mod.rs",
+        "span": "L30-L32"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/scratch/mod.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 31,
+          "text": "Self::new_in(&std::env::temp_dir(), prefix)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust-providers/tests/wing_lexicon_fold_batch_tests.rs#sqlite",
+        "name": "sqlite",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust-providers/tests/wing_lexicon_fold_batch_tests.rs",
+        "span": "L29-L33"
+      },
+      "path": "packages/kits/CorpusKit/rust-providers/tests/wing_lexicon_fold_batch_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 30,
+          "text": "let path = std::env::temp_dir().join(format!(\"wing-fold-batch-{}.sqlite\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/bm25_estate_connection_tests.rs#sqlite_estate",
+        "name": "sqlite_estate",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/bm25_estate_connection_tests.rs",
+        "span": "L48-L58"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/bm25_estate_connection_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 49,
+          "text": "let dir = std::env::temp_dir().join(format!(\"bm25-estate-conn-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/destroy_recall_ownership_tests.rs#make_storage",
+        "name": "make_storage",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/destroy_recall_ownership_tests.rs",
+        "span": "L28-L41"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/destroy_recall_ownership_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 29,
+          "text": "let dir = std::env::temp_dir().join(format!(\"corpuskit-ownership-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/drain_worker_ownership_tests.rs#scratch_sqlite",
+        "name": "scratch_sqlite",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/drain_worker_ownership_tests.rs",
+        "span": "L41-L54"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/drain_worker_ownership_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 42,
+          "text": "let dir = std::env::temp_dir().join(format!(\"corpuskit-drain-ownership-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/reindex_abort_path_tests.rs#make_scratch_storage",
+        "name": "make_scratch_storage",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/reindex_abort_path_tests.rs",
+        "span": "L66-L80"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/reindex_abort_path_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 67,
+          "text": "let dir = std::env::temp_dir().join(format!(\"reindex-abort-rs-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_publish_state_sweep_tests.rs#typed_publish_at_state",
+        "name": "typed_publish_at_state",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_publish_state_sweep_tests.rs",
+        "span": "L35-L74"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_publish_state_sweep_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 36,
+          "text": "let dir = std::env::temp_dir().join(format!(\"typed-publish-state-sweep-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_publish_state_sweep_tests.rs#untyped_publish_at_state",
+        "name": "untyped_publish_at_state",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_publish_state_sweep_tests.rs",
+        "span": "L105-L151"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_publish_state_sweep_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 106,
+          "text": "let dir = std::env::temp_dir().join(format!(\"untyped-publish-state-sweep-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ModelRuntimeKit/rust/src/installed_package.rs#temp",
+        "name": "temp",
+        "kind": "function",
+        "path": "packages/kits/ModelRuntimeKit/rust/src/installed_package.rs",
+        "span": "L294-L298"
+      },
+      "path": "packages/kits/ModelRuntimeKit/rust/src/installed_package.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 295,
+          "text": "let dir = std::env::temp_dir().join(format!(\"installed-package-{name}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/NeuronKit/rust/tests/recall_tombstone_filter.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/NeuronKit/rust/tests/recall_tombstone_filter.rs",
+        "span": "L31-L37"
+      },
+      "path": "packages/kits/NeuronKit/rust/tests/recall_tombstone_filter.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 32,
+          "text": "let path = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-bridge/rust/src/backend.rs#a_message_to_a_backend_that_closed_its_stdin_is_a_typed_error",
+        "name": "a_message_to_a_backend_that_closed_its_stdin_is_a_typed_error",
+        "kind": "function",
+        "path": "apps/moot-bridge/rust/src/backend.rs",
+        "span": "L157-L170"
+      },
+      "path": "apps/moot-bridge/rust/src/backend.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 158,
+          "text": "let directory = std::env::temp_dir().join(format!(\"bridge-closed-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/src/manager.rs#retention_prefs_path_derives_from_store_stem",
+        "name": "retention_prefs_path_derives_from_store_stem",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/src/manager.rs",
+        "span": "L2014-L2048"
+      },
+      "path": "apps/moot-mgr/rust/src/manager.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2018,
+          "text": "let dir = std::env::temp_dir().join(format!(\"moot-prefs-stem-{}\", uuid_hex()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/src/manager.rs#start_creates_store_dir_with_0700_permissions",
+        "name": "start_creates_store_dir_with_0700_permissions",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/src/manager.rs",
+        "span": "L2054-L2069"
+      },
+      "path": "apps/moot-mgr/rust/src/manager.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2058,
+          "text": "let dir = std::env::temp_dir().join(format!(\"moot-perms-{}\", uuid_hex()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/manager_tests.rs#config_rejects_non_positive_retention",
+        "name": "config_rejects_non_positive_retention",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+        "span": "L423-L435"
+      },
+      "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 430,
+          "text": "let scratch = std::env::temp_dir().join(format!(\"moot-mgr-cfg-test-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/manager_tests.rs#wiring_config_dir_key_set_returns_configured_path",
+        "name": "wiring_config_dir_key_set_returns_configured_path",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+        "span": "L441-L456"
+      },
+      "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 442,
+          "text": "let scratch = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/rust/tests/manager_tests.rs#wiring_config_dir_key_absent_returns_computed_default",
+        "name": "wiring_config_dir_key_absent_returns_computed_default",
+        "kind": "function",
+        "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+        "span": "L461-L474"
+      },
+      "path": "apps/moot-mgr/rust/tests/manager_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 462,
+          "text": "let scratch = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/examples/svc_smoke.rs#main",
+        "name": "main",
+        "kind": "function",
+        "path": "apps/mootx01/rust/examples/svc_smoke.rs",
+        "span": "L16-L75"
+      },
+      "path": "apps/mootx01/rust/examples/svc_smoke.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 38,
+          "text": "// — temp_dir() paths are ASCII-clean on all supported Windows builds)."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/serve.rs#stale_pid_marker_is_not_a_live_resident",
+        "name": "stale_pid_marker_is_not_a_live_resident",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/serve.rs",
+        "span": "L934-L948"
+      },
+      "path": "apps/mootx01/rust/src/commands/serve.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 935,
+          "text": "let dir = std::env::temp_dir().join(format!(\"mootx01-stale-marker-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/core/release.rs#secure_upgrade_temp_dir_is_unique_and_private",
+        "name": "secure_upgrade_temp_dir_is_unique_and_private",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/core/release.rs",
+        "span": "L747-L768"
+      },
+      "path": "apps/mootx01/rust/src/core/release.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 747,
+          "text": "fn secure_upgrade_temp_dir_is_unique_and_private() {"
+        },
+        {
+          "line": 748,
+          "text": "let first = secure_upgrade_temp_dir().unwrap();"
+        },
+        {
+          "line": 750,
+          "text": "let second = secure_upgrade_temp_dir().unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/test_scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 21,
+          "text": "/// A unique path under `std::env::temp_dir()`, removed recursively on drop."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/tests/support/scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 13,
+          "text": "/// A unique path under `std::env::temp_dir()`, removed recursively on drop."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/support/scratch.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/support/scratch.rs",
+        "span": "L23-L26"
+      },
+      "path": "apps/mootx01/rust/tests/support/scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 25,
+          "text": "Self { path: std::env::temp_dir().join(name) }"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/AriaMcpKit/rust/src/test_scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 18,
+          "text": "/// A unique path under `std::env::temp_dir()`, removed recursively on drop."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/AriaMcpKit/rust/tests/persistence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 17,
+          "text": "//! `std::env::temp_dir()` and removes that directory on completion, pass or fail."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CognitionKit/rust/src/migration_live.rs#new~2",
+        "name": "new~2",
+        "kind": "function",
+        "path": "packages/kits/CognitionKit/rust/src/migration_live.rs",
+        "span": "L1419-L1426"
+      },
+      "path": "packages/kits/CognitionKit/rust/src/migration_live.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1421,
+          "text": "let path = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CognitionKit/rust/src/trust_lens_recipe.rs#ck_tr4_sqlite_synthesis_non_empty",
+        "name": "ck_tr4_sqlite_synthesis_non_empty",
+        "kind": "function",
+        "path": "packages/kits/CognitionKit/rust/src/trust_lens_recipe.rs",
+        "span": "L252-L319"
+      },
+      "path": "packages/kits/CognitionKit/rust/src/trust_lens_recipe.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 257,
+          "text": "let path = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CognitionKit/rust/tests/cognitionkit_telemetry_tests.rs#new~2",
+        "name": "new~2",
+        "kind": "function",
+        "path": "packages/kits/CognitionKit/rust/tests/cognitionkit_telemetry_tests.rs",
+        "span": "L799-L806"
+      },
+      "path": "packages/kits/CognitionKit/rust/tests/cognitionkit_telemetry_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 801,
+          "text": "let path = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#an_engine_request_walks_the_engine_then_the_gpu_then_the_cpu",
+        "name": "an_engine_request_walks_the_engine_then_the_gpu_then_the_cpu",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+        "span": "L489-L495"
+      },
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 490,
+          "text": "let units = |unit| providers_for(unit, &std::env::temp_dir()).into_iter()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust-providers/tests/pair_scorer_factory_tests.rs#missing_directory_is_model_unavailable",
+        "name": "missing_directory_is_model_unavailable",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust-providers/tests/pair_scorer_factory_tests.rs",
+        "span": "L22-L30"
+      },
+      "path": "packages/kits/CorpusKit/rust-providers/tests/pair_scorer_factory_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 23,
+          "text": "let missing = std::env::temp_dir().join(format!(\"pair-factory-missing-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust-providers/tests/scratch/mod.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust-providers/tests/scratch/mod.rs",
+        "span": "L25-L29"
+      },
+      "path": "packages/kits/CorpusKit/rust-providers/tests/scratch/mod.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 26,
+          "text": "let path = std::env::temp_dir().join(format!(\"corpuskit-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust-providers/tests/span_encoder_factory_tests.rs#missing_directory_is_model_unavailable",
+        "name": "missing_directory_is_model_unavailable",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust-providers/tests/span_encoder_factory_tests.rs",
+        "span": "L22-L30"
+      },
+      "path": "packages/kits/CorpusKit/rust-providers/tests/span_encoder_factory_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 23,
+          "text": "let missing = std::env::temp_dir().join(format!(\"enc-factory-missing-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#orphaned_content_reference_is_reclaimed_and_hydrated_after_restart",
+        "name": "orphaned_content_reference_is_reclaimed_and_hydrated_after_restart",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L109-L202"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 114,
+          "text": "let (storage, _temp_dir, sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#killed_peers_claim_is_reclaimed_when_the_drainer_takes_the_lease_back",
+        "name": "killed_peers_claim_is_reclaimed_when_the_drainer_takes_the_lease_back",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L209-L302"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 214,
+          "text": "let (storage, _temp_dir, sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#live_encode_content_ids_lists_pending_upserts",
+        "name": "live_encode_content_ids_lists_pending_upserts",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L309-L362"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 311,
+          "text": "let (storage, _temp_dir, sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#duplicate_reference_batch_commits_counts_and_checkpoint_once",
+        "name": "duplicate_reference_batch_commits_counts_and_checkpoint_once",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L365-L454"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 370,
+          "text": "let (storage, _temp_dir, _sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#queue_remove_readd_does_not_double_fold_counts_reference",
+        "name": "queue_remove_readd_does_not_double_fold_counts_reference",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L457-L545"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 462,
+          "text": "let (storage, _temp_dir, _sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#queue_revisions_advance_restart_stable_governor_anchors",
+        "name": "queue_revisions_advance_restart_stable_governor_anchors",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L548-L692"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 553,
+          "text": "let (storage, _temp_dir, _sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#orphaned_cur_reclaimed_on_mount",
+        "name": "orphaned_cur_reclaimed_on_mount",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L705-L759"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 707,
+          "text": "let (storage, _temp_dir, _sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs#live_drainer_fresh_lease_blocks_reclaim",
+        "name": "live_drainer_fresh_lease_blocks_reclaim",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+        "span": "L769-L836"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/crash_recovery_reclaim_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 776,
+          "text": "let (storage, _temp_dir, _sqlite_path) = make_scratch_storage();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/scratch_dir_tests.rs#each_guard_names_its_own_directory_under_the_temp_dir",
+        "name": "each_guard_names_its_own_directory_under_the_temp_dir",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/scratch_dir_tests.rs",
+        "span": "L37-L42"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/scratch_dir_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 37,
+          "text": "fn each_guard_names_its_own_directory_under_the_temp_dir() {"
+        },
+        {
+          "line": 41,
+          "text": "assert_eq!(first.path().parent(), Some(std::env::temp_dir().as_path()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/scratch/mod.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/scratch/mod.rs",
+        "span": "L25-L29"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/scratch/mod.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 26,
+          "text": "let path = std::env::temp_dir().join(format!(\"corpuskit-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/sharded_import_key_tests.rs#sharded_import_merges_on_an_estate_keyed_by_the_install_key",
+        "name": "sharded_import_merges_on_an_estate_keyed_by_the_install_key",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/sharded_import_key_tests.rs",
+        "span": "L71-L87"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/sharded_import_key_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 72,
+          "text": "let dir = std::env::temp_dir().join(format!(\"sharded-import-key-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/export_receipt.rs#a_symlinked_or_oversized_receipt_is_refused_unread",
+        "name": "a_symlinked_or_oversized_receipt_is_refused_unread",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/export_receipt.rs",
+        "span": "L317-L328"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/export_receipt.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 318,
+          "text": "let dir = std::env::temp_dir().join(format!(\"export-receipt-bounds-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/export_receipt.rs#the_receipt_is_read_beside_the_engine_file_and_its_absence_is_unavailable",
+        "name": "the_receipt_is_read_beside_the_engine_file_and_its_absence_is_unavailable",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/export_receipt.rs",
+        "span": "L331-L340"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/export_receipt.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 332,
+          "text": "let dir = std::env::temp_dir().join(format!(\"export-receipt-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/fact_judge_runtime.rs#a_judge_scores_through_the_runtime_and_loads_again_after_an_idle_unload",
+        "name": "a_judge_scores_through_the_runtime_and_loads_again_after_an_idle_unload",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/fact_judge_runtime.rs",
+        "span": "L307-L334"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/fact_judge_runtime.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 308,
+          "text": "let root = std::env::temp_dir().join(format!(\"judge-runtime-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/fact_judge_runtime.rs#the_registry_keeps_each_judges_template_digest",
+        "name": "the_registry_keeps_each_judges_template_digest",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/fact_judge_runtime.rs",
+        "span": "L338-L355"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/fact_judge_runtime.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 339,
+          "text": "let root = std::env::temp_dir().join(format!(\"judge-runtime-{}\", uuid::Uuid::new_v4()));"
+        },
+        {
+          "line": 349,
+          "text": "let replacement_root = std::env::temp_dir().join(format!(\"judge-runtime-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/nuextract_qwen2.rs#the_embedding_table_is_candles_dequantize_in_one_tensor",
+        "name": "the_embedding_table_is_candles_dequantize_in_one_tensor",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/nuextract_qwen2.rs",
+        "span": "L295-L312"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/nuextract_qwen2.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 300,
+          "text": "let path = std::env::temp_dir().join(format!(\"nuextract-qwen2-table-{}.gguf\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/runtime_fact_extractor.rs#the_request_deadline_travels_to_the_worker",
+        "name": "the_request_deadline_travels_to_the_worker",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/runtime_fact_extractor.rs",
+        "span": "L413-L463"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/runtime_fact_extractor.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 438,
+          "text": "let root = std::env::temp_dir().join(format!(\"envelope-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/runtime_fact_extractor.rs#a_file_changed_before_a_new_worker_launch_fails_that_generation_and_every_later_one",
+        "name": "a_file_changed_before_a_new_worker_launch_fails_that_generation_and_every_later_one",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/runtime_fact_extractor.rs",
+        "span": "L565-L595"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/runtime_fact_extractor.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 566,
+          "text": "let root=std::env::temp_dir().join(format!(\"launch-verify-{}-{}\",std::process::id(),uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs#a_shaped_exchange_waits_for_its_deadline_not_the_flat_timeout",
+        "name": "a_shaped_exchange_waits_for_its_deadline_not_the_flat_timeout",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+        "span": "L351-L373"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 355,
+          "text": "let root = std::env::temp_dir().join(format!(\"fact-worker-deadline-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs#an_engine_timeout_keeps_the_worker",
+        "name": "an_engine_timeout_keeps_the_worker",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+        "span": "L381-L402"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 385,
+          "text": "let root = std::env::temp_dir().join(format!(\"fact-worker-resident-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs#unresponsive_worker_times_out_and_is_reaped",
+        "name": "unresponsive_worker_times_out_and_is_reaped",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+        "span": "L406-L424"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 408,
+          "text": "let root = std::env::temp_dir().join(format!(\"fact-worker-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs#the_worker_is_handed_the_receipt_shape_as_prefill_tokens",
+        "name": "the_worker_is_handed_the_receipt_shape_as_prefill_tokens",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+        "span": "L427-L452"
+      },
+      "path": "packages/kits/FactExtractionKit/rust-providers/src/worker_client.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 431,
+          "text": "let root = std::env::temp_dir().join(format!(\"fact-worker-arguments-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust/tests/template_bits_conformance.rs#definition_without_bit_refuses_the_library_directory",
+        "name": "definition_without_bit_refuses_the_library_directory",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust/tests/template_bits_conformance.rs",
+        "span": "L100-L113"
+      },
+      "path": "packages/kits/FactExtractionKit/rust/tests/template_bits_conformance.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 101,
+          "text": "let directory = std::env::temp_dir().join(format!(\"template-bits-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust/tests/template_integer_fields_conformance.rs#integer_fields_decode_as_the_vector_says",
+        "name": "integer_fields_decode_as_the_vector_says",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust/tests/template_integer_fields_conformance.rs",
+        "span": "L10-L46"
+      },
+      "path": "packages/kits/FactExtractionKit/rust/tests/template_integer_fields_conformance.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 24,
+          "text": "let dir = std::env::temp_dir().join(format!(\"integer-fields-{}\", std::process::id()) + name);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/FactExtractionKit/rust/tests/template_projection_conformance.rs#directory_loader_refuses_another_schema_by_name",
+        "name": "directory_loader_refuses_another_schema_by_name",
+        "kind": "function",
+        "path": "packages/kits/FactExtractionKit/rust/tests/template_projection_conformance.rs",
+        "span": "L153-L180"
+      },
+      "path": "packages/kits/FactExtractionKit/rust/tests/template_projection_conformance.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 171,
+          "text": "let directory = std::env::temp_dir().join(format!(\"template-schema-{}-{index}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p03_fact_duty_acceptance_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 88,
+          "text": "/// parent directory), so a database directly in `temp_dir()` would share one"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p10_lattice_review_apply_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 17,
+          "text": "/// parent directory), so two fixtures whose databases share `temp_dir()`"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/scratch/mod.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/scratch/mod.rs",
+        "span": "L28-L32"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/scratch/mod.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 29,
+          "text": "let path = std::env::temp_dir().join(format!(\"glk-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs#capsule_uses_the_storages_shared_vector_store",
+        "name": "capsule_uses_the_storages_shared_vector_store",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+        "span": "L432-L459"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 436,
+          "text": "std::env::temp_dir().join(format!(\"glk-mig17-other-{}.vec\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/encoder_compute_units.rs#the_settings_parse_with_defaults_and_named_refusals",
+        "name": "the_settings_parse_with_defaults_and_named_refusals",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/encoder_compute_units.rs",
+        "span": "L153-L176"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/encoder_compute_units.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 154,
+          "text": "let missing = std::env::temp_dir().join(format!(\"no-settings-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs#open_with_the_model_present_is_lane_on_and_loads_nothing",
+        "name": "open_with_the_model_present_is_lane_on_and_loads_nothing",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs",
+        "span": "L114-L119"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 115,
+          "text": "let (coordinator, handle) = open_with(Some(Box::new(FixedDirectory(std::env::temp_dir()))));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs#failed_load_follows_the_retry_schedule_and_a_later_success_clears_it",
+        "name": "failed_load_follows_the_retry_schedule_and_a_later_success_clears_it",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs",
+        "span": "L145-L179"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 146,
+          "text": "let (coordinator, handle) = open_with(Some(Box::new(FixedDirectory(std::env::temp_dir()))));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs#idle_release_then_reload_on_the_next_rerank",
+        "name": "idle_release_then_reload_on_the_next_rerank",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs",
+        "span": "L186-L220"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/cross_encoder_lifecycle_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 187,
+          "text": "let (coordinator, handle) = open_with(Some(Box::new(FixedDirectory(std::env::temp_dir()))));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/tests/fact_extraction_duty_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 21,
+          "text": "/// parent directory), so two tests whose databases share `temp_dir()` contend"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/finisher_wal_bound_tests.rs#finisher_duties_keep_every_wal_within_its_bound",
+        "name": "finisher_duties_keep_every_wal_within_its_bound",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/finisher_wal_bound_tests.rs",
+        "span": "L59-L143"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/finisher_wal_bound_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 60,
+          "text": "let dir = std::env::temp_dir().join(format!(\"finisher-wal-bound-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/grant_millisecond_round_trip.rs#verifies_after_round_trip",
+        "name": "verifies_after_round_trip",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/grant_millisecond_round_trip.rs",
+        "span": "L39-L64"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/grant_millisecond_round_trip.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 40,
+          "text": "let path = std::env::temp_dir().join(format!(\"glk-grant-ms-roundtrip-{}.sqlite\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/preference_table_migration_tests.rs#no_file_or_a_file_with_none_of_the_moved_keys_moves_nothing",
+        "name": "no_file_or_a_file_with_none_of_the_moved_keys_moves_nothing",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/preference_table_migration_tests.rs",
+        "span": "L113-L120"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/preference_table_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 114,
+          "text": "let empty = std::env::temp_dir().join(format!(\"pref-migration-none-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/scratch.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/scratch.rs",
+        "span": "L28-L32"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 29,
+          "text": "let path = std::env::temp_dir().join(format!(\"glk-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs#span_batch_rate",
+        "name": "span_batch_rate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+        "span": "L69-L134"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 73,
+          "text": "let base = std::env::var(\"MOOT_SPAN_BENCH_DIR\").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs#centroid_rebuild_rate",
+        "name": "centroid_rebuild_rate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+        "span": "L144-L180"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 146,
+          "text": "let base = std::env::var(\"MOOT_SPAN_BENCH_DIR\").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs#wal_probe",
+        "name": "wal_probe",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+        "span": "L187-L253"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 189,
+          "text": "let base = std::env::var(\"MOOT_SPAN_BENCH_DIR\").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs#finisher_wal_probe",
+        "name": "finisher_wal_probe",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+        "span": "L265-L368"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 268,
+          "text": "let base = std::env::var(\"MOOT_SPAN_BENCH_DIR\").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs#new~2",
+        "name": "new~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+        "span": "L389-L394"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/span_batch_bench_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 390,
+          "text": "let base = std::env::var(\"MOOT_SPAN_BENCH_DIR\").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/scratch.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/scratch.rs",
+        "span": "L25-L29"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 26,
+          "text": "let path = std::env::temp_dir().join(format!(\"locus-{tag}-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ModelRuntimeKit/rust/tests/runtime_contract_tests.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/ModelRuntimeKit/rust/tests/runtime_contract_tests.rs",
+        "span": "L24-L34"
+      },
+      "path": "packages/kits/ModelRuntimeKit/rust/tests/runtime_contract_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 25,
+          "text": "let root = std::env::temp_dir().join(format!(\"p08-runtime-{}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/NeuronKit/rust/tests/governor_hardening_tests.rs#pool_reduce_drains_bounded_batch_when_over_cap",
+        "name": "pool_reduce_drains_bounded_batch_when_over_cap",
+        "kind": "function",
+        "path": "packages/kits/NeuronKit/rust/tests/governor_hardening_tests.rs",
+        "span": "L162-L204"
+      },
+      "path": "packages/kits/NeuronKit/rust/tests/governor_hardening_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 163,
+          "text": "let tmp = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/NeuronKit/rust/tests/governor_hardening_tests.rs#pool_reduce_fires_normally_with_empty_dir",
+        "name": "pool_reduce_fires_normally_with_empty_dir",
+        "kind": "function",
+        "path": "packages/kits/NeuronKit/rust/tests/governor_hardening_tests.rs",
+        "span": "L209-L229"
+      },
+      "path": "packages/kits/NeuronKit/rust/tests/governor_hardening_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 210,
+          "text": "let tmp = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/NeuronKit/rust/tests/governor_injected_clock_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 57,
+          "text": "/// Pool artifacts a governor fixture points at inside `temp_dir()`. Removed on drop, so the files"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/NeuronKit/rust/tests/governor_stop_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 29,
+          "text": "/// Pool artifacts a governor fixture points at inside `temp_dir()`. Removed on drop, so"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/src/test_scratch.rs#new",
+        "name": "new",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/src/test_scratch.rs",
+        "span": "L16-L20"
+      },
+      "path": "packages/kits/PersistenceKit/rust/src/test_scratch.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 17,
+          "text": "let dir = std::env::temp_dir().join(format!(\"{tag}-{}\", uuid::Uuid::new_v4().simple()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/common/mod.rs#new~2",
+        "name": "new~2",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/common/mod.rs",
+        "span": "L179-L183"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/common/mod.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 180,
+          "text": "let dir = std::env::temp_dir().join(format!(\"{tag}-{}\", uuid::Uuid::new_v4().simple()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/partial_index_tests.rs#sqlite_uses_the_partial_index",
+        "name": "sqlite_uses_the_partial_index",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/partial_index_tests.rs",
+        "span": "L79-L110"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/partial_index_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 80,
+          "text": "let db = TempDb(std::env::temp_dir().join(format!(\"partial_index_{}.db\", Uuid::new_v4().simple())).to_string_lossy().into_owned());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/PersistenceKit/rust/tests/partial_index_tests.rs#literal_count_is_index_only",
+        "name": "literal_count_is_index_only",
+        "kind": "function",
+        "path": "packages/kits/PersistenceKit/rust/tests/partial_index_tests.rs",
+        "span": "L122-L169"
+      },
+      "path": "packages/kits/PersistenceKit/rust/tests/partial_index_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 128,
+          "text": "let db = TempDb(std::env::temp_dir().join(format!(\"partial_index_{}.db\", Uuid::new_v4().simple())).to_string_lossy().into_owned());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/src/drain_lease.rs#new~2",
+        "name": "new~2",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/src/drain_lease.rs",
+        "span": "L258-L263"
+      },
+      "path": "packages/kits/QueueKit/rust/src/drain_lease.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 259,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/src/drain_lease.rs#a_fresh_lease_of_a_dead_process_is_reclaimable_at_once",
+        "name": "a_fresh_lease_of_a_dead_process_is_reclaimable_at_once",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/src/drain_lease.rs",
+        "span": "L288-L304"
+      },
+      "path": "packages/kits/QueueKit/rust/src/drain_lease.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 289,
+          "text": "let dir = std::env::temp_dir().join(format!(\"drain-lease-dead-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/bounded_claim.rs#filesystem_claim_is_bounded",
+        "name": "filesystem_claim_is_bounded",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/bounded_claim.rs",
+        "span": "L134-L154"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/bounded_claim.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 136,
+          "text": "std::env::temp_dir().join(format!(\"queuekit-bounded-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/checkpoints.rs#same_subject_in_distinct_streams_and_legacy_rows_remains_independent",
+        "name": "same_subject_in_distinct_streams_and_legacy_rows_remains_independent",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/checkpoints.rs",
+        "span": "L127-L168"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/checkpoints.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 132,
+          "text": "let directory = std::env::temp_dir().join(format!(\"queue-checkpoint-streams-{}\", uuid::Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/conformance.rs#area4_concurrent_claim_filesystem",
+        "name": "area4_concurrent_claim_filesystem",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/conformance.rs",
+        "span": "L154-L192"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/conformance.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 155,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/conformance.rs#claim_orphan_reclaimed_on_mount",
+        "name": "claim_orphan_reclaimed_on_mount",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/conformance.rs",
+        "span": "L203-L236"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/conformance.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 204,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/QueueKit/rust/tests/conformance.rs#queue_files_created_with_mode_0600",
+        "name": "queue_files_created_with_mode_0600",
+        "kind": "function",
+        "path": "packages/kits/QueueKit/rust/tests/conformance.rs",
+        "span": "L251-L286"
+      },
+      "path": "packages/kits/QueueKit/rust/tests/conformance.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 254,
+          "text": "let dir = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/VaultKit/rust/src/test_support.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 3,
+          "text": "//! Every test that writes under `std::env::temp_dir()` holds a [`TempPath`]"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/VaultKit/rust/src/test_support.rs#file",
+        "name": "file",
+        "kind": "function",
+        "path": "packages/kits/VaultKit/rust/src/test_support.rs",
+        "span": "L43-L46"
+      },
+      "path": "packages/kits/VaultKit/rust/src/test_support.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 44,
+          "text": "let path = std::env::temp_dir().join(format!(\"{prefix}-{}.{ext}\", Uuid::new_v4()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/VaultKit/rust/tests/json_import_scoped_encode.rs#import_calls_rate",
+        "name": "import_calls_rate",
+        "kind": "function",
+        "path": "packages/kits/VaultKit/rust/tests/json_import_scoped_encode.rs",
+        "span": "L214-L247"
+      },
+      "path": "packages/kits/VaultKit/rust/tests/json_import_scoped_encode.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 217,
+          "text": "let base = std::env::var(\"MOOT_SPAN_BENCH_DIR\").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/libs/EstateEncryption/rust/src/install_key_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "//! per test (tag + pid + counter) under `std::env::temp_dir()`."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs#local_dir_submitter_writes_json_file",
+        "name": "local_dir_submitter_writes_json_file",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs",
+        "span": "L320-L362"
+      },
+      "path": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 322,
+          "text": "let tmp = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs#local_dir_submitter_creates_directory_on_first_write",
+        "name": "local_dir_submitter_creates_directory_on_first_write",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs",
+        "span": "L365-L385"
+      },
+      "path": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 367,
+          "text": "let base = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs#local_dir_submitter_closure_wires_to_novel_token_cache",
+        "name": "local_dir_submitter_closure_wires_to_novel_token_cache",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs",
+        "span": "L388-L436"
+      },
+      "path": "packages/libs/LatticeLib/rust/src/novel_pool_submitter.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 394,
+          "text": "let tmp = std::env::temp_dir().join(format!("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/src/pool_reducer.rs#absent_pool_directory_is_noop",
+        "name": "absent_pool_directory_is_noop",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/src/pool_reducer.rs",
+        "span": "L744-L756"
+      },
+      "path": "packages/libs/LatticeLib/rust/src/pool_reducer.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 746,
+          "text": "let base = std::env::temp_dir().join(format!(\"pool_reducer_absent_{}\", nonce()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/tests/pool_submitter_path_guard_test.rs#submitter_still_writes_to_an_absolute_pool_directory",
+        "name": "submitter_still_writes_to_an_absolute_pool_directory",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/tests/pool_submitter_path_guard_test.rs",
+        "span": "L57-L73"
+      },
+      "path": "packages/libs/LatticeLib/rust/tests/pool_submitter_path_guard_test.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 58,
+          "text": "let dir = std::env::temp_dir().join(\"pool_guard_probe_ok_b73c\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/LatticeLib/rust/tests/word_class_seed_test.rs#pool_reducer_skips_table_resident_curated_addition",
+        "name": "pool_reducer_skips_table_resident_curated_addition",
+        "kind": "function",
+        "path": "packages/libs/LatticeLib/rust/tests/word_class_seed_test.rs",
+        "span": "L196-L220"
+      },
+      "path": "packages/libs/LatticeLib/rust/tests/word_class_seed_test.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 197,
+          "text": "let base = std::env::temp_dir().join(format!(\"lattice_seed_precedence_rs_{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/src/lib.rs#the_release_catalog_key_reads_its_default_and_writes_through_the_writer",
+        "name": "the_release_catalog_key_reads_its_default_and_writes_through_the_writer",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+        "span": "L814-L823"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 815,
+          "text": "let dir = std::env::temp_dir().join(format!(\"settings-catalog-{}-{}\", std::process::id(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/src/lib.rs#write_values_merges_the_keys_in_one_write_and_refuses_a_file_that_is_not_an_object",
+        "name": "write_values_merges_the_keys_in_one_write_and_refuses_a_file_that_is_not_an_object",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+        "span": "L826-L848"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 827,
+          "text": "let dir = std::env::temp_dir().join(format!(\"settings-writer-{}-{}\", std::process::id(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/src/lib.rs#remove_values_drops_the_keys_keeps_the_rest_and_refuses_a_file_that_is_not_an_object",
+        "name": "remove_values_drops_the_keys_keeps_the_rest_and_refuses_a_file_that_is_not_an_object",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+        "span": "L851-L883"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 852,
+          "text": "let dir = std::env::temp_dir().join(format!(\"settings-remover-{}-{}\", std::process::id(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/src/lib.rs#load_from_file_missing_file_returns_default",
+        "name": "load_from_file_missing_file_returns_default",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+        "span": "L907-L912"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 908,
+          "text": "let dir = std::env::temp_dir().join(\"mpi-unit-test-missing\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/MootProductIdentity/rust/src/lib.rs#a_leftover_worker_executable_key_survives_the_writers_and_the_seeder",
+        "name": "a_leftover_worker_executable_key_survives_the_writers_and_the_seeder",
+        "kind": "function",
+        "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+        "span": "L915-L931"
+      },
+      "path": "packages/libs/MootProductIdentity/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 916,
+          "text": "let dir = std::env::temp_dir().join(format!(\"settings-worker-key-{}-{}\", std::process::id(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/ObserverSink/rust/src/store.rs#new~2",
+        "name": "new~2",
+        "kind": "function",
+        "path": "packages/libs/ObserverSink/rust/src/store.rs",
+        "span": "L1743-L1750"
+      },
+      "path": "packages/libs/ObserverSink/rust/src/store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1745,
+          "text": "let path = std::env::temp_dir()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/OnnxRuntimeLib/rust/src/lib.rs#relative_and_missing_paths_are_refused_before_any_load",
+        "name": "relative_and_missing_paths_are_refused_before_any_load",
+        "kind": "function",
+        "path": "packages/libs/OnnxRuntimeLib/rust/src/lib.rs",
+        "span": "L175-L182"
+      },
+      "path": "packages/libs/OnnxRuntimeLib/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 180,
+          "text": "let missing = std::env::temp_dir().join(\"onnx-runtime-lib-missing-library.dylib\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/OnnxRuntimeLib/rust/src/lib.rs#none_follows_the_loaded_runtime",
+        "name": "none_follows_the_loaded_runtime",
+        "kind": "function",
+        "path": "packages/libs/OnnxRuntimeLib/rust/src/lib.rs",
+        "span": "L196-L219"
+      },
+      "path": "packages/libs/OnnxRuntimeLib/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 201,
+          "text": "let loaded_file = std::env::temp_dir().join(format!(\"onnx-runtime-lib-loaded-{pid}.dylib\"));"
+        },
+        {
+          "line": 202,
+          "text": "let other_file = std::env::temp_dir().join(format!(\"onnx-runtime-lib-other-{pid}.dylib\"));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/libs/OnnxRuntimeLib/rust/tests/refusal_tests.rs#a_failed_load_is_remembered_and_later_requests_report_the_first_path",
+        "name": "a_failed_load_is_remembered_and_later_requests_report_the_first_path",
+        "kind": "function",
+        "path": "packages/libs/OnnxRuntimeLib/rust/tests/refusal_tests.rs",
+        "span": "L17-L41"
+      },
+      "path": "packages/libs/OnnxRuntimeLib/rust/tests/refusal_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 20,
+          "text": "let root = std::env::temp_dir().join(format!(\"onnx-runtime-lib-refusal-{}\", std::process::id()));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/libs/SQLCipher/Sources/SQLCipher/include/sqlite3.h",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 3988,
+          "text": "** See also: [sqlite3_temp_directory]"
+        },
+        {
+          "line": 6907,
+          "text": "** does not free the memory that sqlite3_temp_directory points to.  If"
+        },
+        {
+          "line": 6924,
+          "text": "** sqlite3_temp_directory = sqlite3_mprintf(\"%s\", zPathBuf);"
+        },
+        {
+          "line": 6927,
+          "text": "SQLITE_API SQLITE_EXTERN char *sqlite3_temp_directory;"
+        },
+        {
+          "line": 6971,
+          "text": "** with the [sqlite3_temp_directory] or [sqlite3_data_directory] variable, to"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 139,
+    "baselineChars": 3641404
+  }
+}

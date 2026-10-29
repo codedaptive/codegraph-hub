@@ -1,0 +1,49 @@
+{
+  "pattern": "decodeRowHLC",
+  "filesSearched": 349,
+  "totalHits": 2,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift#BundleStore.decodeRowHLC",
+        "name": "BundleStore.decodeRowHLC",
+        "kind": "method",
+        "path": "packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift",
+        "span": "L740-L746"
+      },
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 740,
+          "text": "static func decodeRowHLC(_ value: TypedValue?) -> HLC? {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift#BundleStore.decodeChunk",
+        "name": "BundleStore.decodeChunk",
+        "kind": "method",
+        "path": "packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift",
+        "span": "L688-L721"
+      },
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/BundleStore.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 699,
+          "text": "let hlc = decodeRowHLC(row[\"hlc\"]) else {"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 1,
+    "baselineChars": 32626
+  }
+}
