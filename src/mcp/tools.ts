@@ -143,6 +143,7 @@ export { PathRefusalError } from '../errors';
 import { PathRefusalError } from '../errors';
 import { indexedHashInput } from '../file-limits';
 import { resolve as resolvePath, relative as relativePath } from 'path';
+import { extensionTools, findExtensionTool, isExtensionTool, setBuiltins } from '../extensions/host/registry';
 
 /** Maximum output length to prevent context bloat (characters) */
 const MAX_OUTPUT_LENGTH = 15000;
@@ -1894,6 +1895,14 @@ export const tools: ToolDefinition[] = [
   },
 ];
 
+// Extension tools (src/extensions/host) may not take a built-in's name, and carry the built-ins' annotations.
+setBuiltins(() => tools.map(t => t.name), READ_ONLY_ANNOTATIONS);
+
+/** Built-in tool definitions followed by the loaded extensions' tools (src/extensions/host). */
+function allToolDefinitions(): ToolDefinition[] {
+  return [...tools, ...extensionTools().map(t => t.definition)];
+}
+
 /**
  * Return `defs` with `projectPath` marked `required` in each tool's inputSchema.
  *
@@ -1929,14 +1938,16 @@ function withRequiredProjectPath(defs: ToolDefinition[]): ToolDefinition[] {
  * proxy answers `tools/list` with before any project is open. Mirrors
  * `ToolHandler.getTools()` in the no-CodeGraph case (the dynamic per-repo budget
  * note in a description only adds once `cg` is loaded; the schemas are static).
+ * Extension tools are listed only when CODEGRAPH_MCP_TOOLS names them.
  */
 export function getStaticTools(): ToolDefinition[] {
+  const all = allToolDefinitions();
   const raw = process.env.CODEGRAPH_MCP_TOOLS;
   if (!raw || !raw.trim()) {
-    return tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
+    return all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
   }
   const allow = new Set(raw.split(',').map(s => s.trim().replace(/^codegraph_/, '')).filter(Boolean));
-  return allow.size ? tools.filter(t => allow.has(t.name.replace(/^codegraph_/, ''))) : tools;
+  return allow.size ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, ''))) : tools;
 }
 
 /**
@@ -2208,6 +2219,7 @@ export class ToolHandler {
    * trim the tool surface without rebuilding the client config; the ablated
    * tool is then truly absent from ListTools rather than merely denied on call.
    * Matching is on the short form, so "node" and "codegraph_node" both work.
+   * Extension tools are named here like built-ins, e.g. "explore,my_tool".
    */
   private toolAllowlist(): Set<string> | null {
     const raw = process.env.CODEGRAPH_MCP_TOOLS;
@@ -2241,15 +2253,17 @@ export class ToolHandler {
    * The codegraph_explore tool description includes a budget recommendation
    * scaled to the number of indexed files. Honors the CODEGRAPH_MCP_TOOLS
    * allowlist so a trimmed surface is reflected in ListTools.
+   * Extension tools are candidates too, listed only when the allowlist names them.
    */
   getTools(): ToolDefinition[] {
     const allow = this.toolAllowlist();
+    const all = allToolDefinitions();
     // No explicit allowlist → the default 4-tool surface (see
     // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
     // default entirely, so any defined tool can be re-enabled.
     let visible = allow
-      ? tools.filter(t => allow.has(t.name.replace(/^codegraph_/, '')))
-      : tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
+      ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, '')))
+      : all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
     // No default project loaded → no-root-index case (#993): a gateway server
     // started outside any repo, or a monorepo root whose indexes live in
     // sub-projects. With nothing to fall back to, EVERY call needs an explicit
@@ -2271,6 +2285,7 @@ export class ToolHandler {
       // below even the 4-tool default: at this scale callers, too, reduces
       // to one grep. (Historical note: the audit below ran when context and
       // trace still existed; its "5 core tools" are today's trio.)
+      // Extension tools are exempt: one is visible only because the operator named it.
       //
       // n=2 audits ruled out cutting below 5 tools:
       // - 3-tool gate (search + context + trace): cost regressed on
@@ -2296,7 +2311,7 @@ export class ToolHandler {
         'codegraph_node',
       ]);
       if (stats.fileCount < TINY_REPO_FILE_THRESHOLD) {
-        visible = visible.filter(t => TINY_REPO_CORE_TOOLS.has(t.name));
+        visible = visible.filter(t => TINY_REPO_CORE_TOOLS.has(t.name) || isExtensionTool(t.name));
       }
 
       return visible.map(tool => {
@@ -3157,6 +3172,7 @@ export class ToolHandler {
    * allowlist/validation (the caller owns those). `codegraph_status` is handled
    * on the main thread in {@link execute} and never reaches here. May throw
    * NotIndexed/PathRefusal, which {@link executeReadTool} classifies.
+   * An unknown name falls through to the extension tools (src/extensions/host).
    */
   private async dispatchTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     switch (toolName) {
@@ -3167,7 +3183,11 @@ export class ToolHandler {
       case 'codegraph_explore': return await this.handleExplore(args);
       case 'codegraph_node': return await this.handleNode(args);
       case 'codegraph_files': return await this.handleFiles(args);
-      default: return this.errorResult(`Unknown tool: ${toolName}`);
+      default: {
+        const ext = findExtensionTool(toolName);
+        if (ext) return await ext.handle(args, { getCodeGraph: (p?: string) => this.getCodeGraph(p) });
+        return this.errorResult(`Unknown tool: ${toolName}`);
+      }
     }
   }
 
