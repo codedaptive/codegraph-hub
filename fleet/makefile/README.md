@@ -24,7 +24,7 @@ How make is wired here (codeteam 34c2667):
 
 ## Proposal: one fork-only root `Makefile`, no codeteam change
 
-The file is `fleet/makefile/Makefile` in this feature, to be copied to the root as `Makefile`. It maps codeteam's
+The file is the root `Makefile` (settled S-15). It maps codeteam's
 targets onto `team/claude/rules/product.md` "Test calls":
 
 | Target | Runs |
@@ -78,8 +78,7 @@ With `MAKEFILES` set to codeteam's real `zone/zone.mk`, `CODETEAM_ZONE=.`, and `
 - `zone-test-one` passes `DIR=$(DIR)` unquoted to its inner make (`zone.mk:44`), so a path with a space, a quote or
   a backtick is changed there, before this Makefile sees it.
 
-## Apply / undo
+## Applied / undo
 
-Apply (orchestrator, in its own fork-only squash): `cp fleet/makefile/Makefile Makefile`, commit, and add `Makefile`
-to `fleet/README.md`'s list of fork files. Undo: delete `Makefile`; zone.mk's targets go back to failing as they do
-today.
+Applied by settled S-15: the root `Makefile`, listed in `fleet/README.md`'s own files; fleet maintains it.
+Undo: delete `Makefile`; zone.mk's test targets go back to failing as they did before.
