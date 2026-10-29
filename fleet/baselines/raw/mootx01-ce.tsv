@@ -1,0 +1,37 @@
+repo	mootx01-ce
+source	/Users/bob/devlop/.repos/mootx01-ce.git
+ref	develop/1.0.x
+commit	e59669c15390201e36165c03092a0ec60b42c856
+tracked_files	2857
+codegraph	1.6.2-sm.1
+node	v26.12.0
+load_before	66.20 44.65 31.42
+init_wall_s	34.29
+init_user_s	96.13
+init_sys_s	12.06
+init_rss_mb	2850
+load_after	55.37 44.44 31.88
+db_mb	192.7
+indexed_files	2259
+nodes	53787
+edges	172703
+languages	swift 1445, rust 765, python 25, yaml 13, javascript 6, c 2, cpp 1, ruby 1, xml 1
+symbol	bytes
+symbol_callers	442
+callers_wall_s	0.62
+callers_user_s	0.50
+callers_sys_s	0.18
+callers_rss_mb	216
+query_wall_s	0.57
+query_user_s	0.48
+query_sys_s	0.16
+query_rss_mb	217
+impact_wall_s	0.75
+impact_user_s	0.57
+impact_sys_s	0.19
+impact_rss_mb	225
+sync_file	apps/Mootx01-App/App/Mootx01App.swift
+sync_wall_s	4.04
+sync_user_s	3.10
+sync_sys_s	1.18
+sync_rss_mb	555

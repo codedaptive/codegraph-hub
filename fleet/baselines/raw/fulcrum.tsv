@@ -1,0 +1,37 @@
+repo	fulcrum
+source	/Users/bob/devlop/fulcrum
+ref	HEAD
+commit	bbac6eed4d6785cc850830175284e1653dda564c
+tracked_files	23255
+codegraph	1.6.2-sm.1
+node	v26.12.0
+load_before	49.69 43.58 31.72
+init_wall_s	36.90
+init_user_s	59.24
+init_sys_s	7.95
+init_rss_mb	2119
+load_after	49.69 44.14 32.46
+db_mb	147.7
+indexed_files	1715
+nodes	42224
+edges	119015
+languages	swift 1709, python 2, go 1, javascript 1, jsx 1, yaml 1
+symbol	nodes
+symbol_callers	2196
+callers_wall_s	1.69
+callers_user_s	0.57
+callers_sys_s	0.24
+callers_rss_mb	213
+query_wall_s	0.82
+query_user_s	0.50
+query_sys_s	0.21
+query_rss_mb	194
+impact_wall_s	0.97
+impact_user_s	0.65
+impact_sys_s	0.25
+impact_rss_mb	224
+sync_file	FulcrumAI/Package.swift
+sync_wall_s	4.42
+sync_user_s	3.05
+sync_sys_s	1.41
+sync_rss_mb	512
