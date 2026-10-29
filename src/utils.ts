@@ -400,38 +400,80 @@ export function escapeRegExp(text: string): string {
 }
 
 /**
+ * The project that takes a {@link FileLock}. `stamp()` is the record written
+ * on the lock body's second line (read at each acquire, so it describes the
+ * index as it is then); `isForeign()` tests a parsed second line for a record
+ * another project wrote: one whose recorded root is not this project's and
+ * whose recorded index identities both differ from this project's index. A
+ * record at this project's own root, or at a project whose database has more
+ * than one hard link, is never foreign. The caller supplies both
+ * (`lockStamp` and `isForeignLockRecord` in `mcp/writer-lock`) because this
+ * module cannot import `directory` without a cycle (`utils` → `directory` →
+ * `sync/watch-policy` → `utils`).
+ */
+export interface FileLockOwner {
+  stamp(): object;
+  isForeign(record: unknown): boolean;
+}
+
+/**
  * Cross-process file lock using a lock file with PID tracking.
  *
  * Prevents multiple processes (e.g., git hooks, CLI, MCP server) from
  * writing to the same database simultaneously.
+ *
+ * Without an owner the body is the bare PID. With an owner it is the PID, a
+ * newline and the owner's stamp as one line of JSON, so a lock copied in with
+ * another project's `.codegraph/` can be told apart from one taken on this
+ * project. The first line stays the bare PID: readers that `parseInt` the body
+ * get the PID, and a non-numeric first line would make them delete a live lock.
  */
 export class FileLock {
   private lockPath: string;
+  private owner: FileLockOwner | undefined;
   private held = false;
 
-  constructor(lockPath: string) {
+  constructor(lockPath: string, owner?: FileLockOwner) {
     this.lockPath = lockPath;
+    this.owner = owner;
   }
 
   /**
-   * Acquire the lock. Throws if the lock is held by another live process.
+   * Acquire the lock. Throws if the lock is held by another live process and
+   * its record is not foreign. A lock whose PID is dead or malformed is stale;
+   * so is one whose second-line record the owner calls foreign (another
+   * project's, copied in with its `.codegraph/`), even when its PID is alive.
+   * A record at the owner's own root is never foreign, so its live PID holds.
    */
   acquire(): void {
     // Check for existing lock
     if (fs.existsSync(this.lockPath)) {
       try {
-        const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
-        const pid = parseInt(content, 10);
+        const content = fs.readFileSync(this.lockPath, 'utf-8');
+        // parseInt stops at the first newline: the PID is the first line.
+        const pid = parseInt(content.trim(), 10);
+        // The record is exactly the second line, parsed as JSON and never
+        // trimmed or split further: JSON escapes any newline inside the root,
+        // and its spaces are part of it. No second line, or one that does not
+        // parse, is no record: pid liveness alone decides.
+        let foreign = false;
+        if (this.owner) {
+          const recordLine = content.split('\n')[1];
+          if (recordLine !== undefined) {
+            try { foreign = this.owner.isForeign(JSON.parse(recordLine)); } catch { /* no record */ }
+          }
+        }
         // A long sync can hold the lock for hours. Its age says nothing about
-        // whether the writer is still alive; only a dead PID is stale.
-        if (!isNaN(pid) && this.isProcessAlive(pid)) {
+        // whether the writer is still alive; only a dead or malformed PID, or a
+        // foreign record, is stale.
+        if (!foreign && !isNaN(pid) && this.isProcessAlive(pid)) {
           throw new Error(
             `CodeGraph database is locked by another process (PID ${pid}). ` +
             `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
           );
         }
 
-        // Stale lock (dead process or malformed PID) - remove it
+        // Stale lock (dead process, malformed PID or foreign record) - remove it
         fs.unlinkSync(this.lockPath);
       } catch (err) {
         if (err instanceof Error && err.message.includes('locked by another')) {
@@ -442,9 +484,10 @@ export class FileLock {
       }
     }
 
-    // Write our PID to the lock file using exclusive create flag
+    // Write our PID (and our stamp, with an owner) using exclusive create flag
     try {
-      fs.writeFileSync(this.lockPath, String(process.pid), { flag: 'wx' });
+      const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
+      fs.writeFileSync(this.lockPath, body, { flag: 'wx' });
       this.held = true;
     } catch (err: any) {
       if (err.code === 'EEXIST') {
@@ -464,7 +507,8 @@ export class FileLock {
   release(): void {
     if (!this.held) return;
     try {
-      // Only remove if we still own it (check PID)
+      // Only remove if we still own it (check PID; parseInt reads the first
+      // line of an owner body)
       const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
       if (parseInt(content, 10) === process.pid) {
         fs.unlinkSync(this.lockPath);
