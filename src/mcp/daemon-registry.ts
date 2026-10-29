@@ -43,6 +43,7 @@ import {
   type WriterLockInfo,
 } from './writer-lock';
 import { classifyLockHolder, describeProcess } from './process-identity';
+import { removeLockIfUnchanged, snapshotLock, type LockSnapshot } from './lock-takeover';
 import { isOlderRelease } from './version';
 import { WORKER_START_SETTLE_MS } from '../worker-teardown';
 
@@ -167,9 +168,12 @@ function cleanupDaemonArtifacts(
   root: string,
   expectedLockContents: string | null,
 ): boolean {
-  // A daemon owns writer.pid before binding or relocating its socket. Claiming
-  // the writer slot therefore freezes every legitimate daemon artifact writer
-  // while we compare the inspected lock snapshot and clean it up.
+  // A daemon owns writer.pid before binding or relocating its socket, so
+  // claiming the writer slot freezes every socket writer while we clean up.
+  // It does not freeze daemon.pid: a starting daemon creates daemon.pid before
+  // it claims writer.pid. That file is removed only if it still holds the
+  // inspected bytes, by a compare-and-unlink of a fresh snapshot
+  // (removeLockIfUnchanged in removeDaemonArtifacts).
   if (readWriterLock(root)?.pid === process.pid) return false;
   const claim = tryAcquireWriterLock(root, 'cleanup');
   if (claim.kind === 'taken') return false;
@@ -184,14 +188,16 @@ function cleanupDaemonArtifacts(
 /** The removal behind {@link cleanupDaemonArtifacts}, for a caller already holding the writer slot. */
 function removeDaemonArtifacts(root: string, expectedLockContents: string | null): boolean {
   const pidPath = getDaemonPidPath(root);
+  let snapshot: LockSnapshot | null = null;
   if (expectedLockContents === null) {
     if (fs.existsSync(pidPath)) return false;
   } else {
     try {
-      if (fs.readFileSync(pidPath, 'utf8') !== expectedLockContents) return false;
+      snapshot = snapshotLock(pidPath);
     } catch {
       return false;
     }
+    if (snapshot === null || snapshot.raw !== expectedLockContents) return false;
   }
   // POSIX sockets are real files; Windows named pipes vanish with the process.
   // Sweep every candidate before releasing daemon.pid, so no successor can
@@ -202,10 +208,15 @@ function removeDaemonArtifacts(root: string, expectedLockContents: string | null
     }
   }
   deregisterDaemon(root);
-  try { fs.unlinkSync(pidPath); } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+  // Release daemon.pid only if it is still the file compared above: a daemon
+  // that started meanwhile has its own record there, and it stays.
+  if (snapshot === null) return true;
+  try {
+    const removed = removeLockIfUnchanged(pidPath, snapshot);
+    return removed === 'removed' || removed === 'gone';
+  } catch {
+    return false;
   }
-  return true;
 }
 
 /** Remove daemon artifacts only when no matching daemon answers the socket hello. */
