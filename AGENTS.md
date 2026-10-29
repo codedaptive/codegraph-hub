@@ -55,7 +55,7 @@ condition, and applied globally it hands the engine's suites the browser builds 
 ESM-only and the repo is CJS) is the shared base; note that a workspace project **concatenates**
 the base's `include` with its own, which is why the `ui` project does not `extends` it.
 
-Node engines: `>=20.0.0 <25.0.0`. There is a hard exit on Node 25.x and below 20 (see `src/bin/node-version-check.ts`).
+Node engines: `>=20.0.0` (no upper bound; Node 25 and later are supported because a normal launch runs with `--liftoff-only`: the bundled launcher passes it, otherwise the CLI re-execs itself with it (`CODEGRAPH_NO_RELAUNCH` or a failed re-exec runs without it), see `src/extraction/wasm-runtime-flags.ts`). The only hard exit is below 20 (see `src/bin/node-version-check.ts`).
 
 ## Architecture
 
