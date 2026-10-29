@@ -58,6 +58,10 @@ extension's commands after it are skipped.
   checks the copy, freezes it, and serves and looks up only that copy; `handle` is read once too. A
   getter that answers differently later, or a change to the extension's objects afterwards,
   changes nothing.
+- **Annotations are set by the registry.** Every extension tool is served with the built-in tools'
+  read-only MCP annotations (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`,
+  `openWorldHint: false`, handed in from `src/mcp/tools.ts`), in `tools/list` and wherever the tool
+  is looked up. An extension's own `annotations` are replaced, so an extension does not set them.
 - **Off by default.** No extension tool is on the default surface (`codegraph_explore` alone). An
   operator enables one by short name in `CODEGRAPH_MCP_TOOLS`, e.g. `explore,my_tool`. As with
   built-ins, with no allowlist a call to it is still served; with one, only listed tools are.
@@ -80,7 +84,7 @@ extension's commands after it are skipped.
 
 `src/mcp/tools.ts` imports `registry.ts` as a value. So `registry.ts` and `api.ts` import nothing from
 `tools.ts` but types (a type-only import adds nothing to the runtime graph, so it cannot create a
-runtime cycle); tools.ts hands the registry its built-in names through `setBuiltinToolNames`.
+runtime cycle); tools.ts hands the registry its built-in names and annotations through `setBuiltins`.
 An extension module may import from `src/` (tools.ts included): it is required only from inside a
 registry call, after `registry.ts` itself has finished loading, so it never meets a half-loaded
 registry. Keep those imports off the module's top level where you can, though (see "Runs in a

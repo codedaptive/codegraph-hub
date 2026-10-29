@@ -32,7 +32,9 @@ export interface ExtensionTool {
    * The registry drops a tool that breaks a rule, or that has no `handle`
    * function. It keeps a frozen JSON copy taken once at registration, and that
    * copy is what is listed and looked up: changing this object afterwards
-   * changes nothing.
+   * changes nothing. `annotations` are set by the registry, not here: every
+   * extension tool is served with the built-in tools' read-only annotations,
+   * and any the extension sets are replaced.
    */
   definition: ToolDefinition;
   /**

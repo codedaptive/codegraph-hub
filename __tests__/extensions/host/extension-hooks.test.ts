@@ -12,7 +12,8 @@
  * Also the registry's isolation (a malformed extension or tool is one warning,
  * whatever it throws, and loading continues) and its snapshot rule (the name a
  * tool was validated under is the name listed and looked up, whatever its
- * getters or later mutations say).
+ * getters or later mutations say), and the annotations every extension tool
+ * is served with (the built-ins', replacing any the extension set).
  *
  * The CLI, session and worker paths are tested in the sibling files, which
  * import nothing from src/extensions/host, so they test the built code's
@@ -234,6 +235,42 @@ describe('extension hook: tools/list and in-process dispatch', () => {
     expect(res.content[0].text).toBe('flip ran');
   });
 
+  /** The annotations a built-in is served with, read from the same list (never a literal). */
+  function builtinAnnotations(listed: ToolDefinition[]): ToolDefinition['annotations'] {
+    const explore = listed.find(t => t.name === 'codegraph_explore');
+    expect(explore?.annotations).toBeDefined();
+    return explore?.annotations;
+  }
+
+  // Every extension tool is served with the built-ins' read-only annotations.
+  it('an extension tool with no annotations is served with exactly a built-in\'s annotations', () => {
+    withExtension('explore,ext_echo');
+    for (const listed of [getStaticTools(), new ToolHandler(null).getTools()]) {
+      expect(listed.find(t => t.name === EXT_TOOL)?.annotations).toEqual(builtinAnnotations(listed));
+    }
+    expect(findExtensionTool(EXT_TOOL)?.definition.annotations).toEqual(builtinAnnotations(getStaticTools()));
+  });
+
+  it('an extension tool\'s own annotations are replaced with the built-ins\' read-only ones', () => {
+    vi.stubEnv('CODEGRAPH_EXTENSION_MODULES', '');
+    vi.stubEnv('CODEGRAPH_MCP_TOOLS', 'explore,writes');
+    __resetExtensionsForTests();
+    registerExtension({
+      name: 'writes',
+      tools: [{
+        definition: {
+          ...fullDefinition('codegraph_writes'),
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+        handle: reply('never'),
+      }],
+    });
+    for (const listed of [getStaticTools(), new ToolHandler(null).getTools()]) {
+      expect(listed.find(t => t.name === 'codegraph_writes')?.annotations).toEqual(builtinAnnotations(listed));
+    }
+    expect(findExtensionTool('codegraph_writes')?.definition.annotations).toEqual(builtinAnnotations(getStaticTools()));
+  });
+
   it('changing a definition after registration changes nothing served, and the full definition survives', async () => {
     vi.stubEnv('CODEGRAPH_EXTENSION_MODULES', '');
     vi.stubEnv('CODEGRAPH_MCP_TOOLS', 'explore,node,mut');
@@ -254,7 +291,11 @@ describe('extension hook: tools/list and in-process dispatch', () => {
 
     const listed = getStaticTools();
     expect(names(listed).filter(n => n === 'codegraph_node')).toHaveLength(1);
-    expect(listed.find(t => t.name === 'codegraph_mut')).toEqual(fullDefinition('codegraph_mut'));
+    // Every field survives except `annotations`, which the registry replaces.
+    expect(listed.find(t => t.name === 'codegraph_mut')).toEqual({
+      ...fullDefinition('codegraph_mut'),
+      annotations: builtinAnnotations(listed),
+    });
     expect(findExtensionTool('codegraph_node')).toBeUndefined();
     expect(findExtensionTool('codegraph_mut')?.definition.name).toBe('codegraph_mut');
     // `handle` was read once, and runs with the extension's tool as `this`.

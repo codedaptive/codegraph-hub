@@ -14,15 +14,18 @@
  * compiled siblings.
  *
  * Import-cycle rule: `src/mcp/tools.ts` imports this module as a value, so this
- * module takes nothing from tools.ts but types. The built-in tool names it must
- * not let an extension shadow are handed in by tools.ts through
- * `setBuiltinToolNames` when tools.ts loads, and read when the served tool
- * list is first built. (A lazy `require('../../mcp/tools')` would not do:
- * vitest cannot serve a require of a .ts module.)
+ * module takes nothing from tools.ts but types. Two things it needs from there
+ * are handed in by tools.ts through `setBuiltins` when tools.ts loads: the
+ * built-in tool names an extension may not shadow, and the read-only
+ * annotations every built-in carries, which every served extension tool carries
+ * in place of its own. Both are read when the served tool list is built. (A
+ * lazy `require('../../mcp/tools')` would not do: vitest cannot serve a require
+ * of a .ts module.)
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Command } from 'commander';
+import type { ToolAnnotations } from '../../mcp/tools';
 import type { CodegraphExtension, ExtensionTool, ExtensionToolContext } from './api';
 
 /**
@@ -38,28 +41,34 @@ const MODULES_ENV = 'CODEGRAPH_EXTENSION_MODULES';
 let extensions: CodegraphExtension[] | null = null;
 /**
  * Every accepted tool, in load order, keyed by the name it was validated
- * under. Each value is `addTool`'s frozen snapshot, not the extension's object.
+ * under. Each value is `addTool`'s frozen snapshot, not the extension's object,
+ * and has no `annotations` (`extensionTools` adds the built-ins').
  * Duplicates were refused at registration.
  */
 let registered = new Map<string, ExtensionTool>();
 /**
- * `registered` minus any name a built-in owns; null until built with the
- * built-in names known.
+ * `registered` minus any name a built-in owns, each definition carrying the
+ * built-ins' annotations; null until built with both known.
  */
 let served: ExtensionTool[] | null = null;
 /** Supplied by tools.ts at its load (see the header). */
 let builtinToolNames: (() => readonly string[]) | null = null;
+/** The built-ins' annotations; supplied by tools.ts with the names. */
+let builtinAnnotations: ToolAnnotations | null = null;
 
 function warn(message: string): void {
   process.stderr.write(`[CodeGraph] ${message}\n`);
 }
 
 /**
- * Tells the registry which tool names are built in. Called once by tools.ts at
- * module load; a getter so the names are read only when a list is built.
+ * Tells the registry which tool names are built in and which annotations the
+ * built-ins carry. Called once by tools.ts at module load; `names` is a getter
+ * so the names are read only when a list is built. The annotations are copied
+ * onto each served definition, so the caller's object is never frozen.
  */
-export function setBuiltinToolNames(names: () => readonly string[]): void {
+export function setBuiltins(names: () => readonly string[], annotations: ToolAnnotations): void {
   builtinToolNames = names;
+  builtinAnnotations = annotations;
   served = null;
 }
 
@@ -205,9 +214,10 @@ function deepFreeze<T>(value: T): T {
 /**
  * Accepts one tool or warns why not. What is registered is a snapshot, never
  * the extension's own objects: `definition` is copied once through JSON (the
- * form tools/list sends, so `annotations`, `_meta` and the whole schema
- * survive) and deep-frozen, and `handle` is read once and called with the
- * extension's tool as `this`. The rules run on the snapshot, so the name
+ * form tools/list sends, so `_meta` and the whole schema survive), stripped of
+ * its `annotations` (the served copy carries the built-ins' instead, see
+ * `extensionTools`), and deep-frozen; `handle` is read once and called with
+ * the extension's tool as `this`. The rules run on the snapshot, so the name
  * checked against the pattern and the duplicate set is the name listed and
  * looked up for the rest of the process: a getter that answers differently on
  * a later read, or a change to the extension's definition after registration,
@@ -252,6 +262,9 @@ function addTool(extName: string, tool: unknown): void {
     return;
   }
   const run = handle as ExtensionTool['handle'];
+  // An extension does not set its own annotations: every extension tool is
+  // served with the built-ins' read-only ones (see extensionTools).
+  delete def.annotations;
   registered.set(name, Object.freeze({
     definition: deepFreeze(definition as ExtensionTool['definition']),
     handle: (args: Record<string, unknown>, ctx: ExtensionToolContext) => run.call(tool, args, ctx),
@@ -291,8 +304,10 @@ export function registerExtension(ext: CodegraphExtension): void {
  * The extension tools that may be served: the snapshot of every accepted tool
  * whose validated name no built-in owns (a built-in name would be shadowed by
  * the switch in `dispatchTool`, and explore's session bookkeeping keys on its
- * name). The snapshots are frozen, so a served definition's name is always the
- * name checked here.
+ * name), its definition carrying a copy of the built-ins' annotations. This is
+ * the one list tools/list and `findExtensionTool` (and so a worker's dispatch)
+ * read. The definitions are frozen, so a served definition's name is always
+ * the name checked here.
  */
 export function extensionTools(): ExtensionTool[] {
   loadExtensions();
@@ -304,11 +319,17 @@ export function extensionTools(): ExtensionTool[] {
       warn(`extension tool ${name} dropped: a built-in tool has that name`);
       continue;
     }
-    list.push(tool);
+    list.push(builtinAnnotations
+      ? Object.freeze({
+        definition: deepFreeze({ ...tool.definition, annotations: { ...builtinAnnotations } }),
+        handle: tool.handle,
+      })
+      : tool);
   }
-  // Cache only once the built-in names are known, so an early lookup cannot
-  // let a colliding tool through for the rest of the process.
-  if (builtinToolNames) served = list;
+  // Cache only once tools.ts has handed in the built-ins, so an early lookup
+  // can neither let a colliding tool through nor fix a list without the
+  // annotations for the rest of the process.
+  if (builtinToolNames && builtinAnnotations) served = list;
   return list;
 }
 
