@@ -12,7 +12,8 @@ The user-scope `mcpServers` holds one server, and no project in `projects` has i
 
 It was written by 1.5.0's `codegraph install` and carries none of the env the fleet needs (no `DO_NOT_TRACK`, the
 query pool on, the default one-tool list). Isolated codeteam sessions never see it (`--strict-mcp-config`); every
-other Claude Code session on this Mac gets it, beside `codeteam/mcp.json`'s entry of the same name.
+other Claude Code session on this Mac gets it, beside codeteam's `codegraph` entry once a team is switched on
+(`per-team-mcp.md`).
 
 ## Apply
 

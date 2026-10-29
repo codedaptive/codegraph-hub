@@ -1,0 +1,61 @@
+diff -ru a/bin/codeteam b/bin/codeteam
+--- a/bin/codeteam	2026-10-29 15:28:20
++++ b/bin/codeteam	2026-10-29 15:39:21
+@@ -1338,6 +1338,30 @@
+ ]
+ 
+ 
++def mcp_config_files(t):
++    """The MCP config files a team's sessions get: the shared mcp.json, then the files the
++    manifest's `mcp_configs` names (a list of paths, relative to codeteam or absolute; any
++    other value is taken as a list of one), in that order. A team switches a server on for itself
++    alone by naming its file there (e.g. CodeGraph: share/mcp-codegraph.json), with that
++    team's own env. An entry that is not a path to an existing file (a missing file, a folder,
++    a number, a ~user that does not exist) is skipped with a warning, so a bad manifest line
++    never stops a session from starting."""
++    files = [MCP_FILE] if MCP_FILE.exists() else []
++    entries = t.m.get("mcp_configs", [])
++    for p in entries if isinstance(entries, list) else [entries]:
++        try:
++            f = Path(p).expanduser()
++            f = f if f.is_absolute() else TOOL_DIR / f
++            ok = bool(str(p).strip()) and f.is_file()
++        except (TypeError, RuntimeError, OSError):
++            ok = False
++        if ok:
++            files.append(f)
++        else:
++            print(f"codeteam: mcp_configs entry {p!r} is not an MCP config file; skipped", file=sys.stderr)
++    return files
++
++
+ def default_ctx_window(model):
+     """The context window Claude Code uses for a session when codeteam sets no
+     autoCompactWindow (2026-10-25). The zone guard prompts the handoff at 70% of it.
+@@ -1390,8 +1414,9 @@
+     if display in os.environ.get("CODETEAM_RC_OFF", "").split(","):
+         settings["remoteControlAtStartup"] = False
+     flags += ["--settings", json.dumps(settings)]
+-    if MCP_FILE.exists():
+-        flags += ["--mcp-config", str(MCP_FILE)]
++    mcp_files = mcp_config_files(t)
++    if mcp_files:
++        flags += ["--mcp-config", *map(str, mcp_files)]
+     # A lane reads its whole lane folder (worktrees, ledger, scratchpad); the
+     # orchestrator and staff read the whole team folder.
+     team_lanes = load_json(t.team_file, {}).get("lanes", {})
+diff -ru a/v2/codeteam2/team.py b/v2/codeteam2/team.py
+--- a/v2/codeteam2/team.py	2026-10-29 15:28:20
++++ b/v2/codeteam2/team.py	2026-10-29 15:28:31
+@@ -333,8 +333,9 @@
+         if t.isolate:   # v1: project settings only, no MCP
+             flags += ["--setting-sources", "project,local", "--strict-mcp-config"]
+         flags += ["--settings", json.dumps(self.launch_settings(s.key, display))]
+-        if v1.MCP_FILE.exists() and self.cfg.get("mcp", True):
+-            flags += ["--mcp-config", str(v1.MCP_FILE)]
++        mcp_files = v1.mcp_config_files(t) if self.cfg.get("mcp", True) else []
++        if mcp_files:
++            flags += ["--mcp-config", *map(str, mcp_files)]
+         flags += ["--add-dir", str(t.lane_dir(s.key) if s.kind == "lane" else t.root)]
+         flags += ["--name", display, "--append-system-prompt-file", str(role)]
+         handoff = t.ledger(s.key) / "reports" / "handoff.md"

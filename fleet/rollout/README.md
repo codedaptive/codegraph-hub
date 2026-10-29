@@ -1,9 +1,10 @@
 # Fleet production rollout, go-live step 1, staged for Bob's go-ahead
 
 Feature `fleet-rollout`, 2026-10-29; brief `design/Orc-Codegraph/ledger/reports/fleet-production-rollout.md`,
-as narrowed by Orc-Codegraph's rulings #98, #102 and #104 (settled S-8, S-9): the agent instructions and graft's
-removal are Bob's crew's (`CODEGRAPH-COMMANDS.md`, `graft-removal.md`), and worktree indexes are seeded by
-CodeGraph itself (host's `worktree-lifecycle`), so no zone.mk change is staged here. Every file describes one
+as narrowed by Orc-Codegraph's rulings #98, #102, #104 and #112 (settled S-8, S-9) and extended by #110 (per-team
+config): the agent instructions and graft's removal are Bob's crew's (`CODEGRAPH-COMMANDS.md`,
+`graft-removal.md`), worktree indexes are seeded by CodeGraph itself (host's `worktree-lifecycle`), so no zone.mk
+change is staged here, and codeteam owns its MCP entry (`share/mcp-codegraph.json`, decision 82). Every file describes one
 change to shared state with its exact diff and its undo. None has been applied.
 
 ## Apply in this order
@@ -11,8 +12,9 @@ change to shared state with its exact diff and its undo. None has been applied.
 | # | Write-up | Shared state | Waits on |
 |---|---|---|---|
 | 1 | `global-install.md` | `/opt/homebrew` npm prefix: 1.5.0 out, 1.6.2-sm.N (`fleet/pack.sh`) in | nothing |
-| 2 | `mcp-json.md` (+ `mcp-json.patch`) | `codeteam/mcp.json`: the codegraph server with `DO_NOT_TRACK=1`, `CODEGRAPH_QUERY_POOL_SIZE=0`, six tools | 1; host's `worktree-lifecycle` seeding (S-9) |
+| 2 | `mcp-json.md` (+ `mcp-json.patch`) | `codeteam/share/mcp-codegraph.json`: `CODEGRAPH_QUERY_POOL_SIZE=0` added to codeteam's staged entry | nothing |
 | 3 | `claude-json.md` | `~/.claude.json`: the stale user-scope 1.5.0 entry removed | nothing |
+| 4 | `per-team-mcp.md` (+ `codeteam-mcp.patch`) | codeteam's launch code: a manifest's `mcp_configs` adds MCP files for that team; then one manifest line per team switches it on | proposal to codeteam's maintainer; switching a team on waits on 1, 2 and host's `worktree-lifecycle` (S-9), and the order is Bob's (Q-7) |
 
 Undo, in reverse order: `rollback.md`.
 
