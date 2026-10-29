@@ -2,9 +2,13 @@
 
 Fork-only (`codedaptive/codegraph`); never offered upstream. Maintained by the fleet lane.
 
+- `/Makefile` (repository root): codeteam's test targets (`test-one`, `typecheck`, `test-times`, the zone suite)
+  on the npx test calls; settled S-15, write-up `makefile/README.md`. Upstream has no Makefile.
+
 - `pack.sh`: packs `ours` as `@colbymchenry/codegraph@<version>-sm.N`.
 - `rollout/`: go-live write-ups for shared state (global install, MCP entry, per-team config, rollback).
 - `baselines/`: CodeGraph baselines per team repository.
+- `makefile/`: the write-up behind `/Makefile`.
 - `golden/graft-0.16/`: graft's output, kept as the reference for `codegraph grep` / `blast`.
 
 ## Upstream files our patch stack edits
