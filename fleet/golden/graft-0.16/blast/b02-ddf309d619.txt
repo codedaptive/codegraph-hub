@@ -1,0 +1,119 @@
+blast radius — ddf309d619^...HEAD (depth 2)
+  changed: 34 files in 5 areas, 117 seed symbols
+  impacted: 55 symbols in 23 areas
+
+✓ CorpusProviderCountsStore — 8 changed files, 7/16 reached by a test
+✓ chunks — 3 changed files, 5/10 reached by a test
+✓ EncoderPlacementReport — 1 changed file, 0/1 reached by a test
+⚠ values — 6 changed files, 1/19 reached by a test
+✗ reclaim_superseded_generations — 2 changed files, 0/1 reached by a test
+
+CorpusContentEngine.swift — 8 symbols in 3 files
+  calls ← CorpusContentEngine.swift (packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift:L1-L3797) [depth 1]
+  calls ← existingRefs (packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift:L1724-L1726) [depth 1]
+  calls ← Corpus (packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift:L648-L745) [depth 1]
+  calls ← Corpus (packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift:L909-L968) [depth 1]
+  calls ← reindex (packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift:L1778-L2076) [depth 1]
+  calls ← recall (packages/kits/CorpusKit/Sources/CorpusKit/HybridRecall.swift:L84-L273) [depth 1]
+  calls ← recall (packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift:L2236-L2252) [depth 2]
+  calls ← reindex (packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift:L1771-L1773) [depth 2]
+
+commit_queue_batch — 6 symbols in 4 files
+  calls ← commit_queue_batch (packages/kits/CorpusKit/rust/src/content_engine.rs:L1601-L1807) [depth 1]
+  calls ← reindex_with_budget (packages/kits/CorpusKit/rust/src/corpus.rs:L2149-L2579) [depth 1]
+  calls ← recall (packages/kits/CorpusKit/rust/src/hybrid_recall.rs:L87-L309) [depth 1]
+  calls ← drain_content_with_queue (packages/kits/CorpusKit/rust/src/content_engine_queue.rs:L270-L458) [depth 2]
+  calls ← failed_last_write_does_not_double_fold_counts_on_retry (packages/kits/CorpusKit/rust/src/content_engine_queue.rs:L786-L924) [depth 2]
+  calls ← reindex (packages/kits/CorpusKit/rust/src/corpus.rs:L2145-L2147) [depth 2]
+
+CoreAIPairInference — 4 symbols in 2 files
+  calls ← CoreAIPairInference (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIPairInference.swift:L56-L65) [depth 1]
+  calls ← reattemptEngine (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIPairInference.swift:L73-L75) [depth 1]
+  calls ← CoreAISpanInference (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAISpanInference.swift:L52-L61) [depth 1]
+  calls ← reattemptEngine (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAISpanInference.swift:L84-L86) [depth 1]
+
+validateReceivedFactRows — 4 symbols in 3 files
+  calls ← validateReceivedFactRows (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Derivations/DerivationReceiver.swift:L318-L383) [depth 1]
+  calls ← DerivationStore.swift (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Derivations/DerivationStore.swift:L1-L258) [depth 2]
+  calls ← FactDerivationAdapter.swift (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Derivations/FactDerivationAdapter.swift:L1-L497) [depth 2]
+  calls ← append (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Derivations/FactDerivationAdapter.swift:L364-L453) [depth 2]
+
+accumulate — 3 symbols in 1 file
+  calls ← accumulate (packages/libs/SubstrateTypes/Sources/SubstrateTypes/CountVector256.swift:L76-L87) [depth 2]
+  calls ← majorityVote (packages/libs/SubstrateTypes/Sources/SubstrateTypes/CountVector256.swift:L121-L128) [depth 2]
+  calls ← merge (packages/libs/SubstrateTypes/Sources/SubstrateTypes/CountVector256.swift:L95-L100) [depth 2]
+
+map — 3 symbols in 2 files
+  calls ← map (packages/kits/AriaMcpKit/Sources/AriaMCP/AriaV2EstateDiagnostics.swift:L425-L446) [depth 2]
+  calls ← status (packages/kits/AriaMcpKit/Sources/AriaMCP/AriaV2EstateDiagnostics.swift:L368-L423) [depth 2]
+  calls ← latticeSnapshot (packages/kits/AriaMcpKit/Sources/AriaMCP/HTTPServer.swift:L1894-L1931) [depth 2]
+
+MootManager.swift — 3 symbols in 1 file
+  calls ← MootManager.swift (apps/moot-mgr/Sources/MootManager/MootManager.swift:L1-L1501) [depth 2]
+  calls ← analytics (apps/moot-mgr/Sources/MootManager/MootManager.swift:L882-L893) [depth 2]
+  calls ← estatesPayload (apps/moot-mgr/Sources/MootManager/MootManager.swift:L655-L745) [depth 2]
+
+parseTierSpec — 3 symbols in 3 files
+  calls ← parseTierSpec (benchmark-ee/harness-public/Sources/mcp-benchmarker/GauntletCLI.swift:L54-L67) [depth 2]
+  calls ← evenMix (benchmark-ee/harness-public/Sources/mcp-benchmarker/GauntletGenerator.swift:L38-L42) [depth 2]
+  calls ← countsByBaseType (benchmark-ee/harness-public/Sources/mcp-benchmarker/LMESpecCorpus.swift:L146-L152) [depth 2]
+
+roomCounts — 3 symbols in 3 files
+  calls ← roomCounts (packages/kits/CognitionKit/Sources/CognitionKit/Bias.swift:L80-L84) [depth 2]
+  calls ← roomCounts (packages/kits/CognitionKit/Sources/CognitionKit/EstateDivergence.swift:L46-L54) [depth 2]
+  calls ← run (packages/kits/CognitionKit/Sources/CognitionKit/TunnelSuccessor.swift:L36-L59) [depth 2]
+
+allTableCounts — 2 symbols in 1 file
+  calls ← allTableCounts (packages/libs/EstateEncryption/Sources/EstateEncryption/EstateEncryption.swift:L616-L639) [depth 2]
+  calls ← tableCountsDescription (packages/libs/EstateEncryption/Sources/EstateEncryption/EstateEncryption.swift:L747-L762) [depth 2]
+
+mostFrequent — 2 symbols in 1 file
+  calls ← mostFrequent (packages/kits/NeuronKit/Sources/NeuronKit/ContextSynthesizer.swift:L280-L296) [depth 2]
+  calls ← topPatterns (packages/kits/NeuronKit/Sources/NeuronKit/ContextSynthesizer.swift:L189-L218) [depth 2]
+
+perform — 2 symbols in 2 files
+  calls ← perform (tools/estate-surgery/Sources/EstateSurgeryLib/Surgeon.swift:L22-L152) [depth 2]
+  calls ← buildManifest (tools/estate-surgery/Sources/EstateSurgeryLib/SurgeryPlanner.swift:L88-L241) [depth 2]
+
+ScopedLSAIndex — 2 symbols in 2 files
+  calls ← ScopedLSAIndex (packages/kits/CorpusKit/Sources/CorpusKitProviders/ScopedLSAIndex.swift:L66-L72) [depth 1]
+  calls ← WingLexiconStore (packages/kits/CorpusKit/Sources/CorpusKitProviders/WingLexiconStore.swift:L80-L83) [depth 1]
+
+AnomalyFlagSweep.swift — 1 symbol in 1 file
+  calls ← AnomalyFlagSweep.swift (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/AnomalyFlagSweep.swift:L1-L488) [depth 2]
+
+countFold256 — 1 symbol in 1 file
+  calls ← countFold256 (packages/libs/SubstrateKernel/Sources/SubstrateKernel/PortableKernel-SIMD.swift:L376-L417) [depth 2]
+
+decodeCounts — 1 symbol in 1 file
+  calls ← decodeCounts (packages/kits/LocusKit/Sources/LocusKit/NodeBundleStore.swift:L69-L82) [depth 2]
+
+graphTopology — 1 symbol in 1 file
+  calls ← graphTopology (packages/kits/NeuronKit/Sources/NeuronKit/Lenses/TopologyAnalysis.swift:L246-L472) [depth 2]
+
+prototype — 1 symbol in 1 file
+  calls ← prototype (docs/_public/validation/substrate_math_performance/GeniusLocusReference/glref-swift-BitwiseArithmetic.swift:L63-L82) [depth 2]
+
+prototype — 1 symbol in 1 file
+  calls ← prototype (docs/validation/substrate_math_performance/GeniusLocusReference/glref-swift-BitwiseArithmetic.swift:L63-L82) [depth 2]
+
+report — 1 symbol in 1 file
+  calls ← report (packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift:L87-L87) [depth 2]
+
+run — 1 symbol in 1 file
+  calls ← run (apps/mootx01/Sources/mootx01/Commands/ServeCommand.swift:L59-L614) [depth 2]
+
+runCompiledChain — 1 symbol in 1 file
+  calls ← runCompiledChain (packages/kits/GeniusLocusKit/Sources/GeniusLocusKitMigrations/MigrationCatalog.swift:L206-L320) [depth 2]
+
+runSharedContentMigration — 1 symbol in 1 file
+  calls ← runSharedContentMigration (packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift:L454-L813) [depth 1]
+
+19 test suites also reference this code (not listed)
+
+who to tag
+  Test — 17 areas · 87 commits, last 2mo ago
+  Newton — 17 areas · 102 commits, last 3mo ago
+  bob-codedaptive — map · 3 commits, last 2mo ago
+
+⚠ 4 changed files not in the graph (docs/reference/CORPUSKIT_INTERFACE.md, docs/reference/CORPUSKIT_SPEC.md, docs/reference/PERSISTENCEKIT_INTERFACE.md, docs/reference/PERSISTENCEKIT_SPEC.md) — no parser claims the extension, or the index predates the file.

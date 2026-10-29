@@ -1,0 +1,3849 @@
+{
+  "pattern": "Timestamp",
+  "filesSearched": 5478,
+  "totalHits": 300,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#i64_value_of",
+        "name": "i64_value_of",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L10324-L10332"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 40,
+      "hits": [
+        {
+          "line": 10326,
+          "text": "Some(TypedValue::Int(i)) | Some(TypedValue::Bitmap(i)) | Some(TypedValue::Timestamp(i)) => {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/Sources/AriaMCPWire/FirstPartyAuthProtocol.swift#CanonicalEncoder",
+        "name": "CanonicalEncoder",
+        "kind": "struct",
+        "path": "packages/kits/AriaMcpKit/Sources/AriaMCPWire/FirstPartyAuthProtocol.swift",
+        "span": "L615-L705"
+      },
+      "path": "packages/kits/AriaMcpKit/Sources/AriaMCPWire/FirstPartyAuthProtocol.swift",
+      "inDegree": 35,
+      "hits": [
+        {
+          "line": 633,
+          "text": "/// A UInt64 as 8 big-endian bytes. Timestamps use this form."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#create_node",
+        "name": "create_node",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L85-L153"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 27,
+      "hits": [
+        {
+          "line": 134,
+          "text": "values.insert(\"created_at\".into(), TypedValue::Timestamp(now));"
+        },
+        {
+          "line": 135,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#create_root",
+        "name": "create_root",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L159-L193"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 23,
+      "hits": [
+        {
+          "line": 181,
+          "text": "values.insert(\"created_at\".into(), TypedValue::Timestamp(now));"
+        },
+        {
+          "line": 182,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs#make_legacy_estate",
+        "name": "make_legacy_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+        "span": "L233-L366"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+      "inDegree": 16,
+      "hits": [
+        {
+          "line": 292,
+          "text": "chunk.insert(\"created_at\".into(), TypedValue::Timestamp(NOW));"
+        },
+        {
+          "line": 315,
+          "text": "vector.insert(\"filed_at\".into(), TypedValue::Timestamp(NOW));"
+        },
+        {
+          "line": 335,
+          "text": "chunk.insert(\"created_at\".into(), TypedValue::Timestamp(NOW));"
+        },
+        {
+          "line": 353,
+          "text": "vector.insert(\"filed_at\".into(), TypedValue::Timestamp(NOW));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry",
+        "name": "MatrixCalibrationRegistry",
+        "kind": "struct",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L148-L255"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 12,
+      "hits": [
+        {
+          "line": 157,
+          "text": "public private(set) var updateTimestamps: [String: Double]"
+        },
+        {
+          "line": 213,
+          "text": "/// for the model, no decay is applied. After recording, `updateTimestamps`"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs#upsert_reference_into",
+        "name": "upsert_reference_into",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+        "span": "L891-L934"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+      "inDegree": 10,
+      "hits": [
+        {
+          "line": 910,
+          "text": "TypedValue::Timestamp(row.updated_at_secs),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#tombstone_node",
+        "name": "tombstone_node",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L268-L301"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 10,
+      "hits": [
+        {
+          "line": 288,
+          "text": "values.insert(\"tombstoned_at\".into(), TypedValue::Timestamp(now));"
+        },
+        {
+          "line": 289,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/document_store.rs#put_with_dense_text",
+        "name": "put_with_dense_text",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/document_store.rs",
+        "span": "L374-L454"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/document_store.rs",
+      "inDegree": 9,
+      "hits": [
+        {
+          "line": 411,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now_millis));"
+        },
+        {
+          "line": 446,
+          "text": "values.insert(\"created_at\".into(), TypedValue::Timestamp(now_millis));"
+        },
+        {
+          "line": 447,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#erase_marker",
+        "name": "erase_marker",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L230-L237"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 9,
+      "hits": [
+        {
+          "line": 235,
+          "text": "marker.insert(\"tombstonedAt\".into(), TypedValue::Timestamp(NOW + 400));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/dataset_signatures.rs#canonical_value_bytes",
+        "name": "canonical_value_bytes",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/dataset_signatures.rs",
+        "span": "L288-L357"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/dataset_signatures.rs",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 329,
+          "text": "TypedValue::Timestamp(i) => {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/index_state_store.rs#soft_remove",
+        "name": "soft_remove",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/index_state_store.rs",
+        "span": "L256-L290"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/index_state_store.rs",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 278,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(updated_at_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/counts_integrity_runner_tests.rs#seed_counts_row",
+        "name": "seed_counts_row",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/counts_integrity_runner_tests.rs",
+        "span": "L59-L74"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/counts_integrity_runner_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 66,
+          "text": "v.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#update_merkle_root",
+        "name": "update_merkle_root",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L498-L517"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 506,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#tombstone_below_the_seam",
+        "name": "tombstone_below_the_seam",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L718-L726"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 724,
+          "text": "(\"tombstonedAt\".to_string(), TypedValue::Timestamp(NOW + 400)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_fact_reprojection_tests.rs#seed",
+        "name": "seed",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_fact_reprojection_tests.rs",
+        "span": "L74-L125"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_fact_reprojection_tests.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 94,
+          "text": "ColumnType::Timestamp => TypedValue::Timestamp(NOW),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#tunnel_values",
+        "name": "tunnel_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L8897-L8975"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 8932,
+          "text": "m.insert(\"filedAt\".to_string(), TypedValue::Timestamp(t.filed_at));"
+        },
+        {
+          "line": 8936,
+          "text": ".map(TypedValue::Timestamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#opt_int_value_of",
+        "name": "opt_int_value_of",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L10334-L10341"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 10336,
+          "text": "Some(TypedValue::Int(i)) | Some(TypedValue::Bitmap(i)) | Some(TypedValue::Timestamp(i)) => {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_bundle_store.rs#put",
+        "name": "put",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_bundle_store.rs",
+        "span": "L153-L187"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_bundle_store.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 174,
+          "text": "values.insert(\"updatedAt\".to_string(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inventory_snapshot_decode_tests.rs#drawer",
+        "name": "drawer",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inventory_snapshot_decode_tests.rs",
+        "span": "L26-L38"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inventory_snapshot_decode_tests.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 31,
+          "text": "(\"filedAt\", TypedValue::Timestamp(1_700_000_000)),"
+        },
+        {
+          "line": 32,
+          "text": "(\"eventTime\", TypedValue::Timestamp(1_700_000_000)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/index_state_store.rs#advance_into",
+        "name": "advance_into",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/index_state_store.rs",
+        "span": "L215-L247"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/index_state_store.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 237,
+          "text": "TypedValue::Timestamp(state.updated_at_millis),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs#fact",
+        "name": "fact",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+        "span": "L28-L48"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 38,
+          "text": "ColumnType::Timestamp => TypedValue::Timestamp(NOW),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/derivation_receiver.rs#receiver",
+        "name": "receiver",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/derivation_receiver.rs",
+        "span": "L1014-L1040"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/derivation_receiver.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 1031,
+          "text": "row.insert(\"filedAt\".into(), TypedValue::Timestamp(filed_at));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#kg_fact_values",
+        "name": "kg_fact_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L9026-L9087"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 9085,
+          "text": "m.insert(\"filedAt\".to_string(), TypedValue::Timestamp(f.filed_at));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#minimal_drawer",
+        "name": "minimal_drawer",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L372-L378"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 376,
+          "text": "(\"tombstonedAt\".to_string(), tombstoned_at.map_or(TypedValue::Null, TypedValue::Timestamp)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift#gatedCaptureBody",
+        "name": "gatedCaptureBody",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift",
+        "span": "L1320-L1377"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 1360,
+          "text": "// LatticeAnchor, HLCTimestamp, Double, String) are Sendable."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js#buildBrainFromRealData",
+        "name": "buildBrainFromRealData",
+        "kind": "function",
+        "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+        "span": "L4058-L4100"
+      },
+      "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 4093,
+          "text": "createdMs: topologyTimestampMs(e.createdTs),"
+        },
+        {
+          "line": 4094,
+          "text": "deadMs: topologyTimestampMs(e.tombstonedTs),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/document_store.rs#journal",
+        "name": "journal",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/document_store.rs",
+        "span": "L113-L167"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/document_store.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 160,
+          "text": "values.insert(\"changed_at\".into(), TypedValue::Timestamp(now_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/index_state_store.rs#decode",
+        "name": "decode",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/index_state_store.rs",
+        "span": "L711-L749"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/index_state_store.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 728,
+          "text": "// Both Rust backends return TIMESTAMP as Timestamp(millis)."
+        },
+        {
+          "line": 730,
+          "text": "Some(TypedValue::Timestamp(millis)) => *millis,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/corpus_counts_flush_preservation_tests.rs#seed_sentinel_row",
+        "name": "seed_sentinel_row",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_flush_preservation_tests.rs",
+        "span": "L77-L98"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_flush_preservation_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 90,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/counts_integrity_runner_tests.rs#seed_reference_row",
+        "name": "seed_reference_row",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/counts_integrity_runner_tests.rs",
+        "span": "L76-L95"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/counts_integrity_runner_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 83,
+          "text": "v.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/legacy_ledger_rename_on_open_tests.rs#legacy_sqlite_estate",
+        "name": "legacy_sqlite_estate",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/legacy_ledger_rename_on_open_tests.rs",
+        "span": "L71-L117"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/legacy_ledger_rename_on_open_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 102,
+          "text": "row.insert(\"filed_at\".into(), TypedValue::Timestamp(NOW));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/recall_time_convergence.rs#converge_recall_trace_times",
+        "name": "converge_recall_trace_times",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/recall_time_convergence.rs",
+        "span": "L77-L111"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/recall_time_convergence.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 98,
+          "text": "Some(TypedValue::Timestamp(_)) => return Err(RecallTimeConvergenceError::SchemaOpenedStorage),"
+        },
+        {
+          "line": 105,
+          "text": "rows.update(TABLE, BTreeMap::from([(COLUMN.to_string(), TypedValue::Timestamp(ms))]),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs#save",
+        "name": "save",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+        "span": "L406-L433"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 424,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/derivation_receiver.rs#received_fact_rows",
+        "name": "received_fact_rows",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/derivation_receiver.rs",
+        "span": "L603-L720"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/derivation_receiver.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 690,
+          "text": "Some(TypedValue::Timestamp(value)) => Some(*value as f64 / 1000.0 - 978_307_200.0),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift#MatrixRecordMigration.run",
+        "name": "MatrixRecordMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift",
+        "span": "L36-L136"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 98,
+          "text": "calibration.updateTimestamps.allSatisfy({ model, time in"
+        },
+        {
+          "line": 99,
+          "text": "restored.updateTimestamps[model].map { abs($0 - time) <= 0.000001 } == true"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#stored",
+        "name": "stored",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L13501-L13514"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 13512,
+          "text": "(\"filedAt\".into(), TypedValue::Timestamp(FILED)), (\"derivation_result_id\".into(), text(\"result-1\")),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#create_chest",
+        "name": "create_chest",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L443-L488"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 461,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now));"
+        },
+        {
+          "line": 479,
+          "text": "values.insert(\"created_at\".into(), TypedValue::Timestamp(now));"
+        },
+        {
+          "line": 480,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js#topologyTimestampMs",
+        "name": "topologyTimestampMs",
+        "kind": "function",
+        "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+        "span": "L1371-L1374"
+      },
+      "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1371,
+          "text": "function topologyTimestampMs(value) {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js#brainAssignDepth",
+        "name": "brainAssignDepth",
+        "kind": "function",
+        "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+        "span": "L3989-L4018"
+      },
+      "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 3990,
+          "text": "// Timestamp bookkeeping for playback (independent of z-mapping)."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs#typed_value_to_json",
+        "name": "typed_value_to_json",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs",
+        "span": "L505-L515"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 509,
+          "text": "TypedValue::Int(value) | TypedValue::Bitmap(value) | TypedValue::Timestamp(value) => JsonValue::Integer(*value),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs#column_type_label",
+        "name": "column_type_label",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs",
+        "span": "L1867-L1881"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1875,
+          "text": "ColumnType::Timestamp => \"TIMESTAMP\".to_string(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/basis_store.rs#write_parts_into",
+        "name": "write_parts_into",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/basis_store.rs",
+        "span": "L432-L493"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/basis_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 469,
+          "text": "values.insert(\"trained_at\".into(), TypedValue::Timestamp(row.trained_at_secs * 1000));"
+        },
+        {
+          "line": 486,
+          "text": "values.insert(\"trained_at\".into(), TypedValue::Timestamp(row.trained_at_secs * 1000));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/basis_store.rs#decode_trained_at_secs",
+        "name": "decode_trained_at_secs",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/basis_store.rs",
+        "span": "L505-L514"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/basis_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 507,
+          "text": "// `TypedValue::Timestamp` carries milliseconds (the SQLite backend renders it with"
+        },
+        {
+          "line": 510,
+          "text": "Some(TypedValue::Timestamp(millis)) => Some(*millis / 1000),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/bundle_store.rs#insert_with",
+        "name": "insert_with",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/bundle_store.rs",
+        "span": "L245-L333"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/bundle_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 258,
+          "text": "// Epoch milliseconds: `TypedValue::Timestamp` is a millisecond codec (`persistence_kit::sqlite`)."
+        },
+        {
+          "line": 282,
+          "text": "values.insert(\"created_at\".into(), TypedValue::Timestamp(now_ms));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs#upsert_into",
+        "name": "upsert_into",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+        "span": "L359-L388"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 378,
+          "text": "TypedValue::Timestamp(row.updated_at_secs),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs#decode_updated_at_secs",
+        "name": "decode_updated_at_secs",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+        "span": "L1339-L1345"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1341,
+          "text": "Some(TypedValue::Timestamp(secs)) => Some(*secs),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/corpus.rs#remove",
+        "name": "remove",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+        "span": "L3092-L3133"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 3126,
+          "text": "// MILLISECONDS: it lands in a `TypedValue::Timestamp`, a millisecond codec."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/provider_configuration_store.rs#mark_current",
+        "name": "mark_current",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/provider_configuration_store.rs",
+        "span": "L60-L77"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/provider_configuration_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 67,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/provider_coverage_store.rs#mark_covered_into",
+        "name": "mark_covered_into",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/provider_coverage_store.rs",
+        "span": "L70-L90"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/provider_coverage_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 81,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(now_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs#seed_sentinel_counts_row",
+        "name": "seed_sentinel_counts_row",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs",
+        "span": "L61-L83"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 75,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs#historical",
+        "name": "historical",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+        "span": "L25-L57"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 45,
+          "text": "ColumnType::Timestamp => TypedValue::Timestamp(NOW),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#revoke_at_millis",
+        "name": "revoke_at_millis",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L426-L435"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 432,
+          "text": "values.insert(\"revoked_at\".to_string(), TypedValue::Timestamp(ms));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#decode_storage_row",
+        "name": "decode_storage_row",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L557-L677"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 586,
+          "text": "// `Timestamp(epoch MILLISECONDS)`; the grant subsystem works in"
+        },
+        {
+          "line": 588,
+          "text": "Some(TypedValue::Timestamp(ms)) => millis_to_unix_secs(*ms),"
+        },
+        {
+          "line": 602,
+          "text": "Some(TypedValue::Timestamp(ms)) => Some(millis_to_unix_secs(*ms)),"
+        },
+        {
+          "line": 616,
+          "text": "// TEXT/Timestamp date column parsed to Unix epoch seconds the same"
+        },
+        {
+          "line": 633,
+          "text": "Some(TypedValue::Timestamp(ms)) => Some(millis_to_unix_secs(*ms)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#row_from",
+        "name": "row_from",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L794-L827"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 814,
+          "text": "map.insert(\"issued_at\".to_string(), TypedValue::Timestamp(epoch_millis_from_secs(grant.issued_at)));"
+        },
+        {
+          "line": 822,
+          "text": "TypedValue::Timestamp(epoch_millis_from_secs(policy.started_at)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/p14_derivation_sync_tests.rs#held_at_state",
+        "name": "held_at_state",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/p14_derivation_sync_tests.rs",
+        "span": "L801-L810"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/p14_derivation_sync_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 806,
+          "text": "BTreeMap::from([(\"tombstonedAt\".to_string(), TypedValue::Timestamp(NOW + 1))]),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ConsolidationCycle.swift#GeniusLocusKit.sentenceTimestamps",
+        "name": "GeniusLocusKit.sentenceTimestamps",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ConsolidationCycle.swift",
+        "span": "L610-L637"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ConsolidationCycle.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 610,
+          "text": "static func sentenceTimestamps("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry.recordWithDecay",
+        "name": "MatrixCalibrationRegistry.recordWithDecay",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L222-L241"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 232,
+          "text": "if let lastTs = updateTimestamps[modelID] {"
+        },
+        {
+          "line": 240,
+          "text": "updateTimestamps[modelID] = now.timeIntervalSinceReferenceDate"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/container_fingerprint_store.rs#update_row",
+        "name": "update_row",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/container_fingerprint_store.rs",
+        "span": "L340-L386"
+      },
+      "path": "packages/kits/LocusKit/rust/src/container_fingerprint_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 358,
+          "text": "touch.insert(\"updatedAt\".to_string(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/container_fingerprint_store.rs#row_values",
+        "name": "row_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/container_fingerprint_store.rs",
+        "span": "L569-L579"
+      },
+      "path": "packages/kits/LocusKit/rust/src/container_fingerprint_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 577,
+          "text": "values.insert(\"updatedAt\".to_string(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#recalled_at_string",
+        "name": "recalled_at_string",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L10120-L10126"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 10123,
+          "text": "Some(TypedValue::Timestamp(ms)) => format_iso8601(*ms),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/inventory_snapshot_decode.rs#optional_timestamp",
+        "name": "optional_timestamp",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/inventory_snapshot_decode.rs",
+        "span": "L334-L340"
+      },
+      "path": "packages/kits/LocusKit/rust/src/inventory_snapshot_decode.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 337,
+          "text": "Some(TypedValue::Timestamp(value)) | Some(TypedValue::Int(value)) => Ok(Some(*value)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift#LocusInventorySnapshotInterpreter.optionalTimestamp",
+        "name": "LocusInventorySnapshotInterpreter.optionalTimestamp",
+        "kind": "method",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift",
+        "span": "L325-L332"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 325,
+          "text": "private static func optionalTimestamp(_ row: StorageRow, _ table: String, _ column: String) throws -> Date? {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js#buildRealBrainNodes.pushNode",
+        "name": "buildRealBrainNodes.pushNode",
+        "kind": "function",
+        "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+        "span": "L1817-L1886"
+      },
+      "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1830,
+          "text": "var lastMs = topologyTimestampMs(n.lastActiveTs);"
+        },
+        {
+          "line": 1831,
+          "text": "var createdMs = topologyTimestampMs(n.createdTs);"
+        },
+        {
+          "line": 1832,
+          "text": "var deadMs = topologyTimestampMs(n.tombstonedTs);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs#typed_value_to_string",
+        "name": "typed_value_to_string",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs",
+        "span": "L1530-L1549"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/dataset_tools.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1543,
+          "text": "TypedValue::Timestamp(ms) => {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/surface.rs#canonical_fact_page_json",
+        "name": "canonical_fact_page_json",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/surface.rs",
+        "span": "L1682-L1720"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/surface.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1711,
+          "text": "\"sourceTimestamp\": epoch_millis_to_rfc3339(source.source_timestamp),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/vault_tools.rs#column_type_from_label",
+        "name": "column_type_from_label",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/vault_tools.rs",
+        "span": "L1680-L1690"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/vault_tools.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1687,
+          "text": "\"TIMESTAMP\" => ColumnType::Timestamp,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/vault_tools.rs#typed_value_to_csv_text",
+        "name": "typed_value_to_csv_text",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/vault_tools.rs",
+        "span": "L1808-L1820"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/vault_tools.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1817,
+          "text": "TypedValue::Timestamp(ms) => format!(\"{}\", ms),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/src/removed_source_store.rs#mark_removed",
+        "name": "mark_removed",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/src/removed_source_store.rs",
+        "span": "L60-L69"
+      },
+      "path": "packages/kits/CorpusKit/rust/src/removed_source_store.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 63,
+          "text": "values.insert(\"removed_at\".into(), TypedValue::Timestamp(now_ms));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs#seed_valid_counts_row",
+        "name": "seed_valid_counts_row",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs",
+        "span": "L89-L116"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 108,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs#seed_corrupt_counts_row",
+        "name": "seed_corrupt_counts_row",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs",
+        "span": "L121-L137"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_blob_sentinel_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 129,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/legacy_corpus_fixture_tests.rs#build_legacy_v7_corpus_lane",
+        "name": "build_legacy_v7_corpus_lane",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/legacy_corpus_fixture_tests.rs",
+        "span": "L152-L230"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/legacy_corpus_fixture_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 189,
+          "text": "TypedValue::Timestamp(FIXTURE_NOW_MILLIS),"
+        },
+        {
+          "line": 222,
+          "text": "TypedValue::Timestamp(FIXTURE_NOW_MILLIS),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs#insert_legacy_checkpoint",
+        "name": "insert_legacy_checkpoint",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+        "span": "L72-L88"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 79,
+          "text": "row.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs#sqlite_vector_state_after_wire",
+        "name": "sqlite_vector_state_after_wire",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+        "span": "L302-L376"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 334,
+          "text": "row.insert(\"filed_at\".into(), TypedValue::Timestamp(NOW));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_fact_reprojection_state_sweep.rs#seed",
+        "name": "seed",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_fact_reprojection_state_sweep.rs",
+        "span": "L69-L125"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_fact_reprojection_state_sweep.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 95,
+          "text": "ColumnType::Timestamp => TypedValue::Timestamp(NOW),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/matrix/refresh.rs#compute",
+        "name": "compute",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/matrix/refresh.rs",
+        "span": "L194-L361"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/matrix/refresh.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 273,
+          "text": "Some(TypedValue::Timestamp(t)) => Some(*t),"
+        },
+        {
+          "line": 275,
+          "text": "Some(TypedValue::Timestamp(t)) => Some(*t),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Audit/AuditChainReport.swift#AuditChainReport",
+        "name": "AuditChainReport",
+        "kind": "struct",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Audit/AuditChainReport.swift",
+        "span": "L21-L54"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Audit/AuditChainReport.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 30,
+          "text": "/// Timestamp of the earliest entry (by HLC). For an empty log this"
+        },
+        {
+          "line": 35,
+          "text": "/// Timestamp of the latest entry (by HLC). Epoch sentinel for an"
+        },
+        {
+          "line": 39,
+          "text": "/// Timestamp of the first entry that failed integrity, or nil when"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ConsolidationCycle.swift#GeniusLocusKit.composeAndDistill",
+        "name": "GeniusLocusKit.composeAndDistill",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ConsolidationCycle.swift",
+        "span": "L642-L696"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ConsolidationCycle.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 673,
+          "text": "let sentenceTimestamps = Self.sentenceTimestamps("
+        },
+        {
+          "line": 681,
+          "text": "memoryTimestamps: sentenceTimestamps,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ReviewQueueRanking.swift#ReviewQueueRanking.entry",
+        "name": "ReviewQueueRanking.entry",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ReviewQueueRanking.swift",
+        "span": "L88-L98"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/ReviewQueueRanking.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 97,
+          "text": "?? TunnelReviewLedger.isoTimestamp(tunnel.filedAt))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/TunnelReviewLadder.swift#GeniusLocusKit.endorseTunnel",
+        "name": "GeniusLocusKit.endorseTunnel",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/TunnelReviewLadder.swift",
+        "span": "L82-L130"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/TunnelReviewLadder.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 104,
+          "text": "atISO: TunnelReviewLedger.isoTimestamp(now),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/TunnelReviewLadder.swift#GeniusLocusKit.objectToTunnel",
+        "name": "GeniusLocusKit.objectToTunnel",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/TunnelReviewLadder.swift",
+        "span": "L148-L202"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/TunnelReviewLadder.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 170,
+          "text": "atISO: TunnelReviewLedger.isoTimestamp(now),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift#LegacyMatrixCalibration.decode",
+        "name": "LegacyMatrixCalibration.decode",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift",
+        "span": "L157-L171"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 163,
+          "text": "envelope.calibration.updateTimestamps[model]?.isFinite != false else {"
+        },
+        {
+          "line": 167,
+          "text": "guard Set(envelope.calibration.updateTimestamps.keys).isSubset(of: Set(envelope.calibration.curves.keys)) else {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/dataset_handle.rs#patch_dataset_handle_signatures",
+        "name": "patch_dataset_handle_signatures",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/dataset_handle.rs",
+        "span": "L229-L290"
+      },
+      "path": "packages/kits/LocusKit/rust/src/dataset_handle.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 276,
+          "text": "// `updatedAt`, a `TypedValue::Timestamp` (millisecond codec)."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#drawer_values",
+        "name": "drawer_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L8695-L8817"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 8717,
+          "text": "m.insert(\"filedAt\".to_string(), TypedValue::Timestamp(d.filed_at));"
+        },
+        {
+          "line": 8723,
+          "text": "TypedValue::Timestamp(d.event_time),"
+        },
+        {
+          "line": 8732,
+          "text": ".map(TypedValue::Timestamp)"
+        },
+        {
+          "line": 8813,
+          "text": ".map(TypedValue::Timestamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#diary_values",
+        "name": "diary_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L8977-L9024"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 8988,
+          "text": "m.insert(\"filedAt\".to_string(), TypedValue::Timestamp(e.filed_at));"
+        },
+        {
+          "line": 8996,
+          "text": ".map(TypedValue::Timestamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#association_values",
+        "name": "association_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L9089-L9179"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 9124,
+          "text": "m.insert(\"filedAt\".to_string(), TypedValue::Timestamp(a.filed_at));"
+        },
+        {
+          "line": 9128,
+          "text": ".map(TypedValue::Timestamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#proposal_values",
+        "name": "proposal_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L9181-L9241"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 9239,
+          "text": "m.insert(\"filedAt\".to_string(), TypedValue::Timestamp(p.filed_at));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#learned_reference_values",
+        "name": "learned_reference_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L9576-L9654"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 9593,
+          "text": "TypedValue::Timestamp(reference.filed_at),"
+        },
+        {
+          "line": 9599,
+          "text": ".map(TypedValue::Timestamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#source_catalog_values",
+        "name": "source_catalog_values",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L9703-L9748"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 9714,
+          "text": "TypedValue::Timestamp(entry.first_seen),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#order_key_cmp",
+        "name": "order_key_cmp",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L10169-L10180"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 10176,
+          "text": "(TypedValue::Timestamp(x), TypedValue::Timestamp(y)) => x.cmp(y),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/fact_source_regrade.rs#filed_ms",
+        "name": "filed_ms",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/fact_source_regrade.rs",
+        "span": "L1423-L1429"
+      },
+      "path": "packages/kits/LocusKit/rust/src/fact_source_regrade.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1425,
+          "text": "Some(TypedValue::Timestamp(ms)) | Some(TypedValue::Int(ms)) => Some(*ms),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/inventory_snapshot_decode.rs#required_timestamp",
+        "name": "required_timestamp",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/inventory_snapshot_decode.rs",
+        "span": "L326-L332"
+      },
+      "path": "packages/kits/LocusKit/rust/src/inventory_snapshot_decode.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 328,
+          "text": "Some(TypedValue::Timestamp(value)) | Some(TypedValue::Int(value)) => Ok(*value),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#i64_value_of",
+        "name": "i64_value_of",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L629-L636"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 633,
+          "text": "| Some(TypedValue::Timestamp(i)) => *i,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#opt_i64_value_of",
+        "name": "opt_i64_value_of",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L638-L645"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 642,
+          "text": "| Some(TypedValue::Timestamp(i)) => Some(*i),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inventory_snapshot_decode_tests.rs#tombstoned_node",
+        "name": "tombstoned_node",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inventory_snapshot_decode_tests.rs",
+        "span": "L18-L24"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inventory_snapshot_decode_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 22,
+          "text": "row.values.insert(\"tombstoned_at\".to_owned(), TypedValue::Timestamp(1_700_000_001));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/support/swift_spelled_tree.rs#insert_node",
+        "name": "insert_node",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/support/swift_spelled_tree.rs",
+        "span": "L31-L44"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/support/swift_spelled_tree.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 41,
+          "text": "values.insert(\"created_at\".to_string(), TypedValue::Timestamp(at));"
+        },
+        {
+          "line": 42,
+          "text": "values.insert(\"updated_at\".to_string(), TypedValue::Timestamp(at));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/FactQuery.swift#FactSourceContext",
+        "name": "FactSourceContext",
+        "kind": "struct",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/FactQuery.swift",
+        "span": "L215-L232"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/FactQuery.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 220,
+          "text": "public let sourceTimestamp: Date"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift#LocusInventorySnapshotInterpreter.decodeDrawer",
+        "name": "LocusInventorySnapshotInterpreter.decodeDrawer",
+        "kind": "method",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift",
+        "span": "L152-L209"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 177,
+          "text": "let subjectAt = try optionalTimestamp(row, \"drawers\", \"subject_at\")"
+        },
+        {
+          "line": 194,
+          "text": "tombstonedAt: try optionalTimestamp(row, \"drawers\", \"tombstonedAt\"),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift#LocusInventorySnapshotInterpreter.decodeNode",
+        "name": "LocusInventorySnapshotInterpreter.decodeNode",
+        "kind": "method",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift",
+        "span": "L211-L235"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/InventorySnapshotInterpreter.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 216,
+          "text": "let tombstoneDate = try optionalTimestamp(row, \"nodes\", \"tombstoned_at\")"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/moot-mgr/rust/src/api_payloads.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 15,
+          "text": "// Timestamps are emitted as ISO-8601 UTC TEXT (matching the store's on-disk"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/moot-mgr/rust/src/status_report.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 46,
+          "text": "/// renders identically. Timestamps use ISO-8601 UTC for stable output."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/moot-mgr/Sources/MootManager/APIPayloads.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 16,
+          "text": "// Timestamps are emitted as ISO-8601 UTC TEXT (matching the store's on-disk"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js#renderPerfHealth",
+        "name": "renderPerfHealth",
+        "kind": "function",
+        "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+        "span": "L4959-L5072"
+      },
+      "path": "apps/moot-mgr/Sources/MootManager/DashboardAssets/app.js",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5044,
+          "text": "[\"Timestamp\", \"Ingest p50 (ms)\"].forEach(function (h) {"
+        },
+        {
+          "line": 5053,
+          "text": "// Timestamp column: monospace, ISO-8601"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/moot-mgr/Sources/MootManager/StatusReport.swift#StatusReport~2",
+        "name": "StatusReport~2",
+        "kind": "module",
+        "path": "apps/moot-mgr/Sources/MootManager/StatusReport.swift",
+        "span": "L91-L156"
+      },
+      "path": "apps/moot-mgr/Sources/MootManager/StatusReport.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 96,
+          "text": "/// renders identically. Timestamps use ISO-8601 UTC for stable output."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/Mootx01-App/Sources/MootProUI/EngineView.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 948,
+          "text": "/// verbatim line still renders behind the label. Timestamps and peer identity"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/Mootx01-App/Tests/MootCommunityGatewayTests/HTTPTransportTests.swift#FirstPartyHostileHandshakeTests.hostileTimestampsRefused",
+        "name": "FirstPartyHostileHandshakeTests.hostileTimestampsRefused",
+        "kind": "method",
+        "path": "apps/Mootx01-App/Tests/MootCommunityGatewayTests/HTTPTransportTests.swift",
+        "span": "L1023-L1043"
+      },
+      "path": "apps/Mootx01-App/Tests/MootCommunityGatewayTests/HTTPTransportTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1036,
+          "text": "func hostileTimestampsRefused(issuedAt: String) async throws {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/Mootx01-App/Tests/MootProUITests/FederationPanelTests.swift#FederationPanelTests.endSessionUpdatesLastSessionTimestamp",
+        "name": "FederationPanelTests.endSessionUpdatesLastSessionTimestamp",
+        "kind": "method",
+        "path": "apps/Mootx01-App/Tests/MootProUITests/FederationPanelTests.swift",
+        "span": "L209-L226"
+      },
+      "path": "apps/Mootx01-App/Tests/MootProUITests/FederationPanelTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 210,
+          "text": "func endSessionUpdatesLastSessionTimestamp() async throws {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift#AppRemovalRepairNoTimestampTests",
+        "name": "AppRemovalRepairNoTimestampTests",
+        "kind": "struct",
+        "path": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift",
+        "span": "L240-L290"
+      },
+      "path": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 241,
+          "text": "struct AppRemovalRepairNoTimestampTests {"
+        },
+        {
+          "line": 247,
+          "text": "/// Regression: if a `newerTimestamp` field were added to ArbiterObservation"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift#AppRemovalRepairNoTimestampTests.noTimestampFieldInObservation",
+        "name": "AppRemovalRepairNoTimestampTests.noTimestampFieldInObservation",
+        "kind": "method",
+        "path": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift",
+        "span": "L250-L263"
+      },
+      "path": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 251,
+          "text": "func noTimestampFieldInObservation() {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift#AppRemovalRepairNoTimestampTests.higherGenerationNotATimestampProxy",
+        "name": "AppRemovalRepairNoTimestampTests.higherGenerationNotATimestampProxy",
+        "kind": "method",
+        "path": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift",
+        "span": "L273-L289"
+      },
+      "path": "apps/mootx01/Tests/MootDaemonProviderTests/AppRemovalRepairTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 274,
+          "text": "func higherGenerationNotATimestampProxy() {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "docs/_public/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift#SimHashPrimitive.generate",
+        "name": "SimHashPrimitive.generate",
+        "kind": "method",
+        "path": "docs/_public/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+        "span": "L57-L182"
+      },
+      "path": "docs/_public/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 178,
+          "text": "generatedAt: isoTimestamp(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "docs/_public/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift#SimHashPrimitive.isoTimestamp",
+        "name": "SimHashPrimitive.isoTimestamp",
+        "kind": "method",
+        "path": "docs/_public/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+        "span": "L526-L530"
+      },
+      "path": "docs/_public/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 526,
+          "text": "private static func isoTimestamp() -> String {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "docs/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift#SimHashPrimitive.generate",
+        "name": "SimHashPrimitive.generate",
+        "kind": "method",
+        "path": "docs/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+        "span": "L57-L182"
+      },
+      "path": "docs/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 178,
+          "text": "generatedAt: isoTimestamp(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "docs/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift#SimHashPrimitive.isoTimestamp",
+        "name": "SimHashPrimitive.isoTimestamp",
+        "kind": "method",
+        "path": "docs/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+        "span": "L526-L530"
+      },
+      "path": "docs/validation/substrate_math_performance/test-harness/swift/Sources/Harness/Primitives/SimHashPrimitive.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 526,
+          "text": "private static func isoTimestamp() -> String {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/Package.swift#package",
+        "name": "package",
+        "kind": "variable",
+        "path": "packages/kits/AriaMcpKit/Package.swift",
+        "span": "L26-L274"
+      },
+      "path": "packages/kits/AriaMcpKit/Package.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 153,
+          "text": "// executable's mtime (FileTimestamp C617.1); the manifest rides"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/AriaMcpKit/rust/src/interface_tools.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 682,
+          "text": "/// # Timestamp unit"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/Sources/AriaMCP/AriaV2KnowledgeJournal.swift#AriaV2KnowledgeJournalService.factQueryPage",
+        "name": "AriaV2KnowledgeJournalService.factQueryPage",
+        "kind": "method",
+        "path": "packages/kits/AriaMcpKit/Sources/AriaMCP/AriaV2KnowledgeJournal.swift",
+        "span": "L974-L1017"
+      },
+      "path": "packages/kits/AriaMcpKit/Sources/AriaMCP/AriaV2KnowledgeJournal.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1000,
+          "text": "\"sourceTimestamp\": .string(iso8601(record.source.sourceTimestamp)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CognitionKit/rust/src/migration_live.rs#tests",
+        "name": "tests",
+        "kind": "module",
+        "path": "packages/kits/CognitionKit/rust/src/migration_live.rs",
+        "span": "L654-L2301"
+      },
+      "path": "packages/kits/CognitionKit/rust/src/migration_live.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1500,
+          "text": "// `Timestamp`. If decode breaks, recall returns an empty vec and the count assertion fails."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/record.rs#SyncValueBoxRaw",
+        "name": "SyncValueBoxRaw",
+        "kind": "enum",
+        "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+        "span": "L138-L152"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 147,
+          "text": "Timestamp(i64),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/record.rs#from~7",
+        "name": "from~7",
+        "kind": "function",
+        "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+        "span": "L155-L173"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 165,
+          "text": "SyncValueBoxRaw::Timestamp(t) => SyncValueBox::Timestamp(t),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/record.rs#from~8",
+        "name": "from~8",
+        "kind": "function",
+        "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+        "span": "L177-L195"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 187,
+          "text": "SyncValueBox::Timestamp(t) => SyncValueBoxRaw::Timestamp(t),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/record.rs#SyncValueBox",
+        "name": "SyncValueBox",
+        "kind": "enum",
+        "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+        "span": "L206-L221"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 216,
+          "text": "Timestamp(i64),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/record.rs#from~9",
+        "name": "from~9",
+        "kind": "function",
+        "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+        "span": "L279-L297"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 289,
+          "text": "TypedValue::Timestamp(t) => SyncValueBox::Timestamp(t),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/record.rs#from~10",
+        "name": "from~10",
+        "kind": "function",
+        "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+        "span": "L301-L319"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 311,
+          "text": "SyncValueBox::Timestamp(t) => TypedValue::Timestamp(t),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs#sync_value_box_timestamp_encodes_as_epoch_seconds",
+        "name": "sync_value_box_timestamp_encodes_as_epoch_seconds",
+        "kind": "function",
+        "path": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs",
+        "span": "L128-L132"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 129,
+          "text": "let v = SyncValueBox::Timestamp(1_700_000_000);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs#sync_value_box_decodes_swift_golden_array",
+        "name": "sync_value_box_decodes_swift_golden_array",
+        "kind": "function",
+        "path": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs",
+        "span": "L155-L165"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 164,
+          "text": "assert!(matches!(&boxes[6], SyncValueBox::Timestamp(1_700_000_000)));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SyncRecord.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 203,
+          "text": "/// Timestamp payload is epoch seconds (Int64), matching Rust's"
+        },
+        {
+          "line": 204,
+          "text": "/// `TypedValue::Timestamp(i64)`. Binary data (blob, json) is"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SyncRecord.swift#SyncValueBox.encode",
+        "name": "SyncValueBox.encode",
+        "kind": "method",
+        "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SyncRecord.swift",
+        "span": "L292-L356"
+      },
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SyncRecord.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 313,
+          "text": "// Epoch seconds as Int64, matching Rust's Timestamp(i64)."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Tests/ConvergenceKitConformance/FederationJSONConformanceTests.swift#FederationJSONConformanceTests",
+        "name": "FederationJSONConformanceTests",
+        "kind": "struct",
+        "path": "packages/kits/ConvergenceKit/Tests/ConvergenceKitConformance/FederationJSONConformanceTests.swift",
+        "span": "L13-L306"
+      },
+      "path": "packages/kits/ConvergenceKit/Tests/ConvergenceKitConformance/FederationJSONConformanceTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 148,
+          "text": "/// Timestamp encodes as epoch seconds (Int64), not Date."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Tests/ConvergenceKitConformance/FederationJSONConformanceTests.swift#FederationJSONConformanceTests.syncValueBoxTimestamp",
+        "name": "FederationJSONConformanceTests.syncValueBoxTimestamp",
+        "kind": "method",
+        "path": "packages/kits/ConvergenceKit/Tests/ConvergenceKitConformance/FederationJSONConformanceTests.swift",
+        "span": "L149-L157"
+      },
+      "path": "packages/kits/ConvergenceKit/Tests/ConvergenceKitConformance/FederationJSONConformanceTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 150,
+          "text": "func syncValueBoxTimestamp() throws {"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/CorpusKit/rust/src/basis_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 496,
+          "text": "/// the semantic `Timestamp(i64)` form a migrate-aware connection returns AND"
+        },
+        {
+          "line": 500,
+          "text": "/// schema and re-parses TIMESTAMP columns to `Timestamp(i64)`. A SECOND"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/CorpusKit/rust/src/corpus_provider_counts_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1299,
+          "text": "/// Decode a counts row, tolerant of BOTH the semantic `Timestamp(i64)` form a"
+        },
+        {
+          "line": 1336,
+          "text": "/// Decode `updated_at` to epoch seconds, tolerant of `Timestamp(i64)` and `Text`"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/CorpusKit/rust/src/removed_source_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 58,
+          "text": "/// MILLISECONDS — the unit `TypedValue::Timestamp` codes (audit-only"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/basis_chunked_persistence_tests.rs#single_part_round_trip",
+        "name": "single_part_round_trip",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/basis_chunked_persistence_tests.rs",
+        "span": "L96-L130"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/basis_chunked_persistence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 116,
+          "text": "// `Timestamp` from milliseconds, so the store writes seconds * 1000."
+        },
+        {
+          "line": 122,
+          "text": "Some(persistence_kit::TypedValue::Timestamp(ms)) => *ms / 1000,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/basis_chunked_persistence_tests.rs#close_and_reopen_multi_part_round_trip",
+        "name": "close_and_reopen_multi_part_round_trip",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/basis_chunked_persistence_tests.rs",
+        "span": "L486-L515"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/basis_chunked_persistence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 501,
+          "text": "// Timestamp(i64); the decode must tolerate both forms, as bundle_store::decode_chunk does."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/basis_owed_status_tests.rs#estate_saved_before_the_change_still_answers",
+        "name": "estate_saved_before_the_change_still_answers",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/basis_owed_status_tests.rs",
+        "span": "L418-L460"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/basis_owed_status_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 428,
+          "text": "v.insert(\"trained_at\".into(), TypedValue::Timestamp(1_750_000_000_000));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_basis_persistence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 16,
+          "text": "//! a parsed `Timestamp(i64)` here), the same discipline as bundle_store_tests."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/corpus_counts_migration_convergence_tests.rs#migration_clears_vocab_preserves_anchors_and_sets_latch",
+        "name": "migration_clears_vocab_preserves_anchors_and_sets_latch",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_migration_convergence_tests.rs",
+        "span": "L234-L375"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_migration_convergence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 267,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/corpus_counts_migration_convergence_tests.rs#fresh_and_migrated_v4_converge",
+        "name": "fresh_and_migrated_v4_converge",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_migration_convergence_tests.rs",
+        "span": "L388-L536"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/corpus_counts_migration_convergence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 417,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        },
+        {
+          "line": 449,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW_SECS));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/CorpusKit/rust/tests/shared_rows_retained_index_tests.rs#version_one_estate_opens_gains_index_and_keeps_rows",
+        "name": "version_one_estate_opens_gains_index_and_keeps_rows",
+        "kind": "function",
+        "path": "packages/kits/CorpusKit/rust/tests/shared_rows_retained_index_tests.rs",
+        "span": "L316-L390"
+      },
+      "path": "packages/kits/CorpusKit/rust/tests/shared_rows_retained_index_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 329,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(NOW));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/CorpusKit/rust/tests/shared_vector_store_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 45,
+          "text": "/// Timestamp passed to every ingest and recall. The engine is deterministic"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SharedRowsRetainedIndexTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 93,
+          "text": "/// The rows written into the pre-change estate. Timestamps are whole seconds so the"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/recall_time_convergence.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 19,
+          "text": "//! parses back by primary key as `TypedValue::Timestamp`, which the SQLite"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs#corrupt_calibration_blocks_drop_then_retry_preserves_and_reclaims",
+        "name": "corrupt_calibration_blocks_drop_then_retry_preserves_and_reclaims",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs",
+        "span": "L40-L121"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 74,
+          "text": "TypedValue::Timestamp(1_700_000_000_000),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/recall_time_convergence_tests.rs#whole_second_rows_become_milliseconds_and_a_second_pass_writes_nothing",
+        "name": "whole_second_rows_become_milliseconds_and_a_second_pass_writes_nothing",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/recall_time_convergence_tests.rs",
+        "span": "L61-L84"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/recall_time_convergence_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 78,
+          "text": "assert_eq!(a[\"recalledAt\"], TypedValue::Timestamp(1_791_220_920_000));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/src/audit/verifier.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 24,
+          "text": "// Timestamps are `i64` epoch-milliseconds, the raw `HLC.physical_time` unit; the"
+        },
+        {
+          "line": 32,
+          "text": "/// Timestamp fields are `i64` epoch-milliseconds (`HLC.physical_time` units)."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs#revoke_first_unreadable_scope_is_revoked_and_stays_revoked_after_repair",
+        "name": "revoke_first_unreadable_scope_is_revoked_and_stays_revoked_after_repair",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+        "span": "L19636-L19671"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 19650,
+          "text": "Some(persistence_kit::types::TypedValue::Timestamp(1_780_272_001_000))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs#revoke_first_revoking_twice_keeps_the_first_revoked_at",
+        "name": "revoke_first_revoking_twice_keeps_the_first_revoked_at",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+        "span": "L19689-L19706"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 19695,
+          "text": "Some(persistence_kit::types::TypedValue::Timestamp(1_780_272_001_000))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/src/dataset_signatures.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 283,
+          "text": "///   `0x08`  Timestamp — 8 bytes i64 BE (the stored i64 value directly)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_sqlite_tests.rs#sqlite_typed_artifact_metadata_acceptance_and_historical_source",
+        "name": "sqlite_typed_artifact_metadata_acceptance_and_historical_source",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_sqlite_tests.rs",
+        "span": "L208-L291"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/derivations/fact_adapter_sqlite_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 272,
+          "text": "(\"filedAt\".into(), TypedValue::Timestamp(stored[0].filed_at + 1000))]), &fact_filter).unwrap();"
+        },
+        {
+          "line": 277,
+          "text": "(\"filedAt\".into(), TypedValue::Timestamp(stored[0].filed_at))]), &fact_filter).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs#stamp",
+        "name": "stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs",
+        "span": "L180-L201"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 195,
+          "text": "values.insert(\"updated_at\".to_string(), TypedValue::Timestamp(now_millis));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 179,
+          "text": "/// Date columns use `Timestamp`: SQLite stores TEXT ISO-8601 per the"
+        },
+        {
+          "line": 1137,
+          "text": "/// Epoch milliseconds (PersistenceKit `TypedValue::Timestamp`) to the f64"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#a_grant_in_both_spellings_reads_as_its_stricter_copy",
+        "name": "a_grant_in_both_spellings_reads_as_its_stricter_copy",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L1175-L1207"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1204,
+          "text": "revoked.insert(\"revoked_at\".to_string(), TypedValue::Timestamp(1_780_272_100_000));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#tests",
+        "name": "tests",
+        "kind": "module",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L1163-L1638"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1562,
+          "text": "/// and `revoked_at` read back from storage as `TypedValue::Timestamp`"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#writer_stores_native_millisecond_timestamps",
+        "name": "writer_stores_native_millisecond_timestamps",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L1566-L1586"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1581,
+          "text": "assert_eq!(rows[0].get(\"issued_at\"), Some(&TypedValue::Timestamp(1_780_272_000_123)));"
+        },
+        {
+          "line": 1582,
+          "text": "assert_eq!(rows[0].get(\"decay_started_at\"), Some(&TypedValue::Timestamp(1_780_272_001_500)));"
+        },
+        {
+          "line": 1583,
+          "text": "assert_eq!(rows[0].get(\"revoked_at\"), Some(&TypedValue::Timestamp(1_780_272_002_250)));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#revoked_at_native_timestamp_is_milliseconds",
+        "name": "revoked_at_native_timestamp_is_milliseconds",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L1691-L1694"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1692,
+          "text": "let sg = read_back(Some(TypedValue::Timestamp(1_780_272_000_123)), None);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#revoked_at_issued_at_native_timestamp_is_milliseconds",
+        "name": "revoked_at_issued_at_native_timestamp_is_milliseconds",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L1728-L1731"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1729,
+          "text": "let sg = read_back(None, Some(TypedValue::Timestamp(1_780_272_000_123)));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 8,
+          "text": "// native `TypedValue::Timestamp` is epoch milliseconds and is divided by 1000."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/matrix/record_store.rs#stage",
+        "name": "stage",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/matrix/record_store.rs",
+        "span": "L248-L352"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/matrix/record_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 311,
+          "text": "(\"updated_at\", TypedValue::Timestamp(now_millis)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs#readonly_glk_wiring_preserves_stale_receipts_and_keeps_query_tiers",
+        "name": "readonly_glk_wiring_preserves_stale_receipts_and_keeps_query_tiers",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+        "span": "L331-L370"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 348,
+          "text": "configuration.insert(\"updated_at\".to_string(), TypedValue::Timestamp(17));"
+        },
+        {
+          "line": 352,
+          "text": "claim.insert(\"claimed_at\".to_string(), TypedValue::Timestamp(19));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/p03_fact_publication_tests.rs#source_rewrite_and_deletion_refuse_derivation_publication",
+        "name": "source_rewrite_and_deletion_refuse_derivation_publication",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/p03_fact_publication_tests.rs",
+        "span": "L204-L238"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/p03_fact_publication_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 228,
+          "text": "(\"tombstonedAt\".into(), TypedValue::Timestamp(NOW + 2)),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/p14_derivation_sync_tests.rs#rewritten_sensitive_or_deleted_source_cannot_accept_a_late_result",
+        "name": "rewritten_sensitive_or_deleted_source_cannot_accept_a_late_result",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/p14_derivation_sync_tests.rs",
+        "span": "L477-L508"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/p14_derivation_sync_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 494,
+          "text": "\"deleted\" => { source.values.insert(\"tombstonedAt\".into(), TypedValue::Timestamp(NOW + 1)); }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/recall_tombstone_filter.rs#vector_similarity_neighbour_tombstone_read_failure_empties_lane_silently",
+        "name": "vector_similarity_neighbour_tombstone_read_failure_empties_lane_silently",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/recall_tombstone_filter.rs",
+        "span": "L1001-L1064"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/recall_tombstone_filter.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1020,
+          "text": "let Some(TypedValue::Timestamp(newest_filed_at)) = newest.get(\"filed_at\") else {"
+        },
+        {
+          "line": 1021,
+          "text": "panic!(\"the newest vector row must have a Timestamp: {newest:?}\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/FingerprintLane.swift#GeniusLocusKit.structuralFingerprint",
+        "name": "GeniusLocusKit.structuralFingerprint",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/FingerprintLane.swift",
+        "span": "L125-L148"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Brain/FingerprintLane.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 130,
+          "text": "// memoryTimestamps stays nil ON PURPOSE: one item's sentences"
+        },
+        {
+          "line": 138,
+          "text": "memoryTimestamps: nil,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/DatasetSignatures.swift#DatasetSignatureComputer",
+        "name": "DatasetSignatureComputer",
+        "kind": "enum",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/DatasetSignatures.swift",
+        "span": "L183-L482"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/DatasetSignatures.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 369,
+          "text": "/// Timestamp note: Swift `Date.timeIntervalSince1970` is truncated to"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry.MatrixCalibrationRegistry",
+        "name": "MatrixCalibrationRegistry.MatrixCalibrationRegistry",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L159-L162"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 161,
+          "text": "self.updateTimestamps = [:]"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry.MatrixCalibrationRegistry~2",
+        "name": "MatrixCalibrationRegistry.MatrixCalibrationRegistry~2",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L164-L167"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 164,
+          "text": "package init(curves: [String: MatrixCalibrationCurve], updateTimestamps: [String: Double]) {"
+        },
+        {
+          "line": 166,
+          "text": "self.updateTimestamps = updateTimestamps"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry.CodingKeys",
+        "name": "MatrixCalibrationRegistry.CodingKeys",
+        "kind": "enum",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L171-L174"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 173,
+          "text": "case updateTimestamps"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry.MatrixCalibrationRegistry~3",
+        "name": "MatrixCalibrationRegistry.MatrixCalibrationRegistry~3",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L176-L185"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 181,
+          "text": "updateTimestamps = try container.decodeIfPresent("
+        },
+        {
+          "line": 183,
+          "text": "forKey: .updateTimestamps"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift#MatrixCalibrationRegistry.encode",
+        "name": "MatrixCalibrationRegistry.encode",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+        "span": "L187-L191"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/Calibration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 190,
+          "text": "try container.encode(updateTimestamps, forKey: .updateTimestamps)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift#saveCalibration",
+        "name": "saveCalibration",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift",
+        "span": "L238-L244"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 240,
+          "text": "let timestamp = registry.updateTimestamps[modelID].map { $0 + Date.timeIntervalBetween1970AndReferenceDate }"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift#recordCalibration",
+        "name": "recordCalibration",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift",
+        "span": "L266-L301"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 279,
+          "text": "let storedTimestamp = rows[0][\"updated_seconds\"] ?? .null"
+        },
+        {
+          "line": 285,
+          "text": "(row[\"updated_seconds\"] ?? .null) == storedTimestamp else { throw MatrixRecordError.corrupt(\"invalid calibration record\") }"
+        },
+        {
+          "line": 294,
+          "text": "updateTimestamps: timestamp.map { [modelID: $0 - Date.timeIntervalBetween1970AndReferenceDate] } ?? [:])"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift#loadCalibration",
+        "name": "loadCalibration",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift",
+        "span": "L335-L375"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Matrix/MatrixRecordStore.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 355,
+          "text": "let storedTimestamp = row[\"updated_seconds\"] ?? .null"
+        },
+        {
+          "line": 356,
+          "text": "guard timestamps[model] == nil || timestamps[model] == storedTimestamp else {"
+        },
+        {
+          "line": 359,
+          "text": "timestamps[model] = storedTimestamp"
+        },
+        {
+          "line": 360,
+          "text": "switch storedTimestamp {"
+        },
+        {
+          "line": 374,
+          "text": "return MatrixCalibrationRegistry(curves: curves, updateTimestamps: times)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift#SentenceTimestampMappingTests",
+        "name": "SentenceTimestampMappingTests",
+        "kind": "struct",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift",
+        "span": "L325-L352"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 325,
+          "text": "@Suite(\"GeniusLocusKit.sentenceTimestamps (W2.5 S6)\")"
+        },
+        {
+          "line": 326,
+          "text": "struct SentenceTimestampMappingTests {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift#SentenceTimestampMappingTests.mapsByOffset",
+        "name": "SentenceTimestampMappingTests.mapsByOffset",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift",
+        "span": "L331-L342"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 338,
+          "text": "let ts = GeniusLocusKit.sentenceTimestamps("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift#SentenceTimestampMappingTests.failQuiet",
+        "name": "SentenceTimestampMappingTests.failQuiet",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift",
+        "span": "L344-L351"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/ConsolidationCycleTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 347,
+          "text": "let ts = GeniusLocusKit.sentenceTimestamps("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DreamingQueueTests.swift#DreamingQueueTests.sequentialEnqueuesProduceMonotonicallyIncreasingHLCTimestamps",
+        "name": "DreamingQueueTests.sequentialEnqueuesProduceMonotonicallyIncreasingHLCTimestamps",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DreamingQueueTests.swift",
+        "span": "L340-L373"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DreamingQueueTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 341,
+          "text": "func sequentialEnqueuesProduceMonotonicallyIncreasingHLCTimestamps() async throws {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GrantRevokedAtReadTests.swift#GrantRevokedAtReadTests.nativeTimestampReadsAsRevokedAtThatInstant",
+        "name": "GrantRevokedAtReadTests.nativeTimestampReadsAsRevokedAtThatInstant",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GrantRevokedAtReadTests.swift",
+        "span": "L71-L74"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GrantRevokedAtReadTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 71,
+          "text": "@Test func nativeTimestampReadsAsRevokedAtThatInstant() async throws {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GRT01_GrantTests.swift#GRT01_GrantTests.canonicalPayloadEncodesUntilTimestampWithDecimalPoint",
+        "name": "GRT01_GrantTests.canonicalPayloadEncodesUntilTimestampWithDecimalPoint",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GRT01_GrantTests.swift",
+        "span": "L333-L358"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GRT01_GrantTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 334,
+          "text": "func canonicalPayloadEncodesUntilTimestampWithDecimalPoint() throws {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#expunge_gated",
+        "name": "expunge_gated",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L2652-L3009"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2795,
+          "text": "update_vals.insert(\"tombstonedAt\".to_string(), TypedValue::Timestamp(now));"
+        },
+        {
+          "line": 2968,
+          "text": "vals.insert(\"tombstonedAt\".to_string(), TypedValue::Timestamp(now));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#set_subject_representation",
+        "name": "set_subject_representation",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L4025-L4166"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4139,
+          "text": "TypedValue::Timestamp(generated_at),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#mark_subject_refused",
+        "name": "mark_subject_refused",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L4426-L4504"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4487,
+          "text": "values.insert(\"subject_at\".to_string(), TypedValue::Timestamp(generated_at));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#reparent_drawer",
+        "name": "reparent_drawer",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L5416-L5490"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5458,
+          "text": "TypedValue::Timestamp(now),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#fingerprints_captured_in",
+        "name": "fingerprints_captured_in",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L7032-L7078"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 7042,
+          "text": "TypedValue::Timestamp(start_epoch),"
+        },
+        {
+          "line": 7046,
+          "text": "TypedValue::Timestamp(end_epoch),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#fingerprint_bit_series",
+        "name": "fingerprint_bit_series",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L7080-L7158"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 7113,
+          "text": "TypedValue::Timestamp(window_start),"
+        },
+        {
+          "line": 7117,
+          "text": "TypedValue::Timestamp(ending_at),"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 9342,
+          "text": "/// `filed_at` and other Timestamp columns are declared"
+        },
+        {
+          "line": 9343,
+          "text": "/// `ColumnType::Timestamp` in the schema; PersistenceKit's"
+        },
+        {
+          "line": 9465,
+          "text": "/// Timestamp corruption is handled one level up: scan functions call"
+        },
+        {
+          "line": 10113,
+          "text": "/// `Timestamp` form (the SQLite / Postgres backends parse the TEXT column to"
+        },
+        {
+          "line": 10115,
+          "text": "/// then we re-render the canonical ISO8601). Without the Timestamp arm, a persisted"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs#timestamp_text_edges_fixture_through_manifest_and_recall_dates",
+        "name": "timestamp_text_edges_fixture_through_manifest_and_recall_dates",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+        "span": "L12375-L12410"
+      },
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_inmemory.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 12406,
+          "text": "assert_eq!(recalled_at_string(Some(&TypedValue::Timestamp(millis))), text, \"{label}: recall date\");"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_postgres.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 52,
+          "text": "//!   serialises `TypedValue::Timestamp` as ISO-8601; the schema declares"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/drawer_store_sqlite.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 38,
+          "text": "//!   SQLite backend serialises `TypedValue::Timestamp` as an ISO-8601"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/drawer.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 27,
+          "text": "//!   `TypedValue::Timestamp(i64)` carries it on the wire. The SQLite column stores"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/estate_verbs.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 3356,
+          "text": "/// `TypedValue::Timestamp` (`persistence_kit::sqlite`) serializes it with"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/estate_verbs.rs#tests",
+        "name": "tests",
+        "kind": "module",
+        "path": "packages/kits/LocusKit/rust/src/estate_verbs.rs",
+        "span": "L4208-L7338"
+      },
+      "path": "packages/kits/LocusKit/rust/src/estate_verbs.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 7199,
+          "text": "// --- Timestamp-unit guards ---"
+        },
+        {
+          "line": 7202,
+          "text": "// `now` directly as `last_physical`, and `TypedValue::Timestamp` is a"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/inbound_sync.rs#ever_accepted_erase_by_each_marker_alone_is_refused",
+        "name": "ever_accepted_erase_by_each_marker_alone_is_refused",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/inbound_sync.rs",
+        "span": "L1080-L1115"
+      },
+      "path": "packages/kits/LocusKit/rust/src/inbound_sync.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1089,
+          "text": "sent.insert(\"tombstonedAt\".into(), TypedValue::Timestamp(NOW + 500));"
+        },
+        {
+          "line": 1093,
+          "text": "sent.insert(\"TOMBSTONEDAT\".into(), TypedValue::Timestamp(NOW + 500));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/kg_fact_identity_backfill.rs#schema_10_estate_gains_columns_and_migrates",
+        "name": "schema_10_estate_gains_columns_and_migrates",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/kg_fact_identity_backfill.rs",
+        "span": "L490-L560"
+      },
+      "path": "packages/kits/LocusKit/rust/src/kg_fact_identity_backfill.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 534,
+          "text": "values.insert(\"filedAt\".into(), TypedValue::Timestamp(NOW));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/manifest.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 183,
+          "text": "///   `audit_types.rs` and of the `TypedValue::Timestamp(i64)` shape in"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 568,
+          "text": "/// columns, .Hlc and .Int for HLC columns, .Timestamp and .Int for"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/node_store.rs#resolves_swift_uppercase_node_rows",
+        "name": "resolves_swift_uppercase_node_rows",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+        "span": "L844-L884"
+      },
+      "path": "packages/kits/LocusKit/rust/src/node_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 869,
+          "text": "values.insert(\"created_at\".into(), TypedValue::Timestamp(1_000));"
+        },
+        {
+          "line": 870,
+          "text": "values.insert(\"updated_at\".into(), TypedValue::Timestamp(1_000));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/src/schema.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 982,
+          "text": "/// stores it as `ColumnType::Timestamp`."
+        },
+        {
+          "line": 1020,
+          "text": "/// `ColumnType::Timestamp` (PersistenceKit emits TEXT ISO8601 for that type)."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/schema.rs#tests",
+        "name": "tests",
+        "kind": "module",
+        "path": "packages/kits/LocusKit/rust/src/schema.rs",
+        "span": "L1508-L1941"
+      },
+      "path": "packages/kits/LocusKit/rust/src/schema.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1803,
+          "text": "/// TEXT ISO8601 (Timestamp type, fleet date-storage rule). `wrapped` is BLOB"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/src/schema.rs#keys_table_shape_matches_swift",
+        "name": "keys_table_shape_matches_swift",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/src/schema.rs",
+        "span": "L1806-L1841"
+      },
+      "path": "packages/kits/LocusKit/rust/src/schema.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1816,
+          "text": "// Column types: TEXT, TEXT, BLOB, Timestamp, Json"
+        },
+        {
+          "line": 1821,
+          "text": "assert_eq!(k.columns[3].column_type, ColumnType::Timestamp);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/atomic_conflict_proposal_tests.rs#selected_evidence_tombstoned_after_analysis_cannot_file_a_contradiction",
+        "name": "selected_evidence_tombstoned_after_analysis_cannot_file_a_contradiction",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/atomic_conflict_proposal_tests.rs",
+        "span": "L142-L165"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/atomic_conflict_proposal_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 147,
+          "text": "values.insert(\"tombstonedAt\".to_owned(), TypedValue::Timestamp(NOW + 2));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/tests/corrupt_readback_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 15,
+          "text": "//   - filed_at corruption: declared ColumnType::Timestamp so PersistenceKit's"
+        },
+        {
+          "line": 180,
+          "text": "// filed_at corruption — PersistenceKit already handles this at the Timestamp"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/corrupt_readback_tests.rs#corrupt_filed_at_returns_error_not_epoch_zero",
+        "name": "corrupt_filed_at_returns_error_not_epoch_zero",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/corrupt_readback_tests.rs",
+        "span": "L186-L227"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/corrupt_readback_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 206,
+          "text": "// Timestamp columns; this is mapped to LocusKitError::DatabaseUnavailable"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#a_newer_edited_copy_of_an_expunged_drawer_is_refused",
+        "name": "a_newer_edited_copy_of_an_expunged_drawer_is_refused",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L198-L210"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 205,
+          "text": "newer.insert(\"filedAt\".into(), TypedValue::Timestamp(NOW + 10_000));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#a_drawer_tombstoned_by_a_peer_erase_refuses_later_writes",
+        "name": "a_drawer_tombstoned_by_a_peer_erase_refuses_later_writes",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L251-L268"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 265,
+          "text": "e.raw.row_store().update(\"drawers\", BTreeMap::from([(\"tombstonedAt\".to_string(), TypedValue::Timestamp(NOW + 400))]),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#a_storage_without_the_ledger_still_applies_a_peer_erase",
+        "name": "a_storage_without_the_ledger_still_applies_a_peer_erase",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L574-L589"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 586,
+          "text": "Some(&TypedValue::Timestamp(NOW)), \"{backend:?} {path:?}: the erase applied\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs#each_erase_marker_alone_is_ledgered",
+        "name": "each_erase_marker_alone_is_ledgered",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+        "span": "L620-L652"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/inbound_erased_drawer_guard_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 635,
+          "text": "\"tombstonedAt only\" => { marker.insert(\"tombstonedAt\".into(), TypedValue::Timestamp(NOW + 400)); }"
+        },
+        {
+          "line": 638,
+          "text": "marker.insert(\"TombstonedAt\".into(), TypedValue::Timestamp(NOW + 400));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/tests/kg_fact_audit_gate_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 41,
+          "text": "/// Timestamp for store opens and mutations, in epoch milliseconds, matching the"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/rust/tests/lp0_vectors.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 23,
+          "text": "//! Timestamps: `now` is 1_700_000_000 (a fixed epoch value) incremented"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/merkle_rollup_tests.rs#direct_rollup_produces_correct_cascade",
+        "name": "direct_rollup_produces_correct_cascade",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/merkle_rollup_tests.rs",
+        "span": "L88-L166"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/merkle_rollup_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 118,
+          "text": "vals.insert(\"filedAt\".into(), TypedValue::Timestamp(NOW + 2));"
+        },
+        {
+          "line": 119,
+          "text": "vals.insert(\"eventTime\".into(), TypedValue::Timestamp(NOW + 2));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/merkle_rollup_tests.rs#on_demand_leaf_hash_for_pre_existing_data",
+        "name": "on_demand_leaf_hash_for_pre_existing_data",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/merkle_rollup_tests.rs",
+        "span": "L176-L219"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/merkle_rollup_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 195,
+          "text": "vals.insert(\"filedAt\".into(), TypedValue::Timestamp(NOW + 10));"
+        },
+        {
+          "line": 196,
+          "text": "vals.insert(\"eventTime\".into(), TypedValue::Timestamp(NOW + 10));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/rust/tests/schema_upgrade_tests.rs#schema_21_estate_lands_at_22_with_template_bitmap_zero",
+        "name": "schema_21_estate_lands_at_22_with_template_bitmap_zero",
+        "kind": "function",
+        "path": "packages/kits/LocusKit/rust/tests/schema_upgrade_tests.rs",
+        "span": "L563-L607"
+      },
+      "path": "packages/kits/LocusKit/rust/tests/schema_upgrade_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 585,
+          "text": "persistence_kit::types::ColumnType::Timestamp => TypedValue::Text(\"2024-01-01T00:00:00Z\".into()),"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/LocusKit/Sources/LocusKit/DrawerStore.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5645,
+          "text": "/// Timestamp corruption (a `+58432-…` value in `filedAt`) is caught one"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/FactEnumeration.swift#Estate.queryFacts",
+        "name": "Estate.queryFacts",
+        "kind": "method",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/FactEnumeration.swift",
+        "span": "L260-L386"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/FactEnumeration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 380,
+          "text": "currentState: sourceState, visibleSuccessorIDs: later, sourceTimestamp: source.filedAt,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/FactQuery.swift#FactSourceContext.FactSourceContext",
+        "name": "FactSourceContext.FactSourceContext",
+        "kind": "method",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/FactQuery.swift",
+        "span": "L223-L231"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/FactQuery.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 224,
+          "text": "visibleSuccessorIDs: [String], sourceTimestamp: Date, evidenceAvailable: Bool) {"
+        },
+        {
+          "line": 229,
+          "text": "self.sourceTimestamp = sourceTimestamp"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/LocusKit/Sources/LocusKit/TunnelReviewLedger.swift#TunnelReviewLedger.isoTimestamp",
+        "name": "TunnelReviewLedger.isoTimestamp",
+        "kind": "method",
+        "path": "packages/kits/LocusKit/Sources/LocusKit/TunnelReviewLedger.swift",
+        "span": "L297-L310"
+      },
+      "path": "packages/kits/LocusKit/Sources/LocusKit/TunnelReviewLedger.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 297,
+          "text": "public static func isoTimestamp(_ date: Date) -> String {"
+        },
+        {
+          "line": 309,
+          "text": "return isoTimestamp(epochSeconds: secs)"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 277
+  },
+  "saved": {
+    "files": 111,
+    "baselineChars": 6283666
+  }
+}

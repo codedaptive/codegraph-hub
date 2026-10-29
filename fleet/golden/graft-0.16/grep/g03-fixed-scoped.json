@@ -1,0 +1,138 @@
+{
+  "pattern": "EstateOpening::REGISTERED",
+  "filesSearched": 430,
+  "totalHits": 8,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/src/estate_registry.rs#new_sqlite",
+        "name": "new_sqlite",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/src/estate_registry.rs",
+        "span": "L370-L372"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/src/estate_registry.rs",
+      "inDegree": 24,
+      "hits": [
+        {
+          "line": 371,
+          "text": "Self::open_sqlite(path, owner, EstateOpening::REGISTERED, false).map(|(registry, _report)| registry)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs#dream_runner_nonempty_queue_cycle_ran",
+        "name": "dream_runner_nonempty_queue_cycle_ran",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+        "span": "L130-L160"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 153,
+          "text": "let result = run_one_dreaming_cycle(&path, \"dream-test-owner\", EstateOpening::REGISTERED, NOW, SESSION_ID)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs#dream_runner_empty_queue_no_cycle",
+        "name": "dream_runner_empty_queue_no_cycle",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+        "span": "L172-L191"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 180,
+          "text": "let result = run_one_dreaming_cycle(&path, \"dream-test-owner\", EstateOpening::REGISTERED, NOW, SESSION_ID)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs#dream_runner_nonexistent_path_noop",
+        "name": "dream_runner_nonexistent_path_noop",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+        "span": "L201-L218"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 211,
+          "text": "let result = run_one_dreaming_cycle(&absent, \"dream-test-owner\", EstateOpening::REGISTERED, NOW, SESSION_ID)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs#cycle_stamps_caller_session_id_on_both_markers",
+        "name": "cycle_stamps_caller_session_id_on_both_markers",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+        "span": "L346-L391"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/dream_runner_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 353,
+          "text": "let result = run_one_dreaming_cycle(&path, \"dream-test-owner\", EstateOpening::REGISTERED, NOW, SESSION_ID)"
+        },
+        {
+          "line": 361,
+          "text": "EstateRegistry::new_sqlite_with(&path, \"dream-test-owner\", EstateOpening::REGISTERED)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/transient_charter_gate_tests.rs#inmemory_registered_opening_seeds_charters",
+        "name": "inmemory_registered_opening_seeds_charters",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/transient_charter_gate_tests.rs",
+        "span": "L55-L63"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/transient_charter_gate_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 58,
+          "text": "let registry = EstateRegistry::new_inmemory_with(EstateOpening::REGISTERED);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/AriaMcpKit/rust/tests/transient_charter_gate_tests.rs#sqlite_registered_opening_seeds_charters",
+        "name": "sqlite_registered_opening_seeds_charters",
+        "kind": "function",
+        "path": "packages/kits/AriaMcpKit/rust/tests/transient_charter_gate_tests.rs",
+        "span": "L101-L110"
+      },
+      "path": "packages/kits/AriaMcpKit/rust/tests/transient_charter_gate_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 103,
+          "text": "let registry = EstateRegistry::new_sqlite_with(&path, \"charter-gate-owner\", EstateOpening::REGISTERED)"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 3,
+    "baselineChars": 96005
+  }
+}

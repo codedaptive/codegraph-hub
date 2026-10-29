@@ -1,0 +1,1268 @@
+{
+  "basis": "e07bbddd03^...HEAD",
+  "depth": 2,
+  "changed": [
+    {
+      "path": "docs/blast_radius/MOOTAI-WIRE-IN_BLAST_RADIUS.md",
+      "status": "added",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 63
+        }
+      ],
+      "hunks": [
+        {
+          "start": 1,
+          "end": 63,
+          "lines": [
+            {
+              "n": 1,
+              "sign": "+",
+              "text": "# Blast Radius Report — MOOTAI-WIRE-IN (ledger A31)"
+            },
+            {
+              "n": 2,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 3,
+              "sign": "+",
+              "text": "**Mission:** docs/missions/MISSION_MOOTAI_WIRE_IN.md. **Branch / base:** kgf/p2-train-2 at 5d040e0ed (develop c4b74d58c"
+            },
+            {
+              "n": 4,
+              "sign": "+",
+              "text": "holds mootai standalone). **graft:** available. Pre-flight: smythe4 YELLOW (map below; split into back-to-back steps)."
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "**Baselines (make test-one, after the develop merge):**"
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": "- ModelRuntimeKit: Swift 25, Rust 17, Rust providers 14."
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": "- CorpusKit: Swift 497 (5 known issues), Rust providers 177."
+            },
+            {
+              "n": 9,
+              "sign": "+",
+              "text": "- FactExtractionKit: Swift 217, Rust providers 177."
+            },
+            {
+              "n": 10,
+              "sign": "+",
+              "text": "- Rust app `--bin mootai` 4; Swift app (`ClassifierWorkerActivation|MootAIPipe|MootAIBenchProcess`) 14."
+            },
+            {
+              "n": 11,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 12,
+              "sign": "+",
+              "text": "**Lane notes:**"
+            },
+            {
+              "n": 13,
+              "sign": "+",
+              "text": "- A29 (p3) rewrites the docs/reference changelogs. This mission's docs edits land after A29, and the cleanup of older"
+            },
+            {
+              "n": 14,
+              "sign": "+",
+              "text": "  references (brief item 7) is left to A29."
+            },
+            {
+              "n": 15,
+              "sign": "+",
+              "text": "- A19 (p3) holds the community daemon files; changes to them stay minimal."
+            },
+            {
+              "n": 16,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 17,
+              "sign": "+",
+              "text": "## Steps"
+            },
+            {
+              "n": 18,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 19,
+              "sign": "+",
+              "text": "Each step moves a family completely, with no in-process fallback."
+            },
+            {
+              "n": 20,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 21,
+              "sign": "+",
+              "text": "| Step | Scope |"
+            },
+            {
+              "n": 22,
+              "sign": "+",
+              "text": "|---|---|"
+            },
+            {
+              "n": 23,
+              "sign": "+",
+              "text": "| W1 | The refusal list (brief item 4) |"
+            },
+            {
+              "n": 24,
+              "sign": "+",
+              "text": "| W2 | The app-level mootai supervisor (crash, hang, breaker, idle reap, recycle, replaced binary, `--gpu-first` restart), pull pacing, and the move of NuExtract. Deletes `coreai-nuextract-worker`, both Rust `moot-nuextract-worker` bins, `worker_client.rs` and `worker_executable`. Packages mootai in their place (release workflow, Windows installer, product identity). |"
+            }
+          ],
+          "dropped": 39
+        }
+      ]
+    },
+    {
+      "path": "docs/missions/MISSION_MOOTAI_WIRE_IN.md",
+      "status": "added",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 49
+        }
+      ],
+      "hunks": [
+        {
+          "start": 1,
+          "end": 49,
+          "lines": [
+            {
+              "n": 1,
+              "sign": "+",
+              "text": "---"
+            },
+            {
+              "n": 2,
+              "sign": "+",
+              "text": "title: Mission MOOTAI-WIRE-IN"
+            },
+            {
+              "n": 3,
+              "sign": "+",
+              "text": "version: 0.1.0"
+            },
+            {
+              "n": 4,
+              "sign": "+",
+              "text": "status: active"
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": "date: 2026-10-13"
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "description: Wire the standalone mootai worker into mootx01 in both ports and delete the in-daemon model paths in the same change."
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": "---"
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 9,
+              "sign": "+",
+              "text": "# Mission MOOTAI-WIRE-IN (p2, ledger A31)"
+            },
+            {
+              "n": 10,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 11,
+              "sign": "+",
+              "text": "Governing spec: docs/reference/MODELRUNTIMEKIT_SPEC.md § The model worker program. Design record:"
+            },
+            {
+              "n": 12,
+              "sign": "+",
+              "text": "docs/internal/decisions/DECISION_MODEL_RUNTIME_MOOTAI_2026-10-13.md. Starts from develop 101836517 (mootai standalone)."
+            },
+            {
+              "n": 13,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 14,
+              "sign": "+",
+              "text": "## Goal"
+            },
+            {
+              "n": 15,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 16,
+              "sign": "+",
+              "text": "mootx01 runs every model through its own mootai child over the private pipe, in both ports, and contains no model"
+            },
+            {
+              "n": 17,
+              "sign": "+",
+              "text": "code paths of its own. One change: the new path in, the old in-daemon paths out (no bridge, no fallback to in-process)."
+            },
+            {
+              "n": 18,
+              "sign": "+",
+              "text": "iOS keeps the inline host: the same ModelRuntimeKit code linked into the app."
+            },
+            {
+              "n": 19,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 20,
+              "sign": "+",
+              "text": "## Scope"
+            },
+            {
+              "n": 21,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 22,
+              "sign": "+",
+              "text": "1. **Supervision.** mootx01 starts its mootai child, restarts it on crash or hang (reuse the existing breaker and"
+            },
+            {
+              "n": 23,
+              "sign": "+",
+              "text": "   watchdog patterns), passes `--gpu-first <model>` after a reported refusal, and recycles it (reuse the NuExtract"
+            },
+            {
+              "n": 24,
+              "sign": "+",
+              "text": "   worker's idle reap and request-count recycle as the mechanism; limits are settings)."
+            }
+          ],
+          "dropped": 25
+        }
+      ]
+    },
+    {
+      "path": "docs/status/MOOTAI-WIRE-IN_REPORT.md",
+      "status": "added",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 218
+        }
+      ],
+      "hunks": [
+        {
+          "start": 1,
+          "end": 218,
+          "lines": [
+            {
+              "n": 1,
+              "sign": "+",
+              "text": "# MOOTAI-WIRE-IN (ledger A31): handoff report"
+            },
+            {
+              "n": 2,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 3,
+              "sign": "+",
+              "text": "Stopped at the coordinator's instruction (2026-10-13: the team is restructuring and the remaining wire-in moves to the"
+            },
+            {
+              "n": 4,
+              "sign": "+",
+              "text": "Moot team). Branch `kgf/p2-train-2` in `/Users/bob/devlop/mootx01-ee-kgf-p2-train`. The brief is"
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": "`docs/missions/MISSION_MOOTAI_WIRE_IN.md`. The blast radius and map are in"
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "`docs/blast_radius/MOOTAI-WIRE-IN_BLAST_RADIUS.md`."
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": "## Gates"
+            },
+            {
+              "n": 9,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 10,
+              "sign": "+",
+              "text": "- **smythe4 pre-flight: YELLOW.** The mission can only be built as back-to-back steps. Its gross size is about"
+            },
+            {
+              "n": 11,
+              "sign": "+",
+              "text": "  6,000-7,000 lines and its net size is near the ~2,500-line stop. Its map of load paths is the one used below."
+            },
+            {
+              "n": 12,
+              "sign": "+",
+              "text": "- **adams5 and perkins5:** not run. No step past W1 was finished."
+            },
+            {
+              "n": 13,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 14,
+              "sign": "+",
+              "text": "## Done (committed, green, pushed)"
+            },
+            {
+              "n": 15,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 16,
+              "sign": "+",
+              "text": "| Commit | Step | What | Tests |"
+            },
+            {
+              "n": 17,
+              "sign": "+",
+              "text": "|---|---|---|---|"
+            },
+            {
+              "n": 18,
+              "sign": "+",
+              "text": "| `8c364dd4a` | W1 (brief item 4) | Refusal list widened, both ports. Under the wait rule, Core AI `KernelError` on load (Swift `ModelProcessPolicy.isEngineRefusal`) and Core ML \"Failed to create MLModel … execution plan\" (Rust `process_policy::is_coreml_contention`) are engine refusals. They apply in corpus-kit-providers `OnnxGraphSet` (provider choice and new-shape load) and on the LLMLingua ONNX engine rung. Under fall-back nothing changes. Also commits the blast radius report. +100 −7, net +93. | All green, with the same counts as before. Swift: ModelRuntimeKit 25, CorpusKit 497, FactExtractionKit 217. Rust: model-runtime-kit 17, model-runtime-kit-providers 14, corpus-kit-providers 177. |"
+            },
+            {
+              "n": 19,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 20,
+              "sign": "+",
+              "text": "W1 is on `origin/kgf/p2-train-2`. Nothing past W1 is committed."
+            },
+            {
+              "n": 21,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 22,
+              "sign": "+",
+              "text": "## Uncommitted work (W2, Swift half, NOT green; left in the worktree for p2 to decide)"
+            },
+            {
+              "n": 23,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 24,
+              "sign": "+",
+              "text": "W2 is the supervisor plus the NuExtract and classifier families. These files are modified, deleted or new; the two"
+            }
+          ],
+          "dropped": 194
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 179,
+          "end": 182
+        },
+        {
+          "start": 324,
+          "end": 331
+        }
+      ],
+      "hunks": [
+        {
+          "start": 179,
+          "end": 182,
+          "lines": [
+            {
+              "n": 179,
+              "sign": "+",
+              "text": "                // Core ML failing to build the engine's plan while another process holds the engine is a refusal too."
+            },
+            {
+              "n": 180,
+              "sign": "+",
+              "text": "                Err(error) if placement.unit == PlacementUnit::NeuralEngine"
+            },
+            {
+              "n": 181,
+              "sign": "+",
+              "text": "                    && model_runtime_kit::process_policy::is_coreml_contention(&error)"
+            },
+            {
+              "n": 182,
+              "sign": "+",
+              "text": "                    && noted_if_waiting(self.refusal_rule) => return Err(EncoderError::EngineRefused(error)),"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 324,
+          "end": 331,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "            let session = self.create_session(shape, &state.providers).map_err(EncoderError::LoadFailed)?;"
+            },
+            {
+              "n": 324,
+              "sign": "+",
+              "text": "            let session = self.create_session(shape, &state.providers).map_err(|error| {"
+            },
+            {
+              "n": 325,
+              "sign": "+",
+              "text": "                let engine = state.placement.unit == PlacementUnit::NeuralEngine;"
+            },
+            {
+              "n": 326,
+              "sign": "+",
+              "text": "                if engine && model_runtime_kit::process_policy::is_coreml_contention(&error) && noted_if_waiting(self.refusal_rule) {"
+            },
+            {
+              "n": 327,
+              "sign": "+",
+              "text": "                    EncoderError::EngineRefused(error)"
+            },
+            {
+              "n": 328,
+              "sign": "+",
+              "text": "                } else {"
+            },
+            {
+              "n": 329,
+              "sign": "+",
+              "text": "                    EncoderError::LoadFailed(error)"
+            },
+            {
+              "n": 330,
+              "sign": "+",
+              "text": "                }"
+            },
+            {
+              "n": 331,
+              "sign": "+",
+              "text": "            })?;"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 38,
+          "end": 38
+        },
+        {
+          "start": 40,
+          "end": 43
+        },
+        {
+          "start": 46,
+          "end": 47
+        }
+      ],
+      "hunks": [
+        {
+          "start": 38,
+          "end": 38,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// `ModelEngineRefusal`, or Core AI's resource refusal, which calls itself"
+            },
+            {
+              "n": 38,
+              "sign": "+",
+              "text": "    /// `ModelEngineRefusal`; Core AI's resource refusal, which calls itself"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 40,
+          "end": 43,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// says \"transient\" too). Any other engine failure, such as an asset"
+            },
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// exported without the ladder's entrypoints, is not a refusal."
+            },
+            {
+              "n": 40,
+              "sign": "+",
+              "text": "    /// says \"transient\" too); or a `KernelError` from the engine rung's load,"
+            },
+            {
+              "n": 41,
+              "sign": "+",
+              "text": "    /// which is how Core AI fails a load while another process holds the"
+            },
+            {
+              "n": 42,
+              "sign": "+",
+              "text": "    /// engine. Any other engine failure, such as an asset exported without the"
+            },
+            {
+              "n": 43,
+              "sign": "+",
+              "text": "    /// ladder's entrypoints, is not a refusal."
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 46,
+          "end": 47,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "        return String(describing: error).localizedCaseInsensitiveContains(\"transient\")"
+            },
+            {
+              "n": null,
+              "sign": "-",
+              "text": "            || (error as NSError).localizedDescription.localizedCaseInsensitiveContains(\"transient\")"
+            },
+            {
+              "n": 46,
+              "sign": "+",
+              "text": "        let text = String(describing: error) + \" \" + (error as NSError).localizedDescription"
+            },
+            {
+              "n": 47,
+              "sign": "+",
+              "text": "        return text.localizedCaseInsensitiveContains(\"transient\") || text.contains(\"KernelError\")"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 95,
+          "end": 99
+        }
+      ],
+      "hunks": [
+        {
+          "start": 95,
+          "end": 99,
+          "lines": [
+            {
+              "n": 95,
+              "sign": "+",
+              "text": "        // Core AI's KernelError on the engine rung's load is how it fails while another process holds the engine."
+            },
+            {
+              "n": 96,
+              "sign": "+",
+              "text": "        struct Contended: Error, CustomStringConvertible {"
+            },
+            {
+              "n": 97,
+              "sign": "+",
+              "text": "            var description: String { #\"loadFailed(\"entrypoint 'r1_l32': KernelError(kernelName: \"main\")\")\"# }"
+            },
+            {
+              "n": 98,
+              "sign": "+",
+              "text": "        }"
+            },
+            {
+              "n": 99,
+              "sign": "+",
+              "text": "        #expect(ModelProcessPolicy.isEngineRefusal(Contended()))"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 154,
+          "end": 157
+        }
+      ],
+      "hunks": [
+        {
+          "start": 154,
+          "end": 157,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "            let session = create(providers).map_err(RungFailure::Failed)?;"
+            },
+            {
+              "n": 154,
+              "sign": "+",
+              "text": "            // Core ML failing the engine's plan under contention is a refusal, like a refused plan."
+            },
+            {
+              "n": 155,
+              "sign": "+",
+              "text": "            let session = create(providers).map_err(|error| if unit == \"neural-engine\""
+            },
+            {
+              "n": 156,
+              "sign": "+",
+              "text": "                && model_runtime_kit::process_policy::is_coreml_contention(&error) { RungFailure::Refused(error) }"
+            },
+            {
+              "n": 157,
+              "sign": "+",
+              "text": "                else { RungFailure::Failed(error) })?;"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 74,
+          "end": 80
+        },
+        {
+          "start": 111,
+          "end": 112
+        }
+      ],
+      "hunks": [
+        {
+          "start": 74,
+          "end": 80,
+          "lines": [
+            {
+              "n": 74,
+              "sign": "+",
+              "text": "/// Whether a session error on an engine rung is the engine refusing under"
+            },
+            {
+              "n": 75,
+              "sign": "+",
+              "text": "/// contention: Core ML's \"Failed to create MLModel\" while building the"
+            },
+            {
+              "n": 76,
+              "sign": "+",
+              "text": "/// execution plan, which it gives when another process holds the engine."
+            },
+            {
+              "n": 77,
+              "sign": "+",
+              "text": "pub fn is_coreml_contention(error: &str) -> bool {"
+            },
+            {
+              "n": 78,
+              "sign": "+",
+              "text": "    error.contains(\"Failed to create MLModel\") && error.contains(\"execution plan\")"
+            },
+            {
+              "n": 79,
+              "sign": "+",
+              "text": "}"
+            },
+            {
+              "n": 80,
+              "sign": "+",
+              "text": ""
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 111,
+          "end": 112,
+          "lines": [
+            {
+              "n": 111,
+              "sign": "+",
+              "text": "        assert!(is_coreml_contention(\"x.onnx: Failed to create MLModel, error: Failed to build the model execution plan using a model\"));"
+            },
+            {
+              "n": 112,
+              "sign": "+",
+              "text": "        assert!(!is_coreml_contention(\"x.onnx: no such file\"));"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    }
+  ],
+  "unindexed": [
+    "docs/blast_radius/MOOTAI-WIRE-IN_BLAST_RADIUS.md",
+    "docs/missions/MISSION_MOOTAI_WIRE_IN.md",
+    "docs/status/MOOTAI-WIRE-IN_REPORT.md"
+  ],
+  "deleted": [],
+  "seeds": [
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#choose_providers",
+      "name": "choose_providers",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L164-L212",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#run",
+      "name": "run",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L303-L347",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift#ModelProcessPolicy",
+      "name": "ModelProcessPolicy",
+      "kind": "enum",
+      "path": "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift",
+      "span": "L11-L76",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift#ModelProcessPolicy.isEngineRefusal",
+      "name": "isEngineRefusal",
+      "kind": "method",
+      "path": "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift",
+      "span": "L44-L48",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift#ModelHostTests.gpuFirst.Contended",
+      "name": "Contended",
+      "kind": "struct",
+      "path": "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift",
+      "span": "L96-L98",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs#load_placed",
+      "name": "load_placed",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "span": "L123-L199",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs#is_coreml_contention",
+      "name": "is_coreml_contention",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs",
+      "span": "L77-L79",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs#the_defaults_keep_the_compute_ladder_and_one_thread",
+      "name": "the_defaults_keep_the_compute_ladder_and_one_thread",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs",
+      "span": "L107-L113",
+      "wholeFile": false
+    }
+  ],
+  "impacted": [
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#fall_back",
+      "name": "fall_back",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L219-L233",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#open_with",
+      "name": "open_with",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L100-L130",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#a_refused_engine_session_is_never_used_and_the_engine_is_reattempted",
+      "name": "a_refused_engine_session_is_never_used_and_the_engine_is_reattempted",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L507-L548",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#open",
+      "name": "open",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L93-L96",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#under_the_wait_rule_a_refused_engine_plan_fails_the_open",
+      "name": "under_the_wait_rule_a_refused_engine_plan_fails_the_open",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L554-L566",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIEntrypointModel.swift#EngineLoadPolicy.isRefusal",
+      "name": "isRefusal",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIEntrypointModel.swift",
+      "span": "L132-L135",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CoreAISpanInferenceTests.swift#EngineLoadPolicyTests.waitRuleStopsAtTheEngine",
+      "name": "waitRuleStopsAtTheEngine",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CoreAISpanInferenceTests.swift",
+      "span": "L296-L358",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift#ModelHostTests.gpuFirst",
+      "name": "gpuFirst",
+      "kind": "method",
+      "path": "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift",
+      "span": "L80-L100",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CorpusKitHosting.swift#CorpusKitHosting.refusing",
+      "name": "refusing",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CorpusKitHosting.swift",
+      "span": "L63-L67",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#load",
+      "name": "load",
+      "kind": "function",
+      "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+      "span": "L65-L131",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs#load",
+      "name": "load",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "span": "L105-L110",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#a_bonsai_judge_package_for_the_other_runtime_or_without_a_valid_receipt_or_over_budget_leaves_extraction_off",
+      "name": "a_bonsai_judge_package_for_the_other_runtime_or_without_a_valid_receipt_or_over_budget_leaves_extraction_off",
+      "kind": "function",
+      "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+      "span": "L840-L888",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#a_judge_load_hashes_the_package_files_before_it_reads_the_model",
+      "name": "a_judge_load_hashes_the_package_files_before_it_reads_the_model",
+      "kind": "function",
+      "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+      "span": "L897-L909",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#native_package_extractor_selected",
+      "name": "native_package_extractor_selected",
+      "kind": "function",
+      "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+      "span": "L178-L193",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#product_backend",
+      "name": "product_backend",
+      "kind": "function",
+      "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+      "span": "L59-L61",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#validate_installed_package",
+      "name": "validate_installed_package",
+      "kind": "function",
+      "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+      "span": "L280-L320",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs#generate",
+      "name": "generate",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "span": "L374-L419",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs#native_checkpoint_matches_reference_and_unloads",
+      "name": "native_checkpoint_matches_reference_and_unloads",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "span": "L548-L570",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#choose_providers",
+      "name": "choose_providers",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L164-L212",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs#run",
+      "name": "run",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs",
+      "span": "L303-L347",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs#load_placed",
+      "name": "load_placed",
+      "kind": "function",
+      "path": "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+      "span": "L123-L199",
+      "relation": "calls",
+      "depth": 1
+    }
+  ],
+  "modules": [
+    {
+      "label": "load",
+      "labelSource": "symbol",
+      "key": "packages/kits/AriaMcpKit/rust/src/",
+      "files": [
+        "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#load",
+          "name": "load",
+          "kind": "function",
+          "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+          "span": "L65-L131",
+          "relation": "calls",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#a_bonsai_judge_package_for_the_other_runtime_or_without_a_valid_receipt_or_over_budget_leaves_extraction_off",
+          "name": "a_bonsai_judge_package_for_the_other_runtime_or_without_a_valid_receipt_or_over_budget_leaves_extraction_off",
+          "kind": "function",
+          "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+          "span": "L840-L888",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#a_judge_load_hashes_the_package_files_before_it_reads_the_model",
+          "name": "a_judge_load_hashes_the_package_files_before_it_reads_the_model",
+          "kind": "function",
+          "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+          "span": "L897-L909",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#native_package_extractor_selected",
+          "name": "native_package_extractor_selected",
+          "kind": "function",
+          "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+          "span": "L178-L193",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#product_backend",
+          "name": "product_backend",
+          "kind": "function",
+          "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+          "span": "L59-L61",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs#validate_installed_package",
+          "name": "validate_installed_package",
+          "kind": "function",
+          "path": "packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs",
+          "span": "L280-L320",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs",
+        "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs"
+      ],
+      "owners": []
+    },
+    {
+      "label": "isRefusal",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/",
+      "files": [
+        "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIEntrypointModel.swift",
+        "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CorpusKitHosting.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIEntrypointModel.swift#EngineLoadPolicy.isRefusal",
+          "name": "isRefusal",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIEntrypointModel.swift",
+          "span": "L132-L135",
+          "relation": "calls",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CorpusKitHosting.swift#CorpusKitHosting.refusing",
+          "name": "refusing",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CorpusKitHosting.swift",
+          "span": "L63-L67",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift"
+      ],
+      "owners": []
+    }
+  ],
+  "testModules": [
+    {
+      "label": "waitRuleStopsAtTheEngine",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/Tests/CorpusKitTests/",
+      "files": [
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/CoreAISpanInferenceTests.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CoreAISpanInferenceTests.swift#EngineLoadPolicyTests.waitRuleStopsAtTheEngine",
+          "name": "waitRuleStopsAtTheEngine",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CoreAISpanInferenceTests.swift",
+          "span": "L296-L358",
+          "relation": "calls",
+          "depth": 1
+        }
+      ],
+      "from": [
+        "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift"
+      ]
+    }
+  ],
+  "areas": [
+    {
+      "label": "is_coreml_contention",
+      "labelSource": "symbol",
+      "key": "packages/kits/ModelRuntimeKit/rust/src/",
+      "files": [
+        "packages/kits/ModelRuntimeKit/rust/src/process_policy.rs"
+      ],
+      "seeds": 2,
+      "tests": "none",
+      "testFiles": [],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 2,
+      "unreached": [
+        "is_coreml_contention",
+        "the_defaults_keep_the_compute_ladder_and_one_thread"
+      ],
+      "seedNames": [
+        "is_coreml_contention",
+        "the_defaults_keep_the_compute_ladder_and_one_thread"
+      ],
+      "owners": []
+    },
+    {
+      "label": "isEngineRefusal",
+      "labelSource": "symbol",
+      "key": "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/",
+      "files": [
+        "packages/kits/ModelRuntimeKit/Sources/ModelRuntimeKit/ModelProcessPolicy.swift"
+      ],
+      "seeds": 2,
+      "tests": "changed",
+      "testFiles": [
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/CoreAISpanInferenceTests.swift",
+        "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift"
+      ],
+      "changedTestFiles": [
+        "packages/kits/ModelRuntimeKit/Tests/ModelRuntimeKitTests/ModelHostTests.swift"
+      ],
+      "reached": 1,
+      "behavioural": 1,
+      "unreached": [],
+      "seedNames": [
+        "isEngineRefusal",
+        "ModelProcessPolicy"
+      ],
+      "owners": []
+    },
+    {
+      "label": "load_placed",
+      "labelSource": "symbol",
+      "key": "packages/kits/ModelRuntimeKit/rust-providers/src/",
+      "files": [
+        "packages/kits/ModelRuntimeKit/rust-providers/src/llmlingua_onnx.rs"
+      ],
+      "seeds": 1,
+      "tests": "none",
+      "testFiles": [],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 1,
+      "unreached": [
+        "load_placed"
+      ],
+      "seedNames": [
+        "load_placed"
+      ],
+      "owners": []
+    },
+    {
+      "label": "choose_providers",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/rust-providers/src/",
+      "files": [
+        "packages/kits/CorpusKit/rust-providers/src/onnx_graph_set.rs"
+      ],
+      "seeds": 2,
+      "tests": "none",
+      "testFiles": [],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 2,
+      "unreached": [
+        "choose_providers",
+        "run"
+      ],
+      "seedNames": [
+        "choose_providers",
+        "run"
+      ],
+      "owners": []
+    }
+  ],
+  "reviewers": []
+}

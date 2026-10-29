@@ -1,0 +1,121 @@
+blast radius — 20eedf224f^...HEAD (full closure)
+  changed: 6 files in 3 areas, 4 seed symbols
+  impacted: 79 symbols in 13 areas
+
+– CorpusContentSource — 1 changed file, 0/0 reached by a test
+– CorpusContentSource — 1 changed file, 0/0 reached by a test
+✗ mr8c_qid_retry_skips_corrupt_r… — 1 changed file, 0/1 reached by a test
+
+performOpen — 22 symbols in 7 files
+  calls ← performOpen (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateHost.swift:L167-L239) [depth 4]
+  calls ← openEstate (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateHost.swift:L156-L163) [depth 5]
+  calls ← handle (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateHost.swift:L133-L137) [depth 6]
+  calls ← create (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateLifecycle.swift:L138-L185) [depth 6]
+  calls ← open (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateLifecycle.swift:L195-L239) [depth 6]
+  calls ← openForRead (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateLifecycle.swift:L355-L358) [depth 6]
+  calls ← tryOpenAndReport (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateLifecycle.swift:L333-L352) [depth 6]
+  calls ← requireHandle (apps/mootx01/Sources/MootCommunityDaemon/CommunityCaptureCoordinator.swift:L479-L485) [depth 7]
+  calls ← residentStorage (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateHost.swift:L140-L144) [depth 7]
+  calls ← inspect (apps/mootx01/Sources/MootCommunityDaemon/CommunityEstateLifecycle.swift:L107-L123) [depth 7]
+  calls ← currentEstateSession (apps/mootx01/Sources/MootCommunityDaemon/CommunityFirstPartyProviderExecutorContext.swift:L11-L13) [depth 7]
+  calls ← modelRuntimeConfiguration (apps/mootx01/Sources/MootCommunityDaemon/CommunityModelRuntime.swift:L11-L50) [depth 7]
+  calls ← makeCommunityDispatch (apps/mootx01/Sources/MootCommunityDaemon/CommunityResidentMain.swift:L451-L517) [depth 7]
+  calls ← runProduction (apps/mootx01/Sources/MootCommunityDaemon/CommunityResidentMain.swift:L118-L345) [depth 7]
+  calls ← requireHandle (apps/mootx01/Sources/MootCommunityDaemon/CommunityReviewCoordinator.swift:L568-L574) [depth 7]
+  calls ← capture (apps/mootx01/Sources/MootCommunityDaemon/CommunityCaptureCoordinator.swift:L224-L466) [depth 8]
+  calls ← captureChoices (apps/mootx01/Sources/MootCommunityDaemon/CommunityCaptureCoordinator.swift:L151-L205) [depth 8]
+  calls ← run (apps/mootx01/Sources/MootCommunityDaemon/CommunityResidentMain.swift:L87-L114) [depth 8]
+  calls ← applyAction (apps/mootx01/Sources/MootCommunityDaemon/CommunityReviewCoordinator.swift:L249-L312) [depth 8]
+  calls ← resolveDuplicate (apps/mootx01/Sources/MootCommunityDaemon/CommunityReviewCoordinator.swift:L391-L509) [depth 8]
+  calls ← reverseAction (apps/mootx01/Sources/MootCommunityDaemon/CommunityReviewCoordinator.swift:L327-L366) [depth 8]
+  calls ← reviewSession (apps/mootx01/Sources/MootCommunityDaemon/CommunityReviewCoordinator.swift:L178-L234) [depth 8]
+
+settle — 18 symbols in 5 files
+  calls ← settle (apps/mootx01/Sources/mootx01/Commands/DrainCommand.swift:L147-L311) [depth 4]
+  calls ← run (apps/mootx01/Sources/mootx01/Commands/DreamCommand.swift:L47-L392) [depth 4]
+  calls ← run (apps/mootx01/Sources/mootx01/Commands/ReindexCommand.swift:L60-L120) [depth 4]
+  calls ← run (apps/mootx01/Sources/mootx01/Commands/ServeCommand.swift:L59-L632) [depth 4]
+  calls ← runDensePoolingConvergence (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L955-L1036) [depth 4]
+  calls ← runSSCFactsBackfill (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1292-L1367) [depth 4]
+  calls ← drain (apps/mootx01/Sources/mootx01/Commands/DrainCommand.swift:L62-L143) [depth 5]
+  calls ← converged (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L406-L440) [depth 5]
+  calls ← runConvergence (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L2407-L2444) [depth 5]
+  calls ← settled (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L264-L289) [depth 5]
+  calls ← UpgradeCommand.swift (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1-L2671) [depth 5]
+  calls ← runCanonicalPayloadConvergence (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1457-L1505) [depth 5]
+  calls ← runDerivationQualityRankBackfill (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1387-L1442) [depth 5]
+  calls ← runMatrixRecordsUpgrade (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L565-L608) [depth 5]
+  calls ← runRecallTimeConvergence (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1521-L1574) [depth 5]
+  calls ← runTemplateFactReprojection (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1942-L2005) [depth 5]
+  calls ← runVectorReclaim (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L2007-L2071) [depth 5]
+  calls ← runWholeRecordVacuum (apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift:L1183-L1247) [depth 5]
+
+provision — 10 symbols in 4 files
+  calls ← provision (apps/moot-mgr/Sources/MootManager/EstateAdmin.swift:L191-L241) [depth 4]
+  calls ← applyAdminControl (apps/moot-mgr/Sources/MootManager/HTTPReadAPI.swift:L575-L609) [depth 5]
+  calls ← applyControl (apps/moot-mgr/Sources/MootManager/HTTPReadAPI.swift:L543-L569) [depth 6]
+  calls ← serve (apps/moot-mgr/Sources/MootManager/ControlChannel.swift:L117-L134) [depth 7]
+  calls ← handleControl (apps/moot-mgr/Sources/MootManager/HTTPReadAPI.swift:L510-L522) [depth 7]
+  calls ← start (apps/moot-mgr/Sources/MootManager/ControlChannel.swift:L82-L101) [depth 8]
+  calls ← route (apps/moot-mgr/Sources/MootManager/HTTPReadAPI.swift:L414-L490) [depth 8]
+  calls ← serve (apps/moot-mgr/Sources/MootManager/HTTPReadAPI.swift:L358-L409) [depth 9]
+  calls ← start (apps/moot-mgr/Sources/MootManager/ResidentHost.swift:L184-L243) [depth 9]
+  calls ← start (apps/moot-mgr/Sources/MootManager/HTTPReadAPI.swift:L262-L312) [depth 10]
+
+open — 9 symbols in 4 files
+  calls ← open (tools/estate-surgery/Sources/EstateSurgeryLib/Rebuilder.swift:L210-L229) [depth 4]
+  calls ← prepareAudit (tools/estate-surgery/Sources/EstateSurgeryLib/Rebuilder.swift:L56-L84) [depth 5]
+  calls ← rebuild (tools/estate-surgery/Sources/EstateSurgeryLib/Rebuilder.swift:L86-L119) [depth 5]
+  calls ← rebuildDisconnectedReplica (tools/estate-surgery/Sources/EstateSurgeryLib/Rebuilder.swift:L164-L190) [depth 5]
+  calls ← validateDisconnectedReplicaReopen (tools/estate-surgery/Sources/EstateSurgeryLib/Rebuilder.swift:L192-L208) [depth 5]
+  calls ← validateReopen (tools/estate-surgery/Sources/EstateSurgeryLib/Rebuilder.swift:L121-L158) [depth 5]
+  calls ← run (tools/estate-surgery/Sources/EstateSurgeryLib/CloneExportRunner.swift:L56-L224) [depth 6]
+  calls ← run (tools/estate-surgery/Sources/EstateSurgeryLib/CloneInstallRunner.swift:L65-L232) [depth 6]
+  calls ← run (tools/estate-surgery/Sources/EstateSurgeryLib/SurgeryRunner.swift:L64-L181) [depth 6]
+
+makeComponents — 5 symbols in 2 files
+  calls ← makeComponents (apps/Mootx01-App/Sources/MootGateway/MootBridge.swift:L300-L357) [depth 4]
+  calls ← attach (apps/Mootx01-App/Sources/MootGateway/MootBridge.swift:L406-L453) [depth 5]
+  calls ← attachInMemory (apps/Mootx01-App/Sources/MootGateway/MootBridge.swift:L361-L379) [depth 5]
+  calls ← bridge (apps/Mootx01-App/Sources/MootGateway/GatewayRuntime.swift:L109-L172) [depth 6]
+  calls ← lanBridge (apps/Mootx01-App/Sources/MootGateway/GatewayRuntime.swift:L177-L207) [depth 7]
+
+wireSubstores — 3 symbols in 1 file
+  calls ← wireSubstores (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift:L529-L698) [depth 2]
+  calls ← provision (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift:L94-L358) [depth 3]
+  calls ← wireGLKSubstores (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift:L712-L721) [depth 3]
+
+contentSource — 2 symbols in 1 file
+  calls ← contentSource (packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift:L119-L119) [depth 2]
+  calls ← report (packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift:L87-L87) [depth 3]
+
+run — 2 symbols in 1 file
+  calls ← run (apps/aria-mcp-server/Sources/aria-mcp/AriaMCPMain.swift:L116-L388) [depth 4]
+  calls ← main (apps/aria-mcp-server/Sources/aria-mcp/AriaMCPMain.swift:L59-L61) [depth 5]
+
+runCompiledChain — 2 symbols in 1 file
+  calls ← runCompiledChain (packages/kits/GeniusLocusKit/Sources/GeniusLocusKitMigrations/MigrationCatalog.swift:L211-L332) [depth 3]
+  calls ← prepare (packages/kits/GeniusLocusKit/Sources/GeniusLocusKitMigrations/MigrationCatalog.swift:L148-L195) [depth 4]
+
+runResident — 2 symbols in 1 file
+  calls ← runResident (apps/mootx01/Sources/mootx01-daemon/main.swift:L50-L57) [depth 9]
+  calls ← runResident (apps/mootx01/Sources/mootx01-daemon/main.swift:L61-L66) [depth 9]
+
+runResidentHost — 2 symbols in 1 file
+  calls ← runResidentHost (apps/moot-mgr/Sources/moot-mgr/MootMgrMain.swift:L66-L83) [depth 10]
+  calls ← main (apps/moot-mgr/Sources/moot-mgr/MootMgrMain.swift:L19-L61) [depth 11]
+
+LocusDrawerCorpusContentSource — 1 symbol in 1 file
+  extends ← LocusDrawerCorpusContentSource (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift:L40-L181) [depth 1]
+
+runSharedContentMigration — 1 symbol in 1 file
+  calls ← runSharedContentMigration (packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift:L486-L877) [depth 2]
+
+146 test suites also reference this code (not listed)
+
+who to tag
+  Test — 12 areas · 50 commits, last 2mo ago
+  Newton — 13 areas · 54 commits, last 3mo ago
+  bob-codedaptive — 3 areas · 23 commits, last 2mo ago
+
+⚠ 2 changed files not in the graph (docs/missions/MISSION_ORDER_SWEEP_LEFTOVERS.md, docs/status/KGF-ORDER-SWEEP-LEFTOVERS_REPORT.md) — no parser claims the extension, or the index predates the file.

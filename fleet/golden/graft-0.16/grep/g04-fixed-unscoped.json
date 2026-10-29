@@ -1,0 +1,575 @@
+{
+  "pattern": "remap(verb:",
+  "filesSearched": 5478,
+  "totalHits": 36,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.capture",
+        "name": "GeniusLocusKit.capture",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L168-L185"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 246,
+      "hits": [
+        {
+          "line": 175,
+          "text": "throw remap(verb: \"capture\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs#remap",
+        "name": "remap",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+        "span": "L556-L602"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+      "inDegree": 77,
+      "hits": [
+        {
+          "line": 556,
+          "text": "pub(crate) fn remap(verb: &str, estate_id: &str, error: LocusKitError) -> VerbError {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.remap",
+        "name": "GeniusLocusKit.remap",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2815-L2854"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 32,
+      "hits": [
+        {
+          "line": 2815,
+          "text": "func remap(verb: String, estateID: String = \"\", error: Error) -> Error {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.captureTunnel",
+        "name": "GeniusLocusKit.captureTunnel",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L192-L201"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 28,
+      "hits": [
+        {
+          "line": 199,
+          "text": "throw remap(verb: \"captureTunnel\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.mutate",
+        "name": "GeniusLocusKit.mutate",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L933-L944"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 24,
+      "hits": [
+        {
+          "line": 942,
+          "text": "throw remap(verb: \"mutate\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift#GeniusLocusKit.setMeta",
+        "name": "GeniusLocusKit.setMeta",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift",
+        "span": "L16-L28"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift",
+      "inDegree": 9,
+      "hits": [
+        {
+          "line": 26,
+          "text": "throw remap(verb: \"setMeta\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.expunge",
+        "name": "GeniusLocusKit.expunge",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L1107-L1447"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 9,
+      "hits": [
+        {
+          "line": 1132,
+          "text": "throw remap(verb: \"expunge\", estateID: handle.estateUUID.uuidString, error: error)"
+        },
+        {
+          "line": 1180,
+          "text": "throw remap(verb: \"expunge\", estateID: handle.estateUUID.uuidString, error: e)"
+        },
+        {
+          "line": 1182,
+          "text": "throw remap(verb: \"expunge\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.withdraw",
+        "name": "GeniusLocusKit.withdraw",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L951-L962"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 960,
+          "text": "throw remap(verb: \"withdraw\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.provisionEmbeddingProvider",
+        "name": "GeniusLocusKit.provisionEmbeddingProvider",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2411-L2428"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 2426,
+          "text": "throw remap(verb: \"provisionEmbeddingProvider\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.retireKGFact",
+        "name": "GeniusLocusKit.retireKGFact",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L682-L732"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 703,
+          "text": "throw remap(verb: \"retireKGFact\", estateID: handle.estateUUID.uuidString, error: error)"
+        },
+        {
+          "line": 721,
+          "text": "throw remap(verb: \"retireKGFact\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift#GeniusLocusKit.setSubjectRepresentation",
+        "name": "GeniusLocusKit.setSubjectRepresentation",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift",
+        "span": "L34-L51"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 49,
+          "text": "throw remap(verb: \"setSubjectRepresentation\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.propose",
+        "name": "GeniusLocusKit.propose",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L1787-L1802"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 1800,
+          "text": "throw remap(verb: \"propose\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift#GeniusLocusKit.setSSCFacts",
+        "name": "GeniusLocusKit.setSSCFacts",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift",
+        "span": "L56-L65"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/HandleWrites.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 63,
+          "text": "throw remap(verb: \"setSSCFacts\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.reviewableFact",
+        "name": "GeniusLocusKit.reviewableFact",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L780-L791"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 784,
+          "text": "catch { throw remap(verb: verb, estateID: handle.estateUUID.uuidString, error: error) }"
+        },
+        {
+          "line": 786,
+          "text": "throw remap(verb: verb, estateID: handle.estateUUID.uuidString,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.reanchor",
+        "name": "GeniusLocusKit.reanchor",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L1684-L1730"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1708,
+          "text": "throw remap(verb: \"reanchor\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.markRecallUsed",
+        "name": "GeniusLocusKit.markRecallUsed",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2280-L2293"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 2291,
+          "text": "throw remap(verb: \"markRecallUsed\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EncoderActivation.swift#GeniusLocusKit.provisionEncoderHead",
+        "name": "GeniusLocusKit.provisionEncoderHead",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EncoderActivation.swift",
+        "span": "L221-L228"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EncoderActivation.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 226,
+          "text": "throw remap(verb: \"provisionEncoderHead\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EncoderActivation.swift#GeniusLocusKit.provisionEncoderBatch",
+        "name": "GeniusLocusKit.provisionEncoderBatch",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EncoderActivation.swift",
+        "span": "L237-L244"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EncoderActivation.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 242,
+          "text": "throw remap(verb: \"provisionEncoderBatch\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.settleTunnel",
+        "name": "GeniusLocusKit.settleTunnel",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L208-L224"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 222,
+          "text": "throw remap(verb: \"settleTunnel\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.captureDatasetHandle",
+        "name": "GeniusLocusKit.captureDatasetHandle",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L229-L252"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 250,
+          "text": "throw remap(verb: \"captureDatasetHandle\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.stampFDCRecalculationFloor",
+        "name": "GeniusLocusKit.stampFDCRecalculationFloor",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L257-L268"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 266,
+          "text": "throw remap(verb: \"stampFDCRecalculationFloor\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.acceptKGFact",
+        "name": "GeniusLocusKit.acceptKGFact",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L747-L754"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 752,
+          "text": "throw remap(verb: \"acceptKGFact\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.declineKGFact",
+        "name": "GeniusLocusKit.declineKGFact",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L763-L771"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 769,
+          "text": "throw remap(verb: \"declineKGFact\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.reanchorAnchor",
+        "name": "GeniusLocusKit.reanchorAnchor",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L1734-L1750"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1748,
+          "text": "throw remap(verb: \"reanchorAnchor\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.associate",
+        "name": "GeniusLocusKit.associate",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L1811-L1825"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1823,
+          "text": "throw remap(verb: \"associate\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.countRecallTraces",
+        "name": "GeniusLocusKit.countRecallTraces",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2705-L2712"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 2710,
+          "text": "throw remap(verb: \"countRecallTraces\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/CrossEncoderActivation.swift#provisionCrossEncoderLimits",
+        "name": "provisionCrossEncoderLimits",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/CrossEncoderActivation.swift",
+        "span": "L71-L80"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/CrossEncoderActivation.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 78,
+          "text": "throw remap(verb: \"provisionCrossEncoderLimits\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.learn",
+        "name": "GeniusLocusKit.learn",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L1767-L1776"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1774,
+          "text": "throw remap(verb: \"learn\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.provisionLaneWeights",
+        "name": "GeniusLocusKit.provisionLaneWeights",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2304-L2321"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2319,
+          "text": "throw remap(verb: \"provisionLaneWeights\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.provisionRecallTuning",
+        "name": "GeniusLocusKit.provisionRecallTuning",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2350-L2367"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2365,
+          "text": "throw remap(verb: \"provisionRecallTuning\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.provisionFactConfidenceFloor",
+        "name": "GeniusLocusKit.provisionFactConfidenceFloor",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2653-L2664"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2662,
+          "text": "throw remap(verb: \"provisionFactConfidenceFloor\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift#GeniusLocusKit.countDrawerRows",
+        "name": "GeniusLocusKit.countDrawerRows",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+        "span": "L2719-L2726"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Verbs/VerbSurface.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2724,
+          "text": "throw remap(verb: \"countDrawerRows\", estateID: handle.estateUUID.uuidString, error: error)"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 5,
+    "baselineChars": 1203404
+  }
+}
