@@ -1,0 +1,37 @@
+repo	forge
+source	/Users/bob/devlop/forge
+ref	HEAD
+commit	f0f789b51c0d4f337ccb96c87379cbc4780ec4d2
+tracked_files	1150
+codegraph	1.6.2-sm.1
+node	v26.12.0
+load_before	40.22 33.92 26.48
+init_wall_s	8.72
+init_user_s	16.64
+init_sys_s	2.00
+init_rss_mb	1093
+load_after	39.94 34.07 26.62
+db_mb	37.3
+indexed_files	531
+nodes	12059
+edges	29752
+languages	swift 515, yaml 11, python 3, c 2
+symbol	writeControl
+symbol_callers	258
+callers_wall_s	0.67
+callers_user_s	0.45
+callers_sys_s	0.12
+callers_rss_mb	112
+query_wall_s	0.76
+query_user_s	0.45
+query_sys_s	0.11
+query_rss_mb	114
+impact_wall_s	0.97
+impact_user_s	0.46
+impact_sys_s	0.12
+impact_rss_mb	118
+sync_file	Package.swift
+sync_wall_s	1.52
+sync_user_s	1.04
+sync_sys_s	0.35
+sync_rss_mb	233

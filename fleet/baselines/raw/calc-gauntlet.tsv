@@ -1,0 +1,37 @@
+repo	calc-gauntlet
+source	/Users/bob/devlop/.repos/calc-gauntlet.git
+ref	develop
+commit	cfa7dc7db3ef82dd9799b6867e5654122b3f0f44
+tracked_files	14
+codegraph	1.6.2-sm.1
+node	v26.12.0
+load_before	48.22 28.23 23.52
+init_wall_s	4.93
+init_user_s	1.44
+init_sys_s	0.44
+init_rss_mb	421
+load_after	51.96 29.33 23.94
+db_mb	0.2
+indexed_files	10
+nodes	49
+edges	65
+languages	swift 10
+symbol	multiply
+symbol_callers	7
+callers_wall_s	1.53
+callers_user_s	0.44
+callers_sys_s	0.11
+callers_rss_mb	96
+query_wall_s	1.69
+query_user_s	0.45
+query_sys_s	0.11
+query_rss_mb	98
+impact_wall_s	1.25
+impact_user_s	0.43
+impact_sys_s	0.11
+impact_rss_mb	98
+sync_file	Package.swift
+sync_wall_s	1.74
+sync_user_s	0.63
+sync_sys_s	0.20
+sync_rss_mb	131

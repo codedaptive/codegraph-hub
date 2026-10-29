@@ -1,0 +1,37 @@
+repo	codegraph
+source	/Users/bob/devlop/.repos/codegraph.git
+ref	835aaa32c5b409b8e460033506aef76dfff13f55
+commit	835aaa32c5b409b8e460033506aef76dfff13f55
+tracked_files	1747
+codegraph	1.6.2-sm.1
+node	v26.12.0
+load_before	59.08 32.91 25.39
+init_wall_s	65.67
+init_user_s	85.57
+init_sys_s	5.94
+init_rss_mb	2824
+load_after	44.63 34.54 26.61
+db_mb	126.7
+indexed_files	1432
+nodes	35222
+edges	112906
+languages	typescript 1190, svelte 55, javascript 50, rust 28, c 27, go 20, dart 18, scala 10, php 6, astro 4, python 4, cpp 3, csharp 3, swift 3, java 2, kotlin 2, yaml 2, lua 1, luau 1, r 1, ruby 1, tsx 1
+symbol	init
+symbol_callers	928
+callers_wall_s	0.76
+callers_user_s	0.47
+callers_sys_s	0.12
+callers_rss_mb	125
+query_wall_s	0.63
+query_user_s	0.46
+query_sys_s	0.10
+query_rss_mb	116
+impact_wall_s	0.70
+impact_user_s	0.50
+impact_sys_s	0.11
+impact_rss_mb	138
+sync_file	__tests__/absent-member-calls.test.ts
+sync_wall_s	6.00
+sync_user_s	3.88
+sync_sys_s	0.90
+sync_rss_mb	565
