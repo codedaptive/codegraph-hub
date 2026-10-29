@@ -4,19 +4,19 @@
  * the `blast` command, `blastTool` is the `codegraph_blast` MCP tool. The zone's
  * `../extension.ts` contributes both.
  *
- * Static imports only: a lazy `require` of a `.ts` file fails under vitest
- * (see the host registry). The top level defines values and does no work,
- * because the hook loads this module on the main thread and in every
- * query-pool worker.
+ * The hook loads this module on the main thread of every CLI invocation and in
+ * every query-pool worker, so its top level imports only `path`, types and the
+ * tool definition (plain data). The engine (`CodeGraph`, which pulls in the
+ * database layer), project-root lookup, git helpers and blast itself are loaded
+ * with `await import()` inside the command's action and the tool's handler, as
+ * grep's are in `../extension.ts`; `await import()` of a `.ts` module works
+ * under vitest, where a lazy `require` would not.
  */
 import * as path from 'path';
 import type { Command } from 'commander';
-import { CodeGraph } from '../../../index';
-import { findNearestCodeGraphRoot } from '../../../directory';
-import { nestedRepositoryBelow } from '../../../sync/worktree';
+import type { CodeGraph } from '../../../index';
 import type { ToolResult } from '../../../mcp/tools';
 import type { ExtensionTool } from '../../host/api';
-import { blastToolHandler, runBlast } from './index';
 
 interface BlastCommandOptions {
   base?: string;
@@ -38,12 +38,14 @@ interface BlastCommandOptions {
  * An index that cannot be opened is no evidence the repository is excluded,
  * so it answers false and `runBlast` reports on the index as it stands.
  */
-function isUncoveredNestedRepo(start: string, indexRoot: string): boolean {
+async function isUncoveredNestedRepo(start: string, indexRoot: string): Promise<boolean> {
+  const { nestedRepositoryBelow } = await import('../../../sync/worktree');
   const nested = nestedRepositoryBelow(start, indexRoot);
   if (!nested) return false;
+  const engine = await import('../../../index');
   let cg: CodeGraph | null = null;
   try {
-    cg = CodeGraph.openSync(indexRoot, { readOnly: true });
+    cg = engine.CodeGraph.openSync(indexRoot, { readOnly: true });
     return !cg.hasFilesUnder(nested.relPath);
   } catch {
     return false;
@@ -58,7 +60,9 @@ function isUncoveredNestedRepo(start: string, indexRoot: string): boolean {
  * when that root's index leaves out the nested git repository `--path` is in
  * (`isUncoveredNestedRepo`), the resolved path itself is passed, so `runBlast`
  * prints its own no-index message and exits 1. Depth and format defaults are
- * `runBlast`'s (depth 2, text).
+ * `runBlast`'s (depth 2, text). The action is async (its modules load on
+ * first use); commander's `parse()` does not await it, but the process stays
+ * up until it settles, and it sets `process.exitCode` rather than exiting.
  */
 export function registerBlastCommand(program: Command): void {
   program
@@ -68,10 +72,12 @@ export function registerBlastCommand(program: Command): void {
     .option('-d, --depth <n|all>', 'How many dependent hops to walk, or "all" (default: 2)')
     .option('-f, --format <text|json|markdown>', 'Output format (default: text)')
     .option('-p, --path <path>', 'Project path')
-    .action((opts: BlastCommandOptions) => {
+    .action(async (opts: BlastCommandOptions) => {
       const start = path.resolve(opts.path ?? process.cwd());
+      const { findNearestCodeGraphRoot } = await import('../../../directory');
+      const { runBlast } = await import('./index');
       const found = findNearestCodeGraphRoot(start);
-      const root = found && !isUncoveredNestedRepo(start, found) ? found : start;
+      const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
       const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format });
       if (r.output) process.stdout.write(r.output);
       if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
@@ -128,9 +134,8 @@ export const blastTool: ExtensionTool = {
         },
       },
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  handle(args, ctx): ToolResult {
+  async handle(args, ctx): Promise<ToolResult> {
     // null is absent, as the host's own projectPath check treats it.
     const absent = (v: unknown): unknown => (v === null ? undefined : v);
     const projectPath = absent(args.projectPath);
@@ -154,6 +159,7 @@ export const blastTool: ExtensionTool = {
     const root = ctx.getCodeGraph(projectPath).getProjectRoot();
     // When not on a query-pool worker this runs on the main thread, and git plus the
     // graph walk block it for as long as the diff takes.
+    const { blastToolHandler } = await import('./index');
     return blastToolHandler({ projectPath: root, base, depth, format });
   },
 };

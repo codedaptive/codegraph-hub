@@ -5,11 +5,11 @@
  * `codegraph_blast` MCP tool (./blast/extension).
  *
  * The host loads this module on the main thread of every CLI invocation and in
- * every query-pool worker. For grep, its top level imports only the tool
- * definition (plain data) and types, and the search, which pulls in the
- * database layer, is imported inside the command's action and the tool's
- * handler. Blast's wiring is imported statically: its module does no work at
- * load, and it imports the database layer the CLI and the workers load anyway.
+ * every query-pool worker, so loading it must not load the database layer.
+ * Its top level imports only the tool definitions (plain data), types and
+ * blast's wiring module, which follows the same rule. Grep's search and all of
+ * blast's work, both of which pull in the database layer, are imported inside
+ * the commands' actions and the tools' handlers.
  */
 import type { Command } from 'commander';
 import type { CodegraphExtension } from '../host/api';

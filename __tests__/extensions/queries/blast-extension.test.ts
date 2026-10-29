@@ -254,3 +254,24 @@ describe('codegraph blast (built binary, zone module found by discovery)', () =>
     expect(res.stdout.split('\n')[0]).toBe('blast radius — working tree vs HEAD (depth 2)');
   });
 });
+
+describe('blast registration is light (built modules)', () => {
+  // The host loads the zone module on every CLI call and in every query-pool
+  // worker, so loading it must not pull in the engine (src/index) or the
+  // database layer; those are imported inside the action and the handler.
+  for (const rel of ['extensions/queries/blast/extension.js', 'extensions/queries/extension.js']) {
+    it(`requiring dist/${rel} loads neither dist/index.js nor dist/db/`, () => {
+      const distRoot = path.resolve(__dirname, '../../../dist');
+      const script =
+        `require(${JSON.stringify(path.join(distRoot, rel))});` +
+        'process.stdout.write(JSON.stringify(Object.keys(require.cache)));';
+      const res = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', env: childEnv() });
+      expect(res.status, res.stderr).toBe(0);
+      const loaded: string[] = JSON.parse(res.stdout);
+      const heavy = loaded.filter(
+        (p) => p === path.join(distRoot, 'index.js') || p.startsWith(path.join(distRoot, 'db') + path.sep),
+      );
+      expect(heavy).toEqual([]);
+    });
+  }
+});
