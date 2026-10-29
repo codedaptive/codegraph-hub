@@ -1,0 +1,160 @@
+{
+  "pattern": "backfill",
+  "filesSearched": 228,
+  "totalHits": 18,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Sources/ConvergenceKitFederation/FederationSyncEngine.swift#FederationStateActor",
+        "name": "FederationStateActor",
+        "kind": "class",
+        "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKitFederation/FederationSyncEngine.swift",
+        "span": "L253-L1602"
+      },
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKitFederation/FederationSyncEngine.swift",
+      "inDegree": 30,
+      "hits": [
+        {
+          "line": 1135,
+          "text": "///       lossless HLC (ColumnHLCStore.swift header). v7 has no backfill step."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift#CKSideSchema.ensure",
+        "name": "CKSideSchema.ensure",
+        "kind": "method",
+        "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+        "span": "L418-L421"
+      },
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+      "inDegree": 17,
+      "hits": [
+        {
+          "line": 420,
+          "text": "try await backfillSyncHLCWireIfNeeded(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift#CKSideSchema.backfillSyncHLCWireIfNeeded",
+        "name": "CKSideSchema.backfillSyncHLCWireIfNeeded",
+        "kind": "method",
+        "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+        "span": "L440-L463"
+      },
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 440,
+          "text": "static func backfillSyncHLCWireIfNeeded(storage: any Storage) async throws {"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/LegacyPackedHLCMigration.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "// backfill `_ck_sync_meta.sync_hlc`. It is the inverse of the packing in"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 44,
+          "text": "//   - _ck_sync_meta gains sync_hlc_wire (BLOB), backfilled from sync_hlc."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift#CKSideSchema",
+        "name": "CKSideSchema",
+        "kind": "enum",
+        "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+        "span": "L66-L464"
+      },
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKit/SideSchema.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 130,
+          "text": "// shipped v1.0.33 data, so the v9 → v10 step is followed by a backfill in"
+        },
+        {
+          "line": 131,
+          "text": "// ensure(storage:). The backfill reconstructs the value from `sync_hlc` via"
+        },
+        {
+          "line": 179,
+          "text": "//                  no shipped rows, so it needs no backfill."
+        },
+        {
+          "line": 390,
+          "text": "//   tracking. That self-heals, and no backfill is needed: the"
+        },
+        {
+          "line": 394,
+          "text": "//   data, so addColumn is not enough. ensure(storage:) runs a backfill"
+        },
+        {
+          "line": 395,
+          "text": "//   right after this migration (backfillSyncHLCWireIfNeeded, below),"
+        },
+        {
+          "line": 416,
+          "text": "/// ensureSchema(storage:) delegates here. The `sync_hlc_wire` backfill runs"
+        },
+        {
+          "line": 417,
+          "text": "/// after the migration; see `backfillSyncHLCWireIfNeeded` below."
+        },
+        {
+          "line": 423,
+          "text": "// MARK: - sync_hlc_wire backfill"
+        },
+        {
+          "line": 425,
+          "text": "/// One-time backfill of `sync_hlc_wire` from the legacy `sync_hlc` packed"
+        },
+        {
+          "line": 433,
+          "text": "/// after the first successful backfill on any given estate — safe to run"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/Sources/ConvergenceKitCloudKit/Engine/SyncMetaStore.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 8,
+          "text": "// legacy packed `sync_hlc` column. CKSideSchema.ensure(storage:) backfills"
+        },
+        {
+          "line": 10,
+          "text": "// (`backfillSyncHLCWireIfNeeded`; see LegacyPackedHLCMigration.swift for the"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 4,
+    "baselineChars": 116054
+  }
+}

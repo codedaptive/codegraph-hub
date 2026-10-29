@@ -228,13 +228,34 @@ describe('Shared MCP daemon (issue #411)', () => {
   }, 45_000);
 
   it.runIf(process.platform !== 'win32')('stops despite a socket still waiting for its client hello (#1963)', async () => {
-    const server = spawnServer(tempDir);
+    // The 1.5 s window below times only the teardown a hello-waiting socket
+    // could block (server.close() waits for every open connection). Two other
+    // waits in stop() are deliberate and scale with machine load, so the test
+    // keeps them out of the window rather than widening it:
+    //   - the query pool: stop waits for a worker still starting up before it
+    //     terminates it (WORKER_START_SETTLE_MS in src/mcp/query-pool.ts). The
+    //     daemon starts its first worker right after attach, so a SIGTERM sent
+    //     then waits out the rest of that start. CODEGRAPH_QUERY_POOL_SIZE=0
+    //     runs no pool.
+    //   - the startup catch-up sync: releasing the project waits for it
+    //     (retire in src/mcp/project-lifecycle.ts). A tool call waits on that
+    //     same sync before it answers, and CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS=0
+    //     makes that wait unbounded, so its reply means the sync is done.
+    // Measured on a machine at load 35-41 with both waits in the window: 7 of
+    // 10 stops took longer than 1.5 s (up to 2.6 s), while closing the server
+    // took 1-3 ms (#1963).
+    const server = spawnServer(tempDir, { CODEGRAPH_QUERY_POOL_SIZE: '0', CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS: '0' });
     servers.push(server);
     sendInitialize(server.child, `file://${tempDir}`, 1);
     await waitFor(() => findResponse(server.stdout, 1), 10000);
     // The lock is written before the socket is bound; an attached proxy proves
     // the daemon is listening (#1773).
     await waitFor(() => server.stderr.some((l) => l.includes('Attached to shared daemon')), 10000);
+    sendMessage(server.child, {
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'codegraph_files', arguments: {} },
+    });
+    expect((await waitFor(() => findResponse(server.stdout, 2), 10000)).error).toBeUndefined();
     const pid = await waitFor(() => readLockPid(realRoot), 10000);
     const raw = net.connect(getDaemonSocketPath(realRoot));
     try {

@@ -1,0 +1,3534 @@
+{
+  "pattern": "EstateFormatStore",
+  "filesSearched": 850,
+  "totalHits": 258,
+  "groups": [
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift#GeniusLocusKit.provision",
+        "name": "GeniusLocusKit.provision",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift",
+        "span": "L93-L354"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift",
+      "inDegree": 158,
+      "hits": [
+        {
+          "line": 220,
+          "text": "let sourceFormatStore = EstateFormatStore(storage: storage)"
+        },
+        {
+          "line": 225,
+          "text": "let formatStore = EstateFormatStore(storage: formatStorage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKitMigrations/MigrationCatalog.swift#GLKMigrationCatalog.prepare",
+        "name": "GLKMigrationCatalog.prepare",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKitMigrations/MigrationCatalog.swift",
+        "span": "L169-L225"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKitMigrations/MigrationCatalog.swift",
+      "inDegree": 102,
+      "hits": [
+        {
+          "line": 179,
+          "text": "let formatStore = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateFormat.swift#EstateFormatStore",
+        "name": "EstateFormatStore",
+        "kind": "class",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateFormat.swift",
+        "span": "L105-L182"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateFormat.swift",
+      "inDegree": 97,
+      "hits": [
+        {
+          "line": 105,
+          "text": "public actor EstateFormatStore {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/hydration.rs#composite_schema",
+        "name": "composite_schema",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/hydration.rs",
+        "span": "L126-L203"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/hydration.rs",
+      "inDegree": 54,
+      "hits": [
+        {
+          "line": 134,
+          "text": "let estate_format = crate::estate_format::EstateFormatStore::schema_declaration();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs#provision",
+        "name": "provision",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+        "span": "L12465-L12773"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/coordinator.rs",
+      "inDegree": 17,
+      "hits": [
+        {
+          "line": 12572,
+          "text": "let source_format = crate::estate_format::EstateFormatStore::new(Arc::clone(&source_storage))"
+        },
+        {
+          "line": 12576,
+          "text": "let backing_format = crate::estate_format::EstateFormatStore::new(Arc::clone(&backing_storage))"
+        },
+        {
+          "line": 12717,
+          "text": "crate::estate_format::EstateFormatStore::new(Arc::clone(&source_storage))"
+        },
+        {
+          "line": 12724,
+          "text": "crate::estate_format::EstateFormatStore::new(Arc::clone(&backing_storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#makeEstate",
+        "name": "makeEstate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L122-L135"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 129,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift#makeEstate",
+        "name": "makeEstate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+        "span": "L31-L44"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+      "inDegree": 8,
+      "hits": [
+        {
+          "line": 38,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs#make_estate",
+        "name": "make_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+        "span": "L22-L41"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 28,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs#make_estate",
+        "name": "make_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+        "span": "L155-L180"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 167,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift#makeEstate",
+        "name": "makeEstate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+        "span": "L24-L37"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+      "inDegree": 7,
+      "hits": [
+        {
+          "line": 31,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs#make_estate",
+        "name": "make_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs",
+        "span": "L36-L62"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 48,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs#make_estate",
+        "name": "make_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+        "span": "L23-L42"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 29,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#makeEstate",
+        "name": "makeEstate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L60-L81"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 6,
+      "hits": [
+        {
+          "line": 72,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs#make_estate",
+        "name": "make_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+        "span": "L62-L92"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 79,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_13ToV1_14/DerivationCoordinationMigration.swift#DerivationCoordinationMigration.run",
+        "name": "DerivationCoordinationMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_13ToV1_14/DerivationCoordinationMigration.swift",
+        "span": "L15-L69"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_13ToV1_14/DerivationCoordinationMigration.swift",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 16,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_16ToV1_17/GrantWireFormMigration.swift#GrantWireFormMigration.run",
+        "name": "GrantWireFormMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_16ToV1_17/GrantWireFormMigration.swift",
+        "span": "L53-L105"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_16ToV1_17/GrantWireFormMigration.swift",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 55,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs#make_estate",
+        "name": "make_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+        "span": "L117-L143"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 130,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift#GeniusLocusKit.runSharedContentMigration",
+        "name": "GeniusLocusKit.runSharedContentMigration",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift",
+        "span": "L475-L880"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 496,
+          "text": "if try await EstateFormatStore(storage: storage).readIfPresent() == .current {"
+        },
+        {
+          "line": 524,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_1, now: now)"
+        },
+        {
+          "line": 554,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_1, now: now)"
+        },
+        {
+          "line": 836,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_1, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift#historical",
+        "name": "historical",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+        "span": "L14-L26"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 24,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_13, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#makeEstate",
+        "name": "makeEstate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L85-L105"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 4,
+      "hits": [
+        {
+          "line": 96,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_coordination_migration.rs#migrate_derivation_coordination",
+        "name": "migrate_derivation_coordination",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_coordination_migration.rs",
+        "span": "L26-L81"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_coordination_migration.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 27,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/grant_wire_form_migration.rs#migrate_grant_wire_form",
+        "name": "migrate_grant_wire_form",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/grant_wire_form_migration.rs",
+        "span": "L69-L117"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/grant_wire_form_migration.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 71,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/matrix_record_migration.rs#migrate_matrix_records",
+        "name": "migrate_matrix_records",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/matrix_record_migration.rs",
+        "span": "L76-L175"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/matrix_record_migration.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 91,
+          "text": "let format = EstateFormatStore::new(storage.clone());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs#estate",
+        "name": "estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+        "span": "L48-L54"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 52,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(stamp, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs#historical",
+        "name": "historical",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+        "span": "L18-L26"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 24,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::V1_13, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs#seed",
+        "name": "seed",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+        "span": "L20-L40"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 22,
+          "text": "EstateFormatStore::new(Arc::clone(storage)).stamp(format, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_14ToV1_15/TemplateMaskMigration.swift#TemplateMaskMigration.run",
+        "name": "TemplateMaskMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_14ToV1_15/TemplateMaskMigration.swift",
+        "span": "L18-L27"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_14ToV1_15/TemplateMaskMigration.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 19,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_15ToV1_16/DerivationQualityRankMigration.swift#DerivationQualityRankMigration.run",
+        "name": "DerivationQualityRankMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_15ToV1_16/DerivationQualityRankMigration.swift",
+        "span": "L17-L25"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_15ToV1_16/DerivationQualityRankMigration.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 18,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_17ToV1_18/TombstoneSharedRowsMigration.swift#TombstoneSharedRowsMigration.run",
+        "name": "TombstoneSharedRowsMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_17ToV1_18/TombstoneSharedRowsMigration.swift",
+        "span": "L38-L57"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_17ToV1_18/TombstoneSharedRowsMigration.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 40,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift#MatrixRecordMigration.run",
+        "name": "MatrixRecordMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift",
+        "span": "L36-L136"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_9ToV1_10/MatrixRecordMigration.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 67,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift#GrantWireFormMigrationTests.verifiesAfterHop",
+        "name": "GrantWireFormMigrationTests.verifiesAfterHop",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+        "span": "L217-L240"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 228,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_16, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_quality_rank_migration.rs#migrate_derivation_quality_rank",
+        "name": "migrate_derivation_quality_rank",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_quality_rank_migration.rs",
+        "span": "L25-L36"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_quality_rank_migration.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 27,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_canonical_value_migration.rs#migrate_fact_canonical_values",
+        "name": "migrate_fact_canonical_values",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_canonical_value_migration.rs",
+        "span": "L16-L39"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_canonical_value_migration.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 18,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/template_mask_migration.rs#migrate_template_mask",
+        "name": "migrate_template_mask",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/template_mask_migration.rs",
+        "span": "L22-L32"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/template_mask_migration.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 23,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/tombstone_shared_rows_migration.rs#migrate_tombstone_shared_rows",
+        "name": "migrate_tombstone_shared_rows",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/tombstone_shared_rows_migration.rs",
+        "span": "L45-L66"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/tombstone_shared_rows_migration.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 47,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/wing_lexicon_migration.rs#migrate_wing_lexicon",
+        "name": "migrate_wing_lexicon",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/wing_lexicon_migration.rs",
+        "span": "L16-L39"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/wing_lexicon_migration.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 18,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs#historical",
+        "name": "historical",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+        "span": "L35-L52"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 47,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(stamp, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs#fixture",
+        "name": "fixture",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+        "span": "L54-L75"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 61,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs#chain_estate",
+        "name": "chain_estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+        "span": "L275-L291"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 286,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::V1_16, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs#estate",
+        "name": "estate",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+        "span": "L42-L56"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 50,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::V1_11, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs#historical",
+        "name": "historical",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+        "span": "L25-L57"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 36,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(stamp, NOW).unwrap();"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs#resolve_legacy_refusal",
+        "name": "resolve_legacy_refusal",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+        "span": "L526-L544"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 533,
+          "text": "EstateFormatStore::new(Arc::clone(&self.storage)).read_if_present(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs#refusals_on_an_estate_at",
+        "name": "refusals_on_an_estate_at",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs",
+        "span": "L205-L227"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 208,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(stamp, 1_780_272_000_000).expect(\"stamp\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs#debits_on_an_estate_at",
+        "name": "debits_on_an_estate_at",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs",
+        "span": "L256-L274"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 259,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(stamp, 1_780_272_000_000).expect(\"stamp\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift#GeniusLocusKit.wireSubstores",
+        "name": "GeniusLocusKit.wireSubstores",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift",
+        "span": "L518-L683"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 530,
+          "text": "try await EstateFormatStore(storage: backingStorage).requireCurrent()"
+        },
+        {
+          "line": 642,
+          "text": "try await EstateFormatStore(storage: backingStorage).requireCurrent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_11ToV1_12/WingLexiconMigration.swift#WingLexiconMigration.run",
+        "name": "WingLexiconMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_11ToV1_12/WingLexiconMigration.swift",
+        "span": "L15-L33"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_11ToV1_12/WingLexiconMigration.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 16,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_12ToV1_13/FactCanonicalValueMigration.swift#FactCanonicalValueMigration.run",
+        "name": "FactCanonicalValueMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_12ToV1_13/FactCanonicalValueMigration.swift",
+        "span": "L15-L30"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_12ToV1_13/FactCanonicalValueMigration.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 16,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_5ToV1_6/IndexCompositionColumnDropMigration.swift#GeniusLocusKit.runIndexCompositionColumnDropMigration",
+        "name": "GeniusLocusKit.runIndexCompositionColumnDropMigration",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_5ToV1_6/IndexCompositionColumnDropMigration.swift",
+        "span": "L83-L117"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_5ToV1_6/IndexCompositionColumnDropMigration.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 110,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_6, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift#DerivationQualityRankMigrationTests.historical",
+        "name": "DerivationQualityRankMigrationTests.historical",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift",
+        "span": "L18-L34"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 28,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift#GrantWireFormMigrationTests.chainEstate",
+        "name": "GrantWireFormMigrationTests.chainEstate",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+        "span": "L282-L300"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 296,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_16, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift#TemplateMaskMigrationTests.historical",
+        "name": "TemplateMaskMigrationTests.historical",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift",
+        "span": "L16-L47"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 25,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift#TombstoneSharedRowsMigrationTests.estate",
+        "name": "TombstoneSharedRowsMigrationTests.estate",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+        "span": "L22-L36"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 26,
+          "text": "try await EstateFormatStore(storage: storage).stamp(format, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_derivation_migration.rs#migrate_fact_derivations",
+        "name": "migrate_fact_derivations",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_derivation_migration.rs",
+        "span": "L17-L55"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_derivation_migration.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 20,
+          "text": "let format = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs#sqlite_vector_state_after_wire",
+        "name": "sqlite_vector_state_after_wire",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+        "span": "L302-L376"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 338,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Grants/GrantStore.swift#GrantStore.legacyRefusal",
+        "name": "GrantStore.legacyRefusal",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Grants/GrantStore.swift",
+        "span": "L310-L316"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Grants/GrantStore.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 312,
+          "text": "let found = try? await EstateFormatStore(storage: storage).readIfPresent(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift#GeniusLocusKit.sharedContentLaneMustStayDark",
+        "name": "GeniusLocusKit.sharedContentLaneMustStayDark",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift",
+        "span": "L438-L467"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 459,
+          "text": "if try await EstateFormatStore(storage: storage).readIfPresent() == .current {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_10ToV1_11/FactDerivationMigration.swift#FactDerivationMigration.run",
+        "name": "FactDerivationMigration.run",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_10ToV1_11/FactDerivationMigration.swift",
+        "span": "L14-L36"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_10ToV1_11/FactDerivationMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 15,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_4ToV1_5/StorageLedgerKitIDMigration.swift#GeniusLocusKit.runStorageLedgerKitIDMigration",
+        "name": "GeniusLocusKit.runStorageLedgerKitIDMigration",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_4ToV1_5/StorageLedgerKitIDMigration.swift",
+        "span": "L136-L157"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_4ToV1_5/StorageLedgerKitIDMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 151,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_5, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_6ToV1_7/WholeRecordFloatVacuumMigration.swift#GeniusLocusKit.runWholeRecordFloatVacuumMigration",
+        "name": "GeniusLocusKit.runWholeRecordFloatVacuumMigration",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_6ToV1_7/WholeRecordFloatVacuumMigration.swift",
+        "span": "L101-L180"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_6ToV1_7/WholeRecordFloatVacuumMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 120,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_7, now: now)"
+        },
+        {
+          "line": 172,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_7, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_7ToV1_8/FactExtractionSettingMigration.swift#GeniusLocusKit.runFactExtractionSettingMigration",
+        "name": "GeniusLocusKit.runFactExtractionSettingMigration",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_7ToV1_8/FactExtractionSettingMigration.swift",
+        "span": "L47-L92"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_7ToV1_8/FactExtractionSettingMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 87,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_8, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_8ToV1_9/PreferenceSeedMigration.swift#GeniusLocusKit.runPreferenceSeedMigration",
+        "name": "GeniusLocusKit.runPreferenceSeedMigration",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_8ToV1_9/PreferenceSeedMigration.swift",
+        "span": "L78-L138"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_8ToV1_9/PreferenceSeedMigration.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 133,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_9, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift#TombstoneSharedRowsMigrationTests.sqliteEstate",
+        "name": "TombstoneSharedRowsMigrationTests.sqliteEstate",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+        "span": "L84-L102"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 98,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_17, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.sqliteVectorStateAfterWire",
+        "name": "StorageLedgerKitIDMigrationTests.sqliteVectorStateAfterWire",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L245-L300"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 282,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_4, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_coordination_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/derivation_quality_rank_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 11,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_canonical_value_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_derivation_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 6,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_extraction_setting_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 18,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_extraction_setting_migration.rs#run_fact_extraction_setting_migration~2",
+        "name": "run_fact_extraction_setting_migration~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_extraction_setting_migration.rs",
+        "span": "L71-L125"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/fact_extraction_setting_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 120,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/grant_wire_form_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 39,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/index_composition_column_drop_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 34,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/index_composition_column_drop_migration.rs#run_index_composition_column_drop_migration~2",
+        "name": "run_index_composition_column_drop_migration~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/index_composition_column_drop_migration.rs",
+        "span": "L99-L133"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/index_composition_column_drop_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 124,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 167,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatError, EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs#run_migration_chain~2",
+        "name": "run_migration_chain~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs",
+        "span": "L288-L299"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 295,
+          "text": "if EstateFormatStore::new(storage).read_if_present()?.is_some_and(|f| f < EstateFormatVersion::CURRENT) {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs#run_offline_migration_chain~2",
+        "name": "run_offline_migration_chain~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs",
+        "span": "L301-L355"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 310,
+          "text": "let format_store = EstateFormatStore::new(Arc::clone(&storage));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/matrix_record_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 3,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/preference_seed_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 24,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/preference_seed_migration.rs#run_preference_seed_migration~2",
+        "name": "run_preference_seed_migration~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/preference_seed_migration.rs",
+        "span": "L113-L170"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/preference_seed_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 165,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 21,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs#shared_content_lane_must_stay_dark~2",
+        "name": "shared_content_lane_must_stay_dark~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+        "span": "L571-L607"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 597,
+          "text": "Ok(None) => match EstateFormatStore::new(Arc::clone(storage)).read_if_present() {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs#run_shared_content_migration~2",
+        "name": "run_shared_content_migration~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+        "span": "L704-L1312"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/shared_content_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 729,
+          "text": "let found_format = EstateFormatStore::new(Arc::clone(&storage))"
+        },
+        {
+          "line": 799,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        },
+        {
+          "line": 843,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        },
+        {
+          "line": 1250,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/storage_ledger_kit_id_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 36,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/storage_ledger_kit_id_migration.rs#run_storage_ledger_kit_id_migration~2",
+        "name": "run_storage_ledger_kit_id_migration~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/storage_ledger_kit_id_migration.rs",
+        "span": "L176-L195"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/storage_ledger_kit_id_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 189,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/template_mask_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 10,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/tombstone_shared_rows_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 25,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/whole_record_float_vacuum_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 46,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/src/whole_record_float_vacuum_migration.rs#run_whole_record_float_vacuum_migration~2",
+        "name": "run_whole_record_float_vacuum_migration~2",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/src/whole_record_float_vacuum_migration.rs",
+        "span": "L123-L220"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/whole_record_float_vacuum_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 143,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        },
+        {
+          "line": 208,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/src/wing_lexicon_migration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "use genius_locus_kit::{derivations::DerivationStore, estate_format::{EstateFormatStore, EstateFormatVersion}, hydration::*};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs#a_format_1_15_estate_gains_the_rank_column_and_stamps_1_16_once",
+        "name": "a_format_1_15_estate_gains_the_rank_column_and_stamps_1_16_once",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+        "span": "L74-L91"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 87,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_16));"
+        },
+        {
+          "line": 90,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_16));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs#any_other_stamp_is_refused_without_change",
+        "name": "any_other_stamp_is_refused_without_change",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+        "span": "L94-L101"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/derivation_quality_rank_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 100,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_14));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 9,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs#fresh_offline_chain_installs_current_p03_layout_without_historical_capsule",
+        "name": "fresh_offline_chain_installs_current_p03_layout_without_historical_capsule",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+        "span": "L100-L113"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 102,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&f.storage)).read_if_present().unwrap(), None);"
+        },
+        {
+          "line": 109,
+          "text": "EstateFormatStore::new(Arc::clone(&f.storage)).read_if_present().unwrap(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs#v1_10_requires_offline_upgrade_and_retry_preserves_manual_facts",
+        "name": "v1_10_requires_offline_upgrade_and_retry_preserves_manual_facts",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+        "span": "L116-L170"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_derivation_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 139,
+          "text": "EstateFormatStore::new(Arc::clone(&f.storage)).read_if_present().unwrap(),"
+        },
+        {
+          "line": 148,
+          "text": "EstateFormatStore::new(Arc::clone(&f.storage)).read_if_present().unwrap(),"
+        },
+        {
+          "line": 162,
+          "text": "EstateFormatStore::new(Arc::clone(&f.storage)).read_if_present().unwrap(),"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 12,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs#g3_migration_preserves_explicit_off",
+        "name": "g3_migration_preserves_explicit_off",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+        "span": "L149-L179"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 175,
+          "text": "let stamp = EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs#g4_migration_stamps_v1_8",
+        "name": "g4_migration_stamps_v1_8",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+        "span": "L186-L200"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 193,
+          "text": "let stamp = EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs#g5_migration_is_idempotent",
+        "name": "g5_migration_is_idempotent",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+        "span": "L207-L228"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/fact_extraction_setting_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 224,
+          "text": "let stamp = EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 12,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs#a_format_1_16_estate_converts_every_legacy_row_leaves_the_rest_and_stamps_1_17_once",
+        "name": "a_format_1_16_estate_converts_every_legacy_row_leaves_the_rest_and_stamps_1_17_once",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+        "span": "L133-L194"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 170,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_17));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs#any_other_stamp_is_refused_without_change",
+        "name": "any_other_stamp_is_refused_without_change",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+        "span": "L197-L207"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/grant_wire_form_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 206,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_15));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 28,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs#read_stamp",
+        "name": "read_stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+        "span": "L145-L150"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 146,
+          "text": "EstateFormatStore::new(Arc::clone(storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs#sqlite_estate_loses_the_column_and_keeps_the_row",
+        "name": "sqlite_estate_loses_the_column_and_keeps_the_row",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+        "span": "L269-L318"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/index_composition_column_drop_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 281,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs#corrupt_calibration_blocks_drop_then_retry_preserves_and_reclaims",
+        "name": "corrupt_calibration_blocks_drop_then_retry_preserves_and_reclaims",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs",
+        "span": "L40-L121"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 57,
+          "text": "let format = EstateFormatStore::new(storage.clone());"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs#fixture_over_the_requested_floor_still_migrates",
+        "name": "fixture_over_the_requested_floor_still_migrates",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs",
+        "span": "L138-L205"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/matrix_record_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 180,
+          "text": "let format = EstateFormatStore::new(storage.clone());"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 21,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs#read_stamp",
+        "name": "read_stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs",
+        "span": "L64-L68"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/migration_chain_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 65,
+          "text": "EstateFormatStore::new(Arc::clone(storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 7,
+          "text": "estate_format::{EstateFormatStore, EstateFormatVersion},"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs#fresh_offline_chain_installs_current_wing_payload_schema",
+        "name": "fresh_offline_chain_installs_current_wing_payload_schema",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+        "span": "L90-L99"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 92,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), None);"
+        },
+        {
+          "line": 94,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs#v1_11_upgrade_preserves_source_fact_and_p03_data_then_retries",
+        "name": "v1_11_upgrade_preserves_source_fact_and_p03_data_then_retries",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+        "span": "L102-L127"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p06_wing_lexicon_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 108,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::V1_11, NOW).unwrap();"
+        },
+        {
+          "line": 112,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(),"
+        },
+        {
+          "line": 123,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(),"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs#fresh_chain_admits_canonical_schema_before_current_stamp",
+        "name": "fresh_chain_admits_canonical_schema_before_current_stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs",
+        "span": "L26-L36"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 31,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::CURRENT, NOW).unwrap();"
+        },
+        {
+          "line": 32,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::CURRENT));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs#v1_12_capsule_preserves_p03_p06_rows_and_retries",
+        "name": "v1_12_capsule_preserves_p03_p06_rows_and_retries",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs",
+        "span": "L39-L85"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p11_fact_canonical_value_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 70,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::V1_12, NOW).unwrap();"
+        },
+        {
+          "line": 74,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_13));"
+        },
+        {
+          "line": 82,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_13));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 3,
+          "text": "use genius_locus_kit::{derivations::*, estate_format::{EstateFormatStore, EstateFormatVersion}, hydration::*};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs#actual_1_13_layout_preserves_legacy_and_backfills_verified_binding_idempotently",
+        "name": "actual_1_13_layout_preserves_legacy_and_backfills_verified_binding_idempotently",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+        "span": "L77-L108"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 99,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_14));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs#inconsistent_source_and_conflicting_retry_marker_refuse_without_stamp",
+        "name": "inconsistent_source_and_conflicting_retry_marker_refuse_without_stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+        "span": "L125-L137"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 134,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_13));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs#schema47_offline_preparation_keeps_locus_ownership",
+        "name": "schema47_offline_preparation_keeps_locus_ownership",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+        "span": "L142-L191"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/p14_derivation_coordination_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 163,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).stamp(EstateFormatVersion::V1_10, NOW).unwrap();"
+        },
+        {
+          "line": 175,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::CURRENT));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 12,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs#g1_migration_seeds_five_preferences_creates_table_and_stamps_v1_9",
+        "name": "g1_migration_seeds_five_preferences_creates_table_and_stamps_v1_9",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+        "span": "L49-L102"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 97,
+          "text": "let stamp = EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs#g2_migration_preserves_explicit_off",
+        "name": "g2_migration_preserves_explicit_off",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+        "span": "L158-L194"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/preference_seed_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 190,
+          "text": "let stamp = EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs#estate_format_distinguishes_unstamped_from_registered_missing_row",
+        "name": "estate_format_distinguishes_unstamped_from_registered_missing_row",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+        "span": "L53-L66"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 54,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatError, EstateFormatStore};"
+        },
+        {
+          "line": 57,
+          "text": "let store = EstateFormatStore::new(Arc::clone(&storage));"
+        },
+        {
+          "line": 60,
+          "text": ".migrate(&EstateFormatStore::schema_declaration())"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs#below_compiled_floor_refuses_before_legacy_deletion",
+        "name": "below_compiled_floor_refuses_before_legacy_deletion",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+        "span": "L69-L85"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 71,
+          "text": "genius_locus_kit::estate_format::EstateFormatStore::new(Arc::clone(&est.storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs#future_format_refuses_before_migration_schema_or_legacy_deletion",
+        "name": "future_format_refuses_before_migration_schema_or_legacy_deletion",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+        "span": "L88-L110"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 90,
+          "text": "genius_locus_kit::estate_format::EstateFormatStore::new(Arc::clone(&est.storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs#malformed_registered_format_fails_closed_before_destructive_work",
+        "name": "malformed_registered_format_fails_closed_before_destructive_work",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+        "span": "L113-L146"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 115,
+          "text": "genius_locus_kit::estate_format::EstateFormatStore::new(Arc::clone(&est.storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs#current_format_without_migration_record_does_not_dark_attached_corpus",
+        "name": "current_format_without_migration_record_does_not_dark_attached_corpus",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+        "span": "L186-L209"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/shared_content_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 191,
+          "text": "genius_locus_kit::estate_format::EstateFormatStore::new(backing.clone())"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 32,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs#read_stamp",
+        "name": "read_stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+        "span": "L94-L99"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/storage_ledger_kit_id_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 95,
+          "text": "EstateFormatStore::new(Arc::clone(storage))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 5,
+          "text": "use genius_locus_kit::{estate_format::{EstateFormatStore, EstateFormatVersion}, hydration::*};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs#a_format_1_14_estate_gains_the_mask_at_zero_and_stamps_1_15_once",
+        "name": "a_format_1_14_estate_gains_the_mask_at_zero_and_stamps_1_15_once",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+        "span": "L77-L98"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 94,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_15));"
+        },
+        {
+          "line": 97,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_15));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs#any_other_stamp_is_refused_without_change",
+        "name": "any_other_stamp_is_refused_without_change",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+        "span": "L101-L108"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/template_mask_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 107,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(EstateFormatVersion::V1_13));"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 9,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs#a_tombstone_without_bit_16_gains_it_and_other_rows_are_untouched",
+        "name": "a_tombstone_without_bit_16_gains_it_and_other_rows_are_untouched",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+        "span": "L47-L79"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 72,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs#any_other_stamp_is_refused_before_a_write",
+        "name": "any_other_stamp_is_refused_before_a_write",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+        "span": "L82-L94"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 92,
+          "text": "assert_eq!(EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(), Some(stamp));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs#the_migration_chain_ends_with_the_hop",
+        "name": "the_migration_chain_ends_with_the_hop",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+        "span": "L100-L120"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/tombstone_shared_rows_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 117,
+          "text": "EstateFormatStore::new(Arc::clone(&storage)).read_if_present().unwrap(),"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 41,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs#read_stamp",
+        "name": "read_stamp",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+        "span": "L147-L152"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 148,
+          "text": "EstateFormatStore::new(Arc::clone(storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs#sqlite_estate_sidecar_is_rebuilt_and_loads_without_a_rebuild",
+        "name": "sqlite_estate_sidecar_is_rebuilt_and_loads_without_a_rebuild",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+        "span": "L267-L309"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust-migrations/tests/whole_record_float_vacuum_migration_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 276,
+          "text": "EstateFormatStore::new(Arc::clone(&storage))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs#EstateFormatStore",
+        "name": "EstateFormatStore",
+        "kind": "struct",
+        "path": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs",
+        "span": "L98-L100"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 98,
+          "text": "pub struct EstateFormatStore {"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/src/estate_format.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 102,
+          "text": "impl EstateFormatStore {"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/src/grants/grant_store.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 34,
+          "text": "use crate::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/hydration.rs#composite_version_equals_component_sum",
+        "name": "composite_version_equals_component_sum",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/hydration.rs",
+        "span": "L315-L335"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/hydration.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 323,
+          "text": "let format = crate::estate_format::EstateFormatStore::schema_declaration().version;"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/src/lib.rs#every_ladder_ends_at_its_declared_version",
+        "name": "every_ladder_ends_at_its_declared_version",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/src/lib.rs",
+        "span": "L317-L343"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 320,
+          "text": "(\"EstateFormatStore\", crate::estate_format::EstateFormatStore::schema_declaration()),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/composite_schema_signature_tests.rs#composite_version_is_sum_of_live_component_versions",
+        "name": "composite_version_is_sum_of_live_component_versions",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/composite_schema_signature_tests.rs",
+        "span": "L31-L46"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/composite_schema_signature_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 37,
+          "text": "+ genius_locus_kit::estate_format::EstateFormatStore::schema_declaration().version"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs#wire_glk_substores_seeds_through_the_open_path",
+        "name": "wire_glk_substores_seeds_through_the_open_path",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+        "span": "L240-L296"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 242,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        },
+        {
+          "line": 265,
+          "text": "EstateFormatStore::new(Arc::clone(&backing))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs#readonly_glk_wiring_preserves_stale_receipts_and_keeps_query_tiers",
+        "name": "readonly_glk_wiring_preserves_stale_receipts_and_keeps_query_tiers",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+        "span": "L331-L370"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 333,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        },
+        {
+          "line": 339,
+          "text": "EstateFormatStore::new(Arc::clone(&backing))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs#real_model_registers_the_rerank_stage",
+        "name": "real_model_registers_the_rerank_stage",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+        "span": "L386-L415"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_activation_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 388,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        },
+        {
+          "line": 405,
+          "text": "EstateFormatStore::new(Arc::clone(&backing))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/rust/tests/encoder_lane_off_tests.rs#read_preserving_open_with_no_active_row_keeps_the_lane_off",
+        "name": "read_preserving_open_with_no_active_row_keeps_the_lane_off",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_lane_off_tests.rs",
+        "span": "L272-L324"
+      },
+      "path": "packages/kits/GeniusLocusKit/rust/tests/encoder_lane_off_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 274,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        },
+        {
+          "line": 292,
+          "text": "EstateFormatStore::new(Arc::clone(&backing))"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/rust/tests/grant_wire_form_vectors.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 11,
+          "text": "use genius_locus_kit::estate_format::{EstateFormatStore, EstateFormatVersion};"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/GeniusLocusKitSchema.swift#GeniusLocusKitSchema",
+        "name": "GeniusLocusKitSchema",
+        "kind": "enum",
+        "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/GeniusLocusKitSchema.swift",
+        "span": "L57-L330"
+      },
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/GeniusLocusKitSchema.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 79,
+          "text": "+ EstateFormatStore.schemaDeclaration.version"
+        },
+        {
+          "line": 106,
+          "text": "tables: locusKitTables + vectorKitTables + claimsTables + corpusKitTables + EstateFormatStore.schemaDeclaration.tables + grantsTables + matrixRecordsTables"
+        },
+        {
+          "line": 198,
+          "text": "+ EstateFormatStore.schemaDeclaration.tables + grantsTables + matrixRecordsTables,"
+        },
+        {
+          "line": 213,
+          "text": "+ EstateFormatStore.schemaDeclaration.tables + grantsTables + matrixRecordsTables"
+        },
+        {
+          "line": 231,
+          "text": "+ EstateFormatStore.schemaDeclaration.tables + grantsTables + matrixRecordsTables"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift#DerivationQualityRankMigrationTests.upgradesOnce",
+        "name": "DerivationQualityRankMigrationTests.upgradesOnce",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift",
+        "span": "L52-L77"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 72,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_16)"
+        },
+        {
+          "line": 75,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_16)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift#DerivationQualityRankMigrationTests.refusesOtherStamps",
+        "name": "DerivationQualityRankMigrationTests.refusesOtherStamps",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift",
+        "span": "L79-L92"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/DerivationQualityRankMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 90,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_14)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GeometryNormalizationTests.swift#GeometryNormalizationTests.refusedEstateIsLeftUnchanged",
+        "name": "GeometryNormalizationTests.refusedEstateIsLeftUnchanged",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GeometryNormalizationTests.swift",
+        "span": "L544-L565"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GeometryNormalizationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 550,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: now)"
+        },
+        {
+          "line": 564,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == stamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift#GrantWireFormMigrationTests.convertsOnce",
+        "name": "GrantWireFormMigrationTests.convertsOnce",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+        "span": "L127-L192"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 134,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_16, now: now)"
+        },
+        {
+          "line": 171,
+          "text": "#expect(try await EstateFormatStore(storage: reopened).readIfPresent() == .v1_17)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift#GrantWireFormMigrationTests.refusesOtherStamps",
+        "name": "GrantWireFormMigrationTests.refusesOtherStamps",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+        "span": "L194-L211"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 200,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_15, now: now)"
+        },
+        {
+          "line": 209,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_15)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift#GrantWireFormMigrationTests.federationVerifiesConvertedGrant",
+        "name": "GrantWireFormMigrationTests.federationVerifiesConvertedGrant",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+        "span": "L334-L382"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/GrantWireFormMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 366,
+          "text": "try await EstateFormatStore(storage: raw).stamp(.v1_16, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P03FactDerivationMigrationTests.swift#P03FactDerivationMigrationTests.freshEstateGetsCurrentLayout",
+        "name": "P03FactDerivationMigrationTests.freshEstateGetsCurrentLayout",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P03FactDerivationMigrationTests.swift",
+        "span": "L39-L49"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P03FactDerivationMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 45,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P03FactDerivationMigrationTests.swift#P03FactDerivationMigrationTests.stampedEstateMigratesAndRetries",
+        "name": "P03FactDerivationMigrationTests.stampedEstateMigratesAndRetries",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P03FactDerivationMigrationTests.swift",
+        "span": "L51-L87"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P03FactDerivationMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 57,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_10, now: now)"
+        },
+        {
+          "line": 62,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_10,"
+        },
+        {
+          "line": 75,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current,"
+        },
+        {
+          "line": 86,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P06WingLexiconMigrationTests.swift#P06WingLexiconMigrationTests.freshBareOpenHasCurrentWingSchema",
+        "name": "P06WingLexiconMigrationTests.freshBareOpenHasCurrentWingSchema",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P06WingLexiconMigrationTests.swift",
+        "span": "L18-L31"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P06WingLexiconMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 28,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P06WingLexiconMigrationTests.swift#P06WingLexiconMigrationTests.upgradePreservesPriorDataAndIsIdempotent",
+        "name": "P06WingLexiconMigrationTests.upgradePreservesPriorDataAndIsIdempotent",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P06WingLexiconMigrationTests.swift",
+        "span": "L33-L75"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P06WingLexiconMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 58,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_11, now: now)"
+        },
+        {
+          "line": 61,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_11, now: now)"
+        },
+        {
+          "line": 63,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_12)"
+        },
+        {
+          "line": 72,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_12)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P11FactCanonicalValueMigrationTests.swift#FactCanonicalValueMigrationTests.freshBareOpenAdmitsCanonicalSchema",
+        "name": "FactCanonicalValueMigrationTests.freshBareOpenAdmitsCanonicalSchema",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P11FactCanonicalValueMigrationTests.swift",
+        "span": "L18-L32"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P11FactCanonicalValueMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 29,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P11FactCanonicalValueMigrationTests.swift#FactCanonicalValueMigrationTests.upgradePreservesPriorDataAndIsIdempotent",
+        "name": "FactCanonicalValueMigrationTests.upgradePreservesPriorDataAndIsIdempotent",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P11FactCanonicalValueMigrationTests.swift",
+        "span": "L34-L75"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P11FactCanonicalValueMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 48,
+          "text": "try await EstateFormatStore(storage: storage).stamp(.v1_12, now: now)"
+        },
+        {
+          "line": 64,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_13)"
+        },
+        {
+          "line": 72,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_13)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift#preservesAndBackfills",
+        "name": "preservesAndBackfills",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+        "span": "L86-L120"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 110,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_14)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift#markerBlockIsGated",
+        "name": "markerBlockIsGated",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+        "span": "L126-L163"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 162,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_13, \"the format must not be stamped\")"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift#refusesConflict",
+        "name": "refusesConflict",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+        "span": "L181-L201"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 198,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_13)"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/P14DerivationCoordinationMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 236,
+          "text": "try await EstateFormatStore(storage: oldStorage).stamp(.v1_10, now: now)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift#TemplateMaskMigrationTests.upgradesOnce",
+        "name": "TemplateMaskMigrationTests.upgradesOnce",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift",
+        "span": "L64-L93"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 88,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_15)"
+        },
+        {
+          "line": 91,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_15)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift#TemplateMaskMigrationTests.refusesOtherStamps",
+        "name": "TemplateMaskMigrationTests.refusesOtherStamps",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift",
+        "span": "L95-L106"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TemplateMaskMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 104,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_13)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift#TombstoneSharedRowsMigrationTests.marksLegacyTombstones",
+        "name": "TombstoneSharedRowsMigrationTests.marksLegacyTombstones",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+        "span": "L38-L60"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 55,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_18)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift#TombstoneSharedRowsMigrationTests.refusesOtherStamps",
+        "name": "TombstoneSharedRowsMigrationTests.refusesOtherStamps",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+        "span": "L62-L73"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 71,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == stamp)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift#TombstoneSharedRowsMigrationTests.catalogUpgradeMarksLegacyTombstone",
+        "name": "TombstoneSharedRowsMigrationTests.catalogUpgradeMarksLegacyTombstone",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+        "span": "L107-L129"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitMigrationsTests/TombstoneSharedRowsMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 125,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_18)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/CompositeSchemaSignatureTests.swift#CompositeSchemaSignatureTests.compositeVersionIsSumOfLiveComponentVersions",
+        "name": "CompositeSchemaSignatureTests.compositeVersionIsSumOfLiveComponentVersions",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/CompositeSchemaSignatureTests.swift",
+        "span": "L43-L58"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/CompositeSchemaSignatureTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 48,
+          "text": "+ EstateFormatStore.schemaDeclaration.version"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GrantWireFormVectorTests.swift#GrantWireFormVectorTests.refusals",
+        "name": "GrantWireFormVectorTests.refusals",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GrantWireFormVectorTests.swift",
+        "span": "L206-L227"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/GrantWireFormVectorTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 211,
+          "text": "try await EstateFormatStore(storage: storage).stamp(stamp, now: Self.instant(epochMilliseconds: 1_780_272_000_000))"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift#CompositeSchemaVersionTests.compositeVersionEqualsComponentSum",
+        "name": "CompositeSchemaVersionTests.compositeVersionEqualsComponentSum",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift",
+        "span": "L65-L91"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 74,
+          "text": "+ EstateFormatStore.schemaDeclaration.version"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift#VectorSidecarUnificationTests.standaloneVectorStoreIsCorpusSharedInstance",
+        "name": "VectorSidecarUnificationTests.standaloneVectorStoreIsCorpusSharedInstance",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift",
+        "span": "L363-L387"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 377,
+          "text": "try await EstateFormatStore(storage: sqlite).stamp(.current, now: t0)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift#VectorSidecarUnificationTests.vectorSidecarPersistsOnDerivedAcceleratorFlush",
+        "name": "VectorSidecarUnificationTests.vectorSidecarPersistsOnDerivedAcceleratorFlush",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift",
+        "span": "L391-L430"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/HydrateRoundTripTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 410,
+          "text": "try await EstateFormatStore(storage: sqlite).stamp(.current, now: t0)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/SchemaLadderEndTests.swift#SchemaLadderEndTests.everyLadderEndsAtItsDeclaredVersion",
+        "name": "SchemaLadderEndTests.everyLadderEndsAtItsDeclaredVersion",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/SchemaLadderEndTests.swift",
+        "span": "L15-L38"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/SchemaLadderEndTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 19,
+          "text": "(\"EstateFormatStore\", EstateFormatStore.schemaDeclaration),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift#SharedContentMigrationTests.estateFormatDistinguishesUnstampedFromRegisteredMissingRow",
+        "name": "SharedContentMigrationTests.estateFormatDistinguishesUnstampedFromRegisteredMissingRow",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+        "span": "L100-L112"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 107,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == nil)"
+        },
+        {
+          "line": 108,
+          "text": "try await storage.migrate(to: EstateFormatStore.schemaDeclaration)"
+        },
+        {
+          "line": 110,
+          "text": "_ = try await EstateFormatStore(storage: storage).readIfPresent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift#SharedContentMigrationTests.belowCompiledFloorRefusesBeforeLegacyDeletion",
+        "name": "SharedContentMigrationTests.belowCompiledFloorRefusesBeforeLegacyDeletion",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+        "span": "L114-L124"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 118,
+          "text": "try await EstateFormatStore(storage: storage).stamp("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.v1_4EstateRowsMoveToTheirNewIds",
+        "name": "StorageLedgerKitIDMigrationTests.v1_4EstateRowsMoveToTheirNewIds",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L92-L117"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 107,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.prepareTwiceIsNoOpAndDirectRerunReportsNoRow",
+        "name": "StorageLedgerKitIDMigrationTests.prepareTwiceIsNoOpAndDirectRerunReportsNoRow",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L121-L137"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 134,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_5)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.estateWithoutVectorRowsIsStampedWithoutChange",
+        "name": "StorageLedgerKitIDMigrationTests.estateWithoutVectorRowsIsStampedWithoutChange",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L141-L151"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 146,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_5)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.rowsUnderBothIdsAreAConflictLeftInPlace",
+        "name": "StorageLedgerKitIDMigrationTests.rowsUnderBothIdsAreAConflictLeftInPlace",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L155-L169"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 168,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_5)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.freshEstateStampsCurrentWithoutRunningTheCapsule",
+        "name": "StorageLedgerKitIDMigrationTests.freshEstateStampsCurrentWithoutRunningTheCapsule",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L173-L183"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 180,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift#StorageLedgerKitIDMigrationTests.v1_0EstateRunsFullChainToCurrent",
+        "name": "StorageLedgerKitIDMigrationTests.v1_0EstateRunsFullChainToCurrent",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+        "span": "L188-L196"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_4ToV1_5Tests/StorageLedgerKitIDMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 193,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#IndexCompositionColumnDropMigrationTests.v1_5EstateWithLedgerRowDropsTheColumn",
+        "name": "IndexCompositionColumnDropMigrationTests.v1_5EstateWithLedgerRowDropsTheColumn",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L123-L146"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 135,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#IndexCompositionColumnDropMigrationTests.v1_5EstateWithoutLedgerRowDropsTheColumn",
+        "name": "IndexCompositionColumnDropMigrationTests.v1_5EstateWithoutLedgerRowDropsTheColumn",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L150-L164"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 159,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_6)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#IndexCompositionColumnDropMigrationTests.prepareTwiceIsNoOpAndDirectRerunLeavesTheLadderAlone",
+        "name": "IndexCompositionColumnDropMigrationTests.prepareTwiceIsNoOpAndDirectRerunLeavesTheLadderAlone",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L168-L185"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 181,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_6)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#IndexCompositionColumnDropMigrationTests.freshEstateStampsCurrentWithoutRunningTheCapsule",
+        "name": "IndexCompositionColumnDropMigrationTests.freshEstateStampsCurrentWithoutRunningTheCapsule",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L189-L202"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 200,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#IndexCompositionColumnDropMigrationTests.sqliteEstateLosesTheColumnAndKeepsTheRow",
+        "name": "IndexCompositionColumnDropMigrationTests.sqliteEstateLosesTheColumnAndKeepsTheRow",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L206-L253"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 227,
+          "text": "try await EstateFormatStore(storage: writer).stamp(.v1_5, now: testNow)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift#IndexCompositionColumnDropMigrationTests.v1_4EstateRunsBothCapsulesToCurrent",
+        "name": "IndexCompositionColumnDropMigrationTests.v1_4EstateRunsBothCapsulesToCurrent",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+        "span": "L258-L266"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_5ToV1_6Tests/IndexCompositionColumnDropMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 264,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.v1_6EstateLosesFloatAndGraphRowsAndKeepsTheRest",
+        "name": "WholeRecordFloatVacuumMigrationTests.v1_6EstateLosesFloatAndGraphRowsAndKeepsTheRest",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L146-L170"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 163,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.freshEstateStampsCurrentWithoutRunningTheCapsule",
+        "name": "WholeRecordFloatVacuumMigrationTests.freshEstateStampsCurrentWithoutRunningTheCapsule",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L207-L220"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 217,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.sqliteEstateSidecarIsRebuiltAndLoadsWithoutARebuild",
+        "name": "WholeRecordFloatVacuumMigrationTests.sqliteEstateSidecarIsRebuiltAndLoadsWithoutARebuild",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L224-L255"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 252,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_7)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.v1_5EstateRunsBothCapsulesToCurrent",
+        "name": "WholeRecordFloatVacuumMigrationTests.v1_5EstateRunsBothCapsulesToCurrent",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L260-L271"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 266,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.wholeRecordProviderInTheManifestKeepsTheRows",
+        "name": "WholeRecordFloatVacuumMigrationTests.wholeRecordProviderInTheManifestKeepsTheRows",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L276-L288"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 287,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_7)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.spanEncoderInTheManifestStillVacuums",
+        "name": "WholeRecordFloatVacuumMigrationTests.spanEncoderInTheManifestStillVacuums",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L290-L299"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 298,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_7)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift#WholeRecordFloatVacuumMigrationTests.v1_7EstateKeepsTheRowsBecauseTheChainSkipsTheCapsule",
+        "name": "WholeRecordFloatVacuumMigrationTests.v1_7EstateKeepsTheRowsBecauseTheChainSkipsTheCapsule",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+        "span": "L308-L322"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_6ToV1_7Tests/WholeRecordFloatVacuumMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 315,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift#migrationPreservesExplicitOff",
+        "name": "migrationPreservesExplicitOff",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+        "span": "L91-L108"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 106,
+          "text": "let stamp = try await EstateFormatStore(storage: storage).readIfPresent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift#migrationStampsV1_8",
+        "name": "migrationStampsV1_8",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+        "span": "L143-L151"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 149,
+          "text": "let stamp = try await EstateFormatStore(storage: storage).readIfPresent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift#migrationIsIdempotent",
+        "name": "migrationIsIdempotent",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+        "span": "L155-L168"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 166,
+          "text": "let stamp = try await EstateFormatStore(storage: storage).readIfPresent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift#chainFromV1_7EstateReachesCurrentFormat",
+        "name": "chainFromV1_7EstateReachesCurrentFormat",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+        "span": "L193-L203"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_7ToV1_8Tests/FactExtractionSettingMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 200,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift#migrationSeedsFivePreferencesCreatesTableAndStampsV1_9",
+        "name": "migrationSeedsFivePreferencesCreatesTableAndStampsV1_9",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+        "span": "L41-L73"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 70,
+          "text": "let stamp = try await EstateFormatStore(storage: storage).readIfPresent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift#migrationPreservesExplicitOff",
+        "name": "migrationPreservesExplicitOff",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+        "span": "L112-L131"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 129,
+          "text": "let stamp = try await EstateFormatStore(storage: storage).readIfPresent()"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift#chainFromV1_8EstateReachesCurrentFormat",
+        "name": "chainFromV1_8EstateReachesCurrentFormat",
+        "kind": "function",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+        "span": "L159-L172"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_8ToV1_9Tests/PreferenceSeedMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 166,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .v1_8)"
+        },
+        {
+          "line": 169,
+          "text": "#expect(try await EstateFormatStore(storage: storage).readIfPresent() == .current)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_9ToV1_10Tests/MatrixRecordMigrationTests.swift#MatrixOfflineMigrationTests.corruptCalibrationBlocksRetirementThenRetryPreservesAndReclaims",
+        "name": "MatrixOfflineMigrationTests.corruptCalibrationBlocksRetirementThenRetryPreservesAndReclaims",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_9ToV1_10Tests/MatrixRecordMigrationTests.swift",
+        "span": "L12-L56"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_9ToV1_10Tests/MatrixRecordMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 24,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_9ToV1_10Tests/MatrixRecordMigrationTests.swift#MatrixOfflineMigrationTests.fixtureOverTheRequestedFloorStillMigrates",
+        "name": "MatrixOfflineMigrationTests.fixtureOverTheRequestedFloorStillMigrates",
+        "kind": "method",
+        "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_9ToV1_10Tests/MatrixRecordMigrationTests.swift",
+        "span": "L72-L104"
+      },
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_9ToV1_10Tests/MatrixRecordMigrationTests.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 83,
+          "text": "let format = EstateFormatStore(storage: storage)"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 81,
+    "baselineChars": 2161007
+  }
+}

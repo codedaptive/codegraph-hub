@@ -1,0 +1,310 @@
+{
+  "pattern": "//!|```",
+  "filesSearched": 20,
+  "totalHits": 53,
+  "groups": [
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/engine.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! SyncEngine trait. Backends conform to this trait to provide replication."
+        },
+        {
+          "line": 2,
+          "text": "//!"
+        },
+        {
+          "line": 3,
+          "text": "//! The Rust backends are NoSyncEngine (passthrough) and FederationSyncEngine"
+        },
+        {
+          "line": 4,
+          "text": "//! (Ed25519-authenticated peer-to-peer)."
+        },
+        {
+          "line": 5,
+          "text": "//!"
+        },
+        {
+          "line": 6,
+          "text": "//! The trait is synchronous, as PersistenceKit's Rust trait is."
+        },
+        {
+          "line": 7,
+          "text": "//! `subscribe` returns a std::sync::mpsc::Receiver<SyncEvent>."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/federation.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! FederationSyncEngine: Ed25519-authenticated peer-to-peer"
+        },
+        {
+          "line": 2,
+          "text": "//! backend."
+        },
+        {
+          "line": 3,
+          "text": "//!"
+        },
+        {
+          "line": 4,
+          "text": "//! Transport is pluggable behind the `Relay` trait. `FederationRelay`"
+        },
+        {
+          "line": 5,
+          "text": "//! is the in-process implementation used for local peering and tests."
+        },
+        {
+          "line": 6,
+          "text": "//!"
+        },
+        {
+          "line": 7,
+          "text": "//! All envelopes are signed at push and verified at pull. Schema"
+        },
+        {
+          "line": 8,
+          "text": "//! and kit mismatch reject the record. Conflict resolution"
+        },
+        {
+          "line": 9,
+          "text": "//! follows the per-table ConflictPolicy on the local manifest."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "packages/kits/ConvergenceKit/rust/src/federation.rs#refusal_log_tests",
+        "name": "refusal_log_tests",
+        "kind": "module",
+        "path": "packages/kits/ConvergenceKit/rust/src/federation.rs",
+        "span": "L1166-L1246"
+      },
+      "path": "packages/kits/ConvergenceKit/rust/src/federation.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1167,
+          "text": "//! A refused inbound record writes one log line naming its table and key,"
+        },
+        {
+          "line": 1168,
+          "text": "//! with no values. The lines are also kept on the"
+        },
+        {
+          "line": 1169,
+          "text": "//! pulling thread so the test can read them."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/lib.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! convergence-kit"
+        },
+        {
+          "line": 2,
+          "text": "//!"
+        },
+        {
+          "line": 3,
+          "text": "//! Sync abstraction layer: core types, wire format, SyncEngine trait, and"
+        },
+        {
+          "line": 4,
+          "text": "//! two backends: None (passthrough) and Federation (Ed25519 peer-to-peer)."
+        },
+        {
+          "line": 5,
+          "text": "//!"
+        },
+        {
+          "line": 6,
+          "text": "//! CloudKit is Apple-only and is not implemented in this crate."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/none.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! NoSyncEngine: passthrough backend. enable returns AlreadyEnabled"
+        },
+        {
+          "line": 2,
+          "text": "//! on repeat calls; push/pull return NotEnabled before enable, then"
+        },
+        {
+          "line": 3,
+          "text": "//! empty receipts; subscribe returns a receiver whose sender is"
+        },
+        {
+          "line": 4,
+          "text": "//! dropped immediately rather than a long-lived never-emitting receiver."
+        },
+        {
+          "line": 5,
+          "text": "//!"
+        },
+        {
+          "line": 6,
+          "text": "//! Used when sync is structurally not wanted (development,"
+        },
+        {
+          "line": 7,
+          "text": "//! tests, deployments without iCloud or federation)."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/outbound_authorization.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! Optional owning-domain authorization of cached outbound rows."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/pairing.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! Federation pairing value types (paper section 9.2). Two estates"
+        },
+        {
+          "line": 2,
+          "text": "//! share a hyperplane family so their 256-bit fingerprints are directly"
+        },
+        {
+          "line": 3,
+          "text": "//! comparable across the federation."
+        },
+        {
+          "line": 4,
+          "text": "//!"
+        },
+        {
+          "line": 5,
+          "text": "//! This module defines the Codable proposal/acceptance types and a"
+        },
+        {
+          "line": 6,
+          "text": "//! canonical byte helper. It does not implement negotiation, signing,"
+        },
+        {
+          "line": 7,
+          "text": "//! or verification; those are caller responsibilities."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/record.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! SyncRecord wire format."
+        },
+        {
+          "line": 2,
+          "text": "//!"
+        },
+        {
+          "line": 3,
+          "text": "//! SyncRecord wraps a PersistenceKit TableChange with sync metadata"
+        },
+        {
+          "line": 4,
+          "text": "//! (schema version, kit id, HLC). The receiver decodes, validates"
+        },
+        {
+          "line": 5,
+          "text": "//! schema and kit, and applies the change through its local"
+        },
+        {
+          "line": 6,
+          "text": "//! PersistenceKit. Schema or kit mismatch is counted as a conflict"
+        },
+        {
+          "line": 7,
+          "text": "//! and the record is skipped; no retry queue is present."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/src/types.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! Core ConvergenceKit types."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/tests/json_conformance_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! Golden JSON vector tests for the cross-port wire contract. Assertions"
+        },
+        {
+          "line": 2,
+          "text": "//! check decoded fields and substrings, not whole encoded strings."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "packages/kits/ConvergenceKit/rust/tests/outbound_decision_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1,
+          "text": "//! The observe-time verdict on a local change under an outbound authorizer:"
+        },
+        {
+          "line": 2,
+          "text": "//! a denial retracts an update (delete for every peer) or withholds an"
+        },
+        {
+          "line": 3,
+          "text": "//! insert; an authorizer ERROR withholds and is reported, never retracted."
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 0
+  },
+  "saved": {
+    "files": 10,
+    "baselineChars": 265980
+  }
+}

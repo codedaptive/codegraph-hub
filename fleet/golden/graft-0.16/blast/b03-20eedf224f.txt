@@ -1,0 +1,27 @@
+blast radius — 20eedf224f^...HEAD (depth 2)
+  changed: 6 files in 3 areas, 4 seed symbols
+  impacted: 4 symbols in 4 areas
+
+– CorpusContentSource — 1 changed file, 0/0 reached by a test
+– CorpusContentSource — 1 changed file, 0/0 reached by a test
+✗ mr8c_qid_retry_skips_corrupt_r… — 1 changed file, 0/1 reached by a test
+
+contentSource — 1 symbol in 1 file
+  calls ← contentSource (packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift:L119-L119) [depth 2]
+
+LocusDrawerCorpusContentSource — 1 symbol in 1 file
+  extends ← LocusDrawerCorpusContentSource (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift:L40-L181) [depth 1]
+
+runSharedContentMigration — 1 symbol in 1 file
+  calls ← runSharedContentMigration (packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift:L486-L877) [depth 2]
+
+wireSubstores — 1 symbol in 1 file
+  calls ← wireSubstores (packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift:L529-L698) [depth 2]
+
+17 test suites also reference this code (not listed)
+
+who to tag
+  Newton — 7 areas · 23 commits, last 3mo ago
+  Test — 7 areas · 20 commits, last 2mo ago
+
+⚠ 2 changed files not in the graph (docs/missions/MISSION_ORDER_SWEEP_LEFTOVERS.md, docs/status/KGF-ORDER-SWEEP-LEFTOVERS_REPORT.md) — no parser claims the extension, or the index predates the file.

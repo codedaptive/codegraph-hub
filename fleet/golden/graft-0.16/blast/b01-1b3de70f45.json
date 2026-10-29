@@ -1,0 +1,1662 @@
+{
+  "basis": "1b3de70f45^...HEAD",
+  "depth": 2,
+  "changed": [
+    {
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 3052,
+          "end": 3055
+        },
+        {
+          "start": 3058,
+          "end": 3059
+        },
+        {
+          "start": 3088,
+          "end": 3089
+        },
+        {
+          "start": 3094,
+          "end": 3095
+        },
+        {
+          "start": 3135,
+          "end": 3145
+        },
+        {
+          "start": 3149,
+          "end": 3149
+        },
+        {
+          "start": 3167,
+          "end": 3167
+        },
+        {
+          "start": 3172,
+          "end": 3173
+        },
+        {
+          "start": 3178,
+          "end": 3178
+        },
+        {
+          "start": 3180,
+          "end": 3183
+        },
+        {
+          "start": 3204,
+          "end": 3204
+        }
+      ],
+      "hunks": [
+        {
+          "start": 3052,
+          "end": 3055,
+          "lines": [
+            {
+              "n": 3052,
+              "sign": "+",
+              "text": "    /// `progress`, when given, is called once when training starts, once per"
+            },
+            {
+              "n": 3053,
+              "sign": "+",
+              "text": "    /// re-embed batch, and once before publish (`CorpusRetrainingProgress`)."
+            },
+            {
+              "n": 3054,
+              "sign": "+",
+              "text": "    /// It runs on the engine's executor; keep it cheap. Twin of Rust"
+            },
+            {
+              "n": 3055,
+              "sign": "+",
+              "text": "    /// `reindex_with_budget_reporting`."
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3058,
+          "end": 3059,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "        now: Date, budget: RetrainingBudget, laneScope: LaneScope = .all"
+            },
+            {
+              "n": 3058,
+              "sign": "+",
+              "text": "        now: Date, budget: RetrainingBudget, laneScope: LaneScope = .all,"
+            },
+            {
+              "n": 3059,
+              "sign": "+",
+              "text": "        progress: (@Sendable (CorpusRetrainingProgress) -> Void)? = nil"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3088,
+          "end": 3089,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "            now: now, laneScope: laneScope, budget: budget, boundedIDs: ids)"
+            },
+            {
+              "n": 3088,
+              "sign": "+",
+              "text": "            now: now, laneScope: laneScope, budget: budget, boundedIDs: ids,"
+            },
+            {
+              "n": 3089,
+              "sign": "+",
+              "text": "            progress: progress)"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3094,
+          "end": 3095,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "        budget: RetrainingBudget?, boundedIDs: [CorpusContentID]?"
+            },
+            {
+              "n": 3094,
+              "sign": "+",
+              "text": "        budget: RetrainingBudget?, boundedIDs: [CorpusContentID]?,"
+            },
+            {
+              "n": 3095,
+              "sign": "+",
+              "text": "        progress: (@Sendable (CorpusRetrainingProgress) -> Void)? = nil"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3135,
+          "end": 3145,
+          "lines": [
+            {
+              "n": 3135,
+              "sign": "+",
+              "text": "        // Progress: the model ids under retrain, and the document total the"
+            },
+            {
+              "n": 3136,
+              "sign": "+",
+              "text": "        // re-embed pass will walk (the bounded set when a budget admitted one)."
+            },
+            {
+              "n": 3137,
+              "sign": "+",
+              "text": "        let progressModelID = trainableModelIDs.joined(separator: \",\")"
+            },
+            {
+              "n": 3138,
+              "sign": "+",
+              "text": "        let progressTotal: Int"
+            },
+            {
+              "n": 3139,
+              "sign": "+",
+              "text": "        if let boundedIDs { progressTotal = boundedIDs.count }"
+            },
+            {
+              "n": 3140,
+              "sign": "+",
+              "text": "        else { progressTotal = try await source.activeContentIDs().count }"
+            },
+            {
+              "n": 3141,
+              "sign": "+",
+              "text": "        let report: @Sendable (RetrainingPhase, Int) -> Void = { phase, done in"
+            },
+            {
+              "n": 3142,
+              "sign": "+",
+              "text": "            progress?(CorpusRetrainingProgress("
+            },
+            {
+              "n": 3143,
+              "sign": "+",
+              "text": "                phase: phase, modelID: progressModelID, done: done, total: progressTotal))"
+            },
+            {
+              "n": 3144,
+              "sign": "+",
+              "text": "        }"
+            },
+            {
+              "n": 3145,
+              "sign": "+",
+              "text": ""
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3149,
+          "end": 3149,
+          "lines": [
+            {
+              "n": 3149,
+              "sign": "+",
+              "text": "            report(.training, 0)"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3167,
+          "end": 3167,
+          "lines": [
+            {
+              "n": 3167,
+              "sign": "+",
+              "text": "                var done = 0"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3172,
+          "end": 3173,
+          "lines": [
+            {
+              "n": 3172,
+              "sign": "+",
+              "text": "                    done += batch.count"
+            },
+            {
+              "n": 3173,
+              "sign": "+",
+              "text": "                    report(.reEmbedding, done)"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3178,
+          "end": 3178,
+          "lines": [
+            {
+              "n": 3178,
+              "sign": "+",
+              "text": "                var done = 0"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3180,
+          "end": 3183,
+          "lines": [
+            {
+              "n": 3180,
+              "sign": "+",
+              "text": "                    defer {"
+            },
+            {
+              "n": 3181,
+              "sign": "+",
+              "text": "                        done += 1"
+            },
+            {
+              "n": 3182,
+              "sign": "+",
+              "text": "                        if done % 500 == 0 { report(.reEmbedding, done) }"
+            },
+            {
+              "n": 3183,
+              "sign": "+",
+              "text": "                    }"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3204,
+          "end": 3204,
+          "lines": [
+            {
+              "n": 3204,
+              "sign": "+",
+              "text": "                report(.publishing, progressTotal)"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 216,
+          "end": 248
+        }
+      ],
+      "hunks": [
+        {
+          "start": 216,
+          "end": 248,
+          "lines": [
+            {
+              "n": 216,
+              "sign": "+",
+              "text": "/// The phase a basis retrain is in when it reports progress. Twin of Rust"
+            },
+            {
+              "n": 217,
+              "sign": "+",
+              "text": "/// `RetrainingPhase`; the raw value is the wire spelling."
+            },
+            {
+              "n": 218,
+              "sign": "+",
+              "text": "public enum RetrainingPhase: String, Sendable, Equatable {"
+            },
+            {
+              "n": 219,
+              "sign": "+",
+              "text": "    /// The trainable bases are being learned from every document; no vector"
+            },
+            {
+              "n": 220,
+              "sign": "+",
+              "text": "    /// rows are written."
+            },
+            {
+              "n": 221,
+              "sign": "+",
+              "text": "    case training"
+            },
+            {
+              "n": 222,
+              "sign": "+",
+              "text": "    /// Every document is being re-embedded into the shadow generation."
+            },
+            {
+              "n": 223,
+              "sign": "+",
+              "text": "    case reEmbedding = \"re-embedding\""
+            },
+            {
+              "n": 224,
+              "sign": "+",
+              "text": "    /// The shadow generation is being published (one storage transaction)."
+            },
+            {
+              "n": 225,
+              "sign": "+",
+              "text": "    case publishing"
+            },
+            {
+              "n": 226,
+              "sign": "+",
+              "text": "}"
+            },
+            {
+              "n": 227,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 228,
+              "sign": "+",
+              "text": "/// One progress report from a basis retrain (`reindex(now:budget:laneScope:progress:)`):"
+            },
+            {
+              "n": 229,
+              "sign": "+",
+              "text": "/// the phase, the model ids being retrained (comma-joined, in slot order), and"
+            },
+            {
+              "n": 230,
+              "sign": "+",
+              "text": "/// documents done of total. Reported once when training starts, once per"
+            },
+            {
+              "n": 231,
+              "sign": "+",
+              "text": "/// re-embed batch, and once before publish; never more often than once per"
+            },
+            {
+              "n": 232,
+              "sign": "+",
+              "text": "/// batch. A retrain on a large estate runs for hours and, before 2026-09-25,"
+            },
+            {
+              "n": 233,
+              "sign": "+",
+              "text": "/// reported nothing between start and end. Twin of Rust"
+            },
+            {
+              "n": 234,
+              "sign": "+",
+              "text": "/// `CorpusRetrainingProgress`."
+            },
+            {
+              "n": 235,
+              "sign": "+",
+              "text": "public struct CorpusRetrainingProgress: Sendable, Equatable {"
+            },
+            {
+              "n": 236,
+              "sign": "+",
+              "text": "    public let phase: RetrainingPhase"
+            },
+            {
+              "n": 237,
+              "sign": "+",
+              "text": "    public let modelID: String"
+            },
+            {
+              "n": 238,
+              "sign": "+",
+              "text": "    public let done: Int"
+            },
+            {
+              "n": 239,
+              "sign": "+",
+              "text": "    public let total: Int"
+            }
+          ],
+          "dropped": 9
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "status": "added",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 70
+        }
+      ],
+      "hunks": [
+        {
+          "start": 1,
+          "end": 70,
+          "lines": [
+            {
+              "n": 1,
+              "sign": "+",
+              "text": "// CorpusRetrainingProgressTests.swift"
+            },
+            {
+              "n": 2,
+              "sign": "+",
+              "text": "//"
+            },
+            {
+              "n": 3,
+              "sign": "+",
+              "text": "// A basis retrain reports its progress (GLK-RETRAIN-VISIBLE-01), twin of"
+            },
+            {
+              "n": 4,
+              "sign": "+",
+              "text": "// Rust `reindex_reports_progress_once_per_batch` (which walks 1,200): over"
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": "// 501 documents in re-embed batches of 500 the callback sees training once"
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "// at 0, re-embedding at 500 and 501, publishing at 501 — and nothing more"
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": "// often than once per batch. 501 keeps the Swift run inside the three-minute"
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": "// rule while still showing a full batch and a tail."
+            },
+            {
+              "n": 9,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 10,
+              "sign": "+",
+              "text": "import Testing"
+            },
+            {
+              "n": 11,
+              "sign": "+",
+              "text": "import Foundation"
+            },
+            {
+              "n": 12,
+              "sign": "+",
+              "text": "import PersistenceKit"
+            },
+            {
+              "n": 13,
+              "sign": "+",
+              "text": "import CorpusKitProviders"
+            },
+            {
+              "n": 14,
+              "sign": "+",
+              "text": "@testable import CorpusKit"
+            },
+            {
+              "n": 15,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 16,
+              "sign": "+",
+              "text": "private actor ProgressSource: CorpusContentSource {"
+            },
+            {
+              "n": 17,
+              "sign": "+",
+              "text": "    private var records: [String: CorpusContentRecord] = [:]"
+            },
+            {
+              "n": 18,
+              "sign": "+",
+              "text": "    func put(id: String, text: String) {"
+            },
+            {
+              "n": 19,
+              "sign": "+",
+              "text": "        records[id] = CorpusContentRecord(id: id, revision: 1, digest: CorpusContentDigest.digest(text), text: text)"
+            },
+            {
+              "n": 20,
+              "sign": "+",
+              "text": "    }"
+            },
+            {
+              "n": 21,
+              "sign": "+",
+              "text": "    func record(for id: CorpusContentID) async throws -> CorpusContentRecord? { records[id] }"
+            },
+            {
+              "n": 22,
+              "sign": "+",
+              "text": "    func activeContentIDs() async throws -> [CorpusContentID] { records.keys.sorted() }"
+            },
+            {
+              "n": 23,
+              "sign": "+",
+              "text": "    func changes(since cursor: String?, limit: Int) async throws -> CorpusContentChangeBatch { .empty }"
+            },
+            {
+              "n": 24,
+              "sign": "+",
+              "text": "}"
+            }
+          ],
+          "dropped": 46
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/rust/src/content_engine.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 3648,
+          "end": 3648
+        },
+        {
+          "start": 3655,
+          "end": 3667
+        },
+        {
+          "start": 3694,
+          "end": 3694
+        },
+        {
+          "start": 3702,
+          "end": 3702
+        },
+        {
+          "start": 3746,
+          "end": 3760
+        },
+        {
+          "start": 3764,
+          "end": 3764
+        },
+        {
+          "start": 3791,
+          "end": 3791
+        },
+        {
+          "start": 3794,
+          "end": 3795
+        },
+        {
+          "start": 3800,
+          "end": 3800
+        },
+        {
+          "start": 3816,
+          "end": 3819
+        },
+        {
+          "start": 3831,
+          "end": 3831
+        }
+      ],
+      "hunks": [
+        {
+          "start": 3648,
+          "end": 3648,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "        self.reindex_impl(now_millis, None, None).map(|_| ())"
+            },
+            {
+              "n": 3648,
+              "sign": "+",
+              "text": "        self.reindex_impl(now_millis, None, None, None).map(|_| ())"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3655,
+          "end": 3667,
+          "lines": [
+            {
+              "n": 3655,
+              "sign": "+",
+              "text": "    ) -> CorpusKitResult<crate::CorpusRetrainingReport> {"
+            },
+            {
+              "n": 3656,
+              "sign": "+",
+              "text": "        self.reindex_with_budget_reporting(now_millis, budget, &|_| {})"
+            },
+            {
+              "n": 3657,
+              "sign": "+",
+              "text": "    }"
+            },
+            {
+              "n": 3658,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 3659,
+              "sign": "+",
+              "text": "    /// `reindex_with_budget` with a progress callback: called once when"
+            },
+            {
+              "n": 3660,
+              "sign": "+",
+              "text": "    /// training starts, once per re-embed batch, and once before publish"
+            },
+            {
+              "n": 3661,
+              "sign": "+",
+              "text": "    /// (`CorpusRetrainingProgress`). The callback runs on the retraining"
+            },
+            {
+              "n": 3662,
+              "sign": "+",
+              "text": "    /// thread; keep it cheap. Twin of Swift `reindex(now:budget:laneScope:progress:)`."
+            },
+            {
+              "n": 3663,
+              "sign": "+",
+              "text": "    pub fn reindex_with_budget_reporting("
+            },
+            {
+              "n": 3664,
+              "sign": "+",
+              "text": "        &self,"
+            },
+            {
+              "n": 3665,
+              "sign": "+",
+              "text": "        now_millis: i64,"
+            },
+            {
+              "n": 3666,
+              "sign": "+",
+              "text": "        budget: &RetrainingBudget,"
+            },
+            {
+              "n": 3667,
+              "sign": "+",
+              "text": "        progress: &dyn Fn(&crate::CorpusRetrainingProgress),"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3694,
+          "end": 3694,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "        self.reindex_impl(now_millis, Some(budget), Some(ids))"
+            },
+            {
+              "n": 3694,
+              "sign": "+",
+              "text": "        self.reindex_impl(now_millis, Some(budget), Some(ids), Some(progress))"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3702,
+          "end": 3702,
+          "lines": [
+            {
+              "n": 3702,
+              "sign": "+",
+              "text": "        progress: Option<&dyn Fn(&crate::CorpusRetrainingProgress)>,"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3746,
+          "end": 3760,
+          "lines": [
+            {
+              "n": 3746,
+              "sign": "+",
+              "text": "        // Progress: the model ids under retrain, and the document total the"
+            },
+            {
+              "n": 3747,
+              "sign": "+",
+              "text": "        // re-embed pass will walk (the bounded set when a budget admitted one)."
+            },
+            {
+              "n": 3748,
+              "sign": "+",
+              "text": "        let progress_model_id = trainable_model_ids.join(\",\");"
+            },
+            {
+              "n": 3749,
+              "sign": "+",
+              "text": "        let progress_total = match &bounded_ids {"
+            },
+            {
+              "n": 3750,
+              "sign": "+",
+              "text": "            Some(ids) => ids.len(),"
+            },
+            {
+              "n": 3751,
+              "sign": "+",
+              "text": "            None => self.source.active_content_ids()?.len(),"
+            },
+            {
+              "n": 3752,
+              "sign": "+",
+              "text": "        };"
+            },
+            {
+              "n": 3753,
+              "sign": "+",
+              "text": "        let report_progress = |phase: crate::RetrainingPhase, done: usize| {"
+            },
+            {
+              "n": 3754,
+              "sign": "+",
+              "text": "            if let Some(progress) = progress {"
+            },
+            {
+              "n": 3755,
+              "sign": "+",
+              "text": "                progress(&crate::CorpusRetrainingProgress {"
+            },
+            {
+              "n": 3756,
+              "sign": "+",
+              "text": "                    phase, model_id: progress_model_id.clone(), done, total: progress_total,"
+            },
+            {
+              "n": 3757,
+              "sign": "+",
+              "text": "                });"
+            },
+            {
+              "n": 3758,
+              "sign": "+",
+              "text": "            }"
+            },
+            {
+              "n": 3759,
+              "sign": "+",
+              "text": "        };"
+            },
+            {
+              "n": 3760,
+              "sign": "+",
+              "text": ""
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3764,
+          "end": 3764,
+          "lines": [
+            {
+              "n": 3764,
+              "sign": "+",
+              "text": "            report_progress(crate::RetrainingPhase::Training, 0);"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3791,
+          "end": 3791,
+          "lines": [
+            {
+              "n": 3791,
+              "sign": "+",
+              "text": "                let mut done = 0usize;"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3794,
+          "end": 3795,
+          "lines": [
+            {
+              "n": 3794,
+              "sign": "+",
+              "text": "                    done += batch.len();"
+            },
+            {
+              "n": 3795,
+              "sign": "+",
+              "text": "                    report_progress(crate::RetrainingPhase::ReEmbedding, done);"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3800,
+          "end": 3800,
+          "lines": [
+            {
+              "n": 3800,
+              "sign": "+",
+              "text": "                let mut done = 0usize;"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3816,
+          "end": 3819,
+          "lines": [
+            {
+              "n": 3816,
+              "sign": "+",
+              "text": "                    done += 1;"
+            },
+            {
+              "n": 3817,
+              "sign": "+",
+              "text": "                    if done % 500 == 0 {"
+            },
+            {
+              "n": 3818,
+              "sign": "+",
+              "text": "                        report_progress(crate::RetrainingPhase::ReEmbedding, done);"
+            },
+            {
+              "n": 3819,
+              "sign": "+",
+              "text": "                    }"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 3831,
+          "end": 3831,
+          "lines": [
+            {
+              "n": 3831,
+              "sign": "+",
+              "text": "                report_progress(crate::RetrainingPhase::Publishing, progress_total);"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 76,
+          "end": 113
+        }
+      ],
+      "hunks": [
+        {
+          "start": 76,
+          "end": 113,
+          "lines": [
+            {
+              "n": 76,
+              "sign": "+",
+              "text": "/// The phase a basis retrain is in when it reports progress. Twin of Swift"
+            },
+            {
+              "n": 77,
+              "sign": "+",
+              "text": "/// `RetrainingPhase`; the wire spelling is `as_str()`."
+            },
+            {
+              "n": 78,
+              "sign": "+",
+              "text": "#[derive(Debug, Clone, Copy, PartialEq, Eq)]"
+            },
+            {
+              "n": 79,
+              "sign": "+",
+              "text": "pub enum RetrainingPhase {"
+            },
+            {
+              "n": 80,
+              "sign": "+",
+              "text": "    /// The trainable bases are being learned from every document; no"
+            },
+            {
+              "n": 81,
+              "sign": "+",
+              "text": "    /// vector rows are written."
+            },
+            {
+              "n": 82,
+              "sign": "+",
+              "text": "    Training,"
+            },
+            {
+              "n": 83,
+              "sign": "+",
+              "text": "    /// Every document is being re-embedded into the shadow generation."
+            },
+            {
+              "n": 84,
+              "sign": "+",
+              "text": "    ReEmbedding,"
+            },
+            {
+              "n": 85,
+              "sign": "+",
+              "text": "    /// The shadow generation is being published (one storage transaction)."
+            },
+            {
+              "n": 86,
+              "sign": "+",
+              "text": "    Publishing,"
+            },
+            {
+              "n": 87,
+              "sign": "+",
+              "text": "}"
+            },
+            {
+              "n": 88,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 89,
+              "sign": "+",
+              "text": "impl RetrainingPhase {"
+            },
+            {
+              "n": 90,
+              "sign": "+",
+              "text": "    pub fn as_str(&self) -> &'static str {"
+            },
+            {
+              "n": 91,
+              "sign": "+",
+              "text": "        match self {"
+            },
+            {
+              "n": 92,
+              "sign": "+",
+              "text": "            RetrainingPhase::Training => \"training\","
+            },
+            {
+              "n": 93,
+              "sign": "+",
+              "text": "            RetrainingPhase::ReEmbedding => \"re-embedding\","
+            },
+            {
+              "n": 94,
+              "sign": "+",
+              "text": "            RetrainingPhase::Publishing => \"publishing\","
+            },
+            {
+              "n": 95,
+              "sign": "+",
+              "text": "        }"
+            },
+            {
+              "n": 96,
+              "sign": "+",
+              "text": "    }"
+            },
+            {
+              "n": 97,
+              "sign": "+",
+              "text": "}"
+            },
+            {
+              "n": 98,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 99,
+              "sign": "+",
+              "text": "/// One progress report from a basis retrain (`reindex_with_budget_reporting`):"
+            }
+          ],
+          "dropped": 14
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/rust/src/lib.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 90,
+          "end": 90
+        }
+      ],
+      "hunks": [
+        {
+          "start": 90,
+          "end": 90,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "pub use corpus::CorpusRetrainingReport;"
+            },
+            {
+              "n": 90,
+              "sign": "+",
+              "text": "pub use corpus::{CorpusRetrainingProgress, CorpusRetrainingReport, RetrainingPhase};"
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 416,
+          "end": 449
+        }
+      ],
+      "hunks": [
+        {
+          "start": 416,
+          "end": 449,
+          "lines": [
+            {
+              "n": 416,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 417,
+              "sign": "+",
+              "text": "// ── Retrain progress (GLK-RETRAIN-VISIBLE-01) ───────────────────────────────"
+            },
+            {
+              "n": 418,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 419,
+              "sign": "+",
+              "text": "/// A retrain over 1,200 documents in re-embed batches of 500 reports: training"
+            },
+            {
+              "n": 420,
+              "sign": "+",
+              "text": "/// once at 0, re-embedding at 500, 1,000 and 1,200, publishing at 1,200 — and"
+            },
+            {
+              "n": 421,
+              "sign": "+",
+              "text": "/// nothing more often than once per batch. Twin of Swift"
+            },
+            {
+              "n": 422,
+              "sign": "+",
+              "text": "/// `CorpusRetrainingProgressTests.reportsOncePerBatch`."
+            },
+            {
+              "n": 423,
+              "sign": "+",
+              "text": "#[test]"
+            },
+            {
+              "n": 424,
+              "sign": "+",
+              "text": "fn reindex_reports_progress_once_per_batch() {"
+            },
+            {
+              "n": 425,
+              "sign": "+",
+              "text": "    use corpus_kit::{CorpusRetrainingProgress, RetrainingPhase};"
+            },
+            {
+              "n": 426,
+              "sign": "+",
+              "text": "    let (storage, _guard) = make_scratch_storage();"
+            },
+            {
+              "n": 427,
+              "sign": "+",
+              "text": "    let source = FaultSource::new();"
+            },
+            {
+              "n": 428,
+              "sign": "+",
+              "text": "    for index in 1..=1_200 { source.put(&format!(\"progress-{index}\"), &format!(\"progress corpus row {index}\")); }"
+            },
+            {
+              "n": 429,
+              "sign": "+",
+              "text": "    let engine = make_ri_engine(storage.clone(), source.clone());"
+            },
+            {
+              "n": 430,
+              "sign": "+",
+              "text": "    let seen: std::sync::Mutex<Vec<CorpusRetrainingProgress>> = std::sync::Mutex::new(Vec::new());"
+            },
+            {
+              "n": 431,
+              "sign": "+",
+              "text": "    let report = engine"
+            },
+            {
+              "n": 432,
+              "sign": "+",
+              "text": "        .reindex_with_budget_reporting(NOW_MILLIS, &RetrainingBudget::unbounded(), &|p| {"
+            },
+            {
+              "n": 433,
+              "sign": "+",
+              "text": "            seen.lock().unwrap().push(p.clone());"
+            },
+            {
+              "n": 434,
+              "sign": "+",
+              "text": "        })"
+            },
+            {
+              "n": 435,
+              "sign": "+",
+              "text": "        .expect(\"reporting reindex\");"
+            },
+            {
+              "n": 436,
+              "sign": "+",
+              "text": "    assert_eq!(report.completed_model_ids, vec![RI_MODEL_ID.to_string()]);"
+            },
+            {
+              "n": 437,
+              "sign": "+",
+              "text": "    let seen = seen.into_inner().unwrap();"
+            },
+            {
+              "n": 438,
+              "sign": "+",
+              "text": "    let shape: Vec<(RetrainingPhase, usize, usize)> ="
+            },
+            {
+              "n": 439,
+              "sign": "+",
+              "text": "        seen.iter().map(|p| (p.phase, p.done, p.total)).collect();"
+            }
+          ],
+          "dropped": 10
+        }
+      ]
+    }
+  ],
+  "unindexed": [],
+  "deleted": [],
+  "seeds": [
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift#progressModelID",
+      "name": "progressModelID",
+      "kind": "variable",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+      "span": "L3137-L3137",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift#progressTotal",
+      "name": "progressTotal",
+      "kind": "variable",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+      "span": "L3138-L3138",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift#report",
+      "name": "report",
+      "kind": "variable",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+      "span": "L3141-L3144",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift#done",
+      "name": "done",
+      "kind": "variable",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+      "span": "L3167-L3167",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift#done~2",
+      "name": "done",
+      "kind": "variable",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+      "span": "L3178-L3178",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift#CorpusRetrainingProgress.CorpusRetrainingProgress",
+      "name": "CorpusRetrainingProgress",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift",
+      "span": "L241-L246",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift#RetrainingPhase",
+      "name": "RetrainingPhase",
+      "kind": "enum",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift",
+      "span": "L218-L226",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#CorpusRetrainingProgressTests.reportsOncePerBatch",
+      "name": "reportsOncePerBatch",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L36-L69",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#ProgressSource.activeContentIDs",
+      "name": "activeContentIDs",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L22-L22",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#ProgressSource.changes",
+      "name": "changes",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L23-L23",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#ProgressSource.put",
+      "name": "put",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L18-L20",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#ProgressSource.record",
+      "name": "record",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L21-L21",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#Seen.append",
+      "name": "append",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L29-L29",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/content_engine.rs#reindex",
+      "name": "reindex",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/content_engine.rs",
+      "span": "L3647-L3649",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/content_engine.rs#reindex_with_budget",
+      "name": "reindex_with_budget",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/content_engine.rs",
+      "span": "L3651-L3657",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/content_engine.rs#reindex_with_budget_reporting",
+      "name": "reindex_with_budget_reporting",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/content_engine.rs",
+      "span": "L3663-L3695",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/content_engine.rs#reindex_impl",
+      "name": "reindex_impl",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/content_engine.rs",
+      "span": "L3697-L3875",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#as_str",
+      "name": "as_str",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L90-L96",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#CorpusRetrainingProgress",
+      "name": "CorpusRetrainingProgress",
+      "kind": "struct",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L107-L112",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#RetrainingPhase",
+      "name": "RetrainingPhase",
+      "kind": "enum",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L79-L87",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/lib.rs",
+      "name": "lib.rs",
+      "kind": "file",
+      "path": "packages/kits/CorpusKit/rust/src/lib.rs",
+      "span": "L1-L128",
+      "wholeFile": true
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs#reindex_reports_progress_once_per_batch",
+      "name": "reindex_reports_progress_once_per_batch",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs",
+      "span": "L424-L449",
+      "wholeFile": false
+    }
+  ],
+  "impacted": [
+    {
+      "id": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs#reindex_reports_progress_once_per_batch",
+      "name": "reindex_reports_progress_once_per_batch",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs",
+      "span": "L424-L449",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#ingest_batch_import_sharded",
+      "name": "ingest_batch_import_sharded",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L1486-L1703",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#remove",
+      "name": "remove",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L3241-L3283",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#score_sub_spans",
+      "name": "score_sub_spans",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L2973-L3080",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#train_and_persist_basis_with_budget",
+      "name": "train_and_persist_basis_with_budget",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L2599-L2650",
+      "relation": "calls",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#ingest_batch_import",
+      "name": "ingest_batch_import",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L1434-L1474",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#expunge",
+      "name": "expunge",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L3297-L3302",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#reindex_with_budget",
+      "name": "reindex_with_budget",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L2147-L2577",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/corpus.rs#train_and_persist_basis",
+      "name": "train_and_persist_basis",
+      "kind": "function",
+      "path": "packages/kits/CorpusKit/rust/src/corpus.rs",
+      "span": "L2590-L2597",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/content_engine_queue.rs",
+      "name": "content_engine_queue.rs",
+      "kind": "file",
+      "path": "packages/kits/CorpusKit/rust/src/content_engine_queue.rs",
+      "span": "L1-L926",
+      "relation": "imports",
+      "depth": 1
+    }
+  ],
+  "modules": [
+    {
+      "label": "content_engine_queue.rs",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/rust/src/",
+      "files": [
+        "packages/kits/CorpusKit/rust/src/content_engine_queue.rs"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/CorpusKit/rust/src/content_engine_queue.rs",
+          "name": "content_engine_queue.rs",
+          "kind": "file",
+          "path": "packages/kits/CorpusKit/rust/src/content_engine_queue.rs",
+          "span": "L1-L926",
+          "relation": "imports",
+          "depth": 1
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/rust/src/lib.rs"
+      ],
+      "owners": [
+        {
+          "name": "Newton",
+          "commits": 4,
+          "score": 2.338846839249746,
+          "last": 1785466681000
+        },
+        {
+          "name": "Test",
+          "commits": 3,
+          "score": 2.1438631702565147,
+          "last": 1788806112000
+        }
+      ]
+    }
+  ],
+  "testModules": [],
+  "areas": [
+    {
+      "label": "as_str",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/rust/src/",
+      "files": [
+        "packages/kits/CorpusKit/rust/src/content_engine.rs",
+        "packages/kits/CorpusKit/rust/src/corpus.rs",
+        "packages/kits/CorpusKit/rust/src/lib.rs"
+      ],
+      "seeds": 8,
+      "tests": "changed",
+      "testFiles": [
+        "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs"
+      ],
+      "changedTestFiles": [
+        "packages/kits/CorpusKit/rust/tests/shadow_swap_corpus_tests.rs"
+      ],
+      "reached": 1,
+      "behavioural": 5,
+      "unreached": [
+        "reindex",
+        "reindex_with_budget",
+        "reindex_impl",
+        "as_str"
+      ],
+      "seedNames": [
+        "as_str",
+        "reindex_impl",
+        "reindex_with_budget_reporting",
+        "reindex",
+        "reindex_with_budget",
+        "lib.rs",
+        "CorpusRetrainingProgress",
+        "RetrainingPhase"
+      ],
+      "owners": [
+        {
+          "name": "Test",
+          "commits": 14,
+          "score": 9.989988159341856,
+          "last": 1788963107000
+        },
+        {
+          "name": "Newton",
+          "commits": 18,
+          "score": 9.563338131574174,
+          "last": 1785516043000
+        }
+      ]
+    },
+    {
+      "label": "CorpusRetrainingProgress",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/Sources/CorpusKit/",
+      "files": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContentEngine.swift",
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusKit.swift"
+      ],
+      "seeds": 7,
+      "tests": "none",
+      "testFiles": [],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 1,
+      "unreached": [
+        "CorpusRetrainingProgress"
+      ],
+      "seedNames": [
+        "CorpusRetrainingProgress",
+        "done",
+        "done",
+        "progressModelID",
+        "progressTotal",
+        "report",
+        "RetrainingPhase"
+      ],
+      "owners": [
+        {
+          "name": "Newton",
+          "commits": 21,
+          "score": 11.150764793289197,
+          "last": 1785493996000
+        },
+        {
+          "name": "Test",
+          "commits": 15,
+          "score": 10.65460239820254,
+          "last": 1788963107000
+        }
+      ]
+    }
+  ],
+  "reviewers": [
+    {
+      "name": "Newton",
+      "commits": 43,
+      "score": 23.052949764113116,
+      "last": 1785516043000,
+      "areas": [
+        "as_str",
+        "CorpusRetrainingProgress",
+        "content_engine_queue.rs"
+      ]
+    },
+    {
+      "name": "Test",
+      "commits": 32,
+      "score": 22.788453727800913,
+      "last": 1788963107000,
+      "areas": [
+        "as_str",
+        "CorpusRetrainingProgress",
+        "content_engine_queue.rs"
+      ]
+    }
+  ]
+}

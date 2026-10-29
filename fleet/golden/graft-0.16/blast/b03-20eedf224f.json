@@ -1,0 +1,2244 @@
+{
+  "basis": "20eedf224f^...HEAD",
+  "depth": 2,
+  "changed": [
+    {
+      "path": "docs/missions/MISSION_ORDER_SWEEP_LEFTOVERS.md",
+      "status": "added",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 43
+        }
+      ],
+      "hunks": [
+        {
+          "start": 1,
+          "end": 43,
+          "lines": [
+            {
+              "n": 1,
+              "sign": "+",
+              "text": "# Mission ORDER-SWEEP-LEFTOVERS (WORK_LEDGER A14): one doc comment and one test"
+            },
+            {
+              "n": 2,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 3,
+              "sign": "+",
+              "text": "Project 3. Source: docs/status/KGF-ORDER-SWEEP-FOLLOWUPS_REPORT.md § Left open."
+            },
+            {
+              "n": 4,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": "Run details:"
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "- Worktree `/Users/bob/devlop/mootx01-ee-kgf-p3-pipeline`, branch `kgf/p3-pipeline`, at develop's tree (5b6401bc3)."
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": "- One coder (bilby-mid). adams5 runs after, until it gives a PASS."
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": "- Builds and tests go through make only. No Workflow tool. Nothing may call claude-sonnet-4-6."
+            },
+            {
+              "n": 9,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 10,
+              "sign": "+",
+              "text": "## Standing rules (Bob; every coder)"
+            },
+            {
+              "n": 11,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 12,
+              "sign": "+",
+              "text": "- Commit by pathspec only: `git add <your files>`, check `git diff --cached --name-only`, then"
+            },
+            {
+              "n": 13,
+              "sign": "+",
+              "text": "  `git commit -- <your files>`. Name every file in a hand-written zsh array. Never build a list from git status or"
+            },
+            {
+              "n": 14,
+              "sign": "+",
+              "text": "  git diff output, and never use `git add -A`, `git commit -a`, `git reset` or `git stash`."
+            },
+            {
+              "n": 15,
+              "sign": "+",
+              "text": "- Never two coders in one worktree."
+            },
+            {
+              "n": 16,
+              "sign": "+",
+              "text": "- Never edit simple-machines-docs/shared/agents_source or any `.claude/` file."
+            },
+            {
+              "n": 17,
+              "sign": "+",
+              "text": "- No trailers. Do not push; the orchestrator pushes the branch and squashes to develop."
+            },
+            {
+              "n": 18,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 19,
+              "sign": "+",
+              "text": "## Deliver"
+            },
+            {
+              "n": 20,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 21,
+              "sign": "+",
+              "text": "1. **CorpusKit `CorpusContentSource.activeContentIDs()` order.**"
+            },
+            {
+              "n": 22,
+              "sign": "+",
+              "text": "   - Its doc says \"ascending ID order\"."
+            },
+            {
+              "n": 23,
+              "sign": "+",
+              "text": "   - Read what each implementation returns in both ports: the GeniusLocusKit intake list orders by filedAt, then"
+            },
+            {
+              "n": 24,
+              "sign": "+",
+              "text": "     content bytes, then id with case folded."
+            }
+          ],
+          "dropped": 19
+        }
+      ]
+    },
+    {
+      "path": "docs/status/KGF-ORDER-SWEEP-LEFTOVERS_REPORT.md",
+      "status": "added",
+      "ranges": [
+        {
+          "start": 1,
+          "end": 105
+        }
+      ],
+      "hunks": [
+        {
+          "start": 1,
+          "end": 105,
+          "lines": [
+            {
+              "n": 1,
+              "sign": "+",
+              "text": "# KGF-ORDER-SWEEP-LEFTOVERS: completion report"
+            },
+            {
+              "n": 2,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 3,
+              "sign": "+",
+              "text": "Mission: docs/missions/MISSION_ORDER_SWEEP_LEFTOVERS.md (WORK_LEDGER A14). Project 3, branch `kgf/p3-pipeline`, base"
+            },
+            {
+              "n": 4,
+              "sign": "+",
+              "text": "0b5fd6086. One coder (bilby-mid). Source: KGF-ORDER-SWEEP-FOLLOWUPS_REPORT.md, Left open items 6 and 2."
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "## Summary"
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": "1. **`CorpusContentSource.activeContentIDs()` order (comments only).** The protocol doc in Swift"
+            },
+            {
+              "n": 9,
+              "sign": "+",
+              "text": "   (`CorpusKit/Sources/CorpusKit/CorpusContent.swift`) and its Rust twin (`CorpusKit/rust/src/content.rs`) said"
+            },
+            {
+              "n": 10,
+              "sign": "+",
+              "text": "   \"ascending ID order\". They now say the order is set by each conformer and is deterministic. They name the two"
+            },
+            {
+              "n": 11,
+              "sign": "+",
+              "text": "   shipping conformers and the order each one returns:"
+            },
+            {
+              "n": 12,
+              "sign": "+",
+              "text": "   - `CorpusDocumentStore` returns ascending ID order. Swift compares the ids as `String`s; Rust compares their bytes."
+            },
+            {
+              "n": 13,
+              "sign": "+",
+              "text": "   - The GeniusLocusKit intake source returns training order: `filedAt` ascending, then content by UTF-8 bytes, then id"
+            },
+            {
+              "n": 14,
+              "sign": "+",
+              "text": "     with ASCII case folded, then id by its stored bytes. The source is `LocusDrawerCorpusContentSource` in Swift and"
+            },
+            {
+              "n": 15,
+              "sign": "+",
+              "text": "     `LocusDrawerContentSource` in Rust."
+            },
+            {
+              "n": 16,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 17,
+              "sign": "+",
+              "text": "   Each doc names its twin in the other port. No code changed."
+            },
+            {
+              "n": 18,
+              "sign": "+",
+              "text": "2. **Qid retry with a corrupt row in the first 512 drawers.** I added a Rust test,"
+            },
+            {
+              "n": 19,
+              "sign": "+",
+              "text": "   `mr8c_qid_retry_skips_corrupt_row_inside_scan_cap`, in `NeuronKit/rust/src/estate_maintenance_reader.rs`. The test"
+            },
+            {
+              "n": 20,
+              "sign": "+",
+              "text": "   estate:"
+            },
+            {
+              "n": 21,
+              "sign": "+",
+              "text": "   - holds 522 drawers;"
+            },
+            {
+              "n": 22,
+              "sign": "+",
+              "text": "   - marks row 6 and the last row qid_pending;"
+            },
+            {
+              "n": 23,
+              "sign": "+",
+              "text": "   - then overwrites row 6's `lineageID` in the row store with text that is not a UUID. `drawer_from_row` cannot decode"
+            },
+            {
+              "n": 24,
+              "sign": "+",
+              "text": "     that row, so the scans skip it."
+            }
+          ],
+          "dropped": 81
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 201,
+          "end": 212
+        }
+      ],
+      "hunks": [
+        {
+          "start": 201,
+          "end": 212,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// Every live content ID, in deterministic ascending ID order — the"
+            },
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// streaming order rebuilds use."
+            },
+            {
+              "n": 201,
+              "sign": "+",
+              "text": "    /// Every live content ID, in an order the conformer defines and keeps"
+            },
+            {
+              "n": 202,
+              "sign": "+",
+              "text": "    /// deterministic: the same live set gives the same sequence on every"
+            },
+            {
+              "n": 203,
+              "sign": "+",
+              "text": "    /// call. Rebuilds stream in this order; a caller that needs ID order"
+            },
+            {
+              "n": 204,
+              "sign": "+",
+              "text": "    /// sorts the result itself."
+            },
+            {
+              "n": 205,
+              "sign": "+",
+              "text": "    ///"
+            },
+            {
+              "n": 206,
+              "sign": "+",
+              "text": "    /// Shipping conformers:"
+            },
+            {
+              "n": 207,
+              "sign": "+",
+              "text": "    /// - `CorpusDocumentStore`: ascending ID order (`String` comparison)."
+            },
+            {
+              "n": 208,
+              "sign": "+",
+              "text": "    /// - GeniusLocusKit's `LocusDrawerCorpusContentSource`: training order,"
+            },
+            {
+              "n": 209,
+              "sign": "+",
+              "text": "    ///   `filedAt` ascending, then content by UTF-8 bytes, then id with"
+            },
+            {
+              "n": 210,
+              "sign": "+",
+              "text": "    ///   ASCII case folded, then id by stored bytes."
+            },
+            {
+              "n": 211,
+              "sign": "+",
+              "text": "    ///"
+            },
+            {
+              "n": 212,
+              "sign": "+",
+              "text": "    /// Rust twin: `CorpusContentSource::active_content_ids` in `content.rs`."
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/CorpusKit/rust/src/content.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 180,
+          "end": 192
+        }
+      ],
+      "hunks": [
+        {
+          "start": 180,
+          "end": 192,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// Every live content ID, in deterministic ascending ID order — the"
+            },
+            {
+              "n": null,
+              "sign": "-",
+              "text": "    /// streaming order rebuilds use."
+            },
+            {
+              "n": 180,
+              "sign": "+",
+              "text": "    /// Every live content ID, in an order the implementor defines and keeps"
+            },
+            {
+              "n": 181,
+              "sign": "+",
+              "text": "    /// deterministic: the same live set gives the same sequence on every"
+            },
+            {
+              "n": 182,
+              "sign": "+",
+              "text": "    /// call. Rebuilds stream in this order; a caller that needs ID order"
+            },
+            {
+              "n": 183,
+              "sign": "+",
+              "text": "    /// sorts the result itself."
+            },
+            {
+              "n": 184,
+              "sign": "+",
+              "text": "    ///"
+            },
+            {
+              "n": 185,
+              "sign": "+",
+              "text": "    /// Shipping implementors:"
+            },
+            {
+              "n": 186,
+              "sign": "+",
+              "text": "    /// - `CorpusDocumentStore`: ascending ID order (byte comparison)."
+            },
+            {
+              "n": 187,
+              "sign": "+",
+              "text": "    /// - GeniusLocusKit's `LocusDrawerContentSource` (`intake.rs`):"
+            },
+            {
+              "n": 188,
+              "sign": "+",
+              "text": "    ///   training order, `filed_at` ascending, then content by UTF-8 bytes,"
+            },
+            {
+              "n": 189,
+              "sign": "+",
+              "text": "    ///   then id with ASCII case folded, then id by stored bytes."
+            },
+            {
+              "n": 190,
+              "sign": "+",
+              "text": "    ///"
+            },
+            {
+              "n": 191,
+              "sign": "+",
+              "text": "    /// Swift twin: `CorpusContentSource.activeContentIDs()` in"
+            },
+            {
+              "n": 192,
+              "sign": "+",
+              "text": "    /// `CorpusContent.swift`."
+            }
+          ],
+          "dropped": 0
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/EnrichmentRetryReadsTests.swift",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 5,
+          "end": 8
+        },
+        {
+          "start": 65,
+          "end": 129
+        }
+      ],
+      "hunks": [
+        {
+          "start": 5,
+          "end": 8,
+          "lines": [
+            {
+              "n": null,
+              "sign": "-",
+              "text": "// 512th row is still retried. Twin of the Rust"
+            },
+            {
+              "n": null,
+              "sign": "-",
+              "text": "// `mr8b_qid_retry_reaches_pending_drawer_past_scan_cap` in"
+            },
+            {
+              "n": 5,
+              "sign": "+",
+              "text": "// 512th row is still retried, and an undecodable row neither stops the read"
+            },
+            {
+              "n": 6,
+              "sign": "+",
+              "text": "// nor joins the batch. Twins of the Rust"
+            },
+            {
+              "n": 7,
+              "sign": "+",
+              "text": "// `mr8b_qid_retry_reaches_pending_drawer_past_scan_cap` and"
+            },
+            {
+              "n": 8,
+              "sign": "+",
+              "text": "// `mr8c_qid_retry_skips_corrupt_row_inside_scan_cap` in"
+            }
+          ],
+          "dropped": 0
+        },
+        {
+          "start": 65,
+          "end": 129,
+          "lines": [
+            {
+              "n": 65,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 66,
+              "sign": "+",
+              "text": "    /// A qid-pending drawer at row 6 whose lineageID is then overwritten with"
+            },
+            {
+              "n": 67,
+              "sign": "+",
+              "text": "    /// text that is not a UUID cannot be decoded. The full read skips it, so"
+            },
+            {
+              "n": 68,
+              "sign": "+",
+              "text": "    /// the batch is the pending drawer filed after the 512th row alone: the"
+            },
+            {
+              "n": 69,
+              "sign": "+",
+              "text": "    /// corrupt row neither aborts the read nor is retried as pending. Twin of"
+            },
+            {
+              "n": 70,
+              "sign": "+",
+              "text": "    /// the Rust `mr8c_qid_retry_skips_corrupt_row_inside_scan_cap`."
+            },
+            {
+              "n": 71,
+              "sign": "+",
+              "text": "    @Test(\"a corrupt row in the first 512 neither stops nor joins the retry batch\")"
+            },
+            {
+              "n": 72,
+              "sign": "+",
+              "text": "    func corruptRowInFirstFiveTwelveIsSkipped() async throws {"
+            },
+            {
+              "n": 73,
+              "sign": "+",
+              "text": "        let kit = GeniusLocusKit()"
+            },
+            {
+              "n": 74,
+              "sign": "+",
+              "text": "        let storage = InMemoryStorage("
+            },
+            {
+              "n": 75,
+              "sign": "+",
+              "text": "            configuration: EstateConfiguration(estateID: UUID(), backend: .inMemory))"
+            },
+            {
+              "n": 76,
+              "sign": "+",
+              "text": "        let handle = try await kit.provision("
+            },
+            {
+              "n": 77,
+              "sign": "+",
+              "text": "            storage: storage,"
+            },
+            {
+              "n": 78,
+              "sign": "+",
+              "text": "            owner: OwnerCredentials(ownerIdentifier: \"owner-retry-reads\"),"
+            },
+            {
+              "n": 79,
+              "sign": "+",
+              "text": "            params: EstateProvisionParams("
+            },
+            {
+              "n": 80,
+              "sign": "+",
+              "text": "                estateName: \"Retry Reads Estate\", kind: .glk,"
+            },
+            {
+              "n": 81,
+              "sign": "+",
+              "text": "                zoomWindowLow: 1, zoomWindowHigh: 10,"
+            },
+            {
+              "n": 82,
+              "sign": "+",
+              "text": "                frameworkProfile: \"KnowledgeWork\", syncMode: .none),"
+            },
+            {
+              "n": 83,
+              "sign": "+",
+              "text": "            embeddingModels: [.deterministic])"
+            },
+            {
+              "n": 84,
+              "sign": "+",
+              "text": "        let estate = try await kit.estate(for: handle)"
+            },
+            {
+              "n": 85,
+              "sign": "+",
+              "text": "        let now = Date(timeIntervalSince1970: 1_800_000_000)"
+            },
+            {
+              "n": 86,
+              "sign": "+",
+              "text": "        let parent = \"70000000-0000-4000-8000-000000000000\""
+            },
+            {
+              "n": 87,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 88,
+              "sign": "+",
+              "text": "        let count = 512 + 10"
+            }
+          ],
+          "dropped": 41
+        }
+      ]
+    },
+    {
+      "path": "packages/kits/NeuronKit/rust/src/estate_maintenance_reader.rs",
+      "status": "modified",
+      "ranges": [
+        {
+          "start": 687,
+          "end": 757
+        }
+      ],
+      "hunks": [
+        {
+          "start": 687,
+          "end": 757,
+          "lines": [
+            {
+              "n": 687,
+              "sign": "+",
+              "text": "    // ── MR-8c: a corrupt row in the first 512 neither stops nor joins the batch ─"
+            },
+            {
+              "n": 688,
+              "sign": "+",
+              "text": "    //"
+            },
+            {
+              "n": 689,
+              "sign": "+",
+              "text": "    // An estate larger than MAINTENANCE_SCAN_CAP with a qid-pending drawer at"
+            },
+            {
+              "n": 690,
+              "sign": "+",
+              "text": "    // row 6 whose lineageID is then overwritten with text that is not a UUID,"
+            },
+            {
+              "n": 691,
+              "sign": "+",
+              "text": "    // so the row cannot be decoded, and a second qid-pending drawer filed"
+            },
+            {
+              "n": 692,
+              "sign": "+",
+              "text": "    // last, after the 512th row. The full read skips the corrupt row, so the"
+            },
+            {
+              "n": 693,
+              "sign": "+",
+              "text": "    // batch is the last drawer alone: the corrupt row does not abort the scan"
+            },
+            {
+              "n": 694,
+              "sign": "+",
+              "text": "    // and is not retried as pending. Twin of the Swift"
+            },
+            {
+              "n": 695,
+              "sign": "+",
+              "text": "    // `EnrichmentRetryReadsTests.corruptRowInFirstFiveTwelveIsSkipped`."
+            },
+            {
+              "n": 696,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 697,
+              "sign": "+",
+              "text": "    #[test]"
+            },
+            {
+              "n": 698,
+              "sign": "+",
+              "text": "    fn mr8c_qid_retry_skips_corrupt_row_inside_scan_cap() {"
+            },
+            {
+              "n": 699,
+              "sign": "+",
+              "text": "        use persistence_kit::predicate::StoragePredicate;"
+            },
+            {
+              "n": 700,
+              "sign": "+",
+              "text": "        use persistence_kit::types::{Column, TypedValue};"
+            },
+            {
+              "n": 701,
+              "sign": "+",
+              "text": ""
+            },
+            {
+              "n": 702,
+              "sign": "+",
+              "text": "        let store: Arc<dyn LocusDrawerStore> ="
+            },
+            {
+              "n": 703,
+              "sign": "+",
+              "text": "            Arc::new(InMemoryDrawerStore::new(0, None).expect(\"store\"));"
+            },
+            {
+              "n": 704,
+              "sign": "+",
+              "text": "        let mut coord = EstateCoordinator::new();"
+            },
+            {
+              "n": 705,
+              "sign": "+",
+              "text": "        let handle = coord"
+            },
+            {
+              "n": 706,
+              "sign": "+",
+              "text": "            .open(store.clone(), OwnerCredentials::new(\"owner\"), 0, 100)"
+            },
+            {
+              "n": 707,
+              "sign": "+",
+              "text": "            .expect(\"open\");"
+            },
+            {
+              "n": 708,
+              "sign": "+",
+              "text": "        let n = MAINTENANCE_SCAN_CAP + 10;"
+            },
+            {
+              "n": 709,
+              "sign": "+",
+              "text": "        let mut ids = Vec::with_capacity(n);"
+            },
+            {
+              "n": 710,
+              "sign": "+",
+              "text": "        for i in 0..n {"
+            }
+          ],
+          "dropped": 47
+        }
+      ]
+    }
+  ],
+  "unindexed": [
+    "docs/missions/MISSION_ORDER_SWEEP_LEFTOVERS.md",
+    "docs/status/KGF-ORDER-SWEEP-LEFTOVERS_REPORT.md"
+  ],
+  "deleted": [],
+  "seeds": [
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift#CorpusContentSource",
+      "name": "CorpusContentSource",
+      "kind": "interface",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift",
+      "span": "L184-L218",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/CorpusKit/rust/src/content.rs#CorpusContentSource",
+      "name": "CorpusContentSource",
+      "kind": "interface",
+      "path": "packages/kits/CorpusKit/rust/src/content.rs",
+      "span": "L149-L202",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/EnrichmentRetryReadsTests.swift#EnrichmentRetryReadsTests.corruptRowInFirstFiveTwelveIsSkipped",
+      "name": "corruptRowInFirstFiveTwelveIsSkipped",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/EnrichmentRetryReadsTests.swift",
+      "span": "L71-L129",
+      "wholeFile": false
+    },
+    {
+      "id": "packages/kits/NeuronKit/rust/src/estate_maintenance_reader.rs#mr8c_qid_retry_skips_corrupt_row_inside_scan_cap",
+      "name": "mr8c_qid_retry_skips_corrupt_row_inside_scan_cap",
+      "kind": "function",
+      "path": "packages/kits/NeuronKit/rust/src/estate_maintenance_reader.rs",
+      "span": "L698-L756",
+      "wholeFile": false
+    }
+  ],
+  "impacted": [
+    {
+      "id": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift#CorpusContentStore",
+      "name": "CorpusContentStore",
+      "kind": "interface",
+      "path": "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift",
+      "span": "L241-L252",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#MapSource",
+      "name": "MapSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+      "span": "L115-L123",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkSource",
+      "name": "BulkSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+      "span": "L24-L50",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#ProgressSource",
+      "name": "ProgressSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L17-L25",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#DualTextInMemorySource",
+      "name": "DualTextInMemorySource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+      "span": "L159-L199",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#FactsSource",
+      "name": "FactsSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+      "span": "L23-L41",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift#BenchSource",
+      "name": "BenchSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift",
+      "span": "L22-L57",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift#FaultingContentSource",
+      "name": "FaultingContentSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift",
+      "span": "L53-L89",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift#MemorySource",
+      "name": "MemorySource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+      "span": "L89-L97",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift#ReindexSourceReadsTests.CountingSource",
+      "name": "CountingSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift",
+      "span": "L14-L36",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#SimpleContentSource",
+      "name": "SimpleContentSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+      "span": "L46-L85",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift#SSCTestSource",
+      "name": "SSCTestSource",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+      "span": "L38-L69",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#MapContentSource",
+      "name": "MapContentSource",
+      "kind": "struct",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L116-L130",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift#LocusDrawerCorpusContentSource",
+      "name": "LocusDrawerCorpusContentSource",
+      "kind": "struct",
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift",
+      "span": "L40-L181",
+      "relation": "extends",
+      "depth": 1
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusContentBoundaryTests.swift#InMemoryContentAdapter",
+      "name": "InMemoryContentAdapter",
+      "kind": "class",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusContentBoundaryTests.swift",
+      "span": "L24-L70",
+      "relation": "extends",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.activeIndexedCountIsAggregate",
+      "name": "activeIndexedCountIsAggregate",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+      "span": "L270-L285",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.engineCountIsAggregate",
+      "name": "engineCountIsAggregate",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+      "span": "L287-L308",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.matchesFullLoadPath",
+      "name": "matchesFullLoadPath",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+      "span": "L163-L199",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.readsNoPayloadAndNoStateRows",
+      "name": "readsNoPayloadAndNoStateRows",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+      "span": "L201-L222",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkReembedTests.chunkSizeDoesNotChangeTheRows",
+      "name": "chunkSizeDoesNotChangeTheRows",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+      "span": "L114-L130",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkReembedTests.commitsPerChunkAndOneCheckpoint",
+      "name": "commitsPerChunkAndOneCheckpoint",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+      "span": "L132-L155",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkReembedTests.interruptedPassResumes",
+      "name": "interruptedPassResumes",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+      "span": "L157-L199",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#CorpusRetrainingProgressTests.basisRetrainOwed",
+      "name": "basisRetrainOwed",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L79-L102",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#CorpusRetrainingProgressTests.reportsOncePerBatch",
+      "name": "reportsOncePerBatch",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+      "span": "L37-L71",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#CorpusContentEngineDualTextSourceProtocolTests.denseTextUsedForEmbeddingLexicalForBM25",
+      "name": "denseTextUsedForEmbeddingLexicalForBM25",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+      "span": "L217-L236",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#CorpusContentEngineDualTextSourceProtocolTests.nilDenseTextMeansIdenticalBehavior",
+      "name": "nilDenseTextMeansIdenticalBehavior",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+      "span": "L261-L273",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#CorpusContentEngineDualTextSourceProtocolTests.reindexRecomposesFromDenseText",
+      "name": "reindexRecomposesFromDenseText",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+      "span": "L238-L259",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.aCheckpointedIDWithoutASourceRecordIsCountedMissing",
+      "name": "aCheckpointedIDWithoutASourceRecordIsCountedMissing",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+      "span": "L153-L160",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theBulkReindexIndexesTheSupplementAndIsIdempotent",
+      "name": "theBulkReindexIndexesTheSupplementAndIsIdempotent",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+      "span": "L106-L115",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theKeywordReindexIsIdempotent",
+      "name": "theKeywordReindexIsIdempotent",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+      "span": "L117-L127",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theKeywordReindexRepairsAnIndexBuiltWithoutTheSupplement",
+      "name": "theKeywordReindexRepairsAnIndexBuiltWithoutTheSupplement",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+      "span": "L129-L151",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theQueueDrainIndexesTheSupplement",
+      "name": "theQueueDrainIndexesTheSupplement",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+      "span": "L88-L104",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift#ReembedBenchTests.reembedTiming",
+      "name": "reembedTiming",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift",
+      "span": "L72-L127",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift#ReindexAbortPathTests.c4_failedReindexAbandonsOrphanedShadow",
+      "name": "c4_failedReindexAbandonsOrphanedShadow",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift",
+      "span": "L185-L247",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift#ReindexBatchTransactionTests.bm25RowsAreBracketed",
+      "name": "bm25RowsAreBracketed",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+      "span": "L102-L123",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift#ReindexBatchTransactionTests.queueDrainBm25RowsAreBracketed",
+      "name": "queueDrainBm25RowsAreBracketed",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+      "span": "L125-L152",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift#ReindexSourceReadsTests.wholeContentReindexReadsSourcesABatchAtATime",
+      "name": "wholeContentReindexReadsSourcesABatchAtATime",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift",
+      "span": "L38-L54",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.boundedReindexRetainsServingGeneration",
+      "name": "boundedReindexRetainsServingGeneration",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+      "span": "L145-L165",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.c1_twoReindexPassesAdvanceGenerationAndLeaveReclaimRows",
+      "name": "c1_twoReindexPassesAdvanceGenerationAndLeaveReclaimRows",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+      "span": "L183-L221",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.c2_recallUnchangedAfterReindex",
+      "name": "c2_recallUnchangedAfterReindex",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+      "span": "L230-L259",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.c3_reindexFailureLeavesOldGenerationServing",
+      "name": "c3_reindexFailureLeavesOldGenerationServing",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+      "span": "L271-L300",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift#SSCFactsBM25Tests.oldContentNotDoubleIndexed",
+      "name": "oldContentNotDoubleIndexed",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+      "span": "L107-L124",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift#SSCFactsBM25Tests.sscFactsTermRecallable",
+      "name": "sscFactsTermRecallable",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+      "span": "L85-L105",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#CustomSourceScoreTests.customSourceScoring",
+      "name": "customSourceScoring",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L612-L640",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#ScoreEmptyInputTests.emptyCandidateIDs",
+      "name": "emptyCandidateIDs",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L373-L379",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#ScoreEmptyInputTests.emptyQuery",
+      "name": "emptyQuery",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L363-L370",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#ScoreNoFloatLaneTests.throwingProvider",
+      "name": "throwingProvider",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L393-L405",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanBudgetTests.recordByteCap",
+      "name": "recordByteCap",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L733-L745",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanBudgetTests.windowBudgetCoversEverything",
+      "name": "windowBudgetCoversEverything",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L717-L731",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanBudgetTests.windowBudgetStopsTheWalk",
+      "name": "windowBudgetStopsTheWalk",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L686-L715",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanRescueTests.absentCandidateOmitted",
+      "name": "absentCandidateOmitted",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L487-L503",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanRescueTests.dualTextEmbedding",
+      "name": "dualTextEmbedding",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L506-L531",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanRescueTests.rescueFixture",
+      "name": "rescueFixture",
+      "kind": "method",
+      "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+      "span": "L436-L484",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift#GeniusLocusKit.wireSubstores",
+      "name": "wireSubstores",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift",
+      "span": "L529-L698",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift#GeniusLocusKit.runSharedContentMigration",
+      "name": "runSharedContentMigration",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift",
+      "span": "L486-L877",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift#contentSource",
+      "name": "contentSource",
+      "kind": "variable",
+      "path": "packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift",
+      "span": "L119-L119",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DrainDutyCostTests.swift#DrainDutyCostTests.locusSourceResolvesABatchInOneDrawerQuery",
+      "name": "locusSourceResolvesABatchInOneDrawerQuery",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DrainDutyCostTests.swift",
+      "span": "L75-L86",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift#LocusDrawerCorpusContentSourceTests.activeContentIDsTieBreak",
+      "name": "activeContentIDsTieBreak",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift",
+      "span": "L93-L154",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift#LocusDrawerCorpusContentSourceTests.record",
+      "name": "record",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift",
+      "span": "L57-L62",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/ScaleQualificationTests.swift#ScaleQualificationTests.qualifyLargeEstateMigration",
+      "name": "qualifyLargeEstateMigration",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/ScaleQualificationTests.swift",
+      "span": "L35-L137",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift#SharedContentMigrationTests.ensembleUpgradeCoversAddedProviderAndStaysDarkUntilThen",
+      "name": "ensembleUpgradeCoversAddedProviderAndStaysDarkUntilThen",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+      "span": "L500-L554",
+      "relation": "calls",
+      "depth": 2
+    },
+    {
+      "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift#SharedContentMigrationTests.legacyEstateMigratesSelectivelyAndVerifies",
+      "name": "legacyEstateMigratesSelectivelyAndVerifies",
+      "kind": "method",
+      "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+      "span": "L269-L344",
+      "relation": "calls",
+      "depth": 2
+    }
+  ],
+  "modules": [
+    {
+      "label": "contentSource",
+      "labelSource": "symbol",
+      "key": "packages/kits/GeniusLocusKit/Sources/GLKScaleQual/",
+      "files": [
+        "packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift#contentSource",
+          "name": "contentSource",
+          "kind": "variable",
+          "path": "packages/kits/GeniusLocusKit/Sources/GLKScaleQual/main.swift",
+          "span": "L119-L119",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ],
+      "owners": [
+        {
+          "name": "Test",
+          "commits": 1,
+          "score": 0.7407301465435291,
+          "last": 1788806112000
+        },
+        {
+          "name": "Newton",
+          "commits": 1,
+          "score": 0.5748861504361537,
+          "last": 1785014827000
+        }
+      ]
+    },
+    {
+      "label": "LocusDrawerCorpusContentSource",
+      "labelSource": "symbol",
+      "key": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/",
+      "files": [
+        "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift#LocusDrawerCorpusContentSource",
+          "name": "LocusDrawerCorpusContentSource",
+          "kind": "struct",
+          "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/Intake/LocusDrawerCorpusContentSource.swift",
+          "span": "L40-L181",
+          "relation": "extends",
+          "depth": 1
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ],
+      "owners": [
+        {
+          "name": "Test",
+          "commits": 3,
+          "score": 2.1450939288123805,
+          "last": 1788663597000
+        },
+        {
+          "name": "Newton",
+          "commits": 2,
+          "score": 1.165719109901336,
+          "last": 1785424094000
+        }
+      ]
+    },
+    {
+      "label": "runSharedContentMigration",
+      "labelSource": "symbol",
+      "key": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/",
+      "files": [
+        "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift#GeniusLocusKit.runSharedContentMigration",
+          "name": "runSharedContentMigration",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Sources/GLKMigrationV1_0ToV1_1/SharedContentMigration.swift",
+          "span": "L486-L877",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ],
+      "owners": [
+        {
+          "name": "Newton",
+          "commits": 4,
+          "score": 2.353647724645665,
+          "last": 1785488604000
+        },
+        {
+          "name": "Test",
+          "commits": 2,
+          "score": 1.46591926892606,
+          "last": 1788886200000
+        }
+      ]
+    },
+    {
+      "label": "wireSubstores",
+      "labelSource": "symbol",
+      "key": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/",
+      "files": [
+        "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift#GeniusLocusKit.wireSubstores",
+          "name": "wireSubstores",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Sources/GeniusLocusKit/EstateLifecycle.swift",
+          "span": "L529-L698",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ],
+      "owners": [
+        {
+          "name": "Test",
+          "commits": 11,
+          "score": 7.942147342645902,
+          "last": 1788963107000
+        },
+        {
+          "name": "Newton",
+          "commits": 7,
+          "score": 3.8983307966345464,
+          "last": 1785466681000
+        }
+      ]
+    }
+  ],
+  "testModules": [
+    {
+      "label": "MapSource",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/Tests/CorpusKitTests/",
+      "files": [
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusContentBoundaryTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#MapSource",
+          "name": "MapSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+          "span": "L115-L123",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkSource",
+          "name": "BulkSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+          "span": "L24-L50",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#ProgressSource",
+          "name": "ProgressSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+          "span": "L17-L25",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#DualTextInMemorySource",
+          "name": "DualTextInMemorySource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+          "span": "L159-L199",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#FactsSource",
+          "name": "FactsSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+          "span": "L23-L41",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift#BenchSource",
+          "name": "BenchSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift",
+          "span": "L22-L57",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift#FaultingContentSource",
+          "name": "FaultingContentSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift",
+          "span": "L53-L89",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift#MemorySource",
+          "name": "MemorySource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+          "span": "L89-L97",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift#ReindexSourceReadsTests.CountingSource",
+          "name": "CountingSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift",
+          "span": "L14-L36",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#SimpleContentSource",
+          "name": "SimpleContentSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+          "span": "L46-L85",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift#SSCTestSource",
+          "name": "SSCTestSource",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+          "span": "L38-L69",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#MapContentSource",
+          "name": "MapContentSource",
+          "kind": "struct",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L116-L130",
+          "relation": "extends",
+          "depth": 1
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.activeIndexedCountIsAggregate",
+          "name": "activeIndexedCountIsAggregate",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+          "span": "L270-L285",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.engineCountIsAggregate",
+          "name": "engineCountIsAggregate",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+          "span": "L287-L308",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.matchesFullLoadPath",
+          "name": "matchesFullLoadPath",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+          "span": "L163-L199",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift#BasisOwedStatusTests.readsNoPayloadAndNoStateRows",
+          "name": "readsNoPayloadAndNoStateRows",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+          "span": "L201-L222",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkReembedTests.chunkSizeDoesNotChangeTheRows",
+          "name": "chunkSizeDoesNotChangeTheRows",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+          "span": "L114-L130",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkReembedTests.commitsPerChunkAndOneCheckpoint",
+          "name": "commitsPerChunkAndOneCheckpoint",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+          "span": "L132-L155",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift#BulkReembedTests.interruptedPassResumes",
+          "name": "interruptedPassResumes",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+          "span": "L157-L199",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusContentBoundaryTests.swift#InMemoryContentAdapter",
+          "name": "InMemoryContentAdapter",
+          "kind": "class",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusContentBoundaryTests.swift",
+          "span": "L24-L70",
+          "relation": "extends",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#CorpusRetrainingProgressTests.basisRetrainOwed",
+          "name": "basisRetrainOwed",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+          "span": "L79-L102",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift#CorpusRetrainingProgressTests.reportsOncePerBatch",
+          "name": "reportsOncePerBatch",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+          "span": "L37-L71",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#CorpusContentEngineDualTextSourceProtocolTests.denseTextUsedForEmbeddingLexicalForBM25",
+          "name": "denseTextUsedForEmbeddingLexicalForBM25",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+          "span": "L217-L236",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#CorpusContentEngineDualTextSourceProtocolTests.nilDenseTextMeansIdenticalBehavior",
+          "name": "nilDenseTextMeansIdenticalBehavior",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+          "span": "L261-L273",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift#CorpusContentEngineDualTextSourceProtocolTests.reindexRecomposesFromDenseText",
+          "name": "reindexRecomposesFromDenseText",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+          "span": "L238-L259",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.aCheckpointedIDWithoutASourceRecordIsCountedMissing",
+          "name": "aCheckpointedIDWithoutASourceRecordIsCountedMissing",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+          "span": "L153-L160",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theBulkReindexIndexesTheSupplementAndIsIdempotent",
+          "name": "theBulkReindexIndexesTheSupplementAndIsIdempotent",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+          "span": "L106-L115",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theKeywordReindexIsIdempotent",
+          "name": "theKeywordReindexIsIdempotent",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+          "span": "L117-L127",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theKeywordReindexRepairsAnIndexBuiltWithoutTheSupplement",
+          "name": "theKeywordReindexRepairsAnIndexBuiltWithoutTheSupplement",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+          "span": "L129-L151",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift#KeywordSupplementTests.theQueueDrainIndexesTheSupplement",
+          "name": "theQueueDrainIndexesTheSupplement",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+          "span": "L88-L104",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift#ReembedBenchTests.reembedTiming",
+          "name": "reembedTiming",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift",
+          "span": "L72-L127",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift#ReindexAbortPathTests.c4_failedReindexAbandonsOrphanedShadow",
+          "name": "c4_failedReindexAbandonsOrphanedShadow",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift",
+          "span": "L185-L247",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift#ReindexBatchTransactionTests.bm25RowsAreBracketed",
+          "name": "bm25RowsAreBracketed",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+          "span": "L102-L123",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift#ReindexBatchTransactionTests.queueDrainBm25RowsAreBracketed",
+          "name": "queueDrainBm25RowsAreBracketed",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+          "span": "L125-L152",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift#ReindexSourceReadsTests.wholeContentReindexReadsSourcesABatchAtATime",
+          "name": "wholeContentReindexReadsSourcesABatchAtATime",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift",
+          "span": "L38-L54",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.boundedReindexRetainsServingGeneration",
+          "name": "boundedReindexRetainsServingGeneration",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+          "span": "L145-L165",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.c1_twoReindexPassesAdvanceGenerationAndLeaveReclaimRows",
+          "name": "c1_twoReindexPassesAdvanceGenerationAndLeaveReclaimRows",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+          "span": "L183-L221",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.c2_recallUnchangedAfterReindex",
+          "name": "c2_recallUnchangedAfterReindex",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+          "span": "L230-L259",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift#ShadowSwapCorpusTests.c3_reindexFailureLeavesOldGenerationServing",
+          "name": "c3_reindexFailureLeavesOldGenerationServing",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+          "span": "L271-L300",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift#SSCFactsBM25Tests.oldContentNotDoubleIndexed",
+          "name": "oldContentNotDoubleIndexed",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+          "span": "L107-L124",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift#SSCFactsBM25Tests.sscFactsTermRecallable",
+          "name": "sscFactsTermRecallable",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+          "span": "L85-L105",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#CustomSourceScoreTests.customSourceScoring",
+          "name": "customSourceScoring",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L612-L640",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#ScoreEmptyInputTests.emptyCandidateIDs",
+          "name": "emptyCandidateIDs",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L373-L379",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#ScoreEmptyInputTests.emptyQuery",
+          "name": "emptyQuery",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L363-L370",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#ScoreNoFloatLaneTests.throwingProvider",
+          "name": "throwingProvider",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L393-L405",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanBudgetTests.recordByteCap",
+          "name": "recordByteCap",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L733-L745",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanBudgetTests.windowBudgetCoversEverything",
+          "name": "windowBudgetCoversEverything",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L717-L731",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanBudgetTests.windowBudgetStopsTheWalk",
+          "name": "windowBudgetStopsTheWalk",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L686-L715",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanRescueTests.absentCandidateOmitted",
+          "name": "absentCandidateOmitted",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L487-L503",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanRescueTests.dualTextEmbedding",
+          "name": "dualTextEmbedding",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L506-L531",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift#SubSpanRescueTests.rescueFixture",
+          "name": "rescueFixture",
+          "kind": "method",
+          "path": "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift",
+          "span": "L436-L484",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ]
+    },
+    {
+      "label": "locusSourceResolvesABatchInOne…",
+      "labelSource": "symbol",
+      "key": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/",
+      "files": [
+        "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DrainDutyCostTests.swift",
+        "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DrainDutyCostTests.swift#DrainDutyCostTests.locusSourceResolvesABatchInOneDrawerQuery",
+          "name": "locusSourceResolvesABatchInOneDrawerQuery",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/DrainDutyCostTests.swift",
+          "span": "L75-L86",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift#LocusDrawerCorpusContentSourceTests.activeContentIDsTieBreak",
+          "name": "activeContentIDsTieBreak",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift",
+          "span": "L93-L154",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift#LocusDrawerCorpusContentSourceTests.record",
+          "name": "record",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Tests/GeniusLocusKitTests/LocusDrawerCorpusContentSourceTests.swift",
+          "span": "L57-L62",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ]
+    },
+    {
+      "label": "qualifyLargeEstateMigration",
+      "labelSource": "symbol",
+      "key": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/",
+      "files": [
+        "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/ScaleQualificationTests.swift",
+        "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift"
+      ],
+      "symbols": [
+        {
+          "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/ScaleQualificationTests.swift#ScaleQualificationTests.qualifyLargeEstateMigration",
+          "name": "qualifyLargeEstateMigration",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/ScaleQualificationTests.swift",
+          "span": "L35-L137",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift#SharedContentMigrationTests.ensembleUpgradeCoversAddedProviderAndStaysDarkUntilThen",
+          "name": "ensembleUpgradeCoversAddedProviderAndStaysDarkUntilThen",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+          "span": "L500-L554",
+          "relation": "calls",
+          "depth": 2
+        },
+        {
+          "id": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift#SharedContentMigrationTests.legacyEstateMigratesSelectivelyAndVerifies",
+          "name": "legacyEstateMigratesSelectivelyAndVerifies",
+          "kind": "method",
+          "path": "packages/kits/GeniusLocusKit/Tests/GLKMigrationV1_0ToV1_1Tests/SharedContentMigrationTests.swift",
+          "span": "L269-L344",
+          "relation": "calls",
+          "depth": 2
+        }
+      ],
+      "from": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ]
+    }
+  ],
+  "areas": [
+    {
+      "label": "CorpusContentSource",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/Sources/CorpusKit/",
+      "files": [
+        "packages/kits/CorpusKit/Sources/CorpusKit/CorpusContent.swift"
+      ],
+      "seeds": 1,
+      "tests": "na",
+      "testFiles": [
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/BasisOwedStatusTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/BulkReembedTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/CorpusRetrainingProgressTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/DualTextIndexingTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/KeywordSupplementTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReembedBenchTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexAbortPathTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexBatchTransactionTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ReindexSourceReadsTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/SSCFactsTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/ShadowSwapCorpusTests.swift",
+        "packages/kits/CorpusKit/Tests/CorpusKitTests/SubSpanScoringTests.swift"
+      ],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 0,
+      "unreached": [],
+      "seedNames": [
+        "CorpusContentSource"
+      ],
+      "owners": [
+        {
+          "name": "Newton",
+          "commits": 3,
+          "score": 1.7463091103274524,
+          "last": 1785307512000
+        },
+        {
+          "name": "Test",
+          "commits": 1,
+          "score": 0.7337061926944152,
+          "last": 1788663597000
+        }
+      ]
+    },
+    {
+      "label": "CorpusContentSource",
+      "labelSource": "symbol",
+      "key": "packages/kits/CorpusKit/rust/src/",
+      "files": [
+        "packages/kits/CorpusKit/rust/src/content.rs"
+      ],
+      "seeds": 1,
+      "tests": "na",
+      "testFiles": [],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 0,
+      "unreached": [],
+      "seedNames": [
+        "CorpusContentSource"
+      ],
+      "owners": [
+        {
+          "name": "Newton",
+          "commits": 3,
+          "score": 1.746309079622577,
+          "last": 1785307512000
+        },
+        {
+          "name": "Test",
+          "commits": 1,
+          "score": 0.73370617979386,
+          "last": 1788663597000
+        }
+      ]
+    },
+    {
+      "label": "mr8c_qid_retry_skips_corrupt_r…",
+      "labelSource": "symbol",
+      "key": "packages/kits/NeuronKit/rust/src/",
+      "files": [
+        "packages/kits/NeuronKit/rust/src/estate_maintenance_reader.rs"
+      ],
+      "seeds": 1,
+      "tests": "none",
+      "testFiles": [],
+      "changedTestFiles": [],
+      "reached": 0,
+      "behavioural": 1,
+      "unreached": [
+        "mr8c_qid_retry_skips_corrupt_row_inside_scan_cap"
+      ],
+      "seedNames": [
+        "mr8c_qid_retry_skips_corrupt_row_inside_scan_cap"
+      ],
+      "owners": [
+        {
+          "name": "Newton",
+          "commits": 3,
+          "score": 1.5837522291631616,
+          "last": 1784587008000
+        },
+        {
+          "name": "Test",
+          "commits": 1,
+          "score": 0.7407301531298386,
+          "last": 1788806112000
+        }
+      ]
+    }
+  ],
+  "reviewers": [
+    {
+      "name": "Newton",
+      "commits": 23,
+      "score": 13.068954200730893,
+      "last": 1785488604000,
+      "areas": [
+        "CorpusContentSource",
+        "CorpusContentSource",
+        "mr8c_qid_retry_skips_corrupt_r…",
+        "contentSource",
+        "LocusDrawerCorpusContentSource",
+        "runSharedContentMigration",
+        "wireSubstores"
+      ]
+    },
+    {
+      "name": "Test",
+      "commits": 20,
+      "score": 14.502033212545985,
+      "last": 1788963107000,
+      "areas": [
+        "CorpusContentSource",
+        "CorpusContentSource",
+        "mr8c_qid_retry_skips_corrupt_r…",
+        "contentSource",
+        "LocusDrawerCorpusContentSource",
+        "runSharedContentMigration",
+        "wireSubstores"
+      ]
+    }
+  ]
+}

@@ -1966,6 +1966,29 @@ export function isJavaOutsideImport(name: string, ref: UnresolvedRef, context: R
   return true;
 }
 
+/**
+ * `Modifier.pad()` after `import androidx.compose.ui.Modifier`: the type is
+ * outside the project, but Kotlin lets the project extend it. The call reaches
+ * a project extension on that type — `fun Modifier.pad()`, indexed as
+ * `Modifier::pad` — that the call site can see (its file, its package, an
+ * import of it by name or `.*`) and whose own file imports the same type.
+ * Compose's own `Modifier.fillMaxSize()` matches none and stays unlinked.
+ */
+function kotlinExtensionOnImportedType(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
+  const call = /^(\w+)\.(\w+)$/.exec(ref.referenceName);
+  if (!call || ref.referenceKind !== 'calls') return null;
+  const binding = context.getImportMappings(ref.filePath, ref.language).find((m) => m.localName === call[1]);
+  if (!binding) return null;
+  const pkg = binding.source.slice(0, binding.source.lastIndexOf('.'));
+  const extensions = context.getNodesByQualifiedName(`${binding.exportedName}::${call[2]}`).filter((n) => {
+    if (n.kind !== 'method' || n.language !== 'kotlin' || !isKotlinTopLevelVisible(n, ref, context)) return false;
+    const scope = kotlinFileScope(n.filePath, context);
+    return scope.imports.has(binding.source) || scope.stars.has(pkg);
+  });
+  const chosen = extensions.length > 1 ? extensions.filter((n) => n.filePath === ref.filePath) : extensions;
+  return chosen.length === 1 ? { original: ref, targetNodeId: chosen[0]!.id, confidence: 0.9, resolvedBy: 'qualified-name' } : null;
+}
+
 /** Lua's global functions, and the test runner's: `local type = type` is the standard library's `type`. */
 const LUA_GLOBAL_FUNCTIONS: ReadonlySet<string> = new Set([
   'assert', 'error', 'ipairs', 'pairs', 'next', 'type', 'tostring', 'tonumber', 'setmetatable', 'getmetatable',
@@ -3384,6 +3407,38 @@ function isSfcPrivate(n: Node, context: ResolutionContext): boolean {
   return true;
 }
 
+/** Per-context memo: node id → "this member sits inside a `private` class/object". */
+const PRIVATE_OWNER_MEMO = new WeakMap<ResolutionContext, Map<string, boolean>>();
+
+/** Kinds that own members and carry a visibility of their own. */
+const OWNER_KINDS = new Set<string>(['class', 'interface', 'struct', 'enum', 'namespace']);
+
+/**
+ * Whether `candidate` is a member of a `private` type in its file — a Kotlin
+ * test's `private class Clock { fun now() = value }`: the method is public,
+ * the class is not, so nothing outside the file can name `now`. Found by
+ * line range among the file's own nodes, memoised per node.
+ */
+function isInsidePrivateType(candidate: Node, context: ResolutionContext): boolean {
+  let memo = PRIVATE_OWNER_MEMO.get(context);
+  if (!memo) {
+    memo = new Map();
+    PRIVATE_OWNER_MEMO.set(context, memo);
+  }
+  const hit = memo.get(candidate.id);
+  if (hit !== undefined) return hit;
+  const inside = context.getNodesInFile(candidate.filePath).some(
+    (n) =>
+      n.id !== candidate.id &&
+      OWNER_KINDS.has(n.kind) &&
+      n.visibility === 'private' &&
+      n.startLine <= candidate.startLine &&
+      n.endLine >= candidate.endLine
+  );
+  memo.set(candidate.id, inside);
+  return inside;
+}
+
 /**
  * Whether Go lets `ref`'s file name the Go declaration `candidate`: an
  * exported name from anywhere, an unexported one only inside its own package,
@@ -3525,7 +3580,12 @@ export function isVisibleAcrossFiles(candidate: Node, ref: UnresolvedRef, contex
   if (lang === 'dart') {
     return candidate.visibility !== 'private' || (ref.language === 'dart' && dartPrivateVisible(ref.filePath, candidate.filePath, context));
   }
-  if (PRIVATE_IS_FILE_LOCAL.has(lang)) return candidate.visibility !== 'private';
+  if (PRIVATE_IS_FILE_LOCAL.has(lang)) {
+    // Only Kotlin's private type keeps its members in its file: a Scala
+    // `private[pkg] class` (or one with a private constructor) is the package's,
+    // and a C# private nested class serves every file of its partial class.
+    return candidate.visibility !== 'private' && !(lang === 'kotlin' && isInsidePrivateType(candidate, context));
+  }
   // An R test file runs in an environment of its own (testthat): its top-level
   // `c <- ggplot(…)` is not what the package's 2,843 `c(…)` calls mean. The
   // `helper-*.R` / `setup-*.R` files are sourced for every test, so theirs are shared.
@@ -13562,6 +13622,23 @@ export function resolveMethodOnType(
     if (chosen) return { original: ref, targetNodeId: chosen.id, confidence, resolvedBy };
   }
   if (matches.length > 1 && preferredFqn && ref.language !== 'go' && !ES_IMPORT_LANGUAGES.has(ref.language)) {
+    // Prefer the candidate whose namespace-qualified name matches the imported
+    // FQN. #412 indexes JVM declarations as `<pkg>::<Class>` from the file's
+    // `package` directive — independent of the file name — so this disambiguates
+    // Kotlin (where `FooConverter` can live in `Converters.kt`) that the
+    // file-path-suffix heuristic below can't. `com.example.b.FooConverter`
+    // → expected method qn `com.example.b::FooConverter::convert`.
+    const lastDot = preferredFqn.lastIndexOf('.');
+    if (lastDot > 0) {
+      const expectedQn = `${preferredFqn.slice(0, lastDot)}::${preferredFqn.slice(lastDot + 1)}::${methodName}`;
+      const byQn = matches.find((m) => m.qualifiedName === expectedQn);
+      if (byQn) {
+        return { original: ref, targetNodeId: byQn.id, confidence, resolvedBy };
+      }
+    }
+    // Fall back to file-path-suffix match for Java's class-name = file-name
+    // layout (covers files indexed before the namespace wrapper, or any case
+    // the qn match misses).
     const ext = ref.language === 'kotlin' ? '.kt' : '.java';
     const fqnPath = preferredFqn.replace(/\./g, '/') + ext;
     const chosen = matches.find((m) => {
@@ -19425,6 +19502,7 @@ export function clearNameMatcherMemos(context: ResolutionContext): void {
   JAVA_STATIC_IMPORTS.delete(context);
   PY_IMPORTS.delete(context);
   PY_MODULE_LOCAL.delete(context);
+  PRIVATE_OWNER_MEMO.delete(context);
   SEALED_MODULES.delete(context);
   LOCAL_BINDING_MEMO.delete(context);
   LOCAL_BINDING_SITES.delete(context);
@@ -28847,10 +28925,11 @@ function matchReferenceInner(
 
   // `import java.lang.reflect.Field;` — the file's `Field` is the JDK's, never
   // a project class of that name (gson's production code bound it to a test's
-  // nested `ParameterizedTypesTest.Field`).
+  // nested `ParameterizedTypesTest.Field`). Only a Kotlin extension the
+  // project declares on that type is in the graph.
   if ((ref.language === 'java' || ref.language === 'kotlin') && ref.referenceKind !== 'imports' &&
       isJavaOutsideImport(ref.referenceName.split('.')[0]!, ref, context)) {
-    return null;
+    return ref.language === 'kotlin' ? kotlinExtensionOnImportedType(ref, context) : null;
   }
 
   // A symbolic name in a Scala type is a type (`F ~> G`) or a kind-projector

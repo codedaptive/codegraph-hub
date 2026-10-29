@@ -39,7 +39,56 @@ function stage(osfam = windows ? 'win32' : process.platform) {
   const node = windows ? '$(cygpath -u "$2")' : '$2';
   const result = shell(`set -eu\nSTAGE="${convert}"\nNODE_BIN="${node}"\nOSFAM="$3"\n${launcherRecipe}`, [bundle, process.execPath, osfam]);
   expect(result.status, result.stderr || String(result.error)).toBe(0);
+  if (osfam === 'darwin' && process.platform === 'darwin') linkLoaderRelativeLibraries(bundle);
   return { root, bundle };
+}
+
+/**
+ * The recipe copies the test's own Node into the stage. A release bundle's
+ * Node from nodejs.org is self-contained, but a Node built to link its
+ * libraries dynamically (Homebrew's: `@rpath/libnode.<abi>.dylib`, with rpaths
+ * `@loader_path` and `@loader_path/../lib`) cannot load once copied away from
+ * them, and dyld aborts the copy (status 134) before the launcher is tested.
+ * Give the copy what it loads relative to itself: each `@rpath/`,
+ * `@loader_path/` or `@executable_path/` dependency is found where the
+ * original binary finds it and linked at the place the copy will look, the
+ * first of its loader-relative rpaths. Libraries at absolute paths load from
+ * the copy as they are. No-op for a Node with no such dependency.
+ */
+function linkLoaderRelativeLibraries(bundle: string): void {
+  const original = fs.realpathSync(process.execPath);
+  const otool = (flag: string) => {
+    const out = spawnSync('otool', [flag, original], { encoding: 'utf8' });
+    expect(out.status, out.stderr || String(out.error)).toBe(0);
+    return out.stdout.split('\n');
+  };
+  // `otool -L`: the binary's name, then one "<install name> (compatibility ...)" per dependency.
+  const deps = otool('-L').slice(1).map((line) => line.trim().replace(/ \(compatibility .*\)$/, '')).filter((d) => d.startsWith('@'));
+  if (deps.length === 0) return;
+  // `otool -l`: an LC_RPATH load command carries its rpath on a "path <dir> (offset N)" line.
+  const commands = otool('-l');
+  const rpaths = commands.flatMap((line, i) =>
+    line.trim() === 'cmd LC_RPATH' ? [commands[i + 2].trim().replace(/^path /, '').replace(/ \(offset \d+\)$/, '')] : []);
+  // dyld expands both prefixes to the directory of the binary doing the load.
+  const expand = (p: string, dir: string) => p.replace(/^@(loader|executable)_path/, dir);
+  const stagedRpath = rpaths.find((r) => /^@(loader|executable)_path/.test(r));
+  for (const dep of deps) {
+    let source: string | undefined;
+    let target: string | undefined;
+    if (dep.startsWith('@rpath/')) {
+      const name = dep.slice('@rpath/'.length);
+      source = rpaths.map((r) => path.join(expand(r, path.dirname(original)), name)).find((p) => fs.existsSync(p));
+      if (stagedRpath) target = path.join(expand(stagedRpath, bundle), name);
+    } else {
+      source = expand(dep, path.dirname(original));
+      target = expand(dep, bundle);
+    }
+    expect(source && fs.existsSync(source), `${dep} not found beside ${original}`).toBe(true);
+    // An @rpath dependency with only absolute rpaths loads from the copy as it is.
+    if (!target) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.symlinkSync(source!, target);
+  }
 }
 
 function invoke(bundle: string, command: string, args: string[] = [], extraEnv: NodeJS.ProcessEnv = {}, input?: string) {
@@ -136,7 +185,9 @@ describe('bundled Node runtime (#2617)', () => {
     const pin = /^NODE_VERSION="\$\{2:-v(\d+)\.(\d+)\.(\d+)\}"\r?$/m.exec(recipe);
     expect(pin, 'default NODE_VERSION in scripts/build-bundle.sh').not.toBeNull();
     const [major, minor] = pin!.slice(1, 3).map(Number);
-    // The CLI refuses to run on Node 25 and later.
+    // The bundle is pinned to the 24.x release line, the line its security
+    // releases are taken from (24.22.1 and later, issue #2780; see the pin's
+    // comment in scripts/build-bundle.sh).
     expect(major).toBe(24);
     // Node 24 before 24.20.0 can abort on Windows as the process exits, after
     // the command's work is done (0xC0000409, nodejs/node#56645).

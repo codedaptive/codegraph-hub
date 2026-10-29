@@ -1,0 +1,2133 @@
+{
+  "pattern": "backfill",
+  "filesSearched": 5478,
+  "totalHits": 300,
+  "groups": [
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run",
+        "name": "run",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L39-L248"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 5,
+      "hits": [
+        {
+          "line": 46,
+          "text": "backfill_only: bool,"
+        },
+        {
+          "line": 71,
+          "text": "let estate_only = !runs_install_routine(backfill_only, record.kind == EstateRecordKind::Transient);"
+        },
+        {
+          "line": 88,
+          "text": "// --backfill-only, or a transient estate: estate-only convergence for"
+        },
+        {
+          "line": 93,
+          "text": "// preference table migration, vault-class backfill, kg_facts identity, fact"
+        },
+        {
+          "line": 94,
+          "text": "// source re-grade repair, projection backfill, whole-record vacuum,"
+        },
+        {
+          "line": 96,
+          "text": "// convergence, span encode, vector reclaim, derivation quality rank backfill"
+        },
+        {
+          "line": 114,
+          "text": "if record.kind == EstateRecordKind::Transient && !backfill_only {"
+        },
+        {
+          "line": 130,
+          "text": "let ok_vault = run_vault_class_backfill(&record);"
+        },
+        {
+          "line": 131,
+          "text": "let ok_kg    = run_kg_fact_identity_backfill(&record);"
+        },
+        {
+          "line": 133,
+          "text": "let ok_sp    = run_search_projection_backfill(&record);"
+        },
+        {
+          "line": 137,
+          "text": "let ok_facts = run_ssc_facts_backfill(&record);"
+        },
+        {
+          "line": 139,
+          "text": "let ok_span  = run_span_encode_backfill(&record);"
+        },
+        {
+          "line": 141,
+          "text": "let ok_ranks = run_derivation_quality_rank_backfill(&record);"
+        },
+        {
+          "line": 238,
+          "text": "// its own stop/start sequence; the backfill runs first (unattended"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#runKGFactIdentityBackfill",
+        "name": "runKGFactIdentityBackfill",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L911-L976"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 912,
+          "text": "private func runKGFactIdentityBackfill(estate: EstateRecord, home: URL) async -> Bool {"
+        },
+        {
+          "line": 916,
+          "text": "// post-KH; there is nothing to backfill."
+        },
+        {
+          "line": 927,
+          "text": "print(\"  ✗ kg_facts identity backfill skipped — estate key unavailable: \\(error)\")"
+        },
+        {
+          "line": 937,
+          "text": "step: \"kg_facts identity backfill\","
+        },
+        {
+          "line": 950,
+          "text": "let report = try await KGFactIdentityBackfill.run("
+        },
+        {
+          "line": 955,
+          "text": "print(\"  ✓ kg_facts identity columns: nothing to backfill\")"
+        },
+        {
+          "line": 958,
+          "text": "✓ kg_facts identity backfill: \\(report.scanned) scanned — \\"
+        },
+        {
+          "line": 967,
+          "text": "✗ kg_facts identity backfill failed: \\(error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#runSearchProjectionBackfill",
+        "name": "runSearchProjectionBackfill",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L991-L1038"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 992,
+          "text": "private func runSearchProjectionBackfill(estate: EstateRecord, home: URL) async -> Bool {"
+        },
+        {
+          "line": 996,
+          "text": "// there is nothing to backfill."
+        },
+        {
+          "line": 1003,
+          "text": "print(\"  ✗ kg_facts search-projection backfill skipped — estate key unavailable: \\(error)\")"
+        },
+        {
+          "line": 1009,
+          "text": "step: \"kg_facts search-projection backfill\","
+        },
+        {
+          "line": 1019,
+          "text": "let report = try await KGFactSearchProjectionBackfillGateway.run(storage: storage)"
+        },
+        {
+          "line": 1022,
+          "text": "print(\"  ✓ kg_facts search-projection: nothing to backfill\")"
+        },
+        {
+          "line": 1024,
+          "text": "print(\"  ✓ kg_facts search-projection backfill: \\(report.scanned) scanned\")"
+        },
+        {
+          "line": 1029,
+          "text": "✗ kg_facts search-projection backfill failed: \\(error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#runSSCFactsBackfill",
+        "name": "runSSCFactsBackfill",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L1393-L1468"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 1401,
+          "text": "/// debt once (`GeniusLocusKit.backfillSSCFacts`) and, when it wrote"
+        },
+        {
+          "line": 1405,
+          "text": "/// runs after the kg_facts identity backfill and before search projection,"
+        },
+        {
+          "line": 1409,
+          "text": "private func runSSCFactsBackfill(estate: EstateRecord, home: URL) async -> Bool {"
+        },
+        {
+          "line": 1417,
+          "text": "print(\"  ✗ ssc facts backfill skipped — estate key unavailable: \\(error)\")"
+        },
+        {
+          "line": 1422,
+          "text": "step: \"ssc facts backfill\","
+        },
+        {
+          "line": 1445,
+          "text": "let written = try await kit.payDutyUntilSettled(.factsBackfill, in: handle, now: Date())"
+        },
+        {
+          "line": 1459,
+          "text": "✗ ssc facts backfill failed: \\(error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#runDerivationQualityRankBackfill",
+        "name": "runDerivationQualityRankBackfill",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L1487-L1542"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 1488,
+          "text": "private func runDerivationQualityRankBackfill(estate: EstateRecord, home: URL) async -> Bool {"
+        },
+        {
+          "line": 1496,
+          "text": "print(\"  ✗ derivation quality rank backfill skipped — estate key unavailable: \\(error)\")"
+        },
+        {
+          "line": 1501,
+          "text": "step: \"derivation quality rank backfill\","
+        },
+        {
+          "line": 1518,
+          "text": "let report = try await GLKMigrationCatalog.backfillDerivationQualityRanks(kit: kit, handle: handle)"
+        },
+        {
+          "line": 1523,
+          "text": "print(\"  ✓ derivation quality ranks: \\(report.backfilled) backfilled, \""
+        },
+        {
+          "line": 1533,
+          "text": "✗ derivation quality rank backfill failed: \\(error)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#runVaultClassBackfill",
+        "name": "runVaultClassBackfill",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L1790-L1813"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 3,
+      "hits": [
+        {
+          "line": 1791,
+          "text": "private func runVaultClassBackfill(estate: EstateRecord, home: URL) async -> Bool {"
+        },
+        {
+          "line": 1799,
+          "text": "print(\"  ✗ vault-class backfill skipped — estate key unavailable: \\(error)\")"
+        },
+        {
+          "line": 1804,
+          "text": "step: \"vault-class backfill\","
+        },
+        {
+          "line": 1807,
+          "text": "await Self.vaultClassBackfill(configuration: EstateConfiguration("
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_convergence",
+        "name": "run_convergence",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L344-L393"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 370,
+          "text": "let _ = run_vault_class_backfill(record);"
+        },
+        {
+          "line": 371,
+          "text": "let _ = run_kg_fact_identity_backfill(record);"
+        },
+        {
+          "line": 373,
+          "text": "let _ = run_ssc_facts_backfill(record);"
+        },
+        {
+          "line": 374,
+          "text": "let _ = run_search_projection_backfill(record);"
+        },
+        {
+          "line": 379,
+          "text": "let _ = run_span_encode_backfill(record);"
+        },
+        {
+          "line": 381,
+          "text": "let _ = run_derivation_quality_rank_backfill(record);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_kg_fact_identity_backfill",
+        "name": "run_kg_fact_identity_backfill",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L703-L777"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 703,
+          "text": "fn run_kg_fact_identity_backfill(record: &EstateRecord) -> bool {"
+        },
+        {
+          "line": 710,
+          "text": "// there is nothing to backfill."
+        },
+        {
+          "line": 721,
+          "text": "\"kg_facts identity backfill\","
+        },
+        {
+          "line": 724,
+          "text": "(|| -> Result<locus_kit::kg_fact_identity_backfill::KGFactIdentityBackfillReport, String> {"
+        },
+        {
+          "line": 739,
+          "text": "let report = locus_kit::kg_fact_identity_backfill::run("
+        },
+        {
+          "line": 755,
+          "text": "println!(\"  ✓ kg_facts identity columns: nothing to backfill\");"
+        },
+        {
+          "line": 758,
+          "text": "\"  ✓ kg_facts identity backfill: {} scanned — addedBy {}, foreignSourceKey {}, foreignRecordID {}, local anchors kept {} (sensitivity inherited {}), unclassifie"
+        },
+        {
+          "line": 771,
+          "text": "\"  ✗ kg_facts identity backfill failed: {e}\\n    Every row remains findable in its current shape. Run `mootx01 upgrade` to retry.\""
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_search_projection_backfill",
+        "name": "run_search_projection_backfill",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L791-L851"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 791,
+          "text": "fn run_search_projection_backfill(record: &EstateRecord) -> bool {"
+        },
+        {
+          "line": 798,
+          "text": "// there is nothing to backfill."
+        },
+        {
+          "line": 807,
+          "text": "\"kg_facts search-projection backfill\","
+        },
+        {
+          "line": 810,
+          "text": "(|| -> Result<locus_kit::kg_fact_search_projection_backfill::KGFactSearchProjectionBackfillReport, String> {"
+        },
+        {
+          "line": 822,
+          "text": "let report = genius_locus_kit::kg_fact_search_projection_backfill_gateway::run(&storage)"
+        },
+        {
+          "line": 835,
+          "text": "println!(\"  ✓ kg_facts search-projection: nothing to backfill\");"
+        },
+        {
+          "line": 838,
+          "text": "\"  ✓ kg_facts search-projection backfill: {} scanned\","
+        },
+        {
+          "line": 845,
+          "text": "\"  ✗ kg_facts search-projection backfill failed: {e}\\n    Every row remains findable in its current shape. Run `mootx01 upgrade` to retry.\""
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_span_encode_backfill",
+        "name": "run_span_encode_backfill",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L1024-L1098"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1024,
+          "text": "fn run_span_encode_backfill(record: &EstateRecord) -> bool {"
+        },
+        {
+          "line": 1025,
+          "text": "use super::span_encode_backfill::{self, SpanEncodeReport};"
+        },
+        {
+          "line": 1066,
+          "text": "span_encode_backfill::run(storage, &store, &EstateCatalog::configuration_directory(), now,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_derivation_quality_rank_backfill",
+        "name": "run_derivation_quality_rank_backfill",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L1356-L1426"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1356,
+          "text": "fn run_derivation_quality_rank_backfill(record: &EstateRecord) -> bool {"
+        },
+        {
+          "line": 1368,
+          "text": "\"derivation quality rank backfill\","
+        },
+        {
+          "line": 1372,
+          "text": "let result = (|| -> Result<(genius_locus_kit_migrations::DerivationQualityRankBackfillReport,"
+        },
+        {
+          "line": 1386,
+          "text": "let ranks = genius_locus_kit_migrations::backfill_derivation_quality_ranks(storage.clone())"
+        },
+        {
+          "line": 1404,
+          "text": "println!(\"  ✓ derivation quality ranks: {} backfilled, {} already current, {} without a result (of {})\","
+        },
+        {
+          "line": 1405,
+          "text": "report.backfilled, report.current, report.missing, report.examined);"
+        },
+        {
+          "line": 1417,
+          "text": "println!(\"  ✗ derivation quality rank backfill failed: {e}\\n    Ranks already written stay. Run `mootx01 upgrade` to retry.\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_vault_class_backfill",
+        "name": "run_vault_class_backfill",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L1610-L1629"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 1610,
+          "text": "fn run_vault_class_backfill(record: &EstateRecord) -> bool {"
+        },
+        {
+          "line": 1612,
+          "text": "println!(\"  · vault-class backfill: skipped on PostgreSQL (forward-only; new vault imports are marked)\");"
+        },
+        {
+          "line": 1618,
+          "text": "with_resident_daemon_quiesced(&record.pid_path(), \"vault-class backfill\", &PlatformDaemon, || {"
+        },
+        {
+          "line": 1621,
+          "text": "Ok(Some(storage)) => vault_class_backfill_in(storage.as_ref()),"
+        },
+        {
+          "line": 1624,
+          "text": "println!(\"  ✗ vault-class backfill skipped — the estate does not open: {error}\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_ssc_facts_backfill",
+        "name": "run_ssc_facts_backfill",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L2130-L2180"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 2130,
+          "text": "fn run_ssc_facts_backfill(record: &EstateRecord) -> bool {"
+        },
+        {
+          "line": 2137,
+          "text": "\"ssc facts backfill\","
+        },
+        {
+          "line": 2152,
+          "text": ".pay_duty_until_settled(&reg.default.handle, genius_locus_kit::brain::duty_queue::DutyKind::FactsBackfill, now)"
+        },
+        {
+          "line": 2171,
+          "text": "println!(\"  ✗ ssc facts backfill failed: {e}\\n    Rows already written keep their facts. Run `mootx01 upgrade` to retry.\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift#SpanEncodeBackfill.run",
+        "name": "SpanEncodeBackfill.run",
+        "kind": "method",
+        "path": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift",
+        "span": "L74-L163"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift",
+      "inDegree": 2,
+      "hits": [
+        {
+          "line": 85,
+          "text": "// manifest names the encoder; this call keeps the backfill correct"
+        },
+        {
+          "line": 104,
+          "text": "runtimeAccounting: ProductRuntimeAccounting.context(ownerID: \"span-backfill\"),"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#parse_upgrade",
+        "name": "parse_upgrade",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L1163-L1188"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1166,
+          "text": "let (mut check, mut yes, mut no_restart, mut converge_only, mut backfill_only) ="
+        },
+        {
+          "line": 1182,
+          "text": "\"--backfill-only\" => backfill_only = true,"
+        },
+        {
+          "line": 1187,
+          "text": "Ok(Command::Upgrade { from, db, check, yes, no_restart, converge_only, backfill_only })"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#subcommand_usage",
+        "name": "subcommand_usage",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L1356-L1679"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1468,
+          "text": "Each package is fetched, checked against the manifest's sha256 and per-file pins, validated as activation validates it, and placed at <settingsDir>/models/<id>/"
+        },
+        {
+          "line": 1597,
+          "text": "USAGE: mootx01 upgrade [--from <path>] [--db <name>|<dir>/<name>] [--check] [--yes] [--no-restart] [--backfill-only]\\n\\"
+        },
+        {
+          "line": 1605,
+          "text": "\\x20 --backfill-only         Run only the estate migration steps (schema 10 → 19 → 20 → 21 → 22 → 23, preference table migration, vault-class backfill, kg_facts"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/drain.rs#run_with",
+        "name": "run_with",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/drain.rs",
+        "span": "L49-L256"
+      },
+      "path": "apps/mootx01/rust/src/commands/drain.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 168,
+          "text": "// subject backfill under the coordinator, one progress line per batch;"
+        },
+        {
+          "line": 193,
+          "text": "for kind in [DutyKind::SpanEncode, DutyKind::SubjectBackfill, DutyKind::ChestRebin, DutyKind::AnomalySweep,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/span_encode_backfill.rs#run",
+        "name": "run",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+        "span": "L79-L221"
+      },
+      "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 95,
+          "text": "// backfill correct over its own storage (an estate whose embedding_provider"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#runs_install_routine",
+        "name": "runs_install_routine",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L269-L271"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 269,
+          "text": "pub(crate) fn runs_install_routine(backfill_only: bool, transient: bool) -> bool {"
+        },
+        {
+          "line": 270,
+          "text": "!(backfill_only || transient)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#vault_class_backfill_in",
+        "name": "vault_class_backfill_in",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L1634-L1651"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1634,
+          "text": "fn vault_class_backfill_in(storage: &dyn persistence_kit::Storage) -> bool {"
+        },
+        {
+          "line": 1635,
+          "text": "let result = vault_kit::vault_class_marker::backfill(storage);"
+        },
+        {
+          "line": 1639,
+          "text": "println!(\"  ✓ vault-class marks: nothing to backfill\");"
+        },
+        {
+          "line": 1643,
+          "text": "println!(\"  ✓ vault-class backfill: {marked} vault-imported drawer(s) marked\");"
+        },
+        {
+          "line": 1647,
+          "text": "println!(\"  ✗ vault-class backfill failed: {error:?}\\n    Run `mootx01 upgrade` to retry.\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#fact_source_regrade_repair_in",
+        "name": "fact_source_regrade_repair_in",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L1747-L1787"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 1748,
+          "text": "let result = locus_kit::access_field_repair::backfill(storage, now_ms)"
+        },
+        {
+          "line": 1749,
+          "text": ".and_then(|repaired| locus_kit::drawer_fingerprint_refresh::backfill(storage).map(|refreshed| (repaired, refreshed)))"
+        },
+        {
+          "line": 1750,
+          "text": ".and_then(|(repaired, refreshed)| locus_kit::fact_source_regrade::backfill_accepted(storage, now_ms)"
+        },
+        {
+          "line": 1752,
+          "text": ".and_then(|(repaired, refreshed, demoted)| locus_kit::fact_source_regrade::backfill_lax(storage, now_ms)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#run_corpus_counts_migration",
+        "name": "run_corpus_counts_migration",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L2457-L2514"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 2478,
+          "text": "// used by run_kg_fact_identity_backfill. The sibling `db.key` is adopted"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/DrainCommand.swift#DrainCommand.settle",
+        "name": "DrainCommand.settle",
+        "kind": "method",
+        "path": "apps/mootx01/Sources/mootx01/Commands/DrainCommand.swift",
+        "span": "L149-L318"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/DrainCommand.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 291,
+          "text": "for kind in [DutyKind.spanEncode, .subjectBackfill, .chestRebin, .anomalySweep, .factExtraction,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/ServeCommand.swift#ServeCommand.openAndWire",
+        "name": "ServeCommand.openAndWire",
+        "kind": "method",
+        "path": "apps/mootx01/Sources/mootx01/Commands/ServeCommand.swift",
+        "span": "L748-L844"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/ServeCommand.swift",
+      "inDegree": 1,
+      "hits": [
+        {
+          "line": 813,
+          "text": "// Dreaming dispatches the actual backfill sweeps."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Package.community.swift#package",
+        "name": "package",
+        "kind": "variable",
+        "path": "apps/mootx01/Package.community.swift",
+        "span": "L35-L418"
+      },
+      "path": "apps/mootx01/Package.community.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 94,
+          "text": "// LocusKit kg_facts identity backfill. The resolver is"
+        },
+        {
+          "line": 240,
+          "text": "// backfill run by `mootx01 upgrade`."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Package.swift#package",
+        "name": "package",
+        "kind": "variable",
+        "path": "apps/mootx01/Package.swift",
+        "span": "L20-L611"
+      },
+      "path": "apps/mootx01/Package.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 120,
+          "text": "// LocusKit kg_facts identity backfill. The resolver is"
+        },
+        {
+          "line": 280,
+          "text": "// backfill run by `mootx01 upgrade`."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#Command",
+        "name": "Command",
+        "kind": "enum",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L61-L189"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 151,
+          "text": "/// §4.8 upgrade [--from <path>] [--db <name>|<dir>/<name>] [--check] [--yes] [--no-restart] [--backfill-only]"
+        },
+        {
+          "line": 152,
+          "text": "Upgrade { from: Option<String>, db: Option<String>, check: bool, yes: bool, no_restart: bool, converge_only: bool, backfill_only: bool },"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#upgrade_flags",
+        "name": "upgrade_flags",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L2050-L2063"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2060,
+          "text": "backfill_only: false,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#upgrade_converge_only_parses",
+        "name": "upgrade_converge_only_parses",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L2068-L2081"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2078,
+          "text": "backfill_only: false,"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#tests",
+        "name": "tests",
+        "kind": "module",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L1682-L2495"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2083,
+          "text": "/// Help text for `upgrade` must document `--backfill-only` so operators"
+        },
+        {
+          "line": 2094,
+          "text": "/// `--backfill-only` runs only the data-dir migration steps"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#upgrade_help_mentions_backfill_only",
+        "name": "upgrade_help_mentions_backfill_only",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L2086-L2092"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2086,
+          "text": "fn upgrade_help_mentions_backfill_only() {"
+        },
+        {
+          "line": 2089,
+          "text": "help.contains(\"--backfill-only\"),"
+        },
+        {
+          "line": 2090,
+          "text": "\"upgrade help must document --backfill-only; got: {help}\""
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/cli.rs#upgrade_backfill_only_parses",
+        "name": "upgrade_backfill_only_parses",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/cli.rs",
+        "span": "L2099-L2114"
+      },
+      "path": "apps/mootx01/rust/src/cli.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2099,
+          "text": "fn upgrade_backfill_only_parses() {"
+        },
+        {
+          "line": 2101,
+          "text": "p(&[\"upgrade\", \"--backfill-only\"]).unwrap(),"
+        },
+        {
+          "line": 2109,
+          "text": "backfill_only: true,"
+        },
+        {
+          "line": 2113,
+          "text": "assert!(p(&[\"upgrade\", \"--backfill-only\", \"--unknown\"]).is_err());"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/commands/drain.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 6,
+          "text": "//! backfill, fact extraction — until each lane owes nothing or a batch pays"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/commands/dream.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 17,
+          "text": "//!     jobs, one subject-backfill batch, one span-encode batch. Never loops"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/commands/install_convergence.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 12,
+          "text": "//!      backfill finds the encoder;"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/install_convergence.rs#backfill_only_and_transient_estates_do_not_run_the_install_routine",
+        "name": "backfill_only_and_transient_estates_do_not_run_the_install_routine",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/install_convergence.rs",
+        "span": "L252-L257"
+      },
+      "path": "apps/mootx01/rust/src/commands/install_convergence.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 252,
+          "text": "fn backfill_only_and_transient_estates_do_not_run_the_install_routine() {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/mod.rs#span_encode_backfill",
+        "name": "span_encode_backfill",
+        "kind": "module",
+        "path": "apps/mootx01/rust/src/commands/mod.rs",
+        "span": "L40-L40"
+      },
+      "path": "apps/mootx01/rust/src/commands/mod.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 40,
+          "text": "pub mod span_encode_backfill;"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/mod.rs#dispatch",
+        "name": "dispatch",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/mod.rs",
+        "span": "L54-L110"
+      },
+      "path": "apps/mootx01/rust/src/commands/mod.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 81,
+          "text": "Command::Upgrade { from, db, check, yes, no_restart, converge_only, backfill_only } => {"
+        },
+        {
+          "line": 82,
+          "text": "upgrade::run(from, db, check, yes, no_restart, converge_only, backfill_only)"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 8,
+          "text": "//! finished, so no coordinator or daemon has to be alive for the backfill."
+        },
+        {
+          "line": 18,
+          "text": "//! provision and serve; the upgrade backfill is one of the"
+        },
+        {
+          "line": 42,
+          "text": "/// What the backfill did."
+        },
+        {
+          "line": 71,
+          "text": "/// backfill is a bulk lane."
+        },
+        {
+          "line": 74,
+          "text": "/// with `VectorStore::shared_for(storage, None)`. The backfill never builds a"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/span_encode_backfill.rs#shared_store_tests",
+        "name": "shared_store_tests",
+        "kind": "module",
+        "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+        "span": "L276-L348"
+      },
+      "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 287,
+          "text": "/// T1: the span-encode backfill resolves its vector store through the"
+        },
+        {
+          "line": 293,
+          "text": "/// backfill then runs over that same storage with an empty data directory,"
+        },
+        {
+          "line": 296,
+          "text": "/// Proves: the backfill's lookup is refused with the registry's"
+        },
+        {
+          "line": 301,
+          "text": "/// What it guards: a backfill that built its own store would not see the"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/span_encode_backfill.rs#backfill_refuses_a_storage_whose_live_store_has_another_sidecar",
+        "name": "backfill_refuses_a_storage_whose_live_store_has_another_sidecar",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+        "span": "L306-L347"
+      },
+      "path": "apps/mootx01/rust/src/commands/span_encode_backfill.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 306,
+          "text": "fn backfill_refuses_a_storage_whose_live_store_has_another_sidecar() {"
+        },
+        {
+          "line": 314,
+          "text": "// live store must outlive the backfill call for the lookup to see it."
+        },
+        {
+          "line": 333,
+          "text": "\"the backfill must refuse with the registry mismatch; got: {message}\""
+        },
+        {
+          "line": 336,
+          "text": "\"the backfill must refuse a storage whose live store has another sidecar, \\"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/commands/upgrade_postgres_tests.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 73,
+          "text": "/// registered in the scratch catalog, estate-only (the `--backfill-only` path)."
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 266,
+          "text": "/// `--backfill-only` and a transient estate do not: they run the estate"
+        },
+        {
+          "line": 340,
+          "text": "/// the hook (the span encode backfill needs the encoder); the migration steps"
+        },
+        {
+          "line": 686,
+          "text": "/// `foreignRecordID`), via locus-kit's `kg_fact_identity_backfill`."
+        },
+        {
+          "line": 693,
+          "text": "/// path leaves a working estate at the canonical path. The backfill's moves"
+        },
+        {
+          "line": 790,
+          "text": "/// Returns `true` on success or when there is nothing to backfill, `false` on failure."
+        },
+        {
+          "line": 1017,
+          "text": "/// `span_encode_backfill::run`. No active model, or a model whose directory or vocab"
+        },
+        {
+          "line": 1109,
+          "text": "/// backfill: the first estate open of the sequence, so the migration chain runs"
+        },
+        {
+          "line": 1335,
+          "text": "/// pointer records: `genius_locus_kit_migrations::backfill_derivation_quality_ranks`."
+        },
+        {
+          "line": 1338,
+          "text": "/// Idempotent: a backfilled estate writes nothing. It runs on every upgrade,"
+        },
+        {
+          "line": 1355,
+          "text": "/// Returns `true` on success or when there is nothing to backfill."
+        },
+        {
+          "line": 1434,
+          "text": "/// 1.1.x line's steps and the derivation quality rank backfill, and directly"
+        },
+        {
+          "line": 1601,
+          "text": "/// `vault_class_marker::backfill`, which writes bit 30 and no other bit (bit 18,"
+        },
+        {
+          "line": 1631,
+          "text": "/// The vault-class backfill over `storage`, with the step's transcript lines."
+        },
+        {
+          "line": 1656,
+          "text": "/// - `access_field_repair::backfill`, first, so the"
+        },
+        {
+          "line": 1664,
+          "text": "/// - `drawer_fingerprint_refresh::backfill`: every"
+        },
+        {
+          "line": 1669,
+          "text": "/// - `fact_source_regrade::backfill_accepted`: every accepted"
+        },
+        {
+          "line": 1673,
+          "text": "/// - `fact_source_regrade::backfill_lax`:"
+        },
+        {
+          "line": 1683,
+          "text": "/// A second run writes nothing. It runs after the KGFact identity backfill,"
+        },
+        {
+          "line": 2122,
+          "text": "/// once (`EstateCoordinator::backfill_ssc_facts`) and, when it wrote"
+        },
+        {
+          "line": 2126,
+          "text": "/// the kg_facts identity backfill and before search projection, so every later"
+        },
+        {
+          "line": 2329,
+          "text": "/// surface used by `run_kg_fact_identity_backfill`. The estate and queue"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#unserved_estate_runs_the_work_and_never_touches_the_daemon",
+        "name": "unserved_estate_runs_the_work_and_never_touches_the_daemon",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L4144-L4154"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4147,
+          "text": "let out = super::with_resident_serving(false, \"kg_facts identity backfill\", &daemon, || {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#daemon_that_will_not_stop_skips_the_work",
+        "name": "daemon_that_will_not_stop_skips_the_work",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L4181-L4191"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4184,
+          "text": "let out = super::with_resident_serving(true, \"kg_facts identity backfill\", &daemon, || {"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#the_step_marks_earlier_vault_imports_once_on_a_fixture_estate",
+        "name": "the_step_marks_earlier_vault_imports_once_on_a_fixture_estate",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L4474-L4508"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4498,
+          "text": "assert!(vault_class_backfill_in(&sqlite(&path)));"
+        },
+        {
+          "line": 4506,
+          "text": "assert!(vault_class_backfill_in(&sqlite(&path)));"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/commands/upgrade.rs#the_access_field_repair_maps_undeclared_values_up_once_on_a_fixture_estate",
+        "name": "the_access_field_repair_maps_undeclared_values_up_once_on_a_fixture_estate",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+        "span": "L4807-L4989"
+      },
+      "path": "apps/mootx01/rust/src/commands/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 4970,
+          "text": "let counts = locus_kit::access_field_repair::backfill(&storage, 1_800_000_000_000).unwrap();"
+        },
+        {
+          "line": 4978,
+          "text": "let refreshed = locus_kit::drawer_fingerprint_refresh::backfill(&storage).unwrap();"
+        },
+        {
+          "line": 4982,
+          "text": "assert_eq!(locus_kit::access_field_repair::backfill(&storage, 1_800_000_000_000).unwrap(),"
+        },
+        {
+          "line": 4984,
+          "text": "assert_eq!(locus_kit::drawer_fingerprint_refresh::backfill(&storage).unwrap(), 0, \"a second run writes nothing\");"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/src/core/permissions.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 322,
+          "text": "/// Backfilling at the classifier default instead would bypass a user's"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/core/permissions.rs#tests",
+        "name": "tests",
+        "kind": "module",
+        "path": "apps/mootx01/rust/src/core/permissions.rs",
+        "span": "L632-L1300"
+      },
+      "path": "apps/mootx01/rust/src/core/permissions.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 999,
+          "text": "// Matching entries by exact string and backfilling each prefix"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/src/core/permissions.rs#grant_tiered_deny_under_direct_namespace_binds_absent_plugin_twin",
+        "name": "grant_tiered_deny_under_direct_namespace_binds_absent_plugin_twin",
+        "kind": "function",
+        "path": "apps/mootx01/rust/src/core/permissions.rs",
+        "span": "L1033-L1053"
+      },
+      "path": "apps/mootx01/rust/src/core/permissions.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1035,
+          "text": "// seen. Backfilling the plugin twin at the classifier default would"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/tests/preencryption_orphan_guard.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 11,
+          "text": "//!   - `upgrade --backfill-only --db <dir>/<name>` on a transient estate directory, and"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/preencryption_orphan_guard.rs#preencryption_orphan_refuses_upgrade",
+        "name": "preencryption_orphan_refuses_upgrade",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/preencryption_orphan_guard.rs",
+        "span": "L435-L450"
+      },
+      "path": "apps/mootx01/rust/tests/preencryption_orphan_guard.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 444,
+          "text": "// --backfill-only: estate steps only, with no binary download, prompts or service"
+        },
+        {
+          "line": 446,
+          "text": "let run = scratch.run(\"upgrade\", &[\"upgrade\", \"--backfill-only\", \"--db\", &selector]);"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#convergence_runs_ssc_facts_after_identity_before_projection_and_second_run_is_no_op",
+        "name": "convergence_runs_ssc_facts_after_identity_before_projection_and_second_run_is_no_op",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L2-L38"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 11,
+          "text": ".find(\"run_kg_fact_identity_backfill(record)\")"
+        },
+        {
+          "line": 12,
+          "text": ".expect(\"identity backfill in convergence\");"
+        },
+        {
+          "line": 14,
+          "text": ".find(\"run_ssc_facts_backfill(record)\")"
+        },
+        {
+          "line": 15,
+          "text": ".expect(\"ssc facts backfill in convergence\");"
+        },
+        {
+          "line": 17,
+          "text": ".find(\"run_search_projection_backfill(record)\")"
+        },
+        {
+          "line": 18,
+          "text": ".expect(\"search projection backfill in convergence\");"
+        },
+        {
+          "line": 24,
+          "text": "let facts_start = src.find(\"fn run_ssc_facts_backfill\").expect(\"ssc facts function\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#current_schema_upgrade_opens_declared_schema_for_ledger_convergence",
+        "name": "current_schema_upgrade_opens_declared_schema_for_ledger_convergence",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L41-L56"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 45,
+          "text": ".find(\"fn run_kg_fact_identity_backfill(\")"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 139,
+          "text": "/// derivation quality rank backfill and the canonical payload convergence, sit"
+        },
+        {
+          "line": 172,
+          "text": "/// after its rank backfill and outcome spellings."
+        },
+        {
+          "line": 203,
+          "text": "/// 1.1.x line's last step), the derivation quality rank backfill, the canonical"
+        },
+        {
+          "line": 257,
+          "text": "/// sequence (`--backfill-only`, a transient estate) runs neither, and nothing"
+        },
+        {
+          "line": 318,
+          "text": "/// backfill at every call site: the identity backfill files legacy facts that"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#template_fact_reprojection_runs_after_the_vector_reclaim_at_every_call_site",
+        "name": "template_fact_reprojection_runs_after_the_vector_reclaim_at_every_call_site",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L143-L169"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 146,
+          "text": "\"run_schema_upgrade(\", \"run_matrix_records_upgrade(\", \"run_kg_fact_identity_backfill(\","
+        },
+        {
+          "line": 147,
+          "text": "\"run_search_projection_backfill(\", \"run_whole_record_vacuum(\", \"run_shared_content_reclaim_if_pending(\","
+        },
+        {
+          "line": 148,
+          "text": "\"run_ssc_facts_backfill(\", \"run_dense_pooling_convergence(\", \"run_span_encode_backfill(\","
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#the_rank_step_rewinds_the_derivation_acceptance_cursor",
+        "name": "the_rank_step_rewinds_the_derivation_acceptance_cursor",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L174-L182"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 176,
+          "text": "let step = src.find(\"fn run_derivation_quality_rank_backfill(\").expect(\"the rank step\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#the_rank_step_rederives_retired_typed_fact_results",
+        "name": "the_rank_step_rederives_retired_typed_fact_results",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L188-L199"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 190,
+          "text": "let step = src.find(\"fn run_derivation_quality_rank_backfill(\").expect(\"the rank step\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#payload_convergence_and_model_install_run_directly_before_the_reprojection",
+        "name": "payload_convergence_and_model_install_run_directly_before_the_reprojection",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L208-L238"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 227,
+          "text": "let backfill = before.rfind(\"run_derivation_quality_rank_backfill(\").expect(\"a rank backfill precedes the re-projection\");"
+        },
+        {
+          "line": 228,
+          "text": "assert!(backfill < convergence, \"the convergence must follow the rank backfill at byte {at}\");"
+        },
+        {
+          "line": 229,
+          "text": "let gap = &src[backfill + \"run_derivation_quality_rank_backfill(\".len()..convergence];"
+        },
+        {
+          "line": 230,
+          "text": "let backfill_end = gap.find(')').expect(\"call closes\") + 1;"
+        },
+        {
+          "line": 231,
+          "text": "assert!(!is_step_call(&gap[backfill_end..]), \"a step runs between the rank backfill and the convergence at byte {at}\");"
+        },
+        {
+          "line": 233,
+          "text": "assert!(reclaim < backfill, \"the rank backfill must follow the vector reclaim at byte {at}\");"
+        },
+        {
+          "line": 234,
+          "text": "let gap = &src[reclaim + \"run_vector_reclaim(\".len()..backfill];"
+        },
+        {
+          "line": 236,
+          "text": "assert!(!is_step_call(&gap[reclaim_end..]), \"a step runs between the vector reclaim and the rank backfill at byte {at}\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/rust/tests/upgrade.rs#the_fact_source_regrade_repair_runs_directly_after_the_identity_backfill_at_every_call_site",
+        "name": "the_fact_source_regrade_repair_runs_directly_after_the_identity_backfill_at_every_call_site",
+        "kind": "function",
+        "path": "apps/mootx01/rust/tests/upgrade.rs",
+        "span": "L322-L338"
+      },
+      "path": "apps/mootx01/rust/tests/upgrade.rs",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 322,
+          "text": "fn the_fact_source_regrade_repair_runs_directly_after_the_identity_backfill_at_every_call_site() {"
+        },
+        {
+          "line": 326,
+          "text": "\"run_vault_class_backfill(\", \"run_kg_fact_identity_backfill(\", \"run_search_projection_backfill(\","
+        },
+        {
+          "line": 327,
+          "text": "\"run_ssc_facts_backfill(\", \"run_whole_record_vacuum(\","
+        },
+        {
+          "line": 336,
+          "text": "assert_eq!(previous, \"run_kg_fact_identity_backfill(\", \"the repair at byte {at} must follow the identity backfill\");"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/MootFactExtractorActivation/EncoderSettings.swift#EncoderSettings",
+        "name": "EncoderSettings",
+        "kind": "enum",
+        "path": "apps/mootx01/Sources/MootFactExtractorActivation/EncoderSettings.swift",
+        "span": "L10-L38"
+      },
+      "path": "apps/mootx01/Sources/MootFactExtractorActivation/EncoderSettings.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 22,
+          "text": "/// encoder built outside the kit (`upgrade --backfill-only`); a refused"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/MootInstallerCore/PermissionsWriter.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 41,
+          "text": "// default. Backfilling at the default instead would let a `deny` under one"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/MootInstallerCore/PermissionsWriter.swift#PermissionsWriter",
+        "name": "PermissionsWriter",
+        "kind": "enum",
+        "path": "apps/mootx01/Sources/MootInstallerCore/PermissionsWriter.swift",
+        "span": "L54-L535"
+      },
+      "path": "apps/mootx01/Sources/MootInstallerCore/PermissionsWriter.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 257,
+          "text": "/// Backfilling at the classifier default instead would bypass a user's"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/mootx01/Commands/DrainCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 7,
+          "text": "// for every row-debt duty — span encode, subject backfill, fact extraction —"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/mootx01/Commands/DreamCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 15,
+          "text": "//     bounded subject-backfill batch and one span-encode batch."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/DreamCommand.swift#DreamCommand.run",
+        "name": "DreamCommand.run",
+        "kind": "method",
+        "path": "apps/mootx01/Sources/mootx01/Commands/DreamCommand.swift",
+        "span": "L47-L400"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/DreamCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 308,
+          "text": "// Subject backfill dispatch:"
+        },
+        {
+          "line": 316,
+          "text": "// One bounded batch per pass (DutyLimits.subjectBackfillBatch),"
+        },
+        {
+          "line": 319,
+          "text": "_ = try await kit.enqueueDuty(.subjectBackfill, in: handle, now: now)"
+        },
+        {
+          "line": 320,
+          "text": "let sweep = try await kit.drainDuty(.subjectBackfill, in: handle, now: now)"
+        },
+        {
+          "line": 323,
+          "text": "\"mootx01 dream: subject backfill — \\(sweep.unitsPaid) written, \""
+        },
+        {
+          "line": 327,
+          "text": "Logging.stderr.log(\"mootx01 dream warning: subject backfill error: \\(error) — continuing\")"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/mootx01/Commands/InstallConvergence.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 12,
+          "text": "//      Before the estate steps, so the span encode backfill finds the encoder;"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/mootx01/Commands/ModelsCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 27,
+          "text": "// package (a full `mootx01 upgrade` restarts it; `--backfill-only` and a"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 2,
+          "text": "// SpanEncodeBackfill.swift"
+        },
+        {
+          "line": 11,
+          "text": "// open has finished, so no kit or daemon has to be alive for the backfill."
+        },
+        {
+          "line": 37,
+          "text": "/// What the backfill did."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift#SpanEncodeBackfill",
+        "name": "SpanEncodeBackfill",
+        "kind": "enum",
+        "path": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift",
+        "span": "L49-L195"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/SpanEncodeBackfill.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 49,
+          "text": "enum SpanEncodeBackfill {"
+        },
+        {
+          "line": 66,
+          "text": "/// `encoder.bulk_compute_unit`: the backfill is a bulk lane."
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#configuration",
+        "name": "configuration",
+        "kind": "variable",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L39-L69"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 58,
+          "text": "Use --backfill-only to run only the estate migration steps"
+        },
+        {
+          "line": 59,
+          "text": "(schema 10 → 19 → 20 → 21 → 22 → 23, preference table migration, vault-class backfill, kg_facts identity, fact source re-grade repair, projection backfill, whol"
+        },
+        {
+          "line": 61,
+          "text": "derivation quality rank backfill, canonical payload convergence, model package install,"
+        },
+        {
+          "line": 67,
+          "text": "mootx01 upgrade --backfill-only"
+        }
+      ]
+    },
+    {
+      "symbol": null,
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 108,
+          "text": "/// identity, projection backfill, whole-record vacuum, shared-content reclaim,"
+        },
+        {
+          "line": 110,
+          "text": "/// derivation quality rank backfill, canonical payload convergence, the"
+        },
+        {
+          "line": 126,
+          "text": "/// identity second (correctness migration), projection backfill third"
+        },
+        {
+          "line": 135,
+          "text": "/// derivation quality rank backfill eleventh, canonical payload convergence"
+        },
+        {
+          "line": 228,
+          "text": "// --backfill-only: headless estate convergence for scripted and"
+        },
+        {
+          "line": 230,
+          "text": "// steps (schema 10 → 19 → 20 → 21 → 22 → 23, preference table migration, vault-class backfill, kg_facts identity, fact source re-grade repair, projection"
+        },
+        {
+          "line": 231,
+          "text": "// backfill, whole-record vacuum, shared-content reclaim, recall time convergence, ssc facts,"
+        },
+        {
+          "line": 233,
+          "text": "// derivation quality rank backfill, the canonical payload convergence,"
+        },
+        {
+          "line": 247,
+          "text": "if estate.kind == .transient, !backfillOnly {"
+        },
+        {
+          "line": 896,
+          "text": "/// `KGFactIdentityBackfill`. `mootx01 upgrade` is the ONLY migration"
+        },
+        {
+          "line": 904,
+          "text": "/// The backfill's moves are per-row atomic UPDATEs, so a partial run"
+        },
+        {
+          "line": 910,
+          "text": "/// Returns `true` on success or when there is nothing to backfill, `false` on failure."
+        },
+        {
+          "line": 990,
+          "text": "/// Returns `true` on success or when there is nothing to backfill, `false` on failure."
+        },
+        {
+          "line": 1176,
+          "text": "/// runs through `SpanEncodeBackfill`. No active model, or a model whose"
+        },
+        {
+          "line": 1184,
+          "text": "private func runSpanEncodeBackfill(estate: EstateRecord, home: URL) async -> Bool {"
+        },
+        {
+          "line": 1225,
+          "text": "// the backfill opens its own connection over the migrated file."
+        },
+        {
+          "line": 1230,
+          "text": "// schema is declared here before the backfill touches the"
+        },
+        {
+          "line": 1231,
+          "text": "// table (the DrawerStore the backfill creates declares the"
+        },
+        {
+          "line": 1234,
+          "text": "let backfillStorage = try SQLiteStorage(configuration: configuration)"
+        },
+        {
+          "line": 1235,
+          "text": "try await backfillStorage.open(schema: VectorStore.schemaDeclaration)"
+        },
+        {
+          "line": 1236,
+          "text": "let report = try await SpanEncodeBackfill.run("
+        },
+        {
+          "line": 1237,
+          "text": "storage: backfillStorage, dataDirectory: EstateCatalog.configurationDirectory, now: Date(),"
+        },
+        {
+          "line": 1239,
+          "text": "await backfillStorage.close()"
+        },
+        {
+          "line": 1275,
+          "text": "/// shared-content reclaim and before the ssc facts backfill: the first"
+        },
+        {
+          "line": 1471,
+          "text": "/// pointer records: `GLKMigrationCatalog.backfillDerivationQualityRanks`"
+        },
+        {
+          "line": 1472,
+          "text": "/// (`DerivationQualityRankBackfill`). The 1.15 → 1.16 capsule adds the"
+        },
+        {
+          "line": 1474,
+          "text": "/// accepted result disappears by this rank. Idempotent: a backfilled"
+        },
+        {
+          "line": 1486,
+          "text": "/// Returns `true` on success or when there is nothing to backfill."
+        },
+        {
+          "line": 1551,
+          "text": "/// 1.1.x line's steps and the derivation quality rank backfill, and"
+        },
+        {
+          "line": 1781,
+          "text": "/// `VaultClassMarker.backfill`, which writes bit 30 and no other bit (bit"
+        },
+        {
+          "line": 1815,
+          "text": "/// The vault-class backfill over the estate `configuration` opens, with"
+        },
+        {
+          "line": 1842,
+          "text": "/// - `AccessFieldRepair.backfill`, first, so"
+        },
+        {
+          "line": 1850,
+          "text": "/// - `DrawerFingerprintRefresh.backfill`: every"
+        },
+        {
+          "line": 1855,
+          "text": "/// - `AcceptedFactRegrade.backfill`: every accepted fact"
+        },
+        {
+          "line": 1859,
+          "text": "/// - `LaxFactRegrade.backfill`: every"
+        },
+        {
+          "line": 1869,
+          "text": "/// A second run writes nothing. It runs after the KGFact identity backfill,"
+        },
+        {
+          "line": 2551,
+          "text": "/// routine. `--backfill-only` and a transient estate do not: they run the"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#backfillOnly",
+        "name": "backfillOnly",
+        "kind": "variable",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L143-L146"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 144,
+          "text": "name: .customLong(\"backfill-only\"),"
+        },
+        {
+          "line": 145,
+          "text": "help: \"Run only the estate migration steps (schema 10 → 19 → 20 → 21 → 22 → 23, preference table migration, vault-class backfill, kg_facts identity, fact source"
+        },
+        {
+          "line": 146,
+          "text": "var backfillOnly = false"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#estateOnly",
+        "name": "estateOnly",
+        "kind": "variable",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L207-L207"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 207,
+          "text": "let estateOnly = !Self.runsInstallRoutine(backfillOnly: backfillOnly, transient: estate.kind == .transient)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#settled",
+        "name": "settled",
+        "kind": "variable",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L252-L281"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 264,
+          "text": "let okVault  = await runVaultClassBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 265,
+          "text": "let okKG     = await runKGFactIdentityBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 267,
+          "text": "let okSP     = await runSearchProjectionBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 271,
+          "text": "let okFacts  = await runSSCFactsBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 273,
+          "text": "let okSpan   = await runSpanEncodeBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 275,
+          "text": "let okRanks  = await runDerivationQualityRankBackfill(estate: estate, home: home)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#converged",
+        "name": "converged",
+        "kind": "variable",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L392-L432"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 412,
+          "text": "await runVaultClassBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 413,
+          "text": "await runKGFactIdentityBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 415,
+          "text": "await runSearchProjectionBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 419,
+          "text": "await runSSCFactsBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 421,
+          "text": "await runSpanEncodeBackfill(estate: estate, home: home)"
+        },
+        {
+          "line": 423,
+          "text": "await runDerivationQualityRankBackfill(estate: estate, home: home)"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#vaultClassBackfill",
+        "name": "vaultClassBackfill",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L1818-L1837"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1818,
+          "text": "static func vaultClassBackfill(configuration: EstateConfiguration) async -> Bool {"
+        },
+        {
+          "line": 1823,
+          "text": "marked = try await VaultClassMarker.backfill(storage: storage)"
+        },
+        {
+          "line": 1830,
+          "text": "? \"  ✓ vault-class marks: nothing to backfill\""
+        },
+        {
+          "line": 1831,
+          "text": ": \"  ✓ vault-class backfill: \\(marked) vault-imported drawer(s) marked\")"
+        },
+        {
+          "line": 1834,
+          "text": "print(\"  ✗ vault-class backfill failed: \\(error)\\n    Run `mootx01 upgrade` to retry.\")"
+        }
+      ]
+    },
+    {
+      "symbol": {
+        "id": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift#factSourceRegradeRepair",
+        "name": "factSourceRegradeRepair",
+        "kind": "function",
+        "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+        "span": "L1926-L1962"
+      },
+      "path": "apps/mootx01/Sources/mootx01/Commands/UpgradeCommand.swift",
+      "inDegree": 0,
+      "hits": [
+        {
+          "line": 1934,
+          "text": "repaired = try await AccessFieldRepair.backfill(storage: storage, now: now)"
+        },
+        {
+          "line": 1935,
+          "text": "refreshed = try await DrawerFingerprintRefresh.backfill(storage: storage)"
+        },
+        {
+          "line": 1936,
+          "text": "demoted = try await AcceptedFactRegrade.backfill(storage: storage, now: now)"
+        },
+        {
+          "line": 1937,
+          "text": "regraded = try await LaxFactRegrade.backfill(storage: storage, now: now)"
+        }
+      ]
+    }
+  ],
+  "truncated": {
+    "files": 0,
+    "hits": 1080
+  },
+  "saved": {
+    "files": 22,
+    "baselineChars": 953510
+  }
+}

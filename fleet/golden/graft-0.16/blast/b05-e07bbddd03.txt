@@ -1,0 +1,24 @@
+blast radius — e07bbddd03^...HEAD (depth 2)
+  changed: 8 files in 4 areas, 8 seed symbols
+  impacted: 8 symbols in 2 areas
+
+✗ is_coreml_contention — 1 changed file, 0/2 reached by a test
+✓ isEngineRefusal — 1 changed file, 1/1 reached by a test
+✗ load_placed — 1 changed file, 0/1 reached by a test
+✗ choose_providers — 1 changed file, 0/2 reached by a test
+
+load — 6 symbols in 1 file
+  calls ← load (packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs:L65-L131) [depth 1]
+  calls ← a_bonsai_judge_package_for_the_other_runtime_or_without_a_valid_receipt_or_over_budget_leaves_extraction_off (packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs:L840-L888) [depth 2]
+  calls ← a_judge_load_hashes_the_package_files_before_it_reads_the_model (packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs:L897-L909) [depth 2]
+  calls ← native_package_extractor_selected (packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs:L178-L193) [depth 2]
+  calls ← product_backend (packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs:L59-L61) [depth 2]
+  calls ← validate_installed_package (packages/kits/AriaMcpKit/rust/src/process_model_runtime.rs:L280-L320) [depth 2]
+
+isRefusal — 2 symbols in 2 files
+  calls ← isRefusal (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CoreAIEntrypointModel.swift:L132-L135) [depth 1]
+  calls ← refusing (packages/kits/CorpusKit/Sources/CorpusKitProviders/Encoder/CorpusKitHosting.swift:L63-L67) [depth 2]
+
+1 test suite also references this code (not listed)
+
+⚠ 3 changed files not in the graph (docs/blast_radius/MOOTAI-WIRE-IN_BLAST_RADIUS.md, docs/missions/MISSION_MOOTAI_WIRE_IN.md, docs/status/MOOTAI-WIRE-IN_REPORT.md) — no parser claims the extension, or the index predates the file.
