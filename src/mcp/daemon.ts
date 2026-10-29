@@ -66,6 +66,7 @@ import {
   type WriterLockInfo,
 } from './writer-lock';
 import { registerDaemon, deregisterDaemon } from './daemon-registry';
+import { removeLockIfUnchanged, snapshotLock, writeExclusiveTemp } from './lock-takeover';
 
 /** Default idle linger after the last client disconnects. */
 const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
@@ -656,7 +657,9 @@ const LOCK_REFRESH_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 400, 400];
  * Windows sharing violation. Keep this startup step synchronous: accepting a
  * client before ownership is refreshed could initialize an engine too early.
  * Retries wait per {@link LOCK_REFRESH_RETRY_DELAYS_MS}; permanent failures
- * still abort startup.
+ * still abort startup. The new record is written to a private temp file
+ * ({@link writeExclusiveTemp}: a fresh random name, created exclusively, so
+ * nothing planted beside the lock is written through) and renamed over.
  */
 export function refreshDaemonLock(
   pidPath: string,
@@ -664,9 +667,8 @@ export function refreshDaemonLock(
   lock: DaemonLockInfo,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  const tmpPid = `${pidPath}.${process.pid}.bound`;
+  const tmpPid = writeExclusiveTemp(pidPath, encodeLockInfo(lock), 0o600);
   try {
-    fs.writeFileSync(tmpPid, encodeLockInfo(lock), { mode: 0o600 });
     for (let attempt = 0; ; attempt++) {
       // A retry must never replace a record whose owner changed while waiting.
       if (fs.readFileSync(pidPath, 'utf8') !== initialContents) {
@@ -756,11 +758,12 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
     ...lockStamp(projectRoot),
   };
 
-  // Temp name is pid-scoped so racing candidates never collide on it.
-  const tmp = `${pidPath}.${process.pid}.tmp`;
+  // The temp name is drawn fresh per call and the file created exclusively
+  // (writeExclusiveTemp), so racing candidates, worker threads sharing a pid
+  // included, never collide on it and nothing planted there is written through.
+  const tmp = writeExclusiveTemp(pidPath, encodeLockInfo(info), 0o600);
   let acquired = false;
   try {
-    fs.writeFileSync(tmp, encodeLockInfo(info), { mode: 0o600 });
     try {
       fs.linkSync(tmp, pidPath); // atomic + exclusive (race-free; see must-fix 1)
       acquired = true;
@@ -784,11 +787,12 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
 
   if (acquired) return { kind: 'acquired', pidPath, info };
 
-  // Taken. Because the pidfile was link'd atomically it always holds a complete
-  // record — `existing` is null only for a genuinely corrupt leftover or a
-  // foreign record (another project's, copied in with its `.codegraph/`),
-  // never a mid-write race. Either way `lockContents` keeps the exact
-  // bytes so the caller can compare-and-delete it.
+  // Taken. On the link path the pidfile always holds a complete record, so
+  // `existing` is null only for a corrupt leftover or a foreign record
+  // (another project's, copied in with its `.codegraph/`); on the O_EXCL
+  // fallback it can also be a holder mid-write. Either way `lockContents` keeps the exact
+  // bytes so the caller can hand them to clearStaleDaemonLock as
+  // `expectedLockContents`, which removes the lock only if it still holds them.
   let existing: DaemonLockInfo | null = null;
   let lockContents: string | null = null;
   try {
@@ -824,14 +828,16 @@ export function acquireLockViaExclusiveOpen(pidPath: string, info: DaemonLockInf
 }
 
 /**
- * Remove a stale pidfile. Re-reads the file immediately before unlinking so a
- * different daemon that acquired the lock in the meantime is never disturbed.
+ * Remove a stale pidfile. The file is read once ({@link snapshotLock}), judged
+ * from that read, and removed with {@link removeLockIfUnchanged}: under the
+ * `.takeover` guard and only if it is still that very file (same bytes and,
+ * off Windows, same inode), so a different daemon that acquired the lock after
+ * the read is never disturbed. A guard another live taker holds leaves the
+ * lock in place and returns false.
  *
- * must-fix 1 (issue #411 review): the original unconditionally `unlink`'d,
- * which let a racing candidate delete a healthy daemon's lock. Passing
- * `expectedDeadPid` (the pid the caller believed was dead) makes the clear a
- * compare-and-delete: bail if the file now holds a different pid. By default a
- * live pid is also preserved; `allowLivePid` is reserved for callers that have
+ * Passing `expectedDeadPid` (the pid the caller believed dead) makes the clear
+ * bail if the file holds a different pid. By
+ * default a live pid is also preserved; `allowLivePid` is reserved for callers that have
  * already disproved daemon identity with the socket hello (#1553). Passing
  * `projectRoot` (the project `pidPath` belongs to) also clears a FOREIGN record
  * (see {@link isForeignLockRecord}; one copied in with a `.codegraph/`) even
@@ -846,7 +852,9 @@ export function clearStaleDaemonLock(
   opts: { allowLivePid?: boolean; expectedLockContents?: string; projectRoot?: string } = {}
 ): boolean {
   try {
-    const raw = fs.readFileSync(pidPath, 'utf8');
+    const snapshot = snapshotLock(pidPath);
+    if (snapshot === null) return true; // already gone
+    const raw = snapshot.raw;
     // The identity record changed after the caller inspected it. Even the same
     // PID may now advertise a newly-bound socket, so this snapshot was never
     // disproved and must not be deleted.
@@ -862,11 +870,10 @@ export function clearStaleDaemonLock(
       // it only after a failed identity handshake proves PID reuse.
       if (!foreign && !opts.allowLivePid && info.pid > 0 && isProcessAlive(info.pid)) return false;
     }
-    fs.unlinkSync(pidPath);
-    return true;
-  } catch (err: unknown) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === 'ENOENT') return true; // already gone
+    const removed = removeLockIfUnchanged(pidPath, snapshot);
+    return removed === 'removed' || removed === 'gone';
+  } catch {
+    // Unreadable, or the unlink itself failed: the lock is still there.
     return false;
   }
 }

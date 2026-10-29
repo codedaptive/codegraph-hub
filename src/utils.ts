@@ -32,6 +32,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createLockFile, removeLockIfUnchanged, snapshotLock, type LockSnapshot } from './mcp/lock-takeover';
 
 // ============================================================
 // SECURITY UTILITIES
@@ -435,7 +436,8 @@ export function escapeRegExp(text: string): string {
  * than one hard link, is never foreign. The caller supplies both
  * (`lockStamp` and `isForeignLockRecord` in `mcp/writer-lock`) because this
  * module cannot import `directory` without a cycle (`utils` → `directory` →
- * `sync/watch-policy` → `utils`).
+ * `sync/watch-policy` → `utils`). The stale-lock takeover it does import,
+ * `mcp/lock-takeover`, imports Node builtins only, so it adds no cycle.
  */
 export interface FileLockOwner {
   stamp(): object;
@@ -472,59 +474,47 @@ export class FileLock {
    * A record at the owner's own root is never foreign, so its live PID holds.
    */
   acquire(): void {
-    // Check for existing lock
-    if (fs.existsSync(this.lockPath)) {
-      try {
-        const content = fs.readFileSync(this.lockPath, 'utf-8');
-        // parseInt stops at the first newline: the PID is the first line.
-        const pid = parseInt(content.trim(), 10);
-        // The record is exactly the second line, parsed as JSON and never
-        // trimmed or split further: JSON escapes any newline inside the root,
-        // and its spaces are part of it. No second line, or one that does not
-        // parse, is no record: pid liveness alone decides.
-        let foreign = false;
-        if (this.owner) {
-          const recordLine = content.split('\n')[1];
-          if (recordLine !== undefined) {
-            try { foreign = this.owner.isForeign(JSON.parse(recordLine)); } catch { /* no record */ }
-          }
+    const locked = (pid?: number) => new Error(
+      'CodeGraph database is locked by another process' + (pid === undefined ? '. ' : ` (PID ${pid}). `) +
+      `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
+    );
+    // One read of the existing lock, judged as read: never re-read to judge.
+    // A lock that exists but cannot be read is held (fail closed).
+    let snapshot: LockSnapshot | null;
+    try { snapshot = snapshotLock(this.lockPath); } catch { throw locked(); }
+    if (snapshot) {
+      const content = snapshot.raw;
+      // parseInt stops at the first newline: the PID is the first line.
+      const pid = parseInt(content.trim(), 10);
+      // The record is exactly the second line, parsed as JSON and never
+      // trimmed or split further: JSON escapes any newline inside the root,
+      // and its spaces are part of it. No second line, or one that does not
+      // parse, is no record: pid liveness alone decides.
+      let foreign = false;
+      if (this.owner) {
+        const recordLine = content.split('\n')[1];
+        if (recordLine !== undefined) {
+          try { foreign = this.owner.isForeign(JSON.parse(recordLine)); } catch { /* no record */ }
         }
-        // A long sync can hold the lock for hours. Its age says nothing about
-        // whether the writer is still alive; only a dead or malformed PID, or a
-        // foreign record, is stale.
-        if (!foreign && !isNaN(pid) && this.isProcessAlive(pid)) {
-          throw new Error(
-            `CodeGraph database is locked by another process (PID ${pid}). ` +
-            `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
-          );
-        }
-
-        // Stale lock (dead process, malformed PID or foreign record) - remove it
-        fs.unlinkSync(this.lockPath);
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('locked by another')) {
-          throw err;
-        }
-        // Other errors reading lock file - try to remove it
-        try { fs.unlinkSync(this.lockPath); } catch { /* ignore */ }
       }
+      // A long sync can hold the lock for hours. Its age says nothing about
+      // whether the writer is still alive; only a dead or malformed PID, or a
+      // foreign record, is stale.
+      if (!foreign && !isNaN(pid) && this.isProcessAlive(pid)) throw locked(pid);
+      // Stale (dead process, malformed PID or foreign record): remove it only
+      // if it is still the file judged above, under the `.takeover` guard, so
+      // a fresh lock another taker created meanwhile is not deleted
+      // (residuals: see mcp/lock-takeover). Any
+      // result falls through to the exclusive create, which wins only if no
+      // lock is in place.
+      try { removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
     }
-
-    // Write our PID (and our stamp, with an owner) using exclusive create flag
-    try {
-      const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
-      fs.writeFileSync(this.lockPath, body, { flag: 'wx' });
-      this.held = true;
-    } catch (err: any) {
-      if (err.code === 'EEXIST') {
-        // Race condition: another process grabbed the lock between our check and write
-        throw new Error(
-          'CodeGraph database is locked by another process. ' +
-          `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
-        );
-      }
-      throw err;
-    }
+    // Write our PID (and our stamp, with an owner), created exclusively
+    // (linked into place complete where the filesystem has hard links);
+    // false means another process holds the lock.
+    const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
+    if (!createLockFile(this.lockPath, body)) throw locked();
+    this.held = true;
   }
 
   /**

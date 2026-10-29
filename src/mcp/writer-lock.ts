@@ -44,6 +44,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { canonicalProjectRoot, getCodeGraphDir, statInode } from '../directory';
+import {
+  createLockFile,
+  removeLockIfUnchanged,
+  replaceLockIfUnchanged,
+  snapshotLock,
+  writeExclusiveTemp,
+  type LockSnapshot,
+} from './lock-takeover';
 /** Signal-0 liveness (EPERM ⇒ alive). Local copy to avoid a daemon↔writer cycle. */
 function isProcessAlive(pid: number): boolean {
   try {
@@ -219,12 +227,19 @@ export function decodeWriterLockInfo(raw: string, projectRoot?: string): WriterL
 }
 
 /**
- * Atomically create `writer.pid` (link-into-place, O_EXCL fallback). The
- * record carries this project's {@link lockStamp}. If held by a dead PID, or
- * by a foreign record (another project's, copied in with its `.codegraph/`:
- * see {@link isForeignLockRecord}), clear and retry once. Never steals from a
- * live holder whose record is not foreign, which includes every record
- * written at this project's root.
+ * Atomically create `writer.pid` (or `rebuild.pid`) with {@link createLockFile}
+ * (link-into-place, O_EXCL fallback). The record carries this project's
+ * {@link lockStamp}. If the lock is held by a dead PID, is malformed, or holds
+ * a foreign record (another project's, copied in with its `.codegraph/`: see
+ * {@link isForeignLockRecord}), it is stale: judged from one
+ * {@link snapshotLock}, removed with {@link removeLockIfUnchanged} only if it is
+ * still that very file (under the `.takeover` guard, so a competing taker's
+ * fresh lock is not deleted; see the residuals in lock-takeover.ts). An
+ * unreadable lock is left in place and reported taken. The create is then
+ * tried once more whatever the removal found, busy included; it stays
+ * exclusive and wins only if no lock is in place. Never steals from a live holder whose
+ * record is not foreign, which includes every record written at this
+ * project's root.
  */
 export function tryAcquireWriterLock(
   projectRoot: string,
@@ -242,47 +257,23 @@ export function tryAcquireWriterLock(
     ...lockStamp(projectRoot),
   };
 
-  const attempt = (): WriterAcquireResult => {
-    const tmp = `${pidPath}.${process.pid}.tmp`;
-    let acquired = false;
-    try {
-      fs.writeFileSync(tmp, encode(info), { mode: 0o600 });
-      try {
-        fs.linkSync(tmp, pidPath);
-        acquired = true;
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-          // taken
-        } else {
-          // No hard links — O_EXCL create.
-          try {
-            const fd = fs.openSync(pidPath, 'wx', 0o600);
-            try {
-              fs.writeSync(fd, encode(info));
-              acquired = true;
-            } finally {
-              fs.closeSync(fd);
-            }
-          } catch (e2: unknown) {
-            if ((e2 as NodeJS.ErrnoException).code !== 'EEXIST') throw e2;
-          }
-        }
-      }
-    } finally {
-      try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  /** Try the exclusive create; on loss, the snapshot of whatever holds it (null if gone or unreadable). */
+  const attempt = (): { result: WriterAcquireResult; snapshot: LockSnapshot | null } => {
+    if (createLockFile(pidPath, encode(info), 0o600)) {
+      return { result: { kind: 'acquired', pidPath, info }, snapshot: null };
     }
-
-    if (acquired) return { kind: 'acquired', pidPath, info };
-
+    let snapshot: LockSnapshot | null = null;
     let existing: WriterLockInfo | null = null;
     try {
+      snapshot = snapshotLock(pidPath);
       // A foreign record decodes as null, so it is stale below like a dead one.
-      existing = decodeWriterLockInfo(fs.readFileSync(pidPath, 'utf8'), projectRoot);
+      if (snapshot) existing = decodeWriterLockInfo(snapshot.raw, projectRoot);
     } catch { /* unreadable */ }
-    return { kind: 'taken', existing, pidPath };
+    return { result: { kind: 'taken', existing, pidPath }, snapshot };
   };
 
-  let result = attempt();
+  const first = attempt();
+  const result = first.result;
   if (result.kind === 'taken' && result.existing && result.existing.pid === process.pid) {
     // Same process already holds it (daemon acquired before engine watch).
     return { kind: 'acquired', pidPath: result.pidPath, info: result.existing };
@@ -290,77 +281,62 @@ export function tryAcquireWriterLock(
   if (result.kind === 'taken') {
     const existing = result.existing;
     if (!existing || existing.pid <= 0 || !isProcessAlive(existing.pid)) {
-      // Stale (dead, unreadable or foreign): re-read, and unlink only if the
-      // record is still that stale one, then retry once.
-      try {
-        const raw = fs.readFileSync(pidPath, 'utf8');
-        const cur = decodeWriterLockInfo(raw, projectRoot);
-        if (!cur || cur.pid === existing?.pid) {
-          if (!cur || cur.pid <= 0 || !isProcessAlive(cur.pid)) {
-            fs.unlinkSync(pidPath);
-          }
-        }
-      } catch { /* ENOENT ok */ }
-      result = attempt();
+      // Stale (dead, malformed or foreign), judged from this one snapshot.
+      // An unreadable lock gives no snapshot to compare, so it is not removed
+      // here; the create below then reports it taken.
+      if (first.snapshot) {
+        try { removeLockIfUnchanged(pidPath, first.snapshot); } catch { /* left in place */ }
+      }
+      // Whatever the removal found (removed, gone, changed, busy), the create
+      // stays exclusive: it wins only if no lock is in place.
+      return attempt().result;
     }
   }
   return result;
 }
 
 /**
- * Publish catch-up readiness without exposing a partially-written pidfile.
- * The rewritten record keeps the stamp it was acquired with.
+ * Publish catch-up readiness without exposing a partially-written pidfile:
+ * the record goes to a private temp file ({@link writeExclusiveTemp}: a fresh
+ * random name, created exclusively, so nothing planted beside the lock is
+ * written through) and is renamed over. The rewritten record keeps the stamp
+ * it was acquired with.
  */
 export function markWriterReady(projectRoot: string): void {
   const pidPath = getWriterPidPath(projectRoot);
   const info = readWriterLock(projectRoot);
   if (!info || info.pid !== process.pid) return;
-  const tmp = `${pidPath}.${process.pid}.ready.tmp`;
+  const tmp = writeExclusiveTemp(pidPath, encode({ ...info, ready: true }), 0o600);
   try {
-    fs.writeFileSync(tmp, encode({ ...info, ready: true }), { mode: 0o600 });
     fs.renameSync(tmp, pidPath);
   } finally {
-    try { fs.unlinkSync(tmp); } catch { /* best-effort */ }
+    try { fs.unlinkSync(tmp); } catch { /* renamed into place */ }
   }
 }
-
-/** Waits between retries of a writer-record swap refused by Windows (another process has the file open). */
-const SWAP_RETRY_DELAYS_MS = [25, 50, 100, 200];
 
 /**
  * Replace the writer record of `fromPid` with `next`, and only that record, so
  * the slot passes between two processes without ever falling free (#2335). A
  * stopped daemon's sessions serve themselves in-process the moment it goes, and
  * one that found the slot free or stale would claim it as their own writer.
- * Compare and rename are separate steps, so callers check the result: whether
- * the record was replaced. `next` is written as given, stamp included or not:
- * a hand-back restores the previous holder's record exactly, so a caller
- * building a fresh claim adds {@link lockStamp} itself. Never throws.
+ * The pid compare is made on one {@link snapshotLock}, and the rename happens
+ * through {@link replaceLockIfUnchanged}: under the `.takeover` guard, and only
+ * if the record is still that very file, so a stale takeover (a dead `fromPid`)
+ * cannot overwrite a fresh lock another taker created after the compare. On
+ * Windows a rename refused because another process has the file open is
+ * retried briefly inside the guard. Returns whether the record was replaced.
+ * `next` is written as given, stamp included or not: a hand-back restores the
+ * previous holder's record exactly, so a caller building a fresh claim adds
+ * {@link lockStamp} itself. Never throws.
  */
 export function swapWriterLock(projectRoot: string, fromPid: number, next: WriterLockInfo): boolean {
   const pidPath = getWriterPidPath(projectRoot);
-  const tmp = `${pidPath}.${process.pid}.swap.tmp`;
   try {
-    if (readWriterLock(projectRoot)?.pid !== fromPid) return false;
-    fs.writeFileSync(tmp, encode(next), { mode: 0o600 });
-    for (let attempt = 0; ; attempt++) {
-      try {
-        fs.renameSync(tmp, pidPath);
-        return true;
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        const delay = SWAP_RETRY_DELAYS_MS[attempt];
-        if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '') || delay === undefined) {
-          return false;
-        }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-        if (readWriterLock(projectRoot)?.pid !== fromPid) return false;
-      }
-    }
+    const snapshot = snapshotLock(pidPath);
+    if (!snapshot || decodeWriterLockInfo(snapshot.raw, projectRoot)?.pid !== fromPid) return false;
+    return replaceLockIfUnchanged(pidPath, snapshot, encode(next), 0o600) === 'replaced';
   } catch {
     return false;
-  } finally {
-    try { fs.unlinkSync(tmp); } catch { /* renamed, or never written */ }
   }
 }
 
