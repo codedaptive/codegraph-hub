@@ -75,6 +75,7 @@ import { lookupSymbolNodes, describeSymbolNode, groupDefinitions } from '../grap
 import { goPackageReaderFor } from '../graph/go-package';
 import type { Node, Edge } from '../types';
 import { isTestPath } from '../search/query-utils';
+import { registerExtensionCommands } from '../extensions/host/registry';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -3004,6 +3005,13 @@ program
   .action(() => {
     console.log(packageJson.version);
   });
+
+// Commands contributed by extensions (src/extensions/host): the compiled
+// siblings under dist/extensions/ and any CODEGRAPH_EXTENSION_MODULES entry.
+// Every invocation that reaches program.parse() (`serve --mcp` included; not
+// the bare installer run or -v) loads all extension modules here, so an
+// extension's module top level must stay light.
+registerExtensionCommands(program);
 
 // Parse and run
 program.parse();
