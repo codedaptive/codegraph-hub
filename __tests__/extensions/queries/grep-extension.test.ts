@@ -90,7 +90,11 @@ describe('queries extension, in process', () => {
     expect(extensionTools().map(t => t.definition.name)).toContain('codegraph_grep');
     const tool = findExtensionTool('codegraph_grep');
     expect(tool).toBeDefined();
-    expect(tool!.definition).toEqual(GREP_TOOL);
+    // The registry serves a copy carrying the built-ins' read-only annotations.
+    expect(tool!.definition).toEqual({
+      ...GREP_TOOL,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    });
     expect(Object.isFrozen(tool!.definition)).toBe(true);
   });
 
