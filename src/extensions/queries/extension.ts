@@ -1,20 +1,22 @@
 /**
  * The queries zone's extension (src/extensions/host/README.md): the
  * `codegraph grep` CLI command and the `codegraph_grep` MCP tool, both over
- * grep-by-symbol (./grep); and the `codegraph blast` CLI command and the
- * `codegraph_blast` MCP tool (./blast/extension).
+ * grep-by-symbol (./grep); the `codegraph blast` CLI command and the
+ * `codegraph_blast` MCP tool (./blast/extension); and the `codegraph orphans`
+ * CLI command and the `codegraph_orphans` MCP tool (./orphans/extension).
  *
  * The host loads this module on the main thread of every CLI invocation and in
  * every query-pool worker, so loading it must not load the database layer.
  * Its top level imports only the tool definitions (plain data), types and
- * blast's wiring module, which follows the same rule. Grep's search and all of
- * blast's work, both of which pull in the database layer, are imported inside
- * the commands' actions and the tools' handlers.
+ * blast's and orphans' wiring modules, which follow the same rule. Grep's
+ * search and all of blast's and orphans' work, which pull in the database
+ * layer, are imported inside the commands' actions and the tools' handlers.
  */
 import type { Command } from 'commander';
 import type { CodegraphExtension } from '../host/api';
 import { GREP_TOOL } from './grep/grep-definition';
 import { blastTool, registerBlastCommand } from './blast/extension';
+import { orphansTool, registerOrphansCommand } from './orphans/extension';
 
 interface GrepCliOptions {
   in?: string;
@@ -71,6 +73,7 @@ const extension: CodegraphExtension = {
   registerCommands(program) {
     registerGrepCommand(program);
     registerBlastCommand(program);
+    registerOrphansCommand(program);
   },
   tools: [
     {
@@ -92,6 +95,7 @@ const extension: CodegraphExtension = {
       },
     },
     blastTool,
+    orphansTool,
   ],
 };
 

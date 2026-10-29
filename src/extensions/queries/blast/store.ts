@@ -1,7 +1,9 @@
 /**
  * The read side of `codegraph blast`: every SQL query the walk runs. (The CLI's
- * nested-repository check in `extension.ts` opens the index once more, through
- * `CodeGraph.hasFilesUnder`, as the MCP path does.)
+ * nested-repository check in `../shared/nested-repo.ts` opens the index once
+ * more, through `CodeGraph.hasFilesUnder`, as the MCP path does.) `orphans`
+ * reuses `symbolsOverlapping` and `nodesByIds` through `storeOver`, on the
+ * connection it opens for its own queries.
  *
  * graft 0.16 has no counterpart file. Its `blast.js` and `graph/traverse.js`
  * scan an in-memory `graph.json` (`graph.nodes`, `graph.edges`); CodeGraph's
@@ -18,6 +20,7 @@ import * as fs from 'fs';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
 import type { BlastNode } from './blast';
+import { MAX_IDS_PER_QUERY, chunks, placeholders } from '../shared/sql';
 
 /** One incoming edge, as the BFS consumes it. */
 export interface IncomingEdge {
@@ -56,13 +59,6 @@ export interface BlastStore {
  */
 const NON_SEED_KINDS = ['file', 'import', 'export', 'parameter', 'route'] as const;
 
-/**
- * Ids per `IN (...)` list. SQLite's default bound-parameter limit is 32766 on
- * modern builds but 999 on old ones; 500 stays under both with room for the
- * `kind IN (...)` parameters that share the statement.
- */
-const MAX_IDS_PER_QUERY = 500;
-
 interface NodeRow {
   id: string;
   name: string;
@@ -75,17 +71,6 @@ interface NodeRow {
 /** graft's span notation, `L<start>-L<end>`, which every report field and renderer uses. */
 function toNode(row: NodeRow): BlastNode {
   return { id: row.id, name: row.name, kind: row.kind, path: row.file_path, span: `L${row.start_line}-L${row.end_line}` };
-}
-
-function placeholders(n: number): string {
-  return new Array<string>(n).fill('?').join(', ');
-}
-
-/** `xs` split into consecutive slices of at most `size`. */
-function chunks<T>(xs: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
-  return out;
 }
 
 const NODE_COLUMNS = 'id, name, kind, file_path, start_line, end_line';
@@ -110,8 +95,13 @@ export function openBlastStore(root: string): BlastStore {
   }
 }
 
-/** The store's queries over an open connection; the store's `close` closes it. */
-function storeOver(conn: DatabaseConnection): BlastStore {
+/**
+ * The store's queries over an open connection; the store's `close` closes it.
+ * Exported for `orphans`, which runs these queries on the connection it also
+ * runs its own on: it never calls this store's `close`, and closes the
+ * connection once itself, so the connection has exactly one owner.
+ */
+export function storeOver(conn: DatabaseConnection): BlastStore {
   const db: SqliteDatabase = conn.getDb();
 
   const fileStmt = db.prepare(`SELECT ${NODE_COLUMNS} FROM nodes WHERE id = ? AND kind = 'file'`);

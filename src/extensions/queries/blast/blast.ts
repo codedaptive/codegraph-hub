@@ -28,6 +28,7 @@
  * module and area is keyed by directory and labelled by `hubLabel`, and
  * `labelSource` is always "symbol"; reviewers/owners; LLM naming; viz export.
  */
+import { TEST_PATH } from '../shared/test-path';
 import type { ChangedFile } from './diff';
 import type { BlastStore } from './store';
 
@@ -413,9 +414,6 @@ function coarsen(groups: Map<string, string[]>, max: number): void {
     groups.delete(pick);
   }
 }
-
-/** graft 0.16's test-path pattern, verbatim: test directories, `.test`/`.spec` JS/TS files, Go/Python/Ruby `_test` files. */
-const TEST_PATH = /(^|\/)(tests?|specs?|__tests__)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(go|py|rb)$/i;
 
 /** True when every file in the module is a test file. */
 function isTestOnly(mod: Module): boolean {

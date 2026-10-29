@@ -21,12 +21,13 @@
  *
  * Git is shelled out to rather than parsed from a library because the CI job
  * this feeds already has git — and `--unified=0` gives exactly the post-image
- * line ranges we need, with no context lines to subtract back out. It is run
- * through `spawnSync` with an argument array, never a shell string, so a ref or
- * path from the caller is never interpreted by a shell.
+ * line ranges we need, with no context lines to subtract back out. It runs
+ * through the zone's shared runner (`../shared/git.ts`, an argument array,
+ * never a shell string), so a ref or path from the caller is never interpreted
+ * by a shell. `changedFiles` and `refExists` serve `blast` and `orphans` alike.
  */
-import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { git } from '../shared/git';
 
 /** An inclusive post-image line span, 1-based. */
 export interface LineRange {
@@ -74,20 +75,6 @@ const HUNK_RE = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
  * would otherwise ride along in `--format json`. */
 const MAX_HUNK_LINES = 24;
 const MAX_FILE_LINES = 200;
-
-/** Run git in `root`, or return null when git fails (not a repo, unknown ref). */
-function git(root: string, args: string[]): string | null {
-  const res = spawnSync('git', ['-c', 'core.quotePath=false', ...args], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // 64 MiB, graft's value: room for `git diff --unified=0` on a large diff
-    // (spawnSync's default is 1 MiB, and an overflow returns null here).
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (res.error || res.status !== 0 || typeof res.stdout !== 'string') return null;
-  return res.stdout;
-}
 
 /** A ref git would parse as an option (`--output=<file>` makes `git diff` write
  * a file). Git refuses branch and tag names beginning with `-`, and no revision
