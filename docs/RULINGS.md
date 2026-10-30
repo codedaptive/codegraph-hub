@@ -107,3 +107,16 @@ General as a RULING line. Decisions already settled by a document live in `team/
   and in-server worker processes (replaced by the builder process); S-42 where it conflicts. R-8's no-security
   stance and R-10 (private, one server per computer, no ceremony) stand.
 - Work implied: Orc-Codegraph re-plans WP1 on `lane/host` against `docs/SPEC.md`.
+
+## R-12. Bob's answers to SPEC draft 2 and the legacy questions
+- Date: 2026-10-30 / Bob (#1227)
+- Ruling: the server spec (R-11) replaces MISSION.md; nothing only in MISSION.md applies. Q-11: graft has nothing
+  to do with building the tool; stop working on it. Q-12: write the two missing worker-context files
+  (`PROJECT.md`, `rules/toolchain-typescript.md`) and continue. Performance targets are out of the spec.
+  Development builds are built in an isolated directory and run on their own test socket/port, never the live
+  server. The upstream process (daily merge, squashes, nightly check, upstream issue) waits until the tool is
+  finished. SPEC readings: 1 = the first client starts the server, the server starts the builder, neither exits
+  when idle; 3 = no sibling means a full build from the queue, no opt-in; 2, 4-8 approved as written.
+- Supersedes: R-7 (graft leftovers) as work for this team; S-33's opt-in gate; S-43's publication hold; the
+  performance acceptance carried from MISSION.md/R-8.
+- Work implied: Orc-Codegraph writes the two Q-12 files and plans against docs/SPEC.md draft 3.
