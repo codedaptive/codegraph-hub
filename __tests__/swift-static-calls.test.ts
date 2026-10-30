@@ -10,14 +10,23 @@
  * `resolvedBy: 'qualified-name'`, not at the lower confidence a by-name match
  * gives.
  *
- * When several modules declare the type, the caller's own copy wins (same
- * file, then nearest directory); a tie gives no edge. Of overloads in the type
+ * Only a declaration in a SwiftPM module the caller can see counts: the
+ * caller's own module (the path up to the directory after the last `Sources`
+ * or `Tests`), one its file imports (`import M` or `@testable import M`), or
+ * one re-exported (`@_exported import M`, in any file of a module it sees,
+ * its own included, through any chain of re-exports). A declaration outside
+ * any SwiftPM module is always seen; such a copy wins only where it would win
+ * with the unseen copies kept. A module-qualified call (`CryptoKit.SHA256`)
+ * does not apply the module rule yet (`it.fails`). When several
+ * visible modules declare the type, the caller's own copy wins (same file,
+ * then nearest directory); a tie gives no edge. Of overloads in the type
  * and its extensions (in any file, a module-qualified `extension Kit.Type`
  * too), the call's argument labels pick, never one another module's copy
  * declares. When the type does not declare the member, there is no `calls`
  * edge, never one to another type's same-named member nor to a local function
  * of one of its methods. A receiver that names no project type is left to the
  * name matcher; an SDK type's static call (`JSONDecoder.make()`) gets no edge.
+ * An enum's raw-value type (`enum K: String`) is not one of its supertypes.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -159,6 +168,14 @@ describe('Swift: a static call on a type several modules declare', () => {
 `,
       'Tests/CTests/UseC.swift': `func useC() { _ = DeterministicTestID.make() }
 `,
+      // Two modules declare ReviewAction, each as near the test file as the other.
+      'Sources/ModA/ReviewAction.swift': `enum ReviewAction { static func suggestions() -> [String] { [] } }
+`,
+      'Sources/ModB/ReviewAction.swift': `enum ReviewAction { static func suggestions() -> [String] { [] } }
+`,
+      'Tests/ModATests/ReviewTests.swift': `@testable import ModA
+func useReview() { _ = ReviewAction.suggestions() }
+`,
     });
     roots.push(root);
     cg = await CodeGraph.init(root, { index: true });
@@ -175,13 +192,10 @@ describe('Swift: a static call on a type several modules declare', () => {
     expect(callsFrom(cg, 'useC')).toEqual([]);
   });
 
-  // Known limit (a new case class, from the mootx01-ee audit): a test file with
-  // `@testable import ModA` calls `ReviewAction.suggestions()`, and
-  // `Sources/ModA` and `Sources/ModB` both declare a top-level `ReviewAction`,
-  // each as near the caller's `Tests/ModATests` directory as the other. Only
-  // ModA's copy is visible there, but declarationFor reads no imports, so the
-  // directory tie leaves the call with no edge.
-  it.todo("resolves to the copy in the module the caller's file imports when the copies tie by directory");
+  it("resolves to the copy in the module the caller's file imports when the copies tie by directory", () => {
+    // Only ModA's copy is visible in Tests/ModATests; ModB's is not imported there.
+    expectQualified(onlyCall(cg, 'useReview', 'Sources/ModA/ReviewAction.swift:ReviewAction::suggestions'));
+  });
 });
 
 describe('Swift: a static call a class override chain supplies', () => {
@@ -256,15 +270,18 @@ public enum Store {
     public static func load(path: Int) {}
 }
 `,
-      'Sources/App/Cache+Descriptor.swift': `extension Cache {
+      'Sources/App/Cache+Descriptor.swift': `import Kit
+extension Cache {
     static func entryNames(descriptor: Int) -> [String] { [] }
 }
 `,
-      'Sources/App/Store+Name.swift': `extension Kit.Store {
+      'Sources/App/Store+Name.swift': `import Kit
+extension Kit.Store {
     static func load(name: String) {}
 }
 `,
-      'Sources/App/Use.swift': `func useDescriptor() { _ = Cache.entryNames(descriptor: 1) }
+      'Sources/App/Use.swift': `import Kit
+func useDescriptor() { _ = Cache.entryNames(descriptor: 1) }
 func usePackage() { _ = Cache.entryNames(inPackage: 1) }
 func useName() { Store.load(name: "") }
 func useTag() { _ = Cache.entryNames(tag: 1) }
@@ -321,7 +338,8 @@ describe('Swift: a static call the type does not declare as a method', () => {
     }
 }
 `,
-      'Tests/StoreTests/PredTests.swift': `func usePred() { _ = Pred.literal(.isTrue) }
+      'Tests/StoreTests/PredTests.swift': `@testable import Store
+func usePred() { _ = Pred.literal(.isTrue) }
 `,
       // A project type named like CryptoKit's SHA256.
       'Sources/Kernel/SHA256.swift': `public enum SHA256 {
@@ -349,10 +367,8 @@ func digest(_ d: Data) { _ = SHA256.hash(data: d) }
   // the same shape as a local function. Such a candidate is declined.
   it.todo("resolves a static call to a member the grammar indexes under an earlier method, once extraction indexes it on its type");
 
-  // Known limit: the receiver is CryptoKit's SHA256 (imported), but a project
-  // type shares its name, and an argument-label mismatch alone does not drop
-  // the project's member. Imports are not consulted.
-  it.fails("gives no calls edge to a project type that shares an imported SDK type's name", () => {
+  it("gives no calls edge to a project type that shares an imported SDK type's name", () => {
+    // Digest.swift imports CryptoKit, not Kernel, so its SHA256 is CryptoKit's.
     expect(callsFrom(cg, 'digest')).toEqual([]);
   });
 
@@ -551,11 +567,205 @@ func rawCaller() { K.rawX() }
     expectQualified(onlyCall(cg, 'protoBaseCaller', 'Sources/App/Bases.swift:ProtoBase::build'));
   });
 
-  // Known limit: K's raw type `String` resolves to nothing (the project only
-  // extends String), and the supertype walk cannot tell a raw type from a
-  // conformance there, so `K.rawX()` lands on String's extension.
-  it.fails("gives no calls edge to a member an extension adds to an enum's raw type", () => {
+  it("gives no calls edge to a member an extension adds to an enum's raw type", () => {
+    // `String` is K's raw-value type, not a supertype, so String's extension is not walked.
     expect(callsFrom(cg, 'rawCaller').filter((c) => c.target.startsWith('Sources/App/String+RawX.swift:'))).toEqual([]);
+  });
+});
+
+describe('Swift: a static call sees only the modules its file can see', () => {
+  let cg: CodeGraph;
+  beforeAll(async () => {
+    const root = makeProject('cg-swift-static-visible-', {
+      'Sources/A/SHA256.swift': `import Foundation
+public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
+`,
+      // CryptoKit's SHA256: the caller imports CryptoKit, not A.
+      'Sources/B/UseCrypto.swift': `import Foundation
+import CryptoKit
+func digest(d: Data) { _ = SHA256.hash(data: d) }
+`,
+      'Sources/C/UseA.swift': `import Foundation
+import A
+func useImported(d: Data) { _ = SHA256.hash(data: d) }
+`,
+      'Tests/ATests/T.swift': `import Foundation
+@testable import A
+func useTestable(d: Data) { _ = SHA256.hash(data: d) }
+`,
+      'Sources/A/Same.swift': `import Foundation
+func useSameModule(d: Data) { _ = SHA256.hash(data: d) }
+`,
+      // A file in no SwiftPM module that imports nothing cannot see module A.
+      'apps/x/App.swift': `func useApp(d: Data) { _ = SHA256.hash(data: d) }
+`,
+      // Two modules declare Tok; the caller imports only D.
+      'Sources/A/Tok.swift': `enum Tok { static func make() {} }
+`,
+      'Sources/D/Tok.swift': `enum Tok { static func make() {} }
+`,
+      'Sources/C/UseTok.swift': `import D
+func useTok() { Tok.make() }
+`,
+    });
+    roots.push(root);
+    cg = await CodeGraph.init(root, { index: true });
+  });
+  afterAll(() => cg?.close());
+
+  it("gives no calls edge into a module the caller's file does not import", () => {
+    expect(callsFrom(cg, 'digest').filter((c) => c.target.startsWith('Sources/A/'))).toEqual([]);
+  });
+
+  it('resolves into a module the caller imports', () => {
+    expectQualified(onlyCall(cg, 'useImported', 'Sources/A/SHA256.swift:SHA256::hash'));
+  });
+
+  it('resolves into a module a test file imports with @testable', () => {
+    expectQualified(onlyCall(cg, 'useTestable', 'Sources/A/SHA256.swift:SHA256::hash'));
+  });
+
+  it("resolves into the caller's own module without an import", () => {
+    expectQualified(onlyCall(cg, 'useSameModule', 'Sources/A/SHA256.swift:SHA256::hash'));
+  });
+
+  it('gives no calls edge from a file outside any module that imports nothing', () => {
+    expect(callsFrom(cg, 'useApp').filter((c) => c.target.startsWith('Sources/A/'))).toEqual([]);
+  });
+
+  it('resolves to the copy in the module the caller imports when two modules declare the type', () => {
+    expectQualified(onlyCall(cg, 'useTok', 'Sources/D/Tok.swift:Tok::make'));
+  });
+});
+
+describe('Swift: a static call sees the modules an import re-exports', () => {
+  let cg: CodeGraph;
+  beforeAll(async () => {
+    const root = makeProject('cg-swift-static-reexport-', {
+      'Sources/Core/CoreType.swift': `public enum CoreType { public static func member() {} }
+`,
+      // Facade re-exports Core from one of its files.
+      'Sources/Facade/Exports.swift': `@_exported import Core
+`,
+      'Sources/App/UseFacade.swift': `import Facade
+func useFacade() { CoreType.member() }
+`,
+      // Another file of the caller's own module re-exports Core.
+      'Sources/Gate/Exports.swift': `@_exported import Core
+`,
+      'Sources/Gate/UseOwn.swift': `func useOwnExport() { CoreType.member() }
+`,
+      // Outer re-exports Facade, which re-exports Core.
+      'Sources/Outer/Exports.swift': `@_exported import Facade
+`,
+      'Sources/Chain/UseOuter.swift': `import Outer
+func useOuter() { CoreType.member() }
+`,
+      // A plain import in Plain is not re-exported.
+      'Sources/Plain/Imports.swift': `import Core
+`,
+      'Sources/Leaf/UsePlain.swift': `import Plain
+func usePlain() { CoreType.member() }
+`,
+    });
+    roots.push(root);
+    cg = await CodeGraph.init(root, { index: true });
+  });
+  afterAll(() => cg?.close());
+
+  it('resolves into a module an imported module re-exports with @_exported', () => {
+    expectQualified(onlyCall(cg, 'useFacade', 'Sources/Core/CoreType.swift:CoreType::member'));
+  });
+
+  it("resolves into a module another file of the caller's own module re-exports", () => {
+    expectQualified(onlyCall(cg, 'useOwnExport', 'Sources/Core/CoreType.swift:CoreType::member'));
+  });
+
+  it('resolves through a chain of re-exports', () => {
+    expectQualified(onlyCall(cg, 'useOuter', 'Sources/Core/CoreType.swift:CoreType::member'));
+  });
+
+  it("gives no calls edge into a module an imported module only imports", () => {
+    expect(callsFrom(cg, 'usePlain').filter((c) => c.target.startsWith('Sources/Core/'))).toEqual([]);
+  });
+});
+
+/** Every Swift edge of `kinds` out of the one function `caller` to a node named `target`, as `kind -> file`. */
+function edgesOfKinds(cg: CodeGraph, caller: string, target: string, kinds: string[]): string[] {
+  const from = cg.getNodesByName(caller).filter((n) => n.language === 'swift' && n.kind === 'function');
+  expect(from.map((n) => n.qualifiedName), caller).toHaveLength(1);
+  return cg
+    .getOutgoingEdgesFrom([from[0]!.id], kinds as never)
+    .map((e) => ({ e, n: cg.getNode(e.target) }))
+    .filter(({ n }) => n && n.language === 'swift' && n.name === target)
+    .map(({ e, n }) => `${e.kind} -> ${n!.filePath}`)
+    .sort();
+}
+
+describe('Swift: a copy in no module wins only where it wins with every copy kept', () => {
+  it('gives no edge to a module-less copy when a copy the caller cannot see is nearer', async () => {
+    const root = makeProject('cg-swift-static-trap-', {
+      'Sources/Kit/Thing.swift': `enum Thing { static func make() {} }
+`,
+      'Plugins/Other/Thing.swift': `enum Thing { static func make() {} }
+`,
+      // No import: Kit is out of view, so only the module-less copy is left.
+      'Sources/App/UseThing.swift': `func useThingMake() { Thing.make() }
+func useThingOther() { Thing.other() }
+`,
+    });
+    roots.push(root);
+    const local = await CodeGraph.init(root, { index: true });
+    try {
+      expect.soft(edgesOfKinds(local, 'useThingMake', 'make', ['calls']), 'calls').toEqual([]);
+      expect.soft(edgesOfKinds(local, 'useThingOther', 'Thing', ['references']), 'references').toEqual([]);
+    } finally {
+      local.close();
+    }
+  });
+
+  it('resolves to a module-less copy that is the nearest with every copy kept', async () => {
+    const root = makeProject('cg-swift-static-trap-ok-', {
+      'Other/Sources/Kit/Thing.swift': `enum Thing { static func make() {} }
+`,
+      // Directly under Sources/: no derivable module, and nearer the caller.
+      'Sources/Thing.swift': `enum Thing { static func make() {} }
+`,
+      'Sources/App/UseThing.swift': `func useThingMake() { Thing.make() }
+func useThingOther() { Thing.other() }
+`,
+    });
+    roots.push(root);
+    const local = await CodeGraph.init(root, { index: true });
+    try {
+      expectQualified(onlyCall(local, 'useThingMake', 'Sources/Thing.swift:Thing::make'));
+      expect(edgesOfKinds(local, 'useThingOther', 'Thing', ['references'])).toEqual(['references -> Sources/Thing.swift']);
+    } finally {
+      local.close();
+    }
+  });
+});
+
+describe('Swift: a module-qualified static call (known limit)', () => {
+  let cg: CodeGraph;
+  beforeAll(async () => {
+    const root = makeProject('cg-swift-static-modqual-', {
+      'Sources/A/SHA256.swift': `import Foundation
+public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
+`,
+      'Sources/B/UseQualified.swift': `import Foundation
+import CryptoKit
+func digestQualified(d: Data) { _ = CryptoKit.SHA256.hash(data: d) }
+`,
+    });
+    roots.push(root);
+    cg = await CodeGraph.init(root, { index: true });
+  });
+  afterAll(() => cg?.close());
+
+  // Known limit: the multi-segment type-path resolver does not apply the module rule, so the SDK call reaches A's SHA256.
+  it.fails("gives no calls edge to a project type from a call qualified by a module the project does not declare", () => {
+    expect(callsFrom(cg, 'digestQualified').filter((c) => c.target.startsWith('Sources/A/'))).toEqual([]);
   });
 });
 

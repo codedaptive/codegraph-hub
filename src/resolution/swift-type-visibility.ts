@@ -32,17 +32,25 @@
  *    `API.PackageController.GetRoute.query(on:)` through
  *    `resolveSwiftTypePathCall`, the single-segment `TestHelpers.make()`
  *    through `resolveSwiftTypeCall`, both dispatched from the name matcher.
+ *    The single-segment call sees a declaration only in a SwiftPM module its
+ *    file can see (swiftStaticCallVisible: its own module, one an `import`
+ *    node of the file names, or one a seen module re-exports with
+ *    `@_exported import`; a declaration in no derivable module is always
+ *    seen), so `SHA256.hash(data:)` in a file importing CryptoKit and not the
+ *    project module that declares a `SHA256` gets no edge.
  *    `MyTool.main()` on an ArgumentParser `ParsableCommand`, or
  *    `Todo.query(on:)` on a Fluent `Model`, calls a member the library
  *    supplies, so the call cannot resolve — yet the caller depends on the
  *    project type it names. `swiftUnresolvedTypeMemberEdges` gives such a
- *    final failure a `references` edge to that type; the `calls` row itself
- *    stays parked as failed. It runs where final failures are parked
+ *    final failure a `references` edge to that type, under the same module
+ *    rule; the `calls` row itself stays parked as failed. It runs where final failures are parked
  *    (ReferenceResolver's persist paths in index.ts), not at resolveOne's seam.
  */
 import type { Edge, Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { escapeRegExp } from '../utils';
+import { SWIFT_RAW_VALUE_TYPES } from './swift-builtins';
+import { swiftModule, swiftModuleIdentity } from './swift-module';
 
 const TYPE_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['class', 'struct', 'enum', 'interface', 'protocol', 'type_alias']);
 
@@ -57,13 +65,18 @@ interface Memo {
   inherited: Map<string, ReadonlySet<string>>;
   owners: Map<string, string | null>;
   typeOwners: Map<string, string | null>;
+  imports: Map<string, ReadonlySet<string>>;
+  /** Per caller file: the module names it sees through imports and `@_exported` re-exports (seenModules). */
+  seen: Map<string, ReadonlySet<string>>;
+  /** The project's `@_exported import`s, read once (swiftReExports). */
+  reExports: SwiftReExports | null;
 }
 const memos = new WeakMap<ResolutionContext, Memo>();
 
 function memoFor(context: ResolutionContext): Memo {
   let memo = memos.get(context);
   if (!memo) {
-    memo = { extension: new Map(), declaration: new Map(), conformances: new Map(), clauses: new Map(), inherited: new Map(), owners: new Map(), typeOwners: new Map() };
+    memo = { extension: new Map(), declaration: new Map(), conformances: new Map(), clauses: new Map(), inherited: new Map(), owners: new Map(), typeOwners: new Map(), imports: new Map(), seen: new Map(), reExports: null };
     memos.set(context, memo);
   }
   return memo;
@@ -289,10 +302,28 @@ function sharedDirs(a: string, b: string): number {
   return n;
 }
 
-/** The project's own declaration of the type a site names, when exactly one fits. */
-function declarationFor(name: string, written: string, ref: UnresolvedRef, from: Node | null, context: ResolutionContext): Node | null {
+/**
+ * The project's own declaration of the type a site names, when exactly one fits.
+ *
+ * `visible`, when given, keeps only the declarations the caller can see
+ * (swiftStaticCallVisible) before the innermost-scope and tie rules run; the
+ * static-call consumers pass it, gateSwiftTypeTarget does not. Dropping a
+ * copy the caller cannot see never hands the call to a copy in no derivable
+ * module that would not have won without the filter: such a winner must be
+ * the unfiltered winner too, else nothing is found (a module-less copy is
+ * kept only because its module is unknown, which is no evidence the caller
+ * sees it over the dropped one).
+ */
+function declarationFor(
+  name: string,
+  written: string,
+  ref: UnresolvedRef,
+  from: Node | null,
+  context: ResolutionContext,
+  visible?: (decl: Node) => boolean,
+): Node | null {
   const memo = memoFor(context).declaration;
-  const key = `${ref.filePath}\0${from?.qualifiedName ?? ''}\0${written}\0${name}`;
+  const key = `${ref.filePath}\0${from?.qualifiedName ?? ''}\0${written}\0${name}\0${visible ? 'visible' : ''}`;
   if (memo.has(key)) return memo.get(key)!;
 
   const bare = !written.includes('.');
@@ -307,6 +338,22 @@ function declarationFor(name: string, written: string, ref: UnresolvedRef, from:
     const depth = bare ? bareScopeDepth(node, from, context) : 0;
     if (depth !== null) scored.push({ node, depth });
   }
+  let found: Node | null;
+  if (!visible) {
+    found = pickDeclaration(scored, ref);
+  } else {
+    const seen = scored.filter((s) => visible(s.node));
+    found = pickDeclaration(seen, ref);
+    if (found && seen.length < scored.length && swiftModuleIdentity(found.filePath) === null) {
+      if (pickDeclaration(scored, ref)?.id !== found.id) found = null;
+    }
+  }
+  memo.set(key, found);
+  return found;
+}
+
+/** Of scored declarations, the one a site means: innermost scope, then same file, then nearest directory; a tie is none. */
+function pickDeclaration(scored: ReadonlyArray<{ node: Node; depth: number }>, ref: UnresolvedRef): Node | null {
   // Swift looks a bare name up innermost scope first.
   const deepest = Math.max(-1, ...scored.map((s) => s.depth));
   // One declaration per file: a framework resolver's one-line twin of a
@@ -318,21 +365,133 @@ function declarationFor(name: string, written: string, ref: UnresolvedRef, from:
     if (!had || node.endLine - node.startLine > had.endLine - had.startLine) byFile.set(node.filePath, node);
   }
   const declarations = [...byFile.values()];
-  let found: Node | null = null;
-  if (declarations.length === 1) {
-    found = declarations[0]!;
-  } else if (declarations.length > 1) {
-    // The same file's, else the nearest by directory — a package's own type
-    // over another package's. A tie is left unresolved.
-    found = declarations.find((n) => n.filePath === ref.filePath) ?? null;
-    if (!found) {
-      const near = Math.max(...declarations.map((n) => sharedDirs(n.filePath, ref.filePath)));
-      const nearest = declarations.filter((n) => sharedDirs(n.filePath, ref.filePath) === near);
-      found = nearest.length === 1 ? nearest[0]! : null;
+  if (declarations.length === 0) return null;
+  if (declarations.length === 1) return declarations[0]!;
+  // The same file's, else the nearest by directory — a package's own type
+  // over another package's. A tie is left unresolved.
+  const same = declarations.find((n) => n.filePath === ref.filePath);
+  if (same) return same;
+  const near = Math.max(...declarations.map((n) => sharedDirs(n.filePath, ref.filePath)));
+  const nearest = declarations.filter((n) => sharedDirs(n.filePath, ref.filePath) === near);
+  return nearest.length === 1 ? nearest[0]! : null;
+}
+
+/**
+ * Can code in `callerFile` name the type `decl` declares, by Swift's module
+ * rule? Yes when `decl`'s SwiftPM module is not derivable (not gated), when
+ * the caller is in that module (swiftModuleIdentity, the path up to the
+ * module directory), or when the module's c99name is one the caller's file
+ * sees (seenModules): one an `import` node of the file names, by the import's
+ * name before its first '.' (`import Kit`, `@testable import Kit`,
+ * `import struct Kit.Cache`), or one a seen module re-exports with
+ * `@_exported import`, its own module included. A caller in no derivable
+ * module and importing nothing sees no module's types.
+ * Index facts only: the import nodes' names and signatures, never file text.
+ */
+function swiftStaticCallVisible(decl: Node, callerFile: string, context: ResolutionContext): boolean {
+  const target = swiftModuleIdentity(decl.filePath);
+  if (target === null) return true;
+  if (swiftModuleIdentity(callerFile) === target) return true;
+  const name = swiftModule(decl.filePath)!.name;
+  return seenModules(callerFile, context).has(name);
+}
+
+/**
+ * The project's `@_exported import`s, by the module that declares them:
+ * `byIdentity` maps a module's swiftModuleIdentity to the module names its
+ * files re-export, and `byName` a module's c99name to the identities of the
+ * modules of that name that re-export anything (two packages may each have a
+ * `Core` target, so a name can map to several).
+ */
+interface SwiftReExports {
+  byIdentity: Map<string, Set<string>>;
+  byName: Map<string, Set<string>>;
+}
+
+/**
+ * Is this Swift import node an `@_exported import`? Its signature is the
+ * whole import statement as extraction stored it (attributes included), so
+ * the attribute is a whitespace-separated token before the `import` keyword.
+ */
+function isSwiftExportedImport(node: Node): boolean {
+  const tokens = (node.signature ?? '').split(/\s+/);
+  const at = tokens.indexOf('import');
+  return at > 0 && tokens.slice(0, at).includes('@_exported');
+}
+
+/**
+ * Read once per context, and dropped with the other memos: every Swift import
+ * node, kept only where it is `@_exported` and its file is in a derivable
+ * SwiftPM module (a re-export from a file in no module re-exports into no
+ * module another file can import; that file's own imports already count
+ * for it). Swift's `@_exported` is module-wide: one file's re-export is seen
+ * by every importer of the module, and by every file of the module itself.
+ */
+function swiftReExports(context: ResolutionContext): SwiftReExports {
+  const memo = memoFor(context);
+  if (memo.reExports) return memo.reExports;
+  const found: SwiftReExports = { byIdentity: new Map(), byName: new Map() };
+  const imports = context.iterateNodesByKind?.('import') ?? context.getNodesByKind('import');
+  for (const node of imports) {
+    if (node.language !== 'swift' || !isSwiftExportedImport(node)) continue;
+    const identity = swiftModuleIdentity(node.filePath);
+    if (identity === null) continue;
+    let names = found.byIdentity.get(identity);
+    if (!names) {
+      names = new Set();
+      found.byIdentity.set(identity, names);
+      const own = swiftModule(node.filePath)!.name;
+      let ids = found.byName.get(own);
+      if (!ids) found.byName.set(own, (ids = new Set()));
+      ids.add(identity);
     }
+    names.add(node.name.split('.')[0]!);
   }
-  memo.set(key, found);
+  memo.reExports = found;
   return found;
+}
+
+/**
+ * The module names code in `filePath` sees: those its own `import` nodes
+ * name, and, closed transitively, those any seen module re-exports
+ * (swiftReExports), starting from the file's own module's re-exports. A name
+ * is matched to every module of that name that re-exports, as an `import`
+ * is matched by name alone.
+ */
+function seenModules(filePath: string, context: ResolutionContext): ReadonlySet<string> {
+  const memo = memoFor(context).seen;
+  const hit = memo.get(filePath);
+  if (hit) return hit;
+  const reExports = swiftReExports(context);
+  const seen = new Set(importedModules(filePath, context));
+  // Every name in `pending` is in `seen` and is walked once: a cycle of
+  // re-exports (A re-exports B, B re-exports A) ends.
+  const pending = [...seen];
+  const add = (identity: string): void => {
+    for (const name of reExports.byIdentity.get(identity) ?? []) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      pending.push(name);
+    }
+  };
+  const own = swiftModuleIdentity(filePath);
+  if (own !== null) add(own);
+  while (pending.length > 0) {
+    for (const identity of reExports.byName.get(pending.pop()!) ?? []) add(identity);
+  }
+  memo.set(filePath, seen);
+  return seen;
+}
+
+/** The module names a file's `import` nodes name: each import's name before its first '.'. */
+function importedModules(filePath: string, context: ResolutionContext): ReadonlySet<string> {
+  const memo = memoFor(context).imports;
+  let names = memo.get(filePath);
+  if (!names) {
+    names = new Set(context.getNodesInFile(filePath).filter((n) => n.kind === 'import').map((n) => n.name.split('.')[0]!));
+    memo.set(filePath, names);
+  }
+  return names;
 }
 
 /**
@@ -626,9 +785,11 @@ export function swiftExtensionOnlyNames(context: ResolutionContext): string[] {
  *   reads only names swiftExtensionOnlyNames lists): the
  *   project's extensions of that name when it declares no such type
  *   (`struct HV: View` with only `extension View {}`), so the members they
- *   add still reach the conformer. The extended type's kind is unknown there,
- *   so an enum's raw type the project only extends (`enum K: String` with
- *   `extension String {}`) is walked as K's supertype too.
+ *   add still reach the conformer. From an enum declaration, a name in
+ *   SWIFT_RAW_VALUE_TYPES is skipped: it is the enum's raw type
+ *   (`enum K: String` with `extension String {}` does not give K String's
+ *   members). A raw type outside that list (a project type expressible by a
+ *   literal) the project only extends is still walked as a supertype.
  *
  * Every supertype is visited once, so an inheritance cycle ends the walk.
  */
@@ -655,6 +816,10 @@ function swiftSupertypeChain(roots: readonly Node[], path: string, context: Reso
         visit(supPath, () => typeNodesAt(sup, supPath, context));
       }
       for (const name of context.getUnresolvedSupertypeNames?.(n.id) ?? []) {
+        // An enum's entry naming a stdlib raw-value type is its raw type, not
+        // a supertype (SWIFT_RAW_VALUE_TYPES says why). An enum's extension is
+        // indexed as a class, and an extension declares no raw type.
+        if (n.kind === 'enum' && SWIFT_RAW_VALUE_TYPES.has(name)) continue;
         for (const [supPath, nodes] of extensionsOnly(name, context)) visit(supPath, () => nodes);
       }
     }
@@ -709,9 +874,13 @@ const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(
  * supertype or a conformed protocol's extension supplies, as
  * swiftSupertypeChain walks them (never through a class reached from a
  * non-class). The receiver is
- * the project's declaration of that name (declarationFor): a bare nested
- * type only inside its scope, and of several modules' copies the caller's
- * own file's, else its nearest directory's.
+ * the project's declaration of that name (declarationFor): only one in a
+ * module the caller's file can see (swiftStaticCallVisible: the caller's own
+ * SwiftPM module, one its file imports, one a seen module re-exports with
+ * `@_exported import`, or a declaration in no derivable module), a bare nested type only inside its scope, and of several such
+ * copies the caller's own file's, else its nearest directory's. A copy in no
+ * derivable module wins only where it would have won had the copies the
+ * caller cannot see been kept (declarationFor).
  *
  * Matching by the member's name alone would bind a call on a namespace `enum`
  * to whichever type declares a member of that name, and an ArgumentParser
@@ -727,6 +896,9 @@ const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(
  *   nearest override, `Middle`'s, is the target (nearestOverrides);
  * - the only types of the name are nested types outside the caller's scope
  *   → null (Swift cannot name them bare there);
+ * - every declaration of the type is in a module the caller's file neither
+ *   belongs to, imports, nor sees re-exported → null, never a by-name match (the receiver is
+ *   another module's type, or the SDK's: `SHA256` with `import CryptoKit`);
  * - several declarations of the type, none in the caller's file and none
  *   nearer it by directory → null.
  *
@@ -764,7 +936,9 @@ export function resolveSwiftTypeCall(
     .filter((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind) && !isSwiftExtension(n, context));
   if (projectTypes.length === 0) return undefined;
   const from = context.getNodeById?.(ref.fromNodeId) ?? null;
-  const decl = declarationFor(typeName, typeName, ref, from, context);
+  // Only a declaration in a module the caller's file can see is a receiver;
+  // with none left the type is another module's (or the SDK's): no edge.
+  const decl = declarationFor(typeName, typeName, ref, from, context, (d) => swiftStaticCallVisible(d, ref.filePath, context));
   if (!decl) return null;
   if (decl.kind === 'type_alias') return undefined;
   if (decl.visibility === 'private' && decl.filePath !== ref.filePath) return undefined;
@@ -871,8 +1045,9 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  * its receiver's declaration when:
  *
  * - exactly one project declaration fits the receiver as written (an
- *   `extension X {}` is never it; a nested type named bare only in scope —
- *   see declarationFor);
+ *   `extension X {}` is never it; a nested type named bare only in scope;
+ *   only a declaration in a module the caller's file can see, by
+ *   swiftStaticCallVisible — see declarationFor);
  * - the caller can see it: a `private` or `fileprivate` type is visible in
  *   its own file only, so a local `var W = [Float]()` in another file is not
  *   the type;
@@ -905,7 +1080,13 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  *   (pinned in swift-static-calls.test.ts). An entry whose first segment is a
  *   type the project only extends (`Ext.Runner` with `extension Ext {}`) is
  *   walked to Ext's extensions too, so a member they add is taken (pinned in
- *   swift-static-calls.test.ts).
+ *   swift-static-calls.test.ts);
+ * - the module rule reads the index's `import` nodes (the caller file's, and
+ *   every `@_exported import` of a module it sees) and the SwiftPM directory
+ *   layout, never Package.swift, so a SwiftPM target whose Package.swift
+ *   `path:` gives it a module name different from its directory is matched
+ *   by its directory's name: an import of its real name does not see it, so
+ *   a genuine edge is dropped (silent beats wrong). Not pinned.
  *
  * The edge carries no `refName`: an edge with one is turned back into a
  * pending ref when its target is deleted (resurrect-ref.ts), which would
@@ -923,7 +1104,7 @@ export function swiftUnresolvedTypeMemberEdges(refs: readonly UnresolvedRef[], c
     const member = name.slice(dot + 1);
     const typeName = receiver.slice(receiver.lastIndexOf('.') + 1);
     const from = context.getNodeById?.(ref.fromNodeId) ?? null;
-    const decl = declarationFor(typeName, receiver, ref, from, context);
+    const decl = declarationFor(typeName, receiver, ref, from, context, (d) => swiftStaticCallVisible(d, ref.filePath, context));
     if (!decl || decl.kind === 'type_alias') continue;
     if (decl.visibility === 'private' && decl.filePath !== ref.filePath) continue;
     if (declaresMember(decl, typePath(decl, context), member, context)) continue;

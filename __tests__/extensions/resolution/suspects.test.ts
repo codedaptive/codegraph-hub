@@ -17,9 +17,9 @@ import {
   formatSuspects,
   stdCollision,
   suspectsToJson,
-  swiftModuleName,
   type Suspect,
 } from '../../../src/extensions/resolution/suspects';
+import { swiftModuleName } from '../../../src/resolution/swift-module';
 
 const RUST_APP_CARGO = '[package]\nname = "app"\nversion = "0.1.0"\n';
 /** Root workspace: crates a and b are members, so each has a known crate. */
