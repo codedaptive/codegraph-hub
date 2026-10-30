@@ -11,6 +11,12 @@
  * binary and the extension are a backstop that fail, not skip, if it is still
  * absent.
  *
+ * Startup-cost tests require dist/extensions/queries/grep/grep-definition.js,
+ * and separately the zone aggregate dist/extensions/queries/extension.js,
+ * alone in a child `node` and assert from `require.cache` that neither loads
+ * dist/index.js, anything under dist/db/, dist/resolution/ or
+ * dist/extraction/, or any tree-sitter module.
+ *
  * One fixture project is indexed once in beforeAll and shared, read-only.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
@@ -215,6 +221,41 @@ function runCli(args: string[], cwd = REPO): { stdout: string; stderr: string; s
   const res = spawnSync(process.execPath, [BIN, ...args], { cwd, encoding: 'utf-8', env: childEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
+
+describe("grep's registration adds nothing to startup (built modules, child node)", () => {
+  const DIST = path.join(REPO, 'dist');
+  // The only grep module extension.ts imports at top level; grep-command and
+  // grep-mcp are imported inside the command's action and the tool's handler.
+  const GREP_DEFINITION = path.join(DIST, 'extensions', 'queries', 'grep', 'grep-definition.js');
+  /** Requires the module named by argv[1] with Node's own require and prints its exports and the require cache. */
+  const PROBE =
+    'const m = require(process.argv[1]);' +
+    'process.stdout.write(JSON.stringify({ exports: Object.keys(m), cache: Object.keys(require.cache) }));';
+
+  /** Requires `mod` alone in a child node and asserts it loaded none of the index, db, resolution, extraction or tree-sitter code. */
+  function expectLightweight(mod: string, expectedExports: string[]): void {
+    const res = spawnSync(process.execPath, ['-e', PROBE, mod], { encoding: 'utf-8', env: childEnv() });
+    expect(res.status, res.stderr).toBe(0);
+    const { exports, cache } = JSON.parse(res.stdout) as { exports: string[]; cache: string[] };
+    expect(exports).toEqual(expect.arrayContaining(expectedExports));
+    // Cache keys are real paths.
+    const dist = fs.realpathSync(DIST);
+    expect(cache).toContain(fs.realpathSync(mod));
+    expect(cache).not.toContain(path.join(dist, 'index.js'));
+    for (const dir of ['db', 'resolution', 'extraction']) {
+      expect(cache.filter((k) => k.startsWith(path.join(dist, dir) + path.sep))).toEqual([]);
+    }
+    expect(cache.filter((k) => k.includes('tree-sitter'))).toEqual([]);
+  }
+
+  it('requiring grep/grep-definition.js alone loads no dist/index.js, nothing under dist/db|resolution|extraction and no tree-sitter', () => {
+    expectLightweight(GREP_DEFINITION, ['GREP_TOOL']);
+  });
+
+  it('requiring the zone aggregate extension.js alone loads no dist/index.js, nothing under dist/db|resolution|extraction and no tree-sitter', () => {
+    expectLightweight(DIST_EXTENSION, ['default']);
+  });
+});
 
 describe('queries extension, built binary (dist discovery)', () => {
   beforeAll(() => {
