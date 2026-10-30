@@ -5,10 +5,10 @@
  * The grammar gives `Kit.Runner` in `class QC: Kit.Runner {}` as one
  * `user_type` whose `type_identifier` children are flat siblings (`Kit`,
  * `Runner`); generic arguments sit in a separate `type_arguments` child. The
- * last direct `type_identifier` is the type named, so the ref is `Runner` at
- * that segment's position, and the resolver reads the written `Kit.` qualifier
- * back from the source to place it on the nested declaration rather than on
- * `enum Kit`.
+ * extracted ref is the dotted path of those `type_identifier`s, `Kit.Runner`
+ * (generic arguments dropped), at the `user_type`'s position, and the
+ * resolver places it on the declaration that path names rather than on
+ * `enum Kit`. No source text is read back to recover the qualifier.
  *
  * Both extraction paths are covered: the wasm arm always, the kernel arm when
  * a kernel is staged. Each arm indexes one real temp project holding every
@@ -19,6 +19,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { extractFromSource } from '../src/extraction';
 import { resetKernelForTests } from '../src/extraction/kernel';
 
 const FILES: Record<string, string> = {
@@ -46,6 +47,12 @@ class A: B {}
 class X: Foundation.NSObject {}
 struct Y: Swift.Error {}
 class Z: Foundation.Operation {}
+`,
+  // A module-qualified conformance to a name the project only extends: the
+  // extension's members still reach the conformer through the failed ref.
+  'Sources/App/View2.swift': `extension View2 { static func y() {} }
+struct HV: SwiftUI.View2 {}
+func c3() { HV.y() }
 `,
 };
 
@@ -146,9 +153,9 @@ function vectors(env: Record<(typeof ENV_KEYS)[number], string | undefined>): vo
     expect(supers(cg, 'X')).toEqual([]);
   });
 
-  // The ref is `Error` (last segment), but its qualifier `Swift` names no
-  // project type, so it names an external module's type: a supertype written
-  // that way gets no edge rather than landing on the project's `enum Error`.
+  // The ref is `Swift.Error`, and its qualifier `Swift` names no project
+  // type, so it names an external module's type: a supertype written that
+  // way gets no edge rather than landing on the project's `enum Error`.
   it('g. gives no edge from `Swift.Error` to a project enum Error', () => {
     expect(supers(cg, 'Y')).toEqual([]);
   });
@@ -157,6 +164,38 @@ function vectors(env: Record<(typeof ENV_KEYS)[number], string | undefined>): vo
   // the project's `class Operation` is not Z's superclass.
   it('h. gives no edge from `Foundation.Operation` to a project class Operation', () => {
     expect(supers(cg, 'Z')).toEqual([]);
+  });
+
+  // Known limit, pinned as failing in both arms: a module-qualified
+  // conformance to a type the project only extends (`struct HV:
+  // SwiftUI.View2` with a project `extension View2`) records `SwiftUI.View2`;
+  // the extension-only walk matches supertype names exactly, so the
+  // extension's members do not reach HV. Listed with the known limits in
+  // src/resolution/swift-type-visibility.ts.
+  it.fails('i. a module-qualified conformance to an extended-only name still reaches the extension member', () => {
+    const c3 = cg.getNodesByName('c3').filter((n) => n.language === 'swift').map((n) => n.id);
+    expect(c3).toHaveLength(1);
+    const targets = cg.getOutgoingEdgesFrom(c3, ['calls']).map((e) => cg.getNode(e.target)?.qualifiedName);
+    expect(targets, JSON.stringify(targets)).toContain('View2::y');
+  });
+
+  // The extraction itself carries the qualifier: the ref is the user_type's
+  // dotted type_identifier path, generic arguments dropped, at the user_type's
+  // position (line 1-based, column 0-based).
+  it('j. extracts a qualified entry as its dotted path at the entry\'s position', () => {
+    const rel = 'Sources/App/Uses.swift';
+    const result = extractFromSource(path.join(root, rel), FILES[rel]!, 'swift');
+    const fromName = new Map(result.nodes.map((n) => [n.id, n.name]));
+    const ext = result.unresolvedReferences
+      .filter((r) => r.referenceKind === 'extends' && ['QC', 'QG', 'QD', 'A'].includes(fromName.get(r.fromNodeId) ?? ''))
+      .map((r) => ({ from: fromName.get(r.fromNodeId), name: r.referenceName, line: r.line, column: r.column }))
+      .sort((a, b) => a.line - b.line);
+    expect(ext).toEqual([
+      { from: 'QC', name: 'Kit.Runner', line: 1, column: 10 },
+      { from: 'QG', name: 'Kit.Runner', line: 2, column: 10 },
+      { from: 'QD', name: 'Kit.Inner.Deep', line: 3, column: 10 },
+      { from: 'A', name: 'B', line: 5, column: 9 },
+    ]);
   });
 }
 
