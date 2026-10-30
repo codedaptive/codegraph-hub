@@ -20,6 +20,12 @@ export default extension;
 
 Nothing else to edit. The build compiles it to `dist/extensions/<zone>/extension.js`.
 
+Registration runs on every CLI call and every MCP session start, so it must load nothing heavy: a
+registration file imports only types and Node built-ins (`node:*`) at top level, loads the engine,
+`src/db`, `src/resolution`, `src/extraction` (and anything that pulls them in) with `await import(...)`
+inside its CLI action and MCP `handle`, and has a test proving through `require.cache` that
+registering loads none of them.
+
 ## Loading
 
 Once per process, never throwing. A module that fails to load (whatever it throws, even a value
@@ -57,7 +63,10 @@ extension's commands after it are skipped.
 - **Registered once, as a snapshot.** The registry copies `definition` through JSON at registration,
   checks the copy, freezes it, and serves and looks up only that copy; `handle` is read once too. A
   getter that answers differently later, or a change to the extension's objects afterwards,
-  changes nothing.
+  changes nothing. Every served definition also gets the optional boolean `fresh` and `checkpoint`
+  properties, which `src/mcp/tools.ts` adds to every tool's `inputSchema`; `ToolHandler.execute`
+  handles them before and after `handle`, so `handle` needs nothing for them (it still receives them
+  in `args`).
 - **Annotations are set by the registry.** Every extension tool is served with the built-in tools'
   read-only MCP annotations (`readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`,
   `openWorldHint: false`, handed in from `src/mcp/tools.ts`), in `tools/list` and wherever the tool
@@ -87,8 +96,7 @@ extension's commands after it are skipped.
 runtime cycle); tools.ts hands the registry its built-in names and annotations through `setBuiltins`.
 An extension module may import from `src/` (tools.ts included): it is required only from inside a
 registry call, after `registry.ts` itself has finished loading, so it never meets a half-loaded
-registry. Keep those imports off the module's top level where you can, though (see "Runs in a
-worker or on the main thread").
+registry. Its value imports from `src/` still stay off its top level (see "Registering").
 
 ## Testing
 

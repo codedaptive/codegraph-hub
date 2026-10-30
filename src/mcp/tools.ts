@@ -66,6 +66,7 @@ import {
 import { getUpdateNotice } from '../upgrade/update-check';
 import { measurePendingChanges } from './index-freshness';
 import { validateAnswerFiles, type AnswerFile } from './answer-freshness';
+import { appendCheckpointFooter, waitForFresh } from '../extensions/host/fresh/checkpoint';
 import { ExploreDiagnostics } from './explore-diagnostics';
 import {
   EXPLORE_EMISSION_KEY,
@@ -1655,12 +1656,16 @@ const projectPathProperty: PropertySchema = {
 };
 
 /**
- * EVERY codegraph tool is query-only: it reads the pre-built index and never
- * mutates the workspace (indexing is the user's explicit CLI call, never the
- * agent's). Advertising this read-only contract lets clients that gate on it run
+ * EVERY codegraph tool leaves the workspace files untouched: it answers from
+ * the index under `.codegraph/`. Building an index is the user's CLI call
+ * (`codegraph init` / `index`). The one write a tool makes is `fresh: true`,
+ * which syncs that existing index before answering; it touches only
+ * `.codegraph/`, so readOnlyHint (about the user's workspace) stays true.
+ * Advertising this read-only contract lets clients that gate on it run
  * the tools where a possibly-mutating tool would be blocked — most concretely,
  * Cursor's Ask mode, which rejects any MCP tool lacking `readOnlyHint: true`
- * (issue #1018). `idempotentHint`: a repeated query has no additional effect.
+ * (issue #1018). `idempotentHint`: a repeated call has no further effect (a
+ * repeated `fresh` sync finds nothing pending).
  * `openWorldHint: false`: the domain is the closed local index, not an open
  * external world. Shared so the contract is declared once; a hypothetical
  * mutating tool would simply not reference it.
@@ -1679,7 +1684,9 @@ const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
  * (one call usually answers the whole question), and only use other tools for
  * targeted follow-up queries.
  *
- * All tools support cross-project queries via the optional `projectPath` parameter.
+ * All tools support cross-project queries via the optional `projectPath` parameter,
+ * and the optional `fresh` / `checkpoint` parameters (added in allToolDefinitions,
+ * handled in ToolHandler.execute).
  */
 export const tools: ToolDefinition[] = [
   {
@@ -1898,9 +1905,33 @@ export const tools: ToolDefinition[] = [
 // Extension tools (src/extensions/host) may not take a built-in's name, and carry the built-ins' annotations.
 setBuiltins(() => tools.map(t => t.name), READ_ONLY_ANNOTATIONS);
 
-/** Built-in tool definitions followed by the loaded extensions' tools (src/extensions/host). */
+/**
+ * Optional on every tool; handled in ToolHandler.execute, never by a tool's own handler.
+ * `fresh` waits for the index to catch up, `checkpoint` only reports where it stands.
+ */
+const ANSWER_CHECKPOINT_PROPERTIES: Record<string, PropertySchema> = {
+  fresh: {
+    type: 'boolean',
+    description: 'Wait (bounded) until the index matches the working tree, then answer; ends a successful answer with a Checkpoint line.',
+  },
+  checkpoint: {
+    type: 'boolean',
+    description: 'End the answer with a Checkpoint line (git HEAD, hash of uncommitted changes, files the index has not caught up with) without waiting.',
+  },
+};
+
+/**
+ * Built-in tool definitions followed by the loaded extensions' tools (src/extensions/host),
+ * each schema cloned with the optional `fresh` and `checkpoint` properties (`required` untouched).
+ */
 function allToolDefinitions(): ToolDefinition[] {
-  return [...tools, ...extensionTools().map(t => t.definition)];
+  return [...tools, ...extensionTools().map(t => t.definition)].map(tool => ({
+    ...tool,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: { ...tool.inputSchema.properties, ...ANSWER_CHECKPOINT_PROPERTIES },
+    },
+  }));
 }
 
 /**
@@ -3000,13 +3031,20 @@ export class ToolHandler {
         process.stderr.write('[CodeGraph MCP] Re-armed file watcher; full catch-up pending.\n');
       }
 
+      // `fresh: true`: bounded wait for the index to match the working tree,
+      // here on the main thread before dispatch (pooled or not), so the answer
+      // comes from the synced index. Never throws. The checkpoint (including a
+      // passed bound or a sync error) is appended to a successful answer; an
+      // isError result or a stale-file refusal is returned without it.
+      const freshCp = args.fresh === true ? await waitForFresh(project) : undefined;
+
       // codegraph_status reports watcher state (pending files, degraded mode,
       // worktree warning) and embeds its own sections — it must run on the MAIN
       // thread against the watched default instance, so it is NEVER off-loaded to
       // a worker (whose read connection has no watcher). It also skips the
       // auto-banner wrapper to avoid duplicating its own pending-files section.
       if (toolName === 'codegraph_status') {
-        return await this.handleStatus(args);
+        return await appendCheckpointFooter(await this.handleStatus(args), args, project, freshCp);
       }
 
       // Read tools: off-load the CPU-heavy dispatch to the worker pool when one
@@ -3067,7 +3105,7 @@ export class ToolHandler {
       // caller passed session state.
       const result = this.takeExploreEmission(raw, sessionState);
       const withWorktree = this.withWorktreeNotice(result, args.projectPath as string | undefined);
-      return this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
+      return await appendCheckpointFooter(this.withStalenessNotice(withWorktree, args.projectPath as string | undefined), args, project, freshCp);
     } catch (err) {
       // Expected condition, not a malfunction: answer as a SUCCESS so the
       // agent keeps trusting the toolset for projects that ARE indexed.
