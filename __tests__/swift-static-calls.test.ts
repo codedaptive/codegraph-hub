@@ -320,7 +320,7 @@ func useTag() { _ = Cache.entryNames(tag: 1) }
   });
 });
 
-describe('Swift: a static call the type does not declare as a method', () => {
+describe('Swift: a static call on a type member that is not a method', () => {
   let cg: CodeGraph;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-declined-', {
@@ -357,9 +357,13 @@ func digest(_ d: Data) { _ = SHA256.hash(data: d) }
   afterAll(() => cg?.close());
 
   it("gives no calls edge to a local function of one of the type's methods", () => {
-    // `literal` here is a case of Pred (not this feature's target); `render`'s
-    // local `literal` is no member of Pred.
+    // `literal` here is a case of Pred with an associated value, so the call
+    // lands on that case; `render`'s local `literal` is no member of Pred.
     expect(callsFrom(cg, 'usePred').filter((c) => c.target.includes('::render::'))).toEqual([]);
+  });
+
+  it("resolves a call on one of the type's cases to that case", () => {
+    expectQualified(onlyCall(cg, 'usePred', 'Sources/Store/Predicate.swift:Pred::literal'));
   });
 
   // The grammar (tree-sitter-swift 0.7.3, S-29) can end a method late and

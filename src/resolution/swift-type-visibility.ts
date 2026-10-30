@@ -32,6 +32,8 @@
  *    `API.PackageController.GetRoute.query(on:)` through
  *    `resolveSwiftTypePathCall`, the single-segment `TestHelpers.make()`
  *    through `resolveSwiftTypeCall`, both dispatched from the name matcher.
+ *    Either lands on a method, a function, or one of the type's own cases
+ *    (`Pred.literal(x)`); a case is never reached through a supertype.
  *    The single-segment call sees a declaration only in a SwiftPM module its
  *    file can see (swiftStaticCallVisible: its own module, one an `import`
  *    node of the file names, or one a seen module re-exports with
@@ -879,17 +881,25 @@ export const SWIFT_TYPE_CALL = /^(?!Self\.)[A-Z]\w*\.[a-z_]\w*$/;
 
 /**
  * What a single-segment `Type.member(…)` call lands on: a method or a free
- * function the grammar indexes under the type. A case or a static closure
+ * function the grammar indexes under the type, or one of the type's own cases
+ * (`Pred.literal(x)`, `Err.failure(reason:)`). A case is a target only as a
+ * member of the receiver type itself, never one a supertype declares
+ * (TYPE_CALL_INHERITED_KINDS): Swift does not inherit cases. A static closure
  * property the type declares is not a target here (the call gets no edge).
  */
-const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function']);
+const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function', 'enum_member']);
+
+/** Of TYPE_CALL_MEMBER_KINDS, those a supertype in swiftSupertypeChain may supply. */
+const TYPE_CALL_INHERITED_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function']);
 
 /**
  * `TestHelpers.make()` lands on the `make` the type `TestHelpers` declares:
  * its own, one an `extension TestHelpers` adds in any file, or one a project
  * supertype or a conformed protocol's extension supplies, as
  * swiftSupertypeChain walks them (never through a class reached from a
- * non-class). The receiver is
+ * non-class). `Pred.literal(x)` lands on the case `literal` only as the
+ * type's own member: a case a supertype declares, or one of an enum nested in
+ * a supertype, is never a target. The receiver is
  * the project's declaration of that name (declarationFor): only one in a
  * module the caller's file can see (swiftStaticCallVisible: the caller's own
  * SwiftPM module, one its file imports, one a seen module re-exports with
@@ -903,8 +913,9 @@ const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(
  * `MyTool.main()` to the project's only other `main` (`Other.main`). So once
  * the receiver is a project type, the call resolves on it or not at all:
  *
- * - the type declares no such method or function → null; when it declares
- *   no member of the name at all, the parked failure then gets
+ * - the type declares no such method, function or case, and no supertype
+ *   supplies such a method or function → null; when it declares no member
+ *   of the name at all, the parked failure then gets
  *   swiftUnresolvedTypeMemberEdges' `references` edge to the type;
  * - the type does not declare it and two supertypes supply it, neither
  *   overriding the other (two protocols' extensions) → null; of an override
@@ -976,6 +987,9 @@ export function resolveSwiftTypeCall(
       own.push(n);
       continue;
     }
+    // A case is the receiver's own member or no target: Swift does not
+    // inherit cases, so a supertype's case never answers the call.
+    if (!TYPE_CALL_INHERITED_KINDS.has(n.kind)) continue;
     chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
     if (chainKey(owner, chain, context) !== undefined) inherited.push(n);
   }
