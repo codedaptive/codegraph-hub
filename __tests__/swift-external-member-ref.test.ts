@@ -9,7 +9,8 @@
  * project's own, though, and the caller depends on it. When the receiver names
  * a project Swift type (not an `extension X {}`; a nested type only in its
  * scope or through its path; not a `typealias`; not another file's `private`
- * type), and neither the type, its extensions, nor its project supertypes and
+ * type; not a type in a SwiftPM module the caller's file neither belongs to,
+ * imports, nor sees through an `@_exported import`), and neither the type, its extensions, nor its project supertypes and
  * protocols (and their extensions) declare the member, the caller gets one
  * `references` edge to the type. A member the grammar indexes under one of the
  * type's methods still counts as declared; a member of a type nested in it
@@ -116,7 +117,9 @@ public enum EstateMigrator {
   // 18. Type aliases of project types, used in their own file.
   'Sources/Kit/Wire.swift': `enum WireProtocol { struct Request { let id: Int } }
 `,
-  'Tests/KitTests/WireTests.swift': `private typealias P = WireProtocol
+  'Tests/KitTests/WireTests.swift': `@testable import Enc
+@testable import Kit
+private typealias P = WireProtocol
 private typealias Mig = EstateMigrator
 private typealias MigrationError = EstateMigrator.MigrationError
 enum WireTests {
@@ -126,7 +129,10 @@ enum WireTests {
     static func external() { _ = P.decodeAll() }
 }
 `,
-  'Sources/Tool/Entry.swift': `enum Entry {
+  // Todo is in module App and Receiver in Kit; Entry's file imports both.
+  'Sources/Tool/Entry.swift': `import App
+import Kit
+enum Entry {
     static func start() { MyTool.main() }
     static func args() { MyTool.main(["a"]) }
     static func pathed() { API.Tool.main() }
@@ -260,8 +266,17 @@ describe('Swift: a static call to an external member of a project type', () => {
 
   it.todo('alias receiver → references edge to the alias once extraction stores its target and visibility');
 
-  it('keeps the reference through a sync, and drops it when the type goes away', async () => {
-    const root = makeProject('cg-swift-ext-member-sync-');
+  // One cold index and two syncs. The project is only the two files the check needs (1.6 s at
+  // load 110); the 30 s timeout is for a heavily loaded machine, where an index plus two syncs
+  // can run past vitest's 5 s default.
+  it('keeps the reference through a sync, and drops it when the type goes away', { timeout: 30_000 }, async () => {
+    const root = makeProjectOf('cg-swift-ext-member-sync-', {
+      'Sources/Tool/MyTool.swift': FILES['Sources/Tool/MyTool.swift'],
+      'Sources/Tool/Entry.swift': `enum Entry {
+    static func start() { MyTool.main() }
+}
+`,
+    });
     const cg = await CodeGraph.init(root, { index: true });
     try {
       // 5. Re-index the caller's file.
@@ -330,8 +345,7 @@ private struct M { static func x() {} }
 }
 `,
       // A member of a nested type is not a member of the outer type, and a
-      // top-level function is not a member of a type its file declares. (Two
-      // nested `main`s: with one, the name matcher binds `Tool.main()` to it.)
+      // top-level function is not a member of a type its file declares.
       'Sources/Tool/Tool.swift': `import ArgumentParser
 struct Tool: ParsableCommand {
     struct Inner { static func main() {} }
@@ -340,7 +354,8 @@ struct Tool: ParsableCommand {
 struct Cmd: ParsableCommand {}
 func helpMessage() -> String { "" }
 `,
-      'Sources/Tool/Gates.swift': `enum Gates {
+      'Sources/Tool/Gates.swift': `import Kit
+enum Gates {
     static func backtick() { _ = StoragePredicate.in(1, []) }
     static func outer() { Tool.main() }
     static func help() -> String { Cmd.helpMessage() }
@@ -386,6 +401,54 @@ func helpMessage() -> String { "" }
     const cg = await CodeGraph.init(root, { index: true });
     try {
       expect(edgesFromMethod(cg, 'Use::run', 'Config', ['references'])).toEqual([]);
+    } finally {
+      cg.close();
+    }
+  });
+});
+
+describe("Swift: the external-member reference needs the type's module in view", () => {
+  it("references a project type only from a file that can see its module", async () => {
+    const root = makeProjectOf('cg-swift-ext-member-visible-', {
+      'Sources/A/SHA256.swift': `import Foundation
+public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
+`,
+      // CryptoKit's SHA256: the caller imports CryptoKit, not A.
+      'Sources/B/UseCrypto.swift': `import CryptoKit
+enum UseCrypto {
+    static func go() { _ = SHA256.other() }
+}
+`,
+      'Sources/C/UseA.swift': `import A
+enum UseA {
+    static func go() { _ = SHA256.other() }
+}
+`,
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect.soft(edgesFromMethod(cg, 'UseA::go', 'SHA256', ['references']), 'imported').toEqual(['references -> enum SHA256']);
+      expect.soft(edgesFromMethod(cg, 'UseCrypto::go', 'SHA256', ['references']), 'not imported').toEqual([]);
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('references a project type in a module an imported module re-exports', async () => {
+    const root = makeProjectOf('cg-swift-ext-member-reexport-', {
+      'Sources/Core/CoreType.swift': `public enum CoreType { public static func member() {} }
+`,
+      'Sources/Facade/Exports.swift': `@_exported import Core
+`,
+      'Sources/E/UseFacade.swift': `import Facade
+enum UseFacade {
+    static func go() { _ = CoreType.other() }
+}
+`,
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect(edgesFromMethod(cg, 'UseFacade::go', 'CoreType', ['references'])).toEqual(['references -> enum CoreType']);
     } finally {
       cg.close();
     }

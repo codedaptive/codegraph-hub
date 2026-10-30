@@ -25,7 +25,7 @@ import { isPythonSelfCall, matchJsStoreBindingCall, isUnresolvedJsMemberCall, ma
 import { isVisibleCppMacro, clearCppMacroVisibility } from './cpp-macro-visibility';
 import { isCppConstructorRef, matchCppConstructor } from './cpp-constructor';
 import { isCppSupertypeRef, matchCppSupertype, clearCppSupertypeMemos } from './cpp-supertypes';
-import { gateSwiftTypeTarget, clearSwiftTypeVisibility, swiftExtendedConformances, swiftUnresolvedTypeMemberEdges } from './swift-type-visibility';
+import { gateSwiftTypeTarget, clearSwiftTypeVisibility, swiftExtendedConformances, swiftExtensionOnlyNames, swiftUnresolvedTypeMemberEdges, resolveSwiftQualifiedSupertype } from './swift-type-visibility';
 import { clearDartLibraryMemos } from './dart-libraries';
 import { clearVbnetReceiverMemos, isVbMemberRead, isVbPathCall, matchVbMemberRead, matchVbPathCall } from './vbnet-receivers';
 import {
@@ -315,6 +315,14 @@ export class ReferenceResolver {
   private supertypeNodeMemo = new Map<string, { gen: number; nodes: Node[] }>();
   // getSuperclassNodes' memo (`extends` edges alone), the same way.
   private superclassNodeMemo = new Map<string, { gen: number; nodes: Node[] }>();
+  // getUnresolvedSupertypeNames' answers for every node, from one query on
+  // first use; dropped in clearCaches. Not generation-tagged like the memos
+  // above: the rows it reads are `extends`/`implements` references, which
+  // resolve and persist before any reference that asks (they are
+  // prerequisites), so they do not change while it is held. A per-node read
+  // was a full scan of unresolved_refs each time: the batched loop drops
+  // idx_unresolved_from_node (DatabaseConnection.BULK_REF_INDEX_NAMES).
+  private unresolvedSupertypeNames: Map<string, string[]> | null = null;
 
   /** Invalidate the getSupertypes memo — call when resolved edges may have advanced. */
   private advanceSupertypeGeneration(): void {
@@ -602,6 +610,7 @@ export class ReferenceResolver {
     this.supertypeMemo.clear();
     this.supertypeNodeMemo.clear();
     this.superclassNodeMemo.clear();
+    this.unresolvedSupertypeNames = null;
     this.supertypeGen++;
     this.nodesByKindCache.clear();
     this.fileExistsMemo.clear();
@@ -1023,6 +1032,27 @@ export class ReferenceResolver {
         }
         this.superclassNodeMemo.set(id, { gen: this.supertypeGen, nodes });
         return nodes;
+      },
+
+      getUnresolvedSupertypeNames: (id: string) => {
+        if (!this.unresolvedSupertypeNames) {
+          // One read keyed by the names the project only extends (the only
+          // names the Swift walk maps to anything), inverted to the
+          // referencing node; each node's names in name order.
+          const byId = new Map<string, string[]>();
+          const sources = this.queries.getUnresolvedReferenceSourcesNamed(
+            swiftExtensionOnlyNames(this.context), ['extends', 'implements']);
+          for (const [name, fromIds] of sources) {
+            for (const fromId of fromIds) {
+              const names = byId.get(fromId);
+              if (names) names.push(name);
+              else byId.set(fromId, [name]);
+            }
+          }
+          for (const names of byId.values()) names.sort();
+          this.unresolvedSupertypeNames = byId;
+        }
+        return this.unresolvedSupertypeNames.get(id) ?? [];
       },
 
       getImportMappings: (filePath: string, language) => {
@@ -1661,6 +1691,15 @@ export class ReferenceResolver {
     // to that local, whatever the file imports (see matchRustUseBoundName).
     const rustBound = matchRustUseBoundName(ref, this.context);
     if (rustBound !== undefined) return this.gateLanguage(rustBound, ref);
+
+    // A qualified Swift inheritance entry (`class QC: Kit.Runner`) carries its
+    // dotted path; no declaration is named `Kit.Runner`, so the pre-filter
+    // below would drop it. It is the type that path names or nothing, as with
+    // CFML's component paths above: no fallthrough on a miss, since a name
+    // match on the last segment can only guess past the qualifier.
+    if (ref.language === 'swift' && isInheritanceRef(ref) && ref.referenceName.includes('.')) {
+      return this.gateLanguage(resolveSwiftQualifiedSupertype(ref, this.context), ref);
+    }
 
     // Fast pre-filter: skip if no symbol with this name exists anywhere
     // AND the name doesn't match a local import. The import escape is
