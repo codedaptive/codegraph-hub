@@ -182,7 +182,7 @@ describe("orphans' registration adds nothing to startup (built module, child nod
     'const m = require(process.argv[1]);' +
     'process.stdout.write(JSON.stringify({ exports: Object.keys(m), cache: Object.keys(require.cache) }));';
 
-  it('requiring orphans/extension.js alone loads no dist/index.js, nothing under dist/db/ and no web-tree-sitter', () => {
+  it('requiring orphans/extension.js alone loads no dist/index.js, nothing under dist/db/, dist/resolution/ or dist/extraction/, and no web-tree-sitter', () => {
     const res = spawnSync(process.execPath, ['-e', PROBE, EXT], { encoding: 'utf-8', env: childEnv() });
     expect(res.status, res.stderr).toBe(0);
     const { exports, cache } = JSON.parse(res.stdout) as { exports: string[]; cache: string[] };
@@ -192,6 +192,8 @@ describe("orphans' registration adds nothing to startup (built module, child nod
     expect(cache).toContain(fs.realpathSync(EXT));
     expect(cache).not.toContain(path.join(dist, 'index.js'));
     expect(cache.filter((k) => k.startsWith(path.join(dist, 'db') + path.sep))).toEqual([]);
+    expect(cache.filter((k) => k.startsWith(path.join(dist, 'resolution') + path.sep))).toEqual([]);
+    expect(cache.filter((k) => k.startsWith(path.join(dist, 'extraction') + path.sep))).toEqual([]);
     expect(cache.filter((k) => k.includes(`${path.sep}web-tree-sitter${path.sep}`))).toEqual([]);
   });
 });

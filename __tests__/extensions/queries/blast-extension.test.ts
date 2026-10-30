@@ -257,11 +257,13 @@ describe('codegraph blast (built binary, zone module found by discovery)', () =>
 
 describe('blast registration is light (built modules)', () => {
   // The host loads the zone module on every CLI call and in every query-pool
-  // worker, so loading it must not pull in the engine (src/index) or the
-  // database layer; those are imported inside the action and the handler.
+  // worker, so loading it must not pull in the engine (src/index), the
+  // database layer, the resolver or the extractors (src/db, src/resolution,
+  // src/extraction); those are imported inside the action and the handler.
   for (const rel of ['extensions/queries/blast/extension.js', 'extensions/queries/extension.js']) {
-    it(`requiring dist/${rel} loads neither dist/index.js nor dist/db/`, () => {
-      const distRoot = path.resolve(__dirname, '../../../dist');
+    it(`requiring dist/${rel} loads none of dist/index.js, dist/db/, dist/resolution/, dist/extraction/`, () => {
+      // Real path: require.cache keys are physical paths, so a symlinked dist must not hide a load.
+      const distRoot = fs.realpathSync(path.resolve(__dirname, '../../../dist'));
       const script =
         `require(${JSON.stringify(path.join(distRoot, rel))});` +
         'process.stdout.write(JSON.stringify(Object.keys(require.cache)));';
@@ -269,7 +271,9 @@ describe('blast registration is light (built modules)', () => {
       expect(res.status, res.stderr).toBe(0);
       const loaded: string[] = JSON.parse(res.stdout);
       const heavy = loaded.filter(
-        (p) => p === path.join(distRoot, 'index.js') || p.startsWith(path.join(distRoot, 'db') + path.sep),
+        (p) =>
+          p === path.join(distRoot, 'index.js') ||
+          ['db', 'resolution', 'extraction'].some((d) => p.startsWith(path.join(distRoot, d) + path.sep)),
       );
       expect(heavy).toEqual([]);
     });

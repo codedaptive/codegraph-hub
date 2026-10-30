@@ -19,6 +19,9 @@ export function git(root: string, args: string[]): string | null {
     // `git show` of a large file (spawnSync's default is 1 MiB, and an overflow
     // returns null here).
     maxBuffer: 64 * 1024 * 1024,
+    // No console window flashes up for each git call on Windows (the rule for
+    // child_process spawns under src/; a no-op elsewhere).
+    windowsHide: true,
   });
   if (res.error || res.status !== 0 || typeof res.stdout !== 'string') return null;
   return res.stdout;
