@@ -13,6 +13,7 @@ import { blankStringContents, stripCommentsForRegex } from './strip-comments';
 import { isJsSuperCallSite } from './js-super-calls';
 import { JS_ARRAY_METHODS, JS_BROWSER_HOST_GLOBALS, JS_BUILT_INS, JS_BUILTIN_METHODS, TS_PRIMITIVE_TYPES } from './js-builtins';
 import { SWIFT_TYPE_PATH_CALL, resolveSwiftTypePathCall } from './swift-type-visibility';
+import { SWIFT_STD_METHODS, isSwiftStdMethodName } from './swift-builtins';
 import { dartImportPrefixes, dartLibrarySees, dartPrefixSees, dartPrivateVisible, inSameDartLibrary } from './dart-libraries';
 import { isDartLocallyBound } from './dart-local-scope';
 import { breakVbTie, isVbMemberInScope, isVbNestedTypeInScope, isVbTypeQualifiedBy, matchVbTypedCall, preferVbProject, sameVbProject } from './vbnet-receivers';
@@ -6116,7 +6117,7 @@ function receiverLink(receiver: string): string {
   return links.length > 1 && /^[A-Z][A-Z0-9_]+$/.test(last) ? links[links.length - 2]! : last;
 }
 
-/** The standard-library method names of a language whose receiver-less guesses need the receiver to name the owner. */
+/** The standard-library method names of a language whose by-name guess on an untyped receiver needs the receiver to name the owner. */
 function stdMethodNames(language: string): ReadonlySet<string> | null {
   switch (language) {
     case 'go': return GO_STD_METHODS;
@@ -6128,6 +6129,7 @@ function stdMethodNames(language: string): ReadonlySet<string> | null {
     case 'python': return PYTHON_STD_METHODS;
     case 'scala': return SCALA_STD_METHODS;
     case 'java': return JAVA_STD_METHODS;
+    case 'swift': return SWIFT_STD_METHODS;
     default: return null;
   }
 }
@@ -6802,23 +6804,6 @@ function nearestSwiftMembers(candidates: Node[], ref: UnresolvedRef, context: Re
 }
 
 /**
- * Methods of Swift's standard collections, strings and optionals and of
- * Foundation / UIKit views — names a project type rarely carries itself.
- * Ones it often does (`cancel`, `resume`, `store`, `validate`, `load`) are
- * left out: Alamofire's `request.resume()`, Kingfisher's `cache.store(…)`.
- */
-const SWIFT_STD_METHODS: ReadonlySet<string> = new Set([
-  'append', 'insert', 'remove', 'removeAll', 'removeFirst', 'removeLast', 'removeValue', 'contains', 'map',
-  'compactMap', 'flatMap', 'filter', 'reduce', 'forEach', 'sorted', 'sort', 'first', 'last', 'min', 'max',
-  'firstIndex', 'lastIndex', 'index', 'enumerated', 'reversed', 'joined', 'split', 'prefix', 'suffix',
-  'dropFirst', 'dropLast', 'allSatisfy', 'randomElement', 'shuffled', 'popLast', 'replaceSubrange',
-  'replacingOccurrences', 'components', 'trimmingCharacters', 'hasPrefix', 'hasSuffix', 'lowercased',
-  'uppercased', 'appending', 'updateValue', 'merge', 'merging', 'union', 'intersection', 'subtracting',
-  'formUnion', 'isEqual', 'addSubview', 'removeFromSuperview', 'setNeedsDisplay', 'setNeedsLayout',
-  'layoutIfNeeded', 'addGestureRecognizer', 'addTarget', 'addObserver', 'removeObserver', 'eraseToAnyPublisher',
-]);
-
-/**
  * Whether a Swift file's declarations are visible from another file as far as
  * separate modules go: one under a `…Tests` directory (SwiftPM's
  * `Tests/VaporTests`, Xcode's `KingfisherTests`) or in a playground only from
@@ -6840,8 +6825,11 @@ function isSwiftTargetVisible(declFile: string, fromFile: string): boolean {
  * field, `super.init(…)` to an Objective-C demo's `init` 170 times. A member
  * reached down a longer chain keeps its match unless its name is one the
  * standard types all carry: `axis.entries.removeAll()` is the array's, not
- * a chart data class's (unless the receiver names the owner, or the owner
- * is an outside type the project only extends).
+ * a chart data class's — unless the receiver names the owner, the owner is
+ * an outside type the project only extends, or the call gives a label that
+ * member declares. A chain whose receiver reads as empty (a trailing
+ * closure ends it: `values.map { … }.sorted()`) has nothing to name the
+ * owner, so only the last two keep it.
  */
 function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: UnresolvedRef, context: ResolutionContext): boolean {
   if (!shape) return true;
@@ -6870,9 +6858,9 @@ function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: Unresolve
     // ImageCache's, not a test subclass's override.
     const typed = /^(?:self\.)?[A-Za-z_]\w*$/.test(shape.receiver) ? inferMemberReceiverType(shape.receiver, ref, context) : null;
     if (typed && /^[A-Z]/.test(typed)) return swiftTypeClosure(typed, context).has(owner);
-    if (shape.receiver === '' || !SWIFT_STD_METHODS.has(n.name)) return true;
-    return sharesReceiverWord(shape.receiver.split('.').pop()!, n) || !swiftDeclOf(owner, context).projectType ||
-      swiftDeclaresLabel(n, shape.label, context);
+    if (!isSwiftStdMethodName(n.name)) return true;
+    return (shape.receiver !== '' && sharesReceiverWord(shape.receiver.split('.').pop()!, n)) ||
+      !swiftDeclOf(owner, context).projectType || swiftDeclaresLabel(n, shape.label, context);
   }
   const depth = swiftHierarchyAt(ref, context).get(owner);
   return depth !== undefined && (shape.shape !== 'super' || depth > 0);
@@ -22613,10 +22601,10 @@ export function matchMethodCall(
         // `json` of its `MockedResponse`.
         !isUnnamedTestDouble(targetMethods[0]!, objectOrClass!, ref, context) &&
         !((ref.language === 'lua' || ref.language === 'luau') && isLuaLibraryCall(objectOrClass!, methodName!, ref, targetMethods[0]!)) &&
-        // Rust / Go / Kotlin / C# / VB.NET / Python / Scala / Java: a
-        // standard-library method name on an untyped receiver (`sym.map(…)`,
-        // `w.Header().Get(…)`, `reader.Value.ToString()`,
-        // `options.setdefault(…)`) is the library type's.
+        // Go / Rust / Kotlin / C# / VB.NET / Dart / Python / Scala / Java /
+        // Swift: a standard-library method name on an untyped receiver
+        // (`sym.map(…)`, `w.Header().Get(…)`, `reader.Value.ToString()`,
+        // `options.setdefault(…)`, `arr.sorted()`) is the library type's.
         !(isStdMethodName(ref.language, methodName!) &&
           !/^(?:self|Self|this|base)$/.test(objectOrClass!) && !receiverNamesOwner(receiverLink(objectOrClass!), targetMethods[0]!, context)) &&
         !(UNTYPED_RECEIVER_LANGUAGES.has(ref.language) && !/^(?:self|self\.class|this|super|weak_?self|strong_?self)$/i.test(objectOrClass!) &&
