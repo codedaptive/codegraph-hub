@@ -92,7 +92,7 @@ interface SuspectsCommandOptions {
 export function registerSuspectsCommand(program: Command): void {
   program
     .command('suspects')
-    .description('List call edges the resolver bound by name only, ranked by how likely each is wrong (std-collision (Rust only today), missing-import, several-definitions, low-confidence)')
+    .description('List call edges the resolver bound by name only, ranked by how likely each is wrong (std-collision (Rust and Swift), missing-import, several-definitions, low-confidence)')
     .option('-p, --path <path>', 'Project path (default: the nearest indexed project at or above the current directory)')
     .option('--json', 'Print { version: 1, suspects } as JSON')
     .option('-l, --limit <n|all>', `How many targets to list, or "all" (default: ${CLI_DEFAULT_LIMIT})`)
@@ -150,7 +150,7 @@ export const suspectsTool: ExtensionTool = {
     description:
       'Lists the call edges the resolver bound by name only or with low confidence, i.e. the calls most ' +
       'likely to point at the wrong definition, ranked by how suspicious they are. Each edge is flagged ' +
-      'std-collision (Rust only today: the name is a standard-library method, so a stdlib call may have been bound to a ' +
+      'std-collision (Rust and Swift: the name is a standard-library method, so a stdlib call may have been bound to a ' +
       'project method), missing-import (caller and target are in different modules and the caller does not ' +
       'import the target\'s), several-definitions (more than one definition of the name exists) or ' +
       'low-confidence. Returns ranked targets, each with its edge count, flags and up to maxEdgesPerTarget ' +

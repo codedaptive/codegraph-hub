@@ -61,10 +61,8 @@ describe('stdCollision', () => {
     expect(stdCollision('typescript', 'push')).toBe(false);
   });
 
-  // Flips to `it` when swift-builtins exports the Swift standard-library list and
-  // stdCollision's Swift call site is switched to it. Today isStdMethodName('swift', …)
-  // has no Swift list and returns false.
-  it.fails('flags a Swift standard-library method name', () => {
+  // The default predicate's Swift list is swift-builtins.ts's SWIFT_STD_METHODS.
+  it('flags a Swift standard-library method name', () => {
     expect(stdCollision('swift', 'sorted')).toBe(true);
   });
 });
@@ -72,29 +70,35 @@ describe('stdCollision', () => {
 describe('suspects: Swift std collision', () => {
   let dir: string;
   beforeAll(async () => {
+    // `sorter` has no declared type; the resolver keeps the std-named `sorted()` on Sorter
+    // only because the receiver's name shares a word with it (instance-method 0.8, below the
+    // 0.9 declared bar, so a name-only candidate). A plain stdlib receiver (`[3, 1].sorted()`)
+    // does not bind to Sorter at all, and a typed one (`let s = Sorter()`) binds at 0.9.
     dir = await buildProject({
-      'Sources/App/Main.swift': 'import Util\n\nfunc run() {\n    let items = [3, 1]\n    let s = items.sorted()\n    print(s)\n}\n',
+      'Sources/App/Main.swift': 'import Util\n\nfunc run() {\n    let sorter = makeSorter()\n    let out = sorter.sorted()\n    print(out)\n}\n',
       'Sources/Util/Sorter.swift': 'public struct Sorter {\n    public func sorted() -> [Int] { return [] }\n}\n',
     });
   });
   afterAll(() => removeProject(dir));
 
-  it('flags sorted as a std collision with an injected predicate, low confidence, and no missing import', () => {
+  it('flags sorted as a std collision with an injected predicate, not low confidence, and no missing import', () => {
     const suspects = findSuspects(dir, { isStdMethod: (l, n) => l === 'swift' && n === 'sorted' });
     const sorted = byName(suspects, 'sorted');
     expect(sorted.language).toBe('swift');
-    // App imports Util, so the cross-module edge is not a missing import.
-    expect(sorted.flags).toEqual(['std-collision', 'low-confidence']);
-    expect(sorted.score).toBe(5);
+    // App imports Util, so the cross-module edge is not a missing import; confidence 0.8 is
+    // not below the low-confidence bar.
+    expect(sorted.flags).toEqual(['std-collision']);
+    expect(sorted.score).toBe(4);
     expect(sorted.definitions).toBe(1);
     expect(sorted.edgeCount).toBe(1);
     expect(sorted.edges).toHaveLength(1);
-    expect(sorted.edges[0]).toMatchObject({ callerName: 'run', resolvedBy: 'instance-method', confidence: 0.7 });
+    expect(sorted.edges[0]).toMatchObject({
+      callerName: 'run', refName: 'sorter.sorted', resolvedBy: 'instance-method', confidence: 0.8, flags: ['std-collision'],
+    });
   });
 
-  // Flips to `it` when swift-builtins exports the Swift standard-library list (the default
-  // predicate has no Swift names until then).
-  it.fails('flags sorted as a std collision with the default predicate', () => {
+  // The default predicate knows Swift's `sorted` (swift-builtins.ts's SWIFT_STD_METHODS).
+  it('flags sorted as a std collision with the default predicate', () => {
     const sorted = byName(findSuspects(dir), 'sorted');
     expect(sorted.flags).toContain('std-collision');
   });
