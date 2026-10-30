@@ -45,6 +45,13 @@ unfiltered request. So the Makefile stops with an error when `TEST` is set and t
 `zone-test`; a filtered run is `make test-one`, unrecorded. vitest 2.1.9 has no `file:line` filter that could
 carry the filter inside `DIR`.
 
+The extraction-path switches are refused the same way: any non-empty `CODEGRAPH_KERNEL*` (`CODEGRAPH_KERNEL=0`, the
+TypeScript path instead of the Rust kernel, or a `CODEGRAPH_KERNEL_<PASS>=0` pass switch), from the command line or
+the environment, stops `zone-test-one` and `zone-test`, since a record taken on one path would replay for the other.
+`make test-one DIR=...` runs with it, unrecorded. Tested: `CODEGRAPH_KERNEL=0` (environment and command line) and
+`CODEGRAPH_KERNEL_CFNPTR=0` stop with the error; an empty value does not; `CODEGRAPH_KERNEL=0 make test-one` ran
+16 passed.
+
 Why the root: zone.mk runs `$(MAKE) test-one` from the worktree root, so make has to find the target there. Upstream
 has no `Makefile`, so a fork-only root `Makefile` merges cleanly every day. If upstream ever adds one, the daily
 merge conflicts and someone notices; that is better than a `GNUmakefile`, which would silently hide upstream's.
