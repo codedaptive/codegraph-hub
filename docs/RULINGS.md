@@ -89,3 +89,21 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Ruling: (a) this is a standalone improvement of CodeGraph for Bob's private use: not public, never distributed. It has nothing to do with CE/EE editions or with moot; any requirement derived from them is void. (b) One MCP server per COMPUTER; it serves the CodeGraph interface for any directory on the machine, the query path selecting that directory's database (R-9 lifecycle: create if absent, open on demand, close after five query-idle minutes). (c) The work is writing the code and delivering it. Agents do not stop for missing scaffolding files: they create what is missing and continue. Waiting is allowed only while a compile or test is running.
 - Deadline: WP1 delivered by about 18:15 CDT 2026-10-30.
 - Supersedes: every CE/EE/edition/moot reference in WP1's requirements.
+
+## R-11. The CodeGraph server spec (Bob's new mission)
+- Date: 2026-10-30 / Bob, written decision: `/Users/bob/devlop/team-codegraph/SPEC-codegraph-server-2026-10-30.md`
+  (#1222). Expanded into `docs/SPEC.md`.
+- Ruling: one server per computer; databases opened on demand and closed after 10 idle minutes, no open limit; an
+  index covers its worktree's whole repo; the session's launch directory anchors its repo and a call outside it is
+  rejected; `--focus <dir>` narrows finding tools by default, impact tools stay whole-repo and list out-of-focus
+  results separately; every call needs `projectPath` ("missing argument: root path to the code you wish to query");
+  an optional shipped PreToolUse hook sets `projectPath` to the git root of the agent's cwd and always wins when
+  deployed; no access control beyond the anchor; one long-lived builder process with a queue does every index
+  write, small syncs ahead of cold builds; a worktree with no index copies one from the nearest-commit indexed
+  sibling (the lifecycle on `ours`, cleanup and pins included); standing worktrees are pinned, always open and
+  current; nothing codeteam-specific (codeteam supplies `--focus` from `CODETEAM_ZONE` and deploys the hook).
+- Supersedes: R-9's five-minute close and its no-pin rule (pinned standing worktrees stay open); R-8's "any
+  checked-out repository may be queried" (now only the anchor repo); MISSION.md WP1's `CODEGRAPH_MAX_PROJECTS`
+  and in-server worker processes (replaced by the builder process); S-42 where it conflicts. R-8's no-security
+  stance and R-10 (private, one server per computer, no ceremony) stand.
+- Work implied: Orc-Codegraph re-plans WP1 on `lane/host` against `docs/SPEC.md`.
