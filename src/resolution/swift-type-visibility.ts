@@ -1,7 +1,7 @@
 /**
- * Where a Swift reference to a type may land.
- *
- * Two shapes bound type references to the wrong node:
+ * Where a Swift reference to a type may land. Two shapes bound type
+ * references to the wrong node (1, 2); a third left a caller with no edge to
+ * the type it names (3).
  *
  * 1. `extension View { … }` parses as a class_declaration, so the index holds a
  *    `class View` node for every file that extends SwiftUI's `View`, `Text`,
@@ -18,14 +18,22 @@
  *    reference by its last segment, so a site's qualifier (`Build.Id` vs
  *    `Package.Id`) is read back from the source line.
  *
- * Applied to every strategy's result at resolveOne's seam, so the framework
- * resolvers' name patterns and the name matcher obey it alike. A conformance
+ * 1 and 2 apply to every strategy's result at resolveOne's seam, so the
+ * framework resolvers' name patterns and the name matcher obey them alike. A conformance
  * to a type the project only extends now resolves to nothing, so the
  * supertype walk reads such conformances from the declaration itself
  * (`swiftExtendedConformances`) and the extensions' members still reach the
  * conformer. Resolution only: extraction, and the kernel's, are unchanged.
+ *
+ * 3. `MyTool.main()` on an ArgumentParser `ParsableCommand`, or
+ *    `Todo.query(on:)` on a Fluent `Model`, calls a member the library
+ *    supplies, so the call cannot resolve — yet the caller depends on the
+ *    project type it names. `swiftUnresolvedTypeMemberEdges` gives such a
+ *    final failure a `references` edge to that type; the `calls` row itself
+ *    stays parked as failed. It runs where final failures are parked
+ *    (ReferenceResolver's persist paths in index.ts), not at resolveOne's seam.
  */
-import type { Node } from '../types';
+import type { Edge, Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { escapeRegExp } from '../utils';
 
@@ -41,13 +49,14 @@ interface Memo {
   clauses: Map<string, string[]>;
   inherited: Map<string, ReadonlySet<string>>;
   owners: Map<string, string | null>;
+  typeOwners: Map<string, string | null>;
 }
 const memos = new WeakMap<ResolutionContext, Memo>();
 
 function memoFor(context: ResolutionContext): Memo {
   let memo = memos.get(context);
   if (!memo) {
-    memo = { extension: new Map(), declaration: new Map(), conformances: new Map(), clauses: new Map(), inherited: new Map(), owners: new Map() };
+    memo = { extension: new Map(), declaration: new Map(), conformances: new Map(), clauses: new Map(), inherited: new Map(), owners: new Map(), typeOwners: new Map() };
     memos.set(context, memo);
   }
   return memo;
@@ -434,18 +443,24 @@ function ownerPath(member: Node, context: ResolutionContext): string | null {
   const hit = memo.get(member.id);
   if (hit !== undefined) return hit;
   const cut = member.qualifiedName.lastIndexOf('::');
-  let path: string | null = cut < 0 ? null : member.qualifiedName.slice(0, cut);
-  if (path !== null) {
-    const first = path.split('::')[0]!;
-    const outer = context
-      .getNodesInFile(member.filePath)
-      .filter((t) => t.name === first && TYPE_KINDS.has(t.kind) && t.startLine <= member.startLine && t.endLine >= member.endLine)
-      .reduce<Node | null>((out, t) => (!out || t.startLine < out.startLine ? t : out), null);
-    const extended = outer ? extendedPath(outer, context) : null;
-    if (extended) path = extended + path.slice(first.length);
-  }
+  const path = cut < 0 ? null : writtenOwnerPath(member.qualifiedName.slice(0, cut), member, context);
   memo.set(member.id, path);
   return path;
+}
+
+/**
+ * `path`, a prefix of `member`'s qualified name, with its outermost segment
+ * read back as written when that segment is an `extension` of a nested type
+ * enclosing `member` (`PackageController::GetRoute` → `API::PackageController::GetRoute`).
+ */
+function writtenOwnerPath(path: string, member: Node, context: ResolutionContext): string {
+  const first = path.split('::')[0]!;
+  const outer = context
+    .getNodesInFile(member.filePath)
+    .filter((t) => t.name === first && TYPE_KINDS.has(t.kind) && t.startLine <= member.startLine && t.endLine >= member.endLine)
+    .reduce<Node | null>((out, t) => (!out || t.startLine < out.startLine ? t : out), null);
+  const extended = outer ? extendedPath(outer, context) : null;
+  return extended ? extended + path.slice(first.length) : path;
 }
 
 /** `extension API.PackageController {` → `API::PackageController`; null for anything but an extension of a nested type. */
@@ -458,4 +473,177 @@ function extendedPath(node: Node, context: ResolutionContext): string | null {
     .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
   const written = /\bextension\s+((?:[A-Za-z_]\w*\s*\.\s*)+[A-Za-z_]\w*)/.exec(head)?.[1];
   return written ? written.replace(/\s+/g, '').split('.').join('::') : null;
+}
+
+
+/**
+ * A static call on a type, `MyTool.main` or `API.Tool.main`: one or more
+ * capitalized receiver segments, then the member. SWIFT_TYPE_PATH_CALL needs
+ * two receiver segments, so it misses the single-segment `MyTool.main`.
+ * `Self.x` names no type of its own.
+ */
+const SWIFT_TYPE_MEMBER_CALL = /^(?!Self\.)[A-Z]\w*(?:\.[A-Z]\w*)*\.[A-Za-z_]\w*$/;
+
+/**
+ * Anything a `Type.member` call can name when the project declares it: a
+ * method, a case, a stored or static property (it may hold a closure), or a
+ * nested type being constructed.
+ */
+const DECLARED_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>([
+  'method', 'function', 'enum_member', 'property', 'field', 'variable', 'constant', ...TYPE_KINDS,
+]);
+
+/** A type's path as ownerPath writes a member's owner: `API::PackageController::GetRoute`. */
+function typePath(type: Node, context: ResolutionContext): string {
+  const owner = ownerPath(type, context);
+  return owner === null ? type.name : `${owner}::${type.name}`;
+}
+
+/** Does a member's owner path name the type at `path` — as written, or module-qualified (`extension Kit.Tool`)? */
+function isPath(owner: string, path: string, context: ResolutionContext): boolean {
+  return owner === path || moduleQualified(path, owner, context);
+}
+
+/**
+ * The path of the type a member is declared on. Its owner path, less the
+ * methods the grammar can nest it under: an `if try await f(a,⏎ b) {` ends a
+ * method late, so a member declared after it is indexed as
+ * `Receiver::restore::receivedFacts`. A segment is dropped only where the
+ * member's own file indexes a method or function of exactly that qualified
+ * name around it, so the type left is the one that encloses the member. Null
+ * when no type does (a top-level function).
+ */
+function memberTypePath(member: Node, context: ResolutionContext): string | null {
+  const memo = memoFor(context).typeOwners;
+  const hit = memo.get(member.id);
+  if (hit !== undefined) return hit;
+  let path: string | null = null;
+  const cut = member.qualifiedName.lastIndexOf('::');
+  if (cut >= 0) {
+    let prefix: string | null = member.qualifiedName.slice(0, cut);
+    const inFile = context.getNodesInFile(member.filePath);
+    const encloses = (qualifiedName: string): boolean =>
+      inFile.some((n) => (n.kind === 'method' || n.kind === 'function') && n.qualifiedName === qualifiedName &&
+        n.startLine <= member.startLine && n.endLine >= member.endLine);
+    while (prefix !== null && encloses(prefix)) {
+      const up = prefix.lastIndexOf('::');
+      prefix = up < 0 ? null : prefix.slice(0, up);
+    }
+    path = prefix === null ? null : writtenOwnerPath(prefix, member, context);
+  }
+  memo.set(member.id, path);
+  return path;
+}
+
+/**
+ * The project supertypes and protocols of the type `decl` declares at
+ * `path`, by name: what its declaration and its extensions conform to
+ * (`extension Tool: Runner {}`), and what those inherit in turn
+ * (inheritedTypeNames). The inheritance clause gives a supertype by its last
+ * segment, so a supertype is matched by name.
+ */
+function supertypeNamesOf(decl: Node, path: string, context: ResolutionContext): Set<string> {
+  const direct = [...declaredSupertypes(decl, context)];
+  for (const n of context.getNodesByName(decl.name)) {
+    if (n.id === decl.id || n.language !== 'swift' || !isSwiftExtension(n, context)) continue;
+    if (isPath(extendedPath(n, context) ?? n.qualifiedName, path, context)) direct.push(...declaredSupertypes(n, context));
+  }
+  const names = new Set<string>();
+  for (const name of direct) {
+    names.add(name);
+    for (const sup of inheritedTypeNames(name, context)) names.add(sup);
+  }
+  return names;
+}
+
+/**
+ * Does the project declare `member` on the type `decl` declares at `path`
+ * (or an extension of it), or on one of its project supertypes and protocols
+ * (or an extension of one)? A member of a type nested in it is not its
+ * member: `Tool.Inner.main` is no `Tool.main`. A case whose name is a keyword
+ * is indexed with its backticks (`` case `in`(…) `` is `` `in` ``) while the
+ * call names it bare (`StoragePredicate.in(…)`), so both spellings are asked.
+ */
+function declaresMember(decl: Node, path: string, member: string, context: ResolutionContext): boolean {
+  let supertypes: Set<string> | null = null;
+  return [member, `\`${member}\``].some((name) => context.getNodesByName(name).some((n) => {
+    if (n.language !== 'swift' || !DECLARED_MEMBER_KINDS.has(n.kind)) return false;
+    const owner = memberTypePath(n, context);
+    if (owner === null) return false;
+    if (isPath(owner, path, context)) return true;
+    supertypes ??= supertypeNamesOf(decl, path, context);
+    return supertypes.has(owner.split('::').pop()!);
+  }));
+}
+
+/**
+ * `references` edges for Swift static calls whose member is external:
+ * `MyTool.main()` with `struct MyTool: ParsableCommand`, `Todo.query(on:)`
+ * with `final class Todo: Model`. The member is the library's, so the call
+ * fails to resolve, but the receiver is a project type the caller depends on.
+ *
+ * `refs` are final failures (not deferred attempts). A ref gets an edge to
+ * its receiver's declaration when:
+ *
+ * - exactly one project declaration fits the receiver as written (an
+ *   `extension X {}` is never it; a nested type named bare only in scope —
+ *   see declarationFor);
+ * - the caller can see it: a `private` or `fileprivate` type is visible in
+ *   its own file only, so a local `var W = [Float]()` in another file is not
+ *   the type;
+ * - it is not a `typealias`: the index does not hold what an alias names, so
+ *   whether that type declares the member cannot be told;
+ * - and the project does not declare the member on the type, its extensions,
+ *   or its project supertypes and protocols and their extensions
+ *   (declaresMember).
+ *
+ * Every rule here can only suppress an edge; none aims one anywhere but the
+ * receiver's own declaration.
+ *
+ * Known limits (pinned in swift-external-member-ref.test.ts):
+ * - an alias receiver gets no edge at all (the `typealias` rule above);
+ * - a local or parameter that shadows a project type's name cannot be told
+ *   from the type: Swift locals/params are not indexed, so it gets the edge;
+ * - when a later sync makes the call resolve (a new extension declares the
+ *   member), the retry resolves the call but nothing takes back the parked
+ *   `references` edge;
+ * - a member the extraction does not index (a later case in a
+ *   comma-separated enum case list, a member of an extension the parse ends
+ *   early) reads as external, so the receiver gets the edge.
+ *
+ * The edge carries no `refName`: an edge with one is turned back into a
+ * pending ref when its target is deleted (resurrect-ref.ts), which would
+ * duplicate the failed `calls` row that is still parked for the same site.
+ */
+export function swiftUnresolvedTypeMemberEdges(refs: readonly UnresolvedRef[], context: ResolutionContext): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (ref.language !== 'swift' || ref.referenceKind !== 'calls') continue;
+    const name = ref.referenceName;
+    if (!SWIFT_TYPE_MEMBER_CALL.test(name)) continue;
+    const dot = name.lastIndexOf('.');
+    const receiver = name.slice(0, dot);
+    const member = name.slice(dot + 1);
+    const typeName = receiver.slice(receiver.lastIndexOf('.') + 1);
+    const from = context.getNodeById?.(ref.fromNodeId) ?? null;
+    const decl = declarationFor(typeName, receiver, ref, from, context);
+    if (!decl || decl.kind === 'type_alias') continue;
+    if (decl.visibility === 'private' && decl.filePath !== ref.filePath) continue;
+    if (declaresMember(decl, typePath(decl, context), member, context)) continue;
+    const key = `${ref.fromNodeId}\0${decl.id}\0${ref.line}\0${ref.column}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({
+      source: ref.fromNodeId,
+      target: decl.id,
+      kind: 'references',
+      line: ref.line,
+      column: ref.column,
+      provenance: 'heuristic',
+      // 0.8, below the 0.9 of a Swift qualified-name resolution: the edge names the type, not the member called.
+      metadata: { resolvedBy: 'swift-external-member', confidence: 0.8 },
+    });
+  }
+  return edges;
 }
