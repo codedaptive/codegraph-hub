@@ -16,7 +16,7 @@ Fork-only (`codedaptive/codegraph`); never offered upstream. Maintained by the f
 Every upstream file a feature on `ours` changes, by feature, from each feature's DONE report (settled S-12). Our
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only. Checked against `git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream
-60b0d7a9 on exchange 2026-10-30: 53 files, the 52 in the table plus `docs/RULINGS.md`, the fork's own rulings
+60b0d7a9 on exchange 2026-10-30: 54 files, the 53 in the table plus `docs/RULINGS.md`, the fork's own rulings
 register (no feature).
 
 | Feature | Upstream files |
@@ -37,6 +37,7 @@ register (no feature).
 | `sync-mtime-refresh` (host) | `src/extraction/index.ts`, `__tests__/sync-mtime-refresh.test.ts` (new test, settled S-26) |
 | `swift-static-calls` (resolution) | `src/resolution/index.ts`, `src/resolution/name-matcher.ts`, `src/resolution/swift-type-visibility.ts`, `src/resolution/types.ts`, `src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts` (new file in upstream's tree), `__tests__/swift-static-calls.test.ts` (new test, settled S-26), `__tests__/swift-external-member-ref.test.ts`. Fork-only: `src/extensions/resolution/suspects.ts`, `__tests__/extensions/resolution/suspects.test.ts` |
 | `swift-qualified-inheritance` (resolution) | `src/extraction/tree-sitter.ts`, `codegraph-kernel/src/swift.rs`, `docs/design/swift-kernel-port-checklist.md`, `src/resolution/swift-type-visibility.ts`, `__tests__/fixtures/kernel-parity/torture.swift` (the parity corpus), `__tests__/swift-qualified-inheritance.test.ts` (new test, settled S-26), `__tests__/swift-static-calls.test.ts` (swift-static-calls' new test) |
+| `swift-enum-case-calls` (resolution) | `src/resolution/swift-type-visibility.ts`, `__tests__/swift-enum-case-calls.test.ts` (new test, settled S-26), `__tests__/swift-static-calls.test.ts` |
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of
 its own: never inside the product feature's squash, which must stay cherry-pickable upstream (settled S-12).
