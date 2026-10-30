@@ -230,7 +230,7 @@ function runRgBatch(
   onHit: (hit: RawHit) => void,
 ): Promise<{ unreadable: number }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(rg, [...args, '--', ...paths], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(rg, [...args, '--', ...paths], { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     const batch = new Set(paths);
     let settled = false;
     let searches: number | null = null;
