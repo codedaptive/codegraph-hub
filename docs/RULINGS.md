@@ -120,3 +120,13 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-7 (graft leftovers) as work for this team; S-33's opt-in gate; S-43's publication hold; the
   performance acceptance carried from MISSION.md/R-8.
 - Work implied: Orc-Codegraph writes the two Q-12 files and plans against docs/SPEC.md draft 3.
+
+## R-13. The harness is not ours
+- Date: 2026-10-30 / Bob (#1243), standing rule.
+- Ruling: the team's work is the CodeGraph code in the fork, to the server spec (R-11, docs/SPEC.md). codeteam, the
+  agent catalog, role files and templates, other teams and graft are the harness: do not change them, propose
+  changes or ask about them. A wrong or missing harness file is one line in a status, and work continues; only a
+  true blocker of product work goes to Orc-Codegraph in one line, and Bob fixes it. Bob updated the codegraph
+  product guide himself (points at the spec, no Node ceiling); bilby.md stays as it is.
+- Supersedes: any harness work implied by earlier rulings (R-7, S-43 publication, the catalog half of R-12's Q-12).
+- Work implied: Orc-Codegraph passes the rule to every lane.
