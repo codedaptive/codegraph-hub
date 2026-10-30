@@ -1,0 +1,20 @@
+repo	expr-gauntlet
+source	/Users/bob/devlop/.repos/expr-gauntlet.git
+ref	develop
+commit	0043340f5cbba6257db080139e586d44ecbf603e
+tracked_files	4
+codegraph	1.6.2-sm.1
+node	v26.12.0
+load_before	39.94 34.07 26.62
+init_wall_s	1.22
+init_user_s	1.14
+init_sys_s	0.33
+init_rss_mb	320
+load_after	39.94 34.07 26.62
+db_mb	0.2
+indexed_files	0
+nodes	0
+edges	0
+languages	
+symbol	
+sync_file	none (no source file indexed)

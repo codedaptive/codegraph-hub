@@ -32,6 +32,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { createLockFile, removeLockIfUnchanged, snapshotLock, type LockSnapshot } from './mcp/lock-takeover';
 
 // ============================================================
 // SECURITY UTILITIES
@@ -122,6 +123,18 @@ function isWithinDir(child: string, parent: string): boolean {
 export function lexicalPathWithinRoot(projectRoot: string, filePath: string): string | null {
   const resolved = path.resolve(projectRoot, filePath);
   return isWithinDir(resolved, path.resolve(projectRoot)) ? resolved : null;
+}
+
+/**
+ * Whether a path made relative to a root (`path.relative(root, p)`, or a
+ * project-relative path) leaves the root: `..` itself, a first segment of
+ * `..` (`../x`, or `..\x` from Windows), or an absolute path, which
+ * `path.relative` gives on Windows for another drive. A folder whose NAME
+ * starts with two dots, like `..generated/`, is inside the root:
+ * `startsWith('..')` took it for a way out.
+ */
+export function escapesRoot(rel: string): boolean {
+  return rel === '..' || rel.startsWith('../') || rel.startsWith('..\\') || path.isAbsolute(rel);
 }
 
 /**
@@ -318,6 +331,30 @@ function sensitiveHomeTrees(): string[] {
  * @returns An error message if invalid, or null if valid
  */
 export function validateProjectPath(dirPath: string): string | null {
+  const refusal = sensitiveDirectoryRefusal(dirPath);
+  if (refusal) return refusal;
+
+  // Verify it's a real directory
+  const resolved = path.resolve(dirPath);
+  try {
+    const stats = fs.statSync(resolved);
+    if (!stats.isDirectory()) {
+      return `Path is not a directory: ${resolved}`;
+    }
+  } catch {
+    return `Path does not exist or is not accessible: ${resolved}`;
+  }
+
+  return null;
+}
+
+/**
+ * The sensitive-folder half of {@link validateProjectPath}: why `dirPath` is,
+ * or is inside, a folder CodeGraph never uses as a project, or null. Unlike
+ * that function it doesn't require the path to exist or be a directory, so it
+ * can vet a path a project root is searched for from.
+ */
+export function sensitiveDirectoryRefusal(dirPath: string): string | null {
   const resolved = path.resolve(dirPath);
   const lexical = path.resolve(stripWin32NamespacePrefix(dirPath));
   const real = nativeRealPath(lexical);
@@ -345,16 +382,6 @@ export function validateProjectPath(dirPath: string): string | null {
     if (homeTrees.some((tree) => isSameOrUnder(folded, tree))) {
       return `Refusing to operate on sensitive directory: ${named(candidate)}`;
     }
-  }
-
-  // Verify it's a real directory
-  try {
-    const stats = fs.statSync(resolved);
-    if (!stats.isDirectory()) {
-      return `Path is not a directory: ${resolved}`;
-    }
-  } catch {
-    return `Path does not exist or is not accessible: ${resolved}`;
   }
 
   return null;
@@ -400,62 +427,94 @@ export function escapeRegExp(text: string): string {
 }
 
 /**
+ * The project that takes a {@link FileLock}. `stamp()` is the record written
+ * on the lock body's second line (read at each acquire, so it describes the
+ * index as it is then); `isForeign()` tests a parsed second line for a record
+ * another project wrote: one whose recorded root is not this project's and
+ * whose recorded index identities both differ from this project's index. A
+ * record at this project's own root, or at a project whose database has more
+ * than one hard link, is never foreign. The caller supplies both
+ * (`lockStamp` and `isForeignLockRecord` in `mcp/writer-lock`) because this
+ * module cannot import `directory` without a cycle (`utils` → `directory` →
+ * `sync/watch-policy` → `utils`). The stale-lock takeover it does import,
+ * `mcp/lock-takeover`, imports Node builtins only, so it adds no cycle.
+ */
+export interface FileLockOwner {
+  stamp(): object;
+  isForeign(record: unknown): boolean;
+}
+
+/**
  * Cross-process file lock using a lock file with PID tracking.
  *
  * Prevents multiple processes (e.g., git hooks, CLI, MCP server) from
  * writing to the same database simultaneously.
+ *
+ * Without an owner the body is the bare PID. With an owner it is the PID, a
+ * newline and the owner's stamp as one line of JSON, so a lock copied in with
+ * another project's `.codegraph/` can be told apart from one taken on this
+ * project. The first line stays the bare PID: readers that `parseInt` the body
+ * get the PID, and a non-numeric first line would make them delete a live lock.
  */
 export class FileLock {
   private lockPath: string;
+  private owner: FileLockOwner | undefined;
   private held = false;
 
-  constructor(lockPath: string) {
+  constructor(lockPath: string, owner?: FileLockOwner) {
     this.lockPath = lockPath;
+    this.owner = owner;
   }
 
   /**
-   * Acquire the lock. Throws if the lock is held by another live process.
+   * Acquire the lock. Throws if the lock is held by another live process and
+   * its record is not foreign. A lock whose PID is dead or malformed is stale;
+   * so is one whose second-line record the owner calls foreign (another
+   * project's, copied in with its `.codegraph/`), even when its PID is alive.
+   * A record at the owner's own root is never foreign, so its live PID holds.
    */
   acquire(): void {
-    // Check for existing lock
-    if (fs.existsSync(this.lockPath)) {
-      try {
-        const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
-        const pid = parseInt(content, 10);
-        // A long sync can hold the lock for hours. Its age says nothing about
-        // whether the writer is still alive; only a dead PID is stale.
-        if (!isNaN(pid) && this.isProcessAlive(pid)) {
-          throw new Error(
-            `CodeGraph database is locked by another process (PID ${pid}). ` +
-            `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
-          );
+    const locked = (pid?: number) => new Error(
+      'CodeGraph database is locked by another process' + (pid === undefined ? '. ' : ` (PID ${pid}). `) +
+      `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
+    );
+    // One read of the existing lock, judged as read: never re-read to judge.
+    // A lock that exists but cannot be read is held (fail closed).
+    let snapshot: LockSnapshot | null;
+    try { snapshot = snapshotLock(this.lockPath); } catch { throw locked(); }
+    if (snapshot) {
+      const content = snapshot.raw;
+      // parseInt stops at the first newline: the PID is the first line.
+      const pid = parseInt(content.trim(), 10);
+      // The record is exactly the second line, parsed as JSON and never
+      // trimmed or split further: JSON escapes any newline inside the root,
+      // and its spaces are part of it. No second line, or one that does not
+      // parse, is no record: pid liveness alone decides.
+      let foreign = false;
+      if (this.owner) {
+        const recordLine = content.split('\n')[1];
+        if (recordLine !== undefined) {
+          try { foreign = this.owner.isForeign(JSON.parse(recordLine)); } catch { /* no record */ }
         }
-
-        // Stale lock (dead process or malformed PID) - remove it
-        fs.unlinkSync(this.lockPath);
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('locked by another')) {
-          throw err;
-        }
-        // Other errors reading lock file - try to remove it
-        try { fs.unlinkSync(this.lockPath); } catch { /* ignore */ }
       }
+      // A long sync can hold the lock for hours. Its age says nothing about
+      // whether the writer is still alive; only a dead or malformed PID, or a
+      // foreign record, is stale.
+      if (!foreign && !isNaN(pid) && this.isProcessAlive(pid)) throw locked(pid);
+      // Stale (dead process, malformed PID or foreign record): remove it only
+      // if it is still the file judged above, under the `.takeover` guard, so
+      // a fresh lock another taker created meanwhile is not deleted
+      // (residuals: see mcp/lock-takeover). Any
+      // result falls through to the exclusive create, which wins only if no
+      // lock is in place.
+      try { removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
     }
-
-    // Write our PID to the lock file using exclusive create flag
-    try {
-      fs.writeFileSync(this.lockPath, String(process.pid), { flag: 'wx' });
-      this.held = true;
-    } catch (err: any) {
-      if (err.code === 'EEXIST') {
-        // Race condition: another process grabbed the lock between our check and write
-        throw new Error(
-          'CodeGraph database is locked by another process. ' +
-          `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
-        );
-      }
-      throw err;
-    }
+    // Write our PID (and our stamp, with an owner), created exclusively
+    // (linked into place complete where the filesystem has hard links);
+    // false means another process holds the lock.
+    const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
+    if (!createLockFile(this.lockPath, body)) throw locked();
+    this.held = true;
   }
 
   /**
@@ -464,7 +523,8 @@ export class FileLock {
   release(): void {
     if (!this.held) return;
     try {
-      // Only remove if we still own it (check PID)
+      // Only remove if we still own it (check PID; parseInt reads the first
+      // line of an owner body)
       const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
       if (parseInt(content, 10) === process.pid) {
         fs.unlinkSync(this.lockPath);

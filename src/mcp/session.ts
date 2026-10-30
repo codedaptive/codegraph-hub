@@ -16,6 +16,7 @@ import * as path from 'path';
 import { JsonRpcRequest, JsonRpcNotification, JsonRpcTransport, ErrorCodes } from './transport';
 import { MCPEngine } from './engine';
 import { tools } from './tools';
+import { isExtensionTool } from '../extensions/host/registry';
 import { SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_NO_ROOT_INDEX } from './server-instructions';
 import { CodeGraphPackageVersion } from './version';
 import { resolveServerRoot } from '../directory';
@@ -246,6 +247,8 @@ export class MCPSession {
     // sub-projects indexed) and never surfaced the tools after a mid-session
     // `codegraph init`. When no explicit path is known yet (roots/list dance
     // pending), cwd is the best predictor of where the default will resolve.
+    // A root in a sensitive folder resolves to null here as in the engine, so
+    // that session gets the no-default-project variant too.
     const indexed = resolveServerRoot(explicitPath ?? process.cwd()).root !== null;
 
     // Respond to the handshake BEFORE doing any heavy init — see issue #172.
@@ -296,8 +299,10 @@ export class MCPSession {
     const toolName = params.name;
     const toolArgs = params.arguments || {};
 
-    const tool = tools.find((t) => t.name === toolName);
-    if (!tool) {
+    // A built-in or a loaded extension's tool (src/extensions/host); anything
+    // else is refused here, before init. Whether it is allowed is execute's call.
+    const known = tools.some((t) => t.name === toolName) || isExtensionTool(toolName);
+    if (!known) {
       this.transport.sendError(
         request.id,
         ErrorCodes.InvalidParams,

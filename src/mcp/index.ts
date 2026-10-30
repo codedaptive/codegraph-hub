@@ -126,7 +126,7 @@ function makeFallbackEngine(root: string): MCPEngine {
   assertNoRebuild(root);
   let existing: ReturnType<typeof decodeLockInfo> = null;
   try {
-    existing = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'));
+    existing = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'), root);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'ENOENT') {
@@ -304,6 +304,10 @@ export function watchdogProgressPaths(root: string | null): { progressPaths?: st
  * spawned `process.cwd()` is already realpath'd) and one that passed a
  * symlinked `rootUri` would otherwise hash to different sockets and silently
  * fail to share the daemon.
+ *
+ * A root in a sensitive folder (`~/.ssh`, `~/.config`, `/etc`, …) resolves to
+ * null like a missing one: the session runs in-process with no default
+ * project, and no daemon, lock or socket is set up in that folder.
  */
 function resolveDaemonRoot(explicitPath: string | null): string | null {
   const candidate = explicitPath ?? process.cwd();
@@ -436,7 +440,7 @@ async function outwaitCandidate(root: string, handoverFrom: number | null, pid: 
   while (Date.now() < deadline) {
     if (!heldForUs()) return false;
     let holder: number | undefined;
-    try { holder = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'))?.pid; } catch { holder = undefined; }
+    try { holder = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'), root)?.pid; } catch { holder = undefined; }
     if (holder !== pid || !isProcessAlive(pid)) return true;
     await sleep(25);
   }
@@ -651,6 +655,14 @@ export class MCPServer {
     // In daemon mode stderr IS `.codegraph/daemon.log`; stamp every line so
     // kills/restarts can be placed in time (#1431 — the log was undatable).
     timestampStderrLines();
+    // A launcher never starts a daemon for a sensitive folder (see
+    // resolveDaemonRoot). One started by hand for such a folder leaves rather
+    // than take the folder's locks and serve it.
+    const refusal = resolveServerRoot(this.projectPath ?? process.cwd()).refusal;
+    if (refusal) {
+      process.stderr.write(`[CodeGraph daemon] ${refusal}; exiting.\n`);
+      process.exit(0);
+    }
     const root = resolveDaemonRoot(this.projectPath) ?? this.projectPath ?? process.cwd();
     // Read once and dropped, so nothing this daemon spawns inherits it.
     const handoverPid = Number(process.env[DAEMON_HANDOVER_ENV]);
@@ -701,8 +713,9 @@ export class MCPServer {
         disprovedLiveIdentity = true;
       }
 
-      // The holder is dead, the record is unreadable, or a completed socket
-      // hello disproved a live PID's identity. Revalidate the exact record and
+      // The holder is dead, the record is unreadable or foreign (another
+      // project's, copied in with its `.codegraph/`), or a completed socket hello
+      // disproved a live PID's identity. Revalidate the exact record and
       // retry the acquire only after cleanup succeeds safely.
       if (disprovedLiveIdentity) {
         // Re-probe and claim writer.pid before cleanup. A daemon that is merely
@@ -712,6 +725,7 @@ export class MCPServer {
       } else if (lock.lockContents !== null) {
         clearStaleDaemonLock(lock.pidPath, existing?.pid, {
           expectedLockContents: lock.lockContents,
+          projectRoot: root,
         });
       }
       await sleep(TAKEOVER_RETRY_DELAY_MS);
