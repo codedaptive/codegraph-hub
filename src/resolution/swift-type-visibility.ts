@@ -1,7 +1,8 @@
 /**
- * Where a Swift reference to a type may land. Two shapes bound type
- * references to the wrong node (1, 2); a third left a caller with no edge to
- * the type it names (3).
+ * Where a Swift reference to a type may land: on the type's own declaration,
+ * never an extension (1); a nested type only where it can be named bare (2);
+ * and a static call on the type's own member, or a `references` edge to the
+ * type when the member is external (3).
  *
  * 1. `extension View { … }` parses as a class_declaration, so the index holds a
  *    `class View` node for every file that extends SwiftUI's `View`, `Text`,
@@ -19,13 +20,19 @@
  *    `Package.Id`) is read back from the source line.
  *
  * 1 and 2 apply to every strategy's result at resolveOne's seam, so the
- * framework resolvers' name patterns and the name matcher obey them alike. A conformance
- * to a type the project only extends now resolves to nothing, so the
- * supertype walk reads such conformances from the declaration itself
- * (`swiftExtendedConformances`) and the extensions' members still reach the
- * conformer. Resolution only: extraction, and the kernel's, are unchanged.
+ * framework resolvers' name patterns and the name matcher obey them alike. A
+ * conformance to a type the project only extends resolves to nothing, yet the
+ * extensions' members still reach the conformer: the static-call walk
+ * (swiftSupertypeChain) maps the failed conformance's name to the project's
+ * extensions of it, and getSupertypes' conformance pass reads it from the
+ * declaration (`swiftExtendedConformances`). Resolution only: extraction,
+ * and the kernel's, are unchanged.
  *
- * 3. `MyTool.main()` on an ArgumentParser `ParsableCommand`, or
+ * 3. A static call on a project type resolves on that type or not at all:
+ *    `API.PackageController.GetRoute.query(on:)` through
+ *    `resolveSwiftTypePathCall`, the single-segment `TestHelpers.make()`
+ *    through `resolveSwiftTypeCall`, both dispatched from the name matcher.
+ *    `MyTool.main()` on an ArgumentParser `ParsableCommand`, or
  *    `Todo.query(on:)` on a Fluent `Model`, calls a member the library
  *    supplies, so the call cannot resolve — yet the caller depends on the
  *    project type it names. `swiftUnresolvedTypeMemberEdges` gives such a
@@ -121,8 +128,9 @@ function declaredSupertypes(node: Node, context: ResolutionContext): string[] {
  * only extends — `View` for `struct HomeView: View` when `extension View {}`
  * is all the index holds of it. Those conformances resolve to nothing (an
  * extension is not the type), yet the members the extensions add are the
- * conformer's: the supertype walk reads them from here. From the source, once
- * per node — the resolved edges it would otherwise come from do not exist.
+ * conformer's: getSupertypes' walk (the conformance pass) reads them from
+ * here. From the source, once per node — the resolved edges it would
+ * otherwise come from do not exist.
  */
 export function swiftExtendedConformances(node: Node, context: ResolutionContext): string[] {
   if (node.language !== 'swift') return [];
@@ -478,8 +486,10 @@ function extendedPath(node: Node, context: ResolutionContext): string | null {
 
 /**
  * A static call on a type, `MyTool.main` or `API.Tool.main`: one or more
- * capitalized receiver segments, then the member. SWIFT_TYPE_PATH_CALL needs
- * two receiver segments, so it misses the single-segment `MyTool.main`.
+ * capitalized receiver segments, then the member. It covers both the
+ * single-segment calls resolveSwiftTypeCall resolves (SWIFT_TYPE_CALL) and
+ * the paths resolveSwiftTypePathCall does (SWIFT_TYPE_PATH_CALL), and also
+ * a capitalized member after one segment (`Tool.Nested`), which neither claims.
  * `Self.x` names no type of its own.
  */
 const SWIFT_TYPE_MEMBER_CALL = /^(?!Self\.)[A-Z]\w*(?:\.[A-Z]\w*)*\.[A-Za-z_]\w*$/;
@@ -511,7 +521,9 @@ function isPath(owner: string, path: string, context: ResolutionContext): boolea
  * `Receiver::restore::receivedFacts`. A segment is dropped only where the
  * member's own file indexes a method or function of exactly that qualified
  * name around it, so the type left is the one that encloses the member. Null
- * when no type does (a top-level function).
+ * when no type does (a top-level function). A method's real local function
+ * (`func literal` inside `render`) is read the same way, as the type's: the
+ * index does not tell the two apart, so resolveSwiftTypeCall declines both.
  */
 function memberTypePath(member: Node, context: ResolutionContext): string | null {
   const memo = memoFor(context).typeOwners;
@@ -536,24 +548,125 @@ function memberTypePath(member: Node, context: ResolutionContext): string | null
 }
 
 /**
- * The project supertypes and protocols of the type `decl` declares at
- * `path`, by name: what its declaration and its extensions conform to
- * (`extension Tool: Runner {}`), and what those inherit in turn
- * (inheritedTypeNames). The inheritance clause gives a supertype by its last
- * segment, so a supertype is matched by name.
+ * The Swift node kinds a type inherits from or conforms to: a class, or a
+ * protocol (a protocol_declaration is indexed as an `interface`). A struct or
+ * enum is no supertype, so an `extends` edge onto one is not followed: the
+ * extraction takes a module-qualified entry's first segment, so
+ * `struct Q: Kit.Runner` holds an edge to the namespace `enum Kit`. Onto a
+ * class it is the same edge, so swiftSupertypeChain also asks who holds it.
  */
-function supertypeNamesOf(decl: Node, path: string, context: ResolutionContext): Set<string> {
-  const direct = [...declaredSupertypes(decl, context)];
+const SUPERTYPE_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['class', 'interface', 'protocol']);
+
+/** The nodes of the type `decl` declares at `path`: `decl` and every `extension` of it, in any file. */
+function typeNodesAt(decl: Node, path: string, context: ResolutionContext): Node[] {
+  const nodes = [decl];
   for (const n of context.getNodesByName(decl.name)) {
     if (n.id === decl.id || n.language !== 'swift' || !isSwiftExtension(n, context)) continue;
-    if (isPath(extendedPath(n, context) ?? n.qualifiedName, path, context)) direct.push(...declaredSupertypes(n, context));
+    if (isPath(extendedPath(n, context) ?? n.qualifiedName, path, context)) nodes.push(n);
   }
-  const names = new Set<string>();
-  for (const name of direct) {
-    names.add(name);
-    for (const sup of inheritedTypeNames(name, context)) names.add(sup);
+  return nodes;
+}
+
+/**
+ * The project's extensions of a type it does not declare, by the path each
+ * extends: `extension View2 {}` under `View2` when the index holds no
+ * declaration of `View2`. Empty when any project node of the name is a
+ * declaration: a conformance to it resolves to that declaration instead.
+ */
+function extensionsOnly(name: string, context: ResolutionContext): Map<string, Node[]> {
+  const byPath = new Map<string, Node[]>();
+  const typed = context.getNodesByName(name).filter((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind));
+  if (typed.length === 0 || !typed.every((n) => isSwiftExtension(n, context))) return byPath;
+  for (const n of typed) {
+    const path = extendedPath(n, context) ?? n.qualifiedName;
+    const at = byPath.get(path);
+    if (at) at.push(n);
+    else byPath.set(path, [n]);
+  }
+  return byPath;
+}
+
+/**
+ * Every name extensionsOnly maps to something: a name the project's Swift
+ * nodes only extend. Each such name has an `extension` node, and an extension
+ * is indexed as a `class`, so the Swift class nodes are all that is read.
+ * ReferenceResolver's getUnresolvedSupertypeNames reads the unresolved
+ * conformances to these names in one query: a conformance to any other name
+ * gives swiftSupertypeChain nothing.
+ */
+export function swiftExtensionOnlyNames(context: ResolutionContext): string[] {
+  const names: string[] = [];
+  const asked = new Set<string>();
+  for (const n of context.getNodesByKind('class')) {
+    if (n.language !== 'swift' || asked.has(n.name) || !isSwiftExtension(n, context)) continue;
+    asked.add(n.name);
+    if (extensionsOnly(n.name, context).size > 0) names.push(n.name);
   }
   return names;
+}
+
+/**
+ * The project supertypes and protocols of the type at `path` whose nodes
+ * (its declaration and its extensions) are `roots`, transitively, nearest
+ * first: each by its path, with its own declaration and extensions. Read from
+ * the parse tree's inheritance clauses, never from the source text: each
+ * node's own `extends`/`implements` references, so a nested type's clause
+ * (`enum CodingKeys: String` inside `struct User`) is the nested type's, and a
+ * conformance an extension declares (`extension Tool: Runner {}`) counts.
+ *
+ * - A reference that resolved: its target, when a class or a protocol
+ *   (SUPERTYPE_KINDS), with that type's extensions. The edges exist by the
+ *   time a call resolves: `extends`/`implements` references resolve first.
+ *   A class target is followed only from a class declaration: a struct, an
+ *   enum or an extension inherits from no class, so such an edge is a
+ *   qualified entry's first segment (`struct QK: Kit.Runner` holds
+ *   `extends Kit` onto `class Kit`); a protocol's class constraint
+ *   (`protocol P: Kit`) is not walked either, as it cannot be told from that.
+ * - A reference that resolved to nothing (getUnresolvedSupertypeNames, which
+ *   reads only names swiftExtensionOnlyNames lists): the
+ *   project's extensions of that name when it declares no such type
+ *   (`struct HV: View` with only `extension View {}`), so the members they
+ *   add still reach the conformer. The extended type's kind is unknown there,
+ *   so an enum's raw type the project only extends (`enum K: String` with
+ *   `extension String {}`) is walked as K's supertype too.
+ *
+ * Every supertype is visited once, so an inheritance cycle ends the walk.
+ */
+function swiftSupertypeChain(roots: readonly Node[], path: string, context: ResolutionContext): Map<string, Node[]> {
+  const chain = new Map<string, Node[]>();
+  const seen = new Set<string>([path]);
+  let frontier: readonly Node[] = roots;
+  while (frontier.length > 0) {
+    const next: Node[] = [];
+    const visit = (supPath: string, nodes: () => Node[]): void => {
+      if (seen.has(supPath)) return;
+      seen.add(supPath);
+      const at = nodes();
+      chain.set(supPath, at);
+      next.push(...at);
+    };
+    for (const n of frontier) {
+      // Only a class declaration has a superclass; an extension is indexed as a class too.
+      const inheritsClass = n.kind === 'class' && !isSwiftExtension(n, context);
+      for (const sup of context.getSupertypeNodes?.(n.id) ?? []) {
+        if (sup.language !== 'swift' || !SUPERTYPE_KINDS.has(sup.kind) || isSwiftExtension(sup, context)) continue;
+        if (sup.kind === 'class' && !inheritsClass) continue;
+        const supPath = typePath(sup, context);
+        visit(supPath, () => typeNodesAt(sup, supPath, context));
+      }
+      for (const name of context.getUnresolvedSupertypeNames?.(n.id) ?? []) {
+        for (const [supPath, nodes] of extensionsOnly(name, context)) visit(supPath, () => nodes);
+      }
+    }
+    frontier = next;
+  }
+  return chain;
+}
+
+/** The supertype in `chain` a member's owner path names, or undefined when it names none. */
+function chainKey(owner: string, chain: ReadonlyMap<string, Node[]>, context: ResolutionContext): string | undefined {
+  for (const supPath of chain.keys()) if (isPath(owner, supPath, context)) return supPath;
+  return undefined;
 }
 
 /**
@@ -565,15 +678,187 @@ function supertypeNamesOf(decl: Node, path: string, context: ResolutionContext):
  * call names it bare (`StoragePredicate.in(…)`), so both spellings are asked.
  */
 function declaresMember(decl: Node, path: string, member: string, context: ResolutionContext): boolean {
-  let supertypes: Set<string> | null = null;
+  let chain: Map<string, Node[]> | null = null;
   return [member, `\`${member}\``].some((name) => context.getNodesByName(name).some((n) => {
     if (n.language !== 'swift' || !DECLARED_MEMBER_KINDS.has(n.kind)) return false;
     const owner = memberTypePath(n, context);
     if (owner === null) return false;
     if (isPath(owner, path, context)) return true;
-    supertypes ??= supertypeNamesOf(decl, path, context);
-    return supertypes.has(owner.split('::').pop()!);
+    chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
+    return chainKey(owner, chain, context) !== undefined;
   }));
+}
+
+/**
+ * A static call on one type, `TestHelpers.make()`: a capitalized receiver
+ * segment, then a lowercase member. `Self.x` names no type of its own;
+ * two or more receiver segments are SWIFT_TYPE_PATH_CALL's.
+ */
+export const SWIFT_TYPE_CALL = /^(?!Self\.)[A-Z]\w*\.[a-z_]\w*$/;
+
+/**
+ * What a single-segment `Type.member(…)` call lands on: a method or a free
+ * function the grammar indexes under the type. A case or a static closure
+ * property the type declares is not a target here (the call gets no edge).
+ */
+const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function']);
+
+/**
+ * `TestHelpers.make()` lands on the `make` the type `TestHelpers` declares:
+ * its own, one an `extension TestHelpers` adds in any file, or one a project
+ * supertype or a conformed protocol's extension supplies, as
+ * swiftSupertypeChain walks them (never through a class reached from a
+ * non-class). The receiver is
+ * the project's declaration of that name (declarationFor): a bare nested
+ * type only inside its scope, and of several modules' copies the caller's
+ * own file's, else its nearest directory's.
+ *
+ * Matching by the member's name alone would bind a call on a namespace `enum`
+ * to whichever type declares a member of that name, and an ArgumentParser
+ * `MyTool.main()` to the project's only other `main` (`Other.main`). So once
+ * the receiver is a project type, the call resolves on it or not at all:
+ *
+ * - the type declares no such method or function → null; when it declares
+ *   no member of the name at all, the parked failure then gets
+ *   swiftUnresolvedTypeMemberEdges' `references` edge to the type;
+ * - the type does not declare it and two supertypes supply it, neither
+ *   overriding the other (two protocols' extensions) → null; of an override
+ *   chain (`Leaf: Middle: Base`, each class declaring it but `Leaf`), the
+ *   nearest override, `Middle`'s, is the target (nearestOverrides);
+ * - the only types of the name are nested types outside the caller's scope
+ *   → null (Swift cannot name them bare there);
+ * - several declarations of the type, none in the caller's file and none
+ *   nearer it by directory → null.
+ *
+ * A candidate the index holds under a method or function of the type
+ * (`Pred::render::literal`) is never a target. A local function of that
+ * method is no member of the type, and the index cannot tell it from a later
+ * member the grammar nested under an earlier method (tree-sitter-swift
+ * 0.7.3, S-29: `Receiver::restore::receivedFacts`), which memberTypePath
+ * reads as the type's. Such a member gets no `calls` edge until extraction
+ * indexes it on its type.
+ *
+ * `undefined` leaves the call to the name matcher: no project type of the
+ * name (`JSONDecoder.make()`, a capitalized variable), an alias whose
+ * aliased type the index does not hold, or a `private` type of another file
+ * (Swift cannot see it there, so the receiver is something else).
+ *
+ * Of the type's own overloads, those of `decl`'s copy (ofDeclaration): its
+ * body's, and its extensions' in any file, but none in the body of another
+ * module's copy of the type or nearer that copy by directory than `decl`.
+ * Of several overloads left, those whose parameter lists the call's argument
+ * labels fit (`fitsLabels`, the name matcher's label reading); when it finds
+ * none, all of them. Then `decl`'s body's before its extensions', and the
+ * earliest by file path and line.
+ */
+export function resolveSwiftTypeCall(
+  ref: UnresolvedRef,
+  context: ResolutionContext,
+  fitsLabels: (member: Node) => boolean | null,
+): ResolvedRef | null | undefined {
+  const name = ref.referenceName;
+  const dot = name.indexOf('.');
+  const typeName = name.slice(0, dot);
+  const member = name.slice(dot + 1);
+  const projectTypes = context.getNodesByName(typeName)
+    .filter((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind) && !isSwiftExtension(n, context));
+  if (projectTypes.length === 0) return undefined;
+  const from = context.getNodeById?.(ref.fromNodeId) ?? null;
+  const decl = declarationFor(typeName, typeName, ref, from, context);
+  if (!decl) return null;
+  if (decl.kind === 'type_alias') return undefined;
+  if (decl.visibility === 'private' && decl.filePath !== ref.filePath) return undefined;
+
+  const path = typePath(decl, context);
+  const own: Node[] = [];
+  const inherited: Node[] = [];
+  let chain: Map<string, Node[]> | null = null;
+  // A member named by a keyword is indexed with its backticks
+  // (`` func `default`() ``) while the call names it bare, so both spellings are asked.
+  for (const n of [...context.getNodesByName(member), ...context.getNodesByName(`\`${member}\``)]) {
+    if (n.language !== 'swift' || !TYPE_CALL_MEMBER_KINDS.has(n.kind)) continue;
+    const owner = memberTypePath(n, context);
+    if (owner === null) continue;
+    // memberTypePath read past an enclosing method or function: a local
+    // function, or a member the grammar misnested (see above). Declined.
+    if (owner !== ownerPath(n, context)) continue;
+    if (isPath(owner, path, context)) {
+      own.push(n);
+      continue;
+    }
+    chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
+    if (chainKey(owner, chain, context) !== undefined) inherited.push(n);
+  }
+  let fit: Node[];
+  if (own.length > 0) {
+    // Every owner here is the type's path, as written or module-qualified
+    // (`extension Kit.Cache`), so the owners are not compared.
+    fit = ofDeclaration(own, decl, projectTypes, path, context);
+  } else {
+    // A member of the type itself shadows one it inherits, and so does an
+    // override down the chain: of `Base.make` and `Middle.make` for
+    // `Leaf: Middle: Base`, an owner another candidate's owner inherits from
+    // (Base, under Middle) drops out. Owners left that are not related this
+    // way (two protocols' extensions) cannot be told apart: no edge.
+    fit = chain ? nearestOverrides(inherited, chain, context) : [];
+    if (new Set(fit.map((n) => memberTypePath(n, context))).size > 1) return null;
+    // A supertype several modules declare: its members nearest `decl` by directory.
+    const near = Math.max(...fit.map((n) => sharedDirs(n.filePath, decl.filePath)));
+    fit = fit.filter((n) => sharedDirs(n.filePath, decl.filePath) === near);
+  }
+  if (fit.length === 0) return null;
+  if (fit.length > 1) {
+    const labelled = fit.filter((n) => fitsLabels(n) === true);
+    if (labelled.length > 0) fit = labelled;
+    const inBody = fit.filter((n) => declaredIn(n, decl));
+    if (inBody.length > 0) fit = inBody;
+  }
+  const target = fit.reduce((a, b) => (a.filePath < b.filePath || (a.filePath === b.filePath && a.startLine <= b.startLine) ? a : b));
+  return { original: ref, targetNodeId: target.id, confidence: 0.9, resolvedBy: 'qualified-name' };
+}
+
+/** Whether `member` lies in the body of the type declaration `type`. */
+function declaredIn(member: Node, type: Node): boolean {
+  return member.filePath === type.filePath && member.startLine >= type.startLine && member.endLine <= type.endLine;
+}
+
+/**
+ * The members of the type at `path` (`members`: its body's and its
+ * extensions') that belong to `decl`'s copy of it. The other copies are the
+ * project's other declarations of the name (`types`, extensions excluded) in
+ * other files at that same path; an alias is not one. With none, all the
+ * members, in any file. Else those in `decl`'s body, and of the rest (an
+ * extension's) those outside every other copy's body and no nearer another
+ * copy by directory than `decl`.
+ */
+function ofDeclaration(members: Node[], decl: Node, types: readonly Node[], path: string, context: ResolutionContext): Node[] {
+  const copies = types.filter((t) => t.filePath !== decl.filePath && t.kind !== 'type_alias' && typePath(t, context) === path);
+  if (copies.length === 0) return members;
+  return members.filter((n) => {
+    if (declaredIn(n, decl)) return true;
+    if (copies.some((c) => declaredIn(n, c))) return false;
+    const mine = sharedDirs(n.filePath, decl.filePath);
+    return copies.every((c) => sharedDirs(n.filePath, c.filePath) <= mine);
+  });
+}
+
+/**
+ * The inherited candidates no other candidate overrides: a member whose
+ * owner is a supertype of another candidate's owner drops out, so
+ * `Middle.make` stays and `Base.make` goes for `Leaf: Middle: Base`. Each
+ * owner is a supertype in `chain` (the receiver's swiftSupertypeChain), and
+ * what it inherits is the same walk from that supertype's own nodes, never
+ * every type that shares its name. Owners neither of which inherits from the
+ * other both stay.
+ */
+function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>, context: ResolutionContext): Node[] {
+  const ownerKey = (n: Node): string | undefined => chainKey(memberTypePath(n, context)!, chain, context);
+  const owners = new Set(inherited.map(ownerKey));
+  if (owners.size < 2) return inherited;
+  const ancestors = new Map<string | undefined, ReadonlySet<string>>();
+  for (const o of owners) ancestors.set(o, o === undefined ? new Set() : new Set(swiftSupertypeChain(chain.get(o)!, o, context).keys()));
+  const overridden = new Set([...owners].filter((o) => o !== undefined && [...owners].some((other) => other !== o && ancestors.get(other)!.has(o))));
+  return inherited.filter((n) => !overridden.has(ownerKey(n)));
 }
 
 /**
@@ -608,7 +893,19 @@ function declaresMember(decl: Node, path: string, member: string, context: Resol
  *   member), the retry resolves the call but nothing takes back the parked
  *   `references` edge;
  * - a member the extraction does not index (a member of an extension the
- *   parse ends early) reads as external, so the receiver gets the edge.
+ *   parse ends early) reads as external, so the receiver gets the edge;
+ * - a module-qualified conformance (`struct Q: Kit.Runner`) is extracted as
+ *   its first segment, `Kit`, so the supertype walk does not reach `Runner`
+ *   (swiftSupertypeChain drops the edge onto a struct or enum `Kit`, and onto
+ *   a class `Kit` from anything but a class declaration): a member only
+ *   `Runner` or its extensions supply reads as external, so the receiver gets
+ *   the edge (pinned for the static-call path in swift-static-calls.test.ts;
+ *   not pinned for this edge). A class `Kit` reached from a class declaration
+ *   is walked as a superclass, so a member Kit itself declares is taken
+ *   (pinned in swift-static-calls.test.ts). An entry whose first segment is a
+ *   type the project only extends (`Ext.Runner` with `extension Ext {}`) is
+ *   walked to Ext's extensions too, so a member they add is taken (pinned in
+ *   swift-static-calls.test.ts).
  *
  * The edge carries no `refName`: an edge with one is turned back into a
  * pending ref when its target is deleted (resurrect-ref.ts), which would

@@ -330,8 +330,7 @@ private struct M { static func x() {} }
 }
 `,
       // A member of a nested type is not a member of the outer type, and a
-      // top-level function is not a member of a type its file declares. (Two
-      // nested `main`s: with one, the name matcher binds `Tool.main()` to it.)
+      // top-level function is not a member of a type its file declares.
       'Sources/Tool/Tool.swift': `import ArgumentParser
 struct Tool: ParsableCommand {
     struct Inner { static func main() {} }
