@@ -17,6 +17,7 @@ import {
   formatSuspects,
   stdCollision,
   suspectsToJson,
+  swiftModuleName,
   type Suspect,
 } from '../../../src/extensions/resolution/suspects';
 
@@ -248,6 +249,117 @@ describe('suspects: Swift missing import + several definitions', () => {
     expect(s.edges[0]).toMatchObject({
       callerName: 'run', refName: 'makeWidget', resolvedBy: 'exact-match', confidence: 0.4,
     });
+  });
+});
+
+describe('swiftModuleName', () => {
+  // SwiftPM's c99name (`spm_mangledToC99ExtendedIdentifier`, swift-tools-support-core
+  // StringMangling.swift @ c574915f): every Unicode scalar outside its C99 Annex D allowed
+  // range table becomes `_`, and a first scalar that is a digit is replaced by `_` (not
+  // prefixed; '1abc' -> '_abc' measured with Swift 6.4).
+  it('replaces a hyphen with an underscore', () => {
+    expect(swiftModuleName('mcp-benchmarker')).toBe('mcp_benchmarker');
+  });
+
+  it('replaces a dot and a space with underscores', () => {
+    expect(swiftModuleName('a.b c')).toBe('a_b_c');
+  });
+
+  it('replaces a leading digit with an underscore', () => {
+    expect(swiftModuleName('1abc')).toBe('_abc');
+  });
+
+  it('keeps a non-ASCII letter and replaces a plus sign', () => {
+    expect(swiftModuleName('na\u00efve+x')).toBe('na\u00efve_x');
+  });
+
+  it('leaves a plain identifier unchanged', () => {
+    expect(swiftModuleName('Util')).toBe('Util');
+  });
+
+  it('replaces a character outside the table (a fraction, U+00BD) with an underscore', () => {
+    expect(swiftModuleName('a½b')).toBe('a_b');
+  });
+
+  it('keeps a Roman numeral (U+2163, in the table range U+2160-U+2182)', () => {
+    expect(swiftModuleName('aⅣb')).toBe('aⅣb');
+  });
+
+  it('replaces a combining mark outside the table (U+0308) with an underscore', () => {
+    // 'i' + COMBINING DIAERESIS: the table allows precomposed U+00EF but not U+0308.
+    expect(swiftModuleName('naïve')).toBe('nai_ve');
+  });
+});
+
+describe('suspects: Swift import of a hyphenated target names its c99name', () => {
+  // The target sits in Sources/mcp-benchmarker, so `import` must name mcp_benchmarker.
+  // benchTargetRun has one definition, so both edges are name-only (exact-match) and differ
+  // only in whether the caller imports the target's module.
+  let dir: string;
+  beforeAll(async () => {
+    dir = await buildProject({
+      'Sources/mcp-benchmarker/Bench.swift': 'public func benchTargetRun() -> Int { return 1 }\n',
+      'Sources/bench-cli/Main.swift':
+        'import mcp_benchmarker\n\nfunc cliRun() {\n    let x = benchTargetRun()\n    print(x)\n}\n',
+      'Sources/Other/Main.swift': 'import Foundation\n\nfunc otherRun() {\n    let x = benchTargetRun()\n    print(x)\n}\n',
+    });
+  });
+  afterAll(() => removeProject(dir));
+
+  function edgeFrom(callerName: string) {
+    const s = byName(findSuspects(dir), 'benchTargetRun');
+    const edges = s.edges.filter((e) => e.callerName === callerName);
+    expect(edges, `edges from ${callerName}`).toHaveLength(1);
+    return edges[0]!;
+  }
+
+  it('does not flag a missing import when the caller imports mcp_benchmarker', () => {
+    const e = edgeFrom('cliRun');
+    expect(e).toMatchObject({ callerFile: 'Sources/bench-cli/Main.swift', refName: 'benchTargetRun' });
+    expect(e.flags).not.toContain('missing-import');
+  });
+
+  it('flags a missing import when the caller does not import the target', () => {
+    const e = edgeFrom('otherRun');
+    expect(e).toMatchObject({ callerFile: 'Sources/Other/Main.swift', refName: 'benchTargetRun' });
+    expect(e.flags).toContain('missing-import');
+  });
+});
+
+describe('suspects: Swift import of a target named with a Roman numeral keeps it', () => {
+  // The target sits in Sources/aⅣb; U+2163 is in SwiftPM's allowed table, so the c99name
+  // is the directory itself and `import aⅣb` names it. romanTargetRun has one definition,
+  // so both edges are name-only (exact-match) and differ only in the caller's import.
+  const MODULE = 'aⅣb';
+  let dir: string;
+  beforeAll(async () => {
+    dir = await buildProject({
+      [`Sources/${MODULE}/Roman.swift`]: 'public func romanTargetRun() -> Int { return 1 }\n',
+      'Sources/RomanCli/Main.swift':
+        `import ${MODULE}\n\nfunc romanCliRun() {\n    let x = romanTargetRun()\n    print(x)\n}\n`,
+      'Sources/RomanOther/Main.swift':
+        'import Foundation\n\nfunc romanOtherRun() {\n    let x = romanTargetRun()\n    print(x)\n}\n',
+    });
+  });
+  afterAll(() => removeProject(dir));
+
+  function edgeFrom(callerName: string) {
+    const s = byName(findSuspects(dir), 'romanTargetRun');
+    const edges = s.edges.filter((e) => e.callerName === callerName);
+    expect(edges, `edges from ${callerName}`).toHaveLength(1);
+    return edges[0]!;
+  }
+
+  it(`does not flag a missing import when the caller imports ${MODULE}`, () => {
+    const e = edgeFrom('romanCliRun');
+    expect(e).toMatchObject({ callerFile: 'Sources/RomanCli/Main.swift', refName: 'romanTargetRun' });
+    expect(e.flags).not.toContain('missing-import');
+  });
+
+  it('flags a missing import when the caller does not import the target', () => {
+    const e = edgeFrom('romanOtherRun');
+    expect(e).toMatchObject({ callerFile: 'Sources/RomanOther/Main.swift', refName: 'romanTargetRun' });
+    expect(e.flags).toContain('missing-import');
   });
 });
 

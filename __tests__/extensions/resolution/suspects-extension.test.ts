@@ -300,3 +300,36 @@ describe('CLI and MCP agree', () => {
     }
   });
 });
+
+describe('suspects registration is light (built modules)', () => {
+  // The host loads the zone module in every CLI invocation that reaches
+  // program.parse() and, in a query-pool worker, on its first call of a
+  // non-built-in tool, so loading it and registering its command must not pull
+  // in the engine (dist/index.js), the database layer (dist/db/), the resolver
+  // (dist/resolution/) or tree-sitter extraction (dist/extraction/); those belong
+  // inside the action and the tool handler.
+  // dist/extensions/resolution/ is the module under test, so the checks are
+  // anchored on distRoot and it does not match them.
+  it('requiring dist/extensions/resolution/extension.js and registering its command loads none of dist/index.js, dist/db/, dist/resolution/, dist/extraction/', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const distRoot = path.join(repoRoot, 'dist');
+    const commanderPath = require.resolve('commander', { paths: [repoRoot] });
+    const script =
+      `const m = require(${JSON.stringify(path.join(distRoot, 'extensions/resolution/extension.js'))});` +
+      'const ext = m.default ?? m.extension;' +
+      `const { Command } = require(${JSON.stringify(commanderPath)});` +
+      'ext.registerCommands(new Command());' +
+      'process.stdout.write(JSON.stringify(Object.keys(require.cache)));';
+    const res = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', env: childEnv() });
+    expect(res.status, res.stderr).toBe(0);
+    const loaded: string[] = JSON.parse(res.stdout);
+    const heavy = loaded.filter(
+      (p) =>
+        p === path.join(distRoot, 'index.js') ||
+        p.startsWith(path.join(distRoot, 'db') + path.sep) ||
+        p.startsWith(path.join(distRoot, 'resolution') + path.sep) ||
+        p.startsWith(path.join(distRoot, 'extraction') + path.sep),
+    );
+    expect(heavy).toEqual([]);
+  });
+});

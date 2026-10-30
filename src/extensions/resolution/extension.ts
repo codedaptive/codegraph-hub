@@ -18,16 +18,20 @@
  * `suspects` (e.g. `explore,suspects`). As with built-ins, a call to it by name
  * is still served when no allowlist is set (host README, "Off by default").
  *
- * Static imports only: a lazy `require` of a `.ts` file fails under vitest (see
- * the host registry). The top level defines values and does no work, because
- * the hook loads this module on the main thread and in every query-pool worker.
+ * The host loads this module in every CLI invocation that reaches
+ * program.parse() and, in a query-pool worker, on its first call of a
+ * non-built-in tool, so the top level defines values and does no work, and
+ * imports only `path` and types. Project-root lookup (../../directory, which
+ * imports ./db/node-sqlite) and the suspects library (./suspects, which pulls
+ * in the db and resolution layers) are both lazy for that reason: they are
+ * loaded with `await import()` inside the command's action and the tool's
+ * handler; `await import()` of a `.ts` module works under vitest, where a lazy
+ * `require` would not.
  */
 import * as path from 'path';
 import type { Command } from 'commander';
-import { findNearestCodeGraphRoot } from '../../directory';
 import type { ToolResult } from '../../mcp/tools';
 import type { CodegraphExtension, ExtensionTool } from '../host/api';
-import { findSuspects, formatSuspects, suspectsToJson } from './suspects';
 
 /** CLI default target limit. */
 const CLI_DEFAULT_LIMIT = 50;
@@ -81,7 +85,9 @@ interface SuspectsCommandOptions {
  * Add `codegraph suspects` to `program`. The project is the nearest CodeGraph
  * root at or above `--path` (default: the working directory). A bad --limit or
  * --edges, or no index at or above the path, prints a ✗ line on stderr,
- * nothing on stdout, and exits 1.
+ * nothing on stdout, and exits 1. The action is async (its modules load on
+ * first use); commander's `parse()` does not await it, but the process stays
+ * up until it settles, and it sets `process.exitCode` rather than exiting.
  */
 export function registerSuspectsCommand(program: Command): void {
   program
@@ -91,7 +97,7 @@ export function registerSuspectsCommand(program: Command): void {
     .option('--json', 'Print { version: 1, suspects } as JSON')
     .option('-l, --limit <n|all>', `How many targets to list, or "all" (default: ${CLI_DEFAULT_LIMIT})`)
     .option('-e, --edges <n>', `Sample edges listed per target (default: ${DEFAULT_MAX_EDGES})`)
-    .action((opts: SuspectsCommandOptions) => {
+    .action(async (opts: SuspectsCommandOptions) => {
       // Not process.exit() anywhere here: exiting can cut off stdout that is
       // still draining into a pipe.
       const limit = opts.limit === undefined ? { ok: true as const, value: CLI_DEFAULT_LIMIT } : parseLimit(opts.limit);
@@ -107,20 +113,25 @@ export function registerSuspectsCommand(program: Command): void {
         return;
       }
       const start = path.resolve(opts.path ?? process.cwd());
-      const root = findNearestCodeGraphRoot(start);
-      if (!root) {
-        process.stderr.write(`✗ No CodeGraph index at or above ${start}. Run \`codegraph init\` in the project first.\n`);
-        process.exitCode = 1;
-        return;
-      }
+      // The imports sit inside the try, so a module that fails to load ends as
+      // the ✗ line below with exit 1, not an unhandled rejection.
       try {
+        const { findNearestCodeGraphRoot } = await import('../../directory');
+        const root = findNearestCodeGraphRoot(start);
+        if (!root) {
+          process.stderr.write(`✗ No CodeGraph index at or above ${start}. Run \`codegraph init\` in the project first.\n`);
+          process.exitCode = 1;
+          return;
+        }
+        const { findSuspects, formatSuspects, suspectsToJson } = await import('./suspects');
         const list = findSuspects(root, { limit: limit.value, maxEdgesPerTarget: edges.value });
         process.stdout.write(
           opts.json ? `${JSON.stringify(suspectsToJson(list), null, 2)}\n` : `${formatSuspects(list)}\n`,
         );
         process.exitCode = 0;
       } catch (err) {
-        // An index that exists but cannot be read (locked, corrupt, an older schema).
+        // An index that exists but cannot be read (locked, corrupt, an older
+        // schema), or a module that failed to load.
         process.stderr.write(`✗ suspects failed: ${err instanceof Error ? err.message : String(err)}\n`);
         process.exitCode = 1;
       }
@@ -170,7 +181,7 @@ export const suspectsTool: ExtensionTool = {
       },
     },
   },
-  handle(args, ctx): ToolResult {
+  async handle(args, ctx): Promise<ToolResult> {
     // null is absent, as the host's own projectPath check treats it.
     const absent = (v: unknown): unknown => (v === null ? undefined : v);
     const projectPath = absent(args.projectPath);
@@ -193,6 +204,9 @@ export const suspectsTool: ExtensionTool = {
     // getCodeGraph resolves a subdirectory to its project, and throws
     // NotIndexedError and the rest, which the ToolHandler shapes.
     const root = ctx.getCodeGraph(projectPath).getProjectRoot();
+    // Loaded here rather than at the top level, which must stay light (see the
+    // header).
+    const { findSuspects, formatSuspects, suspectsToJson } = await import('./suspects');
     const list = findSuspects(root, { limit: limit.value, maxEdgesPerTarget: edges.value });
     return guidance(format === 'json' ? JSON.stringify(suspectsToJson(list), null, 2) : formatSuspects(list));
   },
