@@ -837,6 +837,11 @@ export class TreeSitterExtractor {
   private reExportImports = 0;
   private extractor: LanguageExtractor | null = null;
   private nodeStack: string[] = []; // Stack of parent node IDs
+  // The containing node's id for each type-shaped node (struct / union / enum /
+  // class): the nodeStack head when it was created. A Rust `impl Trait for
+  // Type` searches it scope by scope (findTypeInScope), mirroring the kernel's
+  // `NodeMeta.parent` (codegraph-kernel/src/rustlang.rs).
+  private typeParentIds = new Map<string, string>();
   // C/C++ enclosing `namespace ns { … }` names, prepended to every contained
   // symbol's qualifiedName (see visitNode). Prefix-only by design — no
   // namespace NODE is created: `namespace cutlass {` opens in thousands of
@@ -2012,7 +2017,8 @@ export class TreeSitterExtractor {
     // — extractClass / extractFunction / extractProperty — because the
     // decorator node sits BEFORE the symbol in the AST and the walker
     // would otherwise see the wrong nodeStack head.)
-    // Rust: `impl Trait for Type { ... }` — creates implements edge from Type to Trait
+    // Rust: `impl Trait for Type { ... }` — records an unresolved `implements`
+    // reference from Type to Trait
     else if (nodeType === 'impl_item') {
       this.extractRustImplItem(node);
     }
@@ -2102,6 +2108,7 @@ export class TreeSitterExtractor {
     if (this.nodeStack.length > 0) {
       const parentId = this.nodeStack[this.nodeStack.length - 1];
       if (parentId) {
+        if (TreeSitterExtractor.IMPL_TARGET_KINDS.has(kind)) this.typeParentIds.set(id, parentId);
         this.edges.push({
           source: parentId,
           target: id,
@@ -3026,14 +3033,27 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract enum member names from an enum member node.
-   * Handles multi-case declarations (Swift: `case put, delete`) and single-case patterns.
+   * Extract enum member names from an enum member node and return the first.
+   * A member node with one `name` field (Rust enum_variant, Swift `case put`)
+   * mints one member spanning the whole node. A Swift multi-case entry
+   * (`case put, delete`, `case object([Int]), null`) carries one `name` field
+   * per case; each case mints its own member spanning its own name. Ids come
+   * from name and line; the column only separates a collision.
    */
   private extractEnumMembers(node: SyntaxNode): Node | null {
-    // Try field-based name first (e.g. Rust enum_variant has a 'name' field)
-    const nameNode = getChildByField(node, 'name');
-    if (nameNode) {
-      return this.createNode('enum_member', getNodeText(nameNode, this.source), node);
+    // Field-based names first. Only Swift's enum_entry marks `name` multiple;
+    // every other grammar's member node has at most one.
+    const nameNodes = node.childrenForFieldName('name');
+    if (nameNodes.length === 1) {
+      return this.createNode('enum_member', getNodeText(nameNodes[0]!, this.source), node);
+    }
+    if (nameNodes.length > 1) {
+      let firstCase: Node | null = null;
+      for (const caseName of nameNodes) {
+        const created = this.createNode('enum_member', getNodeText(caseName, this.source), caseName);
+        firstCase ??= created;
+      }
+      return firstCase;
     }
 
     // Check for identifier-like children (Swift: simple_identifier, TS: property_identifier)
@@ -7467,6 +7487,11 @@ export class TreeSitterExtractor {
       // handler paths live in a raw token tree the call walker can't see.
       if (nodeType === 'macro_invocation') this.extractRustRouteMacro(node);
 
+      // A Rust `impl Trait for Type` in a body (a local type implementing a
+      // trait) records its `implements` reference as one at module scope does;
+      // the walk below still descends into it for the impl's methods.
+      if (nodeType === 'impl_item') this.extractRustImplItem(node);
+
       // A CFML `include "x.cfm";` in a function body includes the template
       // there, as it does at component scope (#2651).
       if (nodeType === 'include_statement' && this.language === 'cfscript') this.extractImport(node);
@@ -8169,8 +8194,11 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Rust `impl Trait for Type` — creates an implements edge from Type to Trait.
-   * For plain `impl Type { ... }` (no trait), no inheritance edge is needed.
+   * Rust `impl Trait for Type`, at module scope or in a function body: records
+   * an unresolved `implements` reference from the implementing type to the
+   * trait's full text. The implementing type is found by findTypeInScope:
+   * lexically for a bare name, among file-scope types only for a path
+   * (`crate::Local`). An inherent `impl Type { ... }` records nothing.
    */
   private extractRustImplItem(node: SyntaxNode): void {
     // `impl Trait for Type` carries the trait in the grammar's `trait` field;
@@ -8182,14 +8210,24 @@ export class TreeSitterExtractor {
     // (`From<u32>`) keep their spelling.
     const traitName = getNodeText(traitNode, this.source);
 
-    // The implementing type from the `type` field (#1588). The old positional
-    // scan took the LAST type-shaped child, which for a parameterized
-    // implementing type (`BufSource<T>`, `Parents<'a>`, `&Foo`) was the trait.
-    const typeName = rustImplTypeName(getChildByField(node, 'type'), this.source);
+    // The implementing type comes from the grammar's `type` field (#1588), so a
+    // parameterized implementing type (`BufSource<T>`, `Parents<'a>`, `&Foo`)
+    // is never taken for the trait.
+    const typeField = getChildByField(node, 'type');
+    const typeName = rustImplTypeName(typeField, this.source);
     if (!typeName) return;
 
-    // Find the struct/type node for the implementing type
-    const typeNodeId = this.findNodeByName(typeName);
+    // Whether the implementing type is written as a path (`crate::Local`,
+    // `m::Local<T>`, `&self::Local`): unwrap `generic_type` / `reference_type`
+    // as rustImplTypeName does and look at what names the type. A fn-local item
+    // can never be named by a path, so a path names a module item.
+    let named: SyntaxNode | null = typeField;
+    while (named && (named.type === 'generic_type' || named.type === 'reference_type')) {
+      named = getChildByField(named, 'type');
+    }
+    const isPath = named?.type === 'scoped_type_identifier' || named?.type === 'scoped_identifier';
+
+    const typeNodeId = this.findTypeInScope(typeName, isPath);
     if (typeNodeId) {
       this.unresolvedReferences.push({
         fromNodeId: typeNodeId,
@@ -8201,14 +8239,33 @@ export class TreeSitterExtractor {
     }
   }
 
+  /** Node kinds an `impl Trait for Type` can name as its implementing type. */
+  private static readonly IMPL_TARGET_KINDS: ReadonlySet<string> = new Set(['struct', 'union', 'enum', 'class']);
+
   /**
-   * Find a previously-extracted node by name (used for back-references like impl blocks)
+   * The implementing type an impl names, found lexically among this file's
+   * earlier-extracted type-shaped nodes: the impl's enclosing scope (the
+   * nodeStack head: the fn, method or const/static whose body or initializer
+   * is walked, or the file) is
+   * searched first, then each scope outward to the file. Within one scope the
+   * earliest-declared type wins. A type declared in a fn is visible only to
+   * impls in that fn or nested deeper. An inline `mod` mints no node, so its
+   * types belong to the file's scope. When the impl writes the type as a path
+   * (`isPath`: `crate::X`, `self::X`, `super::X`, `m::X`), only the file's
+   * scope (the bottom of the nodeStack) is searched: a path always names a
+   * module item, never one declared in a fn body. Mirrored by the kernel's
+   * `extract_rust_impl_item` (codegraph-kernel/src/rustlang.rs) — change both.
    */
-  private findNodeByName(name: string): string | undefined {
-    for (const node of this.nodes) {
-      if (node.name === name && (node.kind === 'struct' || node.kind === 'union' || node.kind === 'enum' || node.kind === 'class')) {
-        return node.id;
-      }
+  private findTypeInScope(name: string, isPath: boolean): string | undefined {
+    const candidates = this.nodes.filter(
+      (n) => n.name === name && TreeSitterExtractor.IMPL_TARGET_KINDS.has(n.kind),
+    );
+    if (candidates.length === 0) return undefined;
+    const innermost = isPath ? 0 : this.nodeStack.length - 1;
+    for (let i = innermost; i >= 0; i--) {
+      const scopeId = this.nodeStack[i];
+      const hit = candidates.find((n) => this.typeParentIds.get(n.id) === scopeId);
+      if (hit) return hit.id;
     }
     return undefined;
   }

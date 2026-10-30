@@ -203,12 +203,14 @@ export class CodeGraph {
     this.db = db;
     this.queries = queries;
     this.projectRoot = projectRoot;
-    // The lock body carries this project's lock stamp (its root and the
-    // identity of its physical index), so a codegraph.lock copied in with
-    // another project's .codegraph/ is stale here even if its pid lives, when
-    // it is foreign by isForeignLockRecord. Pid liveness decides every other
-    // lock, including one at this root after a .codegraph/ restored in place,
-    // which a live holder follows (reopenIfReplaced).
+    // The lock body carries this project's lock stamp (its root, the identity
+    // of its physical index, and the writer's pid and OS start time), so a
+    // codegraph.lock is stale here even if its pid lives when it is foreign by
+    // isForeignLockRecord: copied in with another project's .codegraph/, or
+    // naming a pid now held by a process that started at another time than
+    // the recorded one. Any other lock is decided by pid liveness, including
+    // one at this root after a .codegraph/ restored in place, which a live
+    // holder follows (reopenIfReplaced).
     this.fileLock = new FileLock(
       path.join(getCodeGraphDir(projectRoot), 'codegraph.lock'),
       { stamp: () => lockStamp(projectRoot), isForeign: (r) => isForeignLockRecord(r, projectRoot) }

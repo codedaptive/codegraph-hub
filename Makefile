@@ -19,9 +19,17 @@ export DIR TEST
 
 # zone.mk keys a zone-test-one record on DIR, SWIFT_TEST_ARGS and CARGO_TEST_ARGS only. A TEST filter would be
 # recorded under the unfiltered key and answer later unfiltered runs, so it is refused there.
+# The same holds for the extraction-path switches: CODEGRAPH_KERNEL=0 sends every file to the TypeScript (wasm)
+# extractors instead of the Rust kernel, and CODEGRAPH_KERNEL_<PASS>=0 turns one kernel pass off. A record taken
+# on one path would replay as if it covered the other, so any non-empty CODEGRAPH_KERNEL* (command line or
+# environment) is refused there too.
 ifneq ($(filter zone-test-one zone-test,$(MAKECMDGOALS)),)
 ifneq ($(TEST),)
 $(error TEST is not part of zone-test-one's record key; run `make test-one DIR=... TEST=...` for a filtered, unrecorded run)
+endif
+KERNEL_SET := $(strip $(foreach v,$(filter CODEGRAPH_KERNEL%,$(.VARIABLES)),$(if $(strip $($(v))),$(v))))
+ifneq ($(KERNEL_SET),)
+$(error $(KERNEL_SET) is not part of zone-test-one's record key; unset it here, or run `make test-one DIR=...` with it for a path-specific, unrecorded run)
 endif
 endif
 

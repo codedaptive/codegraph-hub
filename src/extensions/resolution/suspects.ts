@@ -19,8 +19,8 @@
  *   std-collision        the target's name is a standard-library method name in its language
  *                        (`options.isStdMethod`, default `stdCollision`): a call like
  *                        `items.sorted()` on a stdlib value was bound to a project method.
- *                        The default `stdCollision` knows Rust only; Swift waits on its
- *                        marked call site.
+ *                        The default `stdCollision` knows Rust (name-matcher's list) and
+ *                        Swift (`isSwiftStdMethodName` from resolution/swift-builtins.ts).
  *   missing-import       the caller and target sit in different known modules and the caller's
  *                        file does not import the target's module (see below).
  *   several-definitions  more than one function/method node of the target's name and language
@@ -60,9 +60,6 @@
  *     `extern crate` and `mod` produce no import node, so a caller that reaches another
  *     crate only through them is flagged.
  *   Other languages: unknown (abstain).
- *
- * The Swift standard-library list (SWIFT_STD_METHODS) is private to name-matcher.ts's Swift
- * filter and not exported yet; see the one marked call site in `stdCollision`.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -70,6 +67,7 @@ import { DatabaseConnection, getDatabasePath } from '../../db';
 import type { SqliteDatabase } from '../../db/sqlite-adapter';
 import { getCargoWorkspaceCrateMap } from '../../resolution/frameworks/cargo-workspace';
 import { isStdMethodName } from '../../resolution/name-matcher';
+import { isSwiftStdMethodName } from '../../resolution/swift-builtins';
 import type { ResolutionContext } from '../../resolution/types';
 
 export type SuspectFlag = 'std-collision' | 'missing-import' | 'several-definitions' | 'low-confidence';
@@ -135,17 +133,14 @@ export interface SuspectOptions {
   isStdMethod?: (language: string, name: string) => boolean;
 }
 
-/** Whether `name` is a standard-library method name in `language` (Rust today; Swift once the marked call site is switched). */
+/** Whether `name` is a standard-library method name in `language` (Rust and Swift; false for any other language). */
 export function stdCollision(language: string, name: string): boolean {
   switch (language) {
     case 'rust':
       return isStdMethodName('rust', name);
     case 'swift':
-      // SWIFT-STD CALL SITE: switch this to the swift-builtins export when it lands.
-      // isStdMethodName returns false for Swift today: its stdMethodNames switch has no
-      // 'swift' case, and SWIFT_STD_METHODS is private to name-matcher.ts's Swift filter.
-      // Do not copy the list here.
-      return isStdMethodName('swift', name);
+      // The one Swift list lives in swift-builtins.ts (SWIFT_STD_METHODS); do not copy it here.
+      return isSwiftStdMethodName(name);
     default:
       return false;
   }

@@ -13,6 +13,7 @@ import { blankStringContents, stripCommentsForRegex } from './strip-comments';
 import { isJsSuperCallSite } from './js-super-calls';
 import { JS_ARRAY_METHODS, JS_BROWSER_HOST_GLOBALS, JS_BUILT_INS, JS_BUILTIN_METHODS, TS_PRIMITIVE_TYPES } from './js-builtins';
 import { SWIFT_TYPE_PATH_CALL, resolveSwiftTypePathCall } from './swift-type-visibility';
+import { SWIFT_STD_METHODS, isSwiftStdMethodName } from './swift-builtins';
 import { dartImportPrefixes, dartLibrarySees, dartPrefixSees, dartPrivateVisible, inSameDartLibrary } from './dart-libraries';
 import { isDartLocallyBound } from './dart-local-scope';
 import { breakVbTie, isVbMemberInScope, isVbNestedTypeInScope, isVbTypeQualifiedBy, matchVbTypedCall, preferVbProject, sameVbProject } from './vbnet-receivers';
@@ -6116,7 +6117,7 @@ function receiverLink(receiver: string): string {
   return links.length > 1 && /^[A-Z][A-Z0-9_]+$/.test(last) ? links[links.length - 2]! : last;
 }
 
-/** The standard-library method names of a language whose receiver-less guesses need the receiver to name the owner. */
+/** The standard-library method names of a language whose by-name guess on an untyped receiver needs the receiver to name the owner. */
 function stdMethodNames(language: string): ReadonlySet<string> | null {
   switch (language) {
     case 'go': return GO_STD_METHODS;
@@ -6128,6 +6129,7 @@ function stdMethodNames(language: string): ReadonlySet<string> | null {
     case 'python': return PYTHON_STD_METHODS;
     case 'scala': return SCALA_STD_METHODS;
     case 'java': return JAVA_STD_METHODS;
+    case 'swift': return SWIFT_STD_METHODS;
     default: return null;
   }
 }
@@ -6802,23 +6804,6 @@ function nearestSwiftMembers(candidates: Node[], ref: UnresolvedRef, context: Re
 }
 
 /**
- * Methods of Swift's standard collections, strings and optionals and of
- * Foundation / UIKit views — names a project type rarely carries itself.
- * Ones it often does (`cancel`, `resume`, `store`, `validate`, `load`) are
- * left out: Alamofire's `request.resume()`, Kingfisher's `cache.store(…)`.
- */
-const SWIFT_STD_METHODS: ReadonlySet<string> = new Set([
-  'append', 'insert', 'remove', 'removeAll', 'removeFirst', 'removeLast', 'removeValue', 'contains', 'map',
-  'compactMap', 'flatMap', 'filter', 'reduce', 'forEach', 'sorted', 'sort', 'first', 'last', 'min', 'max',
-  'firstIndex', 'lastIndex', 'index', 'enumerated', 'reversed', 'joined', 'split', 'prefix', 'suffix',
-  'dropFirst', 'dropLast', 'allSatisfy', 'randomElement', 'shuffled', 'popLast', 'replaceSubrange',
-  'replacingOccurrences', 'components', 'trimmingCharacters', 'hasPrefix', 'hasSuffix', 'lowercased',
-  'uppercased', 'appending', 'updateValue', 'merge', 'merging', 'union', 'intersection', 'subtracting',
-  'formUnion', 'isEqual', 'addSubview', 'removeFromSuperview', 'setNeedsDisplay', 'setNeedsLayout',
-  'layoutIfNeeded', 'addGestureRecognizer', 'addTarget', 'addObserver', 'removeObserver', 'eraseToAnyPublisher',
-]);
-
-/**
  * Whether a Swift file's declarations are visible from another file as far as
  * separate modules go: one under a `…Tests` directory (SwiftPM's
  * `Tests/VaporTests`, Xcode's `KingfisherTests`) or in a playground only from
@@ -6840,8 +6825,11 @@ function isSwiftTargetVisible(declFile: string, fromFile: string): boolean {
  * field, `super.init(…)` to an Objective-C demo's `init` 170 times. A member
  * reached down a longer chain keeps its match unless its name is one the
  * standard types all carry: `axis.entries.removeAll()` is the array's, not
- * a chart data class's (unless the receiver names the owner, or the owner
- * is an outside type the project only extends).
+ * a chart data class's — unless the receiver names the owner, the owner is
+ * an outside type the project only extends, or the call gives a label that
+ * member declares. A chain whose receiver reads as empty (a trailing
+ * closure ends it: `values.map { … }.sorted()`) has nothing to name the
+ * owner, so only the last two keep it.
  */
 function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: UnresolvedRef, context: ResolutionContext): boolean {
   if (!shape) return true;
@@ -6870,9 +6858,9 @@ function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: Unresolve
     // ImageCache's, not a test subclass's override.
     const typed = /^(?:self\.)?[A-Za-z_]\w*$/.test(shape.receiver) ? inferMemberReceiverType(shape.receiver, ref, context) : null;
     if (typed && /^[A-Z]/.test(typed)) return swiftTypeClosure(typed, context).has(owner);
-    if (shape.receiver === '' || !SWIFT_STD_METHODS.has(n.name)) return true;
-    return sharesReceiverWord(shape.receiver.split('.').pop()!, n) || !swiftDeclOf(owner, context).projectType ||
-      swiftDeclaresLabel(n, shape.label, context);
+    if (!isSwiftStdMethodName(n.name)) return true;
+    return (shape.receiver !== '' && sharesReceiverWord(shape.receiver.split('.').pop()!, n)) ||
+      !swiftDeclOf(owner, context).projectType || swiftDeclaresLabel(n, shape.label, context);
   }
   const depth = swiftHierarchyAt(ref, context).get(owner);
   return depth !== undefined && (shape.shape !== 'super' || depth > 0);
@@ -11413,7 +11401,8 @@ function rustMethodsNamed(name: string, method: string, context: ResolutionConte
 /**
  * The `Name::method` nodes of the types a lookup found: a namesake type's
  * methods are its own. A method is the type's when it sits in the type's
- * file, or its impl's file names the type by that name.
+ * file, or its impl's file names the type by that name. Given no types, every
+ * type's `Name::method` (the trait's own declarations excepted).
  */
 function rustOwnedMethods(name: string, method: string, lookup: RustTypeLookup, context: ResolutionContext): Node[] {
   // A trait's own declaration of the method is the trait's, whatever type
@@ -11428,17 +11417,174 @@ function rustOwnedMethods(name: string, method: string, lookup: RustTypeLookup, 
   return matches.filter((m) => files.has(m.filePath) || rustTypeLookup(name, [], m.filePath, context, rustNodeOffset(m, context)).nodes.some((n) => ids.has(n.id)));
 }
 
-/** The text an `impl` header above a Rust method gives its implementing type's arguments: `BuildArgs` of `impl Overrides<BuildArgs>`. */
+/**
+ * The ids of the items named by the type in the header of the `impl` around
+ * a Rust method (`impl Cache`, `impl Open for Cache`; rustImplSelfType),
+ * walked from the module the `impl` is written in. A path from `crate`,
+ * `self` or `super` names the same item wherever the `impl` is written:
+ * `impl crate::store::Cache` is store's. Any other path (a bare `impl
+ * Cache`) is walked only from an `impl` written directly in a module's body,
+ * the file's top level or an inline `mod`'s braces, where it is that
+ * module's own `Cache` (or the one its `use` brings in), never a namesake's
+ * in another inline module of the file. Null when the method is in no `impl`
+ * (a trait's own body, a macro the scopes don't read), when the header's
+ * type is no path or its path can't be walked, when the header names a
+ * reference to the type (`impl Open for &Cache`, `&'a mut Cache`): that
+ * `impl` is the reference type's, and its method is no method of `Cache`
+ * itself, which may take the trait's provided one instead; and for a path
+ * not from `crate`, `self` or `super` in an `impl` inside a function's body
+ * or another block: the block may declare a type of that name for itself
+ * (`fn f() { struct Cache; impl Cache { … } }`) or `use` one, which the
+ * module's walk does not see.
+ */
+function rustImplSelfItems(method: Node, context: ResolutionContext): Set<string> | null {
+  const scopes = rustScopesOf(method.filePath, context);
+  if (!scopes) return null;
+  const block = rustImplAt(scopes, rustNodeOffset(method, context));
+  if (!block || block.kind !== 'impl') return null;
+  const self = rustImplSelfType(scopes, block);
+  // `impl Open for &Cache`: the reference type's method, never `Cache`'s own.
+  if (!self || self.byRef) return null;
+  const type = self.type;
+  const head = type.segments[0];
+  if (head !== 'crate' && head !== 'self' && head !== 'super') {
+    // In a module's body, the innermost braces around the `impl` are none
+    // (the file's top level) or that inline `mod`'s own.
+    const inner = rustInnerBlockAt(scopes, block.at);
+    const mod = rustBlockAt(rustUsesOf(method.filePath, context).blocks, block.at);
+    if (inner !== null && inner[0] !== mod?.open) return null;
+  }
+  // A bare name is looked up in the impl's own module, as `self::Cache`.
+  const segs = type.segments.length > 0 ? [...type.segments, type.name] : ['self', type.name];
+  return rustWalkedItems(segs, method.filePath, block.at, context);
+}
+
+/**
+ * A Rust call written as a module path of three or more segments to a type's
+ * associated function — `crate::store::Cache::open(…)`,
+ * `other_crate::Cache::open(…)`; a two-segment `Cache::open` is colonMatch's —
+ * is the one method of the struct, enum or union the path walks to, from the
+ * module the call is written in (as rustPathTarget walks a path to a module's
+ * item) or, for a 2015 path, from its crate's root. Only a type the walk names
+ * counts: no guess by the modules' names, which could pick a namesake in a
+ * crate the path never reaches. A method is the type's only when the type its
+ * `impl` header names, walked from the `impl`'s module, is that walked type
+ * (rustImplSelfItems): the `impl` may sit in another file, a namesake type's
+ * `impl` in the same file is not the type's, and neither is the `impl` of a
+ * type a function declares in its own body nor an `impl` for a reference to
+ * the type (`impl Open for &Cache`). Null for a path written with a leading
+ * `::` (`::a::Cache::open()`): since Rust 2018 that names the external crate
+ * `a`, which the walk from the module would mistake for the calling crate's
+ * own `mod a` when it declares one; the external crate is not walked, and no
+ * edition is read, so a 2015 crate's `::a::…` (its root's `a`) is declined
+ * too. Null when the walk
+ * reaches a trait (whose methods belong to whatever implements it) or an
+ * alias (the walk does not follow it to the type it names), no type, std or
+ * an out-of-project crate, or when the type has no single method of that
+ * name — a trait's provided method, which no `impl` of the type writes,
+ * included. Null too when the function's body, or a block in it around the
+ * call, gives the path's first segment a meaning of its own: a `use` binding
+ * it to a project path (`use crate::b as a; a::Cache::open()`), or a module
+ * of that name declared anywhere in that block (`mod a { … }
+ * a::Cache::open()`). The walk from the module does not read that `use`, and
+ * does not tell that `mod` from the module's own `a`.
+ */
+function matchRustTypePathMethod(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
+  // `::a::Cache::open()`: since Rust 2018 a leading `::` names the external
+  // crate `a`, which the walk from the module would take for the calling
+  // crate's own `mod a`. No edition is read, so a 2015 crate's `::a::…` (its
+  // root's `a`) is declined too.
+  if (ref.referenceName.startsWith('::')) return null;
+  const segs = ref.referenceName.split('::');
+  if (segs.length < 3 || !segs.every((s) => /^[A-Za-z_]\w*$/.test(s))) return null;
+  const method = segs[segs.length - 1]!;
+  const type = segs[segs.length - 2]!;
+  // Modules are snake_case and types PascalCase: `a::B::C::f` is no module path to a type.
+  if (!/^[A-Z]/.test(type) || segs.slice(0, -2).some((s) => /^[A-Z]/.test(s))) return null;
+  const head = segs[0]!;
+  // `std::sync::Arc::new(…)`: std's. The walk would find no project item for
+  // it either (rustWalkModules), so this only skips the work.
+  if (RUST_STD_ROOTS.has(head)) return null;
+  const offset = rustRefOffset(ref, context);
+  const bare = head !== 'crate' && head !== 'self' && head !== 'super';
+  if (bare) {
+    // `fs::File::open(…)` under `use std::fs;`: std's, whatever the project names `fs`.
+    const bound = rustVisibleUse(head, ref.filePath, offset, context);
+    if (bound && bound.std.length > 0 && bound.paths.length === 0) return null;
+    // `use crate::b as a;` in the function's body makes `a` crate::b there;
+    // the walk from the module would take the module's own `a`.
+    if (bound && bound.block !== -1 && bound.paths.length > 0) return null;
+    // So does `mod a { … }` declared anywhere in the function's body, or in a
+    // block in it around the call: `a` is that module there. Such a `mod` is
+    // one whose innermost braces are no module's own (as rustImplSelfItems
+    // tells an `impl` in a block from one in a module's body); a macro's
+    // braces count as a block, so one in `cfg_x! { … }` around the call
+    // declines too.
+    const uses = rustUsesOf(ref.filePath, context);
+    const mod = rustBlockAt(uses.blocks, offset);
+    const local = uses.blocks.filter((b) => b.name === head && b.parent === mod);
+    const scopes = local.length > 0 ? rustScopesOf(ref.filePath, context) : null;
+    if (scopes && local.some((b) => {
+      const block = rustInnerBlockAt(scopes, b.open);
+      return block !== null && block[0] !== mod?.open && block[0] < offset && offset < block[1];
+    })) return null;
+    if (!rustProjectCrates(context).has(head) && rustDependencyCrates(context).has(head)) return null;
+  }
+  const typePath = segs.slice(0, -1);
+  let walked: Node[] | null = null;
+  const ids = rustWalkedItems(typePath, ref.filePath, offset, context);
+  if (ids !== null) walked = [...ids].map((id) => context.getNodeById?.(id)).filter((n): n is Node => n != null);
+  else if (bare) {
+    const root = rustCrateRootModule(ref.filePath, context);
+    if (root) walked = rustUsePathItems(typePath, root, context, new Set());
+  }
+  const types = (walked ?? []).filter((n) => n.language === 'rust' && RUST_OWNER_KINDS.has(n.kind));
+  // A walk to a trait or an alias names no type, and so no type's method.
+  if (types.length === 0) return null;
+  const typeIds = new Set(types.map((t) => t.id));
+  // By the impl's header, not its file: an inline `mod b`'s namesake `Cache`
+  // shares the walked type's file, as does a `Cache` a function declares for
+  // itself, and a split `impl` lives in another one.
+  const methods = rustMethodsNamed(type, method, context).filter((m) => m.kind === 'method' &&
+    [...(rustImplSelfItems(m, context) ?? [])].some((id) => typeIds.has(id)));
+  if (methods.length !== 1) return null;
+  const target = methods[0]!;
+  return { original: ref, targetNodeId: target.id, confidence: target.filePath === ref.filePath ? 0.9 : 0.8, resolvedBy: 'qualified-name' };
+}
+
+/**
+ * The type an `impl` header names as the one it implements, as rustPathHead
+ * reads it — `crate::store::Cache` of `impl crate::store::Cache`,
+ * `Overrides<BuildArgs>` of `impl Overrides<BuildArgs>`, `Cache<T>` of
+ * `impl<T> Open<T> for &'a mut Cache<T>` — and whether the header names a
+ * reference to it. Read from the `impl` keyword at `block.at` to the body's
+ * `{` at `block.from`: its `where` clause and `impl<…>` generics dropped, the
+ * text after its first `for` when it has one, a leading `&'a mut` dropped.
+ * Null when that type is no path (a tuple, a slice, `dyn Trait`, a fn
+ * pointer).
+ */
+function rustImplSelfType(scopes: RustScopes, block: { at: number; from: number }): { type: { segments: string[]; name: string; args: string }; byRef: boolean } | null {
+  const header = scopes.code.slice(block.at, block.from).replace(/\bwhere\b[\s\S]*$/, '');
+  const head = header.replace(/^impl\s*(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?/, '');
+  const self = /\bfor\s+([\s\S]+)$/.exec(head)?.[1] ?? head;
+  const type = rustPathHead(self.trim().replace(/^&\s*(?:'\w+\s+)?(?:mut\s+)?/, ''));
+  return type ? { type, byRef: self.trim().startsWith('&') } : null;
+}
+
+/**
+ * What the `impl` header above a Rust method says of its implementing type
+ * (rustImplSelfType): the type's arguments (`BuildArgs` of
+ * `impl Overrides<BuildArgs>`), the `impl<…>` generics, and whether the
+ * header names a reference to the type. Null when the method's file cannot
+ * be read, the method is in no `impl`, or the type is no path.
+ */
 function rustImplSelfArgs(method: Node, context: ResolutionContext): { args: string; generics: string; byRef: boolean } | null {
   const scopes = rustScopesOf(method.filePath, context);
   if (!scopes) return null;
   const block = rustImplAt(scopes, rustNodeOffset(method, context));
   if (!block || block.kind !== 'impl') return null;
-  const header = scopes.code.slice(block.at, block.from).replace(/\bwhere\b[\s\S]*$/, '');
-  const head = header.replace(/^impl\s*(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?/, '');
-  const self = /\bfor\s+([\s\S]+)$/.exec(head)?.[1] ?? head;
-  const type = rustPathHead(self.trim().replace(/^&\s*(?:'\w+\s+)?(?:mut\s+)?/, ''));
-  return type ? { args: type.args, generics: block.generics, byRef: self.trim().startsWith('&') } : null;
+  const self = rustImplSelfType(scopes, block);
+  return self ? { args: self.type.args, generics: block.generics, byRef: self.byRef } : null;
 }
 
 /**
@@ -21560,6 +21706,8 @@ export function matchMethodCall(
     // is a call on the function's object: a member of its class, of a class
     // it derives from or of one it is nested in, when one has that name.
     if (ref.language === 'cpp') return nmTimedT('mc-cppthis', ref, () => matchCppImplicitThisCall(ref, context)) ?? null;
+    // A Rust `crate::m::Type::method(…)`: the method of the type the path walks to.
+    if (ref.language === 'rust' && ref.referenceKind === 'calls') return matchRustTypePathMethod(ref, context);
     return null;
   }
 
@@ -22453,10 +22601,10 @@ export function matchMethodCall(
         // `json` of its `MockedResponse`.
         !isUnnamedTestDouble(targetMethods[0]!, objectOrClass!, ref, context) &&
         !((ref.language === 'lua' || ref.language === 'luau') && isLuaLibraryCall(objectOrClass!, methodName!, ref, targetMethods[0]!)) &&
-        // Rust / Go / Kotlin / C# / VB.NET / Python / Scala / Java: a
-        // standard-library method name on an untyped receiver (`sym.map(…)`,
-        // `w.Header().Get(…)`, `reader.Value.ToString()`,
-        // `options.setdefault(…)`) is the library type's.
+        // Go / Rust / Kotlin / C# / VB.NET / Dart / Python / Scala / Java /
+        // Swift: a standard-library method name on an untyped receiver
+        // (`sym.map(…)`, `w.Header().Get(…)`, `reader.Value.ToString()`,
+        // `options.setdefault(…)`, `arr.sorted()`) is the library type's.
         !(isStdMethodName(ref.language, methodName!) &&
           !/^(?:self|Self|this|base)$/.test(objectOrClass!) && !receiverNamesOwner(receiverLink(objectOrClass!), targetMethods[0]!, context)) &&
         !(UNTYPED_RECEIVER_LANGUAGES.has(ref.language) && !/^(?:self|self\.class|this|super|weak_?self|strong_?self)$/i.test(objectOrClass!) &&

@@ -1,0 +1,77 @@
+diff -ru a/bin/codeteam b/bin/codeteam
+--- a/bin/codeteam	2026-10-30 00:29:57
++++ b/bin/codeteam	2026-10-30 00:41:53
+@@ -723,7 +723,7 @@
+     say_line(f"branch {name}: created from {start}")
+ 
+ 
+-def ensure_worktree(t, team, path: Path, branch, start=None, repo=None):
++def ensure_worktree(t, team, path: Path, branch, start=None, repo=None) -> bool:
+     """LIFTED (create_worktree): an existing worktree is reused, never
+     recreated. Adapted: the path must belong to the repository, and a
+     repo-wide prune runs only when git reports stale metadata for this
+@@ -739,7 +739,7 @@
+         if head_branch(path) != branch:
+             warn(f"{path} is on '{head_branch(path) or 'no branch'}', not {branch}")
+         say_line(f"worktree {path.name}: reused")
+-        return
++        return False
+     path.parent.mkdir(parents=True, exist_ok=True)
+     new_branch = None
+     if branch_exists(repo, branch):
+@@ -759,8 +759,31 @@
+         if repo == t.repo:
+             guard_push(t, new_branch)
+     say_line(f"worktree {path.name}: created on {branch}")
++    return True
+ 
+ 
++def pin_codegraph(path: Path):
++    """Pin a standing worktree (a tier checkout or a lane's standing worktree) in CodeGraph, so the
++    MCP servers that open it never idle-release it or evict it from their project cache (settled
++    S-34; request worktrees stay unpinned). `codeteam init` calls it only for a worktree it has just
++    created: the go-live step pinned the ones that already existed. Best effort: with no codegraph
++    CLI, a CLI that cannot be started, or a failed pin, init carries on with a warning."""
++    exe = shutil.which("codegraph")
++    if not exe:
++        warn(f"worktree {path.name}: not pinned in CodeGraph (no codegraph on PATH)")
++        return
++    try:
++        r = subprocess.run([exe, "project", "pin", str(path)], capture_output=True, text=True,
++                           env=dict(os.environ, DO_NOT_TRACK="1"))
++    except OSError as e:
++        warn(f"worktree {path.name}: codegraph could not be started to pin it: {e}")
++        return
++    if r.returncode:
++        warn(f"worktree {path.name}: codegraph project pin failed: {(r.stderr or r.stdout).strip()}")
++    else:
++        say_line(f"worktree {path.name}: pinned in CodeGraph")
++
++
+ def backup(t, *branches):
+     """Push each branch to origin as a backup. The base is never pushed here:
+     the base is shipped by the session that owns shipping."""
+@@ -1165,8 +1188,9 @@
+     if not t.lab:
+         ensure_branch(t, team, t.integration, t.base)
+         ensure_branch(t, team, t.exchange, t.integration)
+-        ensure_worktree(t, team, t.int_wt(), branch=t.integration)
+-        ensure_worktree(t, team, t.ex_wt(), branch=t.exchange)
++        for wt, branch in ((t.int_wt(), t.integration), (t.ex_wt(), t.exchange)):
++            if ensure_worktree(t, team, wt, branch=branch):
++                pin_codegraph(wt)
+         backup(t, t.integration, t.exchange)
+ 
+     # Tiers: one checkout each; each staff session gets its records folder there.
+@@ -1184,8 +1208,9 @@
+     # workcrews/
+     for n, r in team["lanes"].items():
+         wt = lane_wt(t, n, r)
+-        ensure_worktree(t, team, wt, branch=lane_branch(t, n, r),
+-                        start=r["ref"] if r.get("ref") else t.target, repo=lane_repo(t, r))
++        if ensure_worktree(t, team, wt, branch=lane_branch(t, n, r),
++                           start=r["ref"] if r.get("ref") else t.target, repo=lane_repo(t, r)):
++            pin_codegraph(wt)
+         cwd = lane_cwd(t, n, r)
+         if r.get("workdir") and not cwd.exists():
+             sys.exit(f"lane '{n}': workdir {cwd} does not exist")

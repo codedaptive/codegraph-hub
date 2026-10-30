@@ -430,10 +430,14 @@ export function escapeRegExp(text: string): string {
  * The project that takes a {@link FileLock}. `stamp()` is the record written
  * on the lock body's second line (read at each acquire, so it describes the
  * index as it is then); `isForeign()` tests a parsed second line for a record
- * another project wrote: one whose recorded root is not this project's and
- * whose recorded index identities both differ from this project's index. A
- * record at this project's own root, or at a project whose database has more
- * than one hard link, is never foreign. The caller supplies both
+ * that names no live holder of this project's lock. That is either a record
+ * whose `pid` is alive but whose recorded `pidStart` differs from that
+ * process's OS start time (the pid was reused by a later process), at any
+ * root; or a record another project wrote: its recorded root is not this
+ * project's and its recorded index identities both differ from this project's
+ * index. By the copied-index rule, a record at this project's own root, or at
+ * a project whose database has more than one hard link, is not foreign; only
+ * the start-time check can make such a record foreign. The caller supplies both
  * (`lockStamp` and `isForeignLockRecord` in `mcp/writer-lock`) because this
  * module cannot import `directory` without a cycle (`utils` → `directory` →
  * `sync/watch-policy` → `utils`). The stale-lock takeover it does import,
@@ -470,8 +474,10 @@ export class FileLock {
    * Acquire the lock. Throws if the lock is held by another live process and
    * its record is not foreign. A lock whose PID is dead or malformed is stale;
    * so is one whose second-line record the owner calls foreign (another
-   * project's, copied in with its `.codegraph/`), even when its PID is alive.
-   * A record at the owner's own root is never foreign, so its live PID holds.
+   * project's, copied in with its `.codegraph/`, or one whose PID now names a
+   * process that started at another time than the recorded `pidStart`), even
+   * when its PID is alive. A record at the owner's own root whose PID is alive
+   * and started when recorded (or that records no start time) holds.
    */
   acquire(): void {
     const locked = (pid?: number) => new Error(

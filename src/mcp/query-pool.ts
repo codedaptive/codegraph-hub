@@ -27,6 +27,12 @@
  *     resolves with SUCCESS-shaped "busy, retry" guidance — never `isError`, so
  *     a momentary overload can't teach the agent to abandon codegraph — instead
  *     of hanging past the client's hard timeout.
+ *   - project release: `releaseProject(root)` asks every worker to close its
+ *     own connection to one project (a removed worktree's index, whether this
+ *     process's sweep tore it down or the engine's housekeeping pass found its
+ *     database gone), so the database's blocks are freed once deleted. It is
+ *     a broadcast: the pool does not track which worker opened which root;
+ *     see that method.
  */
 
 import { Worker } from 'worker_threads';
@@ -41,8 +47,9 @@ const WORKER_FILE = path.join(__dirname, 'query-worker.js');
  * Minimal worker surface the pool drives — satisfied by a real `worker_threads`
  * Worker. Abstracted so tests can inject a fake worker and exercise the pool's
  * queue / growth / idle-retirement / crash-recovery / backstop logic without
- * spawning threads or needing a built `dist/`. The pool posts `call` and
- * `retire` messages; the worker posts `ready`, `result` and `retired`.
+ * spawning threads or needing a built `dist/`. The pool posts `call`, `release`
+ * and `retire` messages; the worker posts `ready`, `result`, `released` and
+ * `retired`.
  */
 export interface PoolWorker {
   postMessage(msg: unknown): void;
@@ -109,12 +116,34 @@ const MIN_STARTED_WORKERS = 1;
 /** setTimeout's ceiling; a longer delay would fire after 1 ms instead. */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
-/** Shape of a message a worker posts back: the `ready` handshake, a tool `result`, or `retired`. */
+/**
+ * Bound on how long `releaseProject` waits for a worker's `released` ack. A
+ * worker answers once any call it is running on that project finishes; this
+ * only bounds a wedged one. Shares the start-settle cap: both bound a worker
+ * that has stopped answering.
+ */
+const RELEASE_ACK_TIMEOUT_MS = WORKER_START_SETTLE_MS;
+
+/**
+ * Shape of a message a worker posts back: the `ready` handshake, a tool
+ * `result`, a `released` ack (with `error` when its close failed), or `retired`.
+ */
 interface WorkerMessage {
   type?: string;
   ok?: boolean;
   id?: number;
   result?: ToolResult;
+  error?: string;
+}
+
+/** One `releaseProject` call: the workers that have not acked yet. */
+interface PendingRelease {
+  root: string;
+  waiting: Set<PoolWorker>;
+  failures: string[];
+  resolve: () => void;
+  reject: (err: Error) => void;
+  timer: NodeJS.Timeout;
 }
 
 interface Job {
@@ -234,6 +263,22 @@ export class QueryPool {
   }>();
   // One unref'd timer, armed for the earliest due retirement.
   private retireTimer: NodeJS.Timeout | null = null;
+  // In-flight releaseProject calls by id. A worker leaves `waiting` on its
+  // ack; once it has stopped (its 'exit', or its terminate() settling); or at
+  // once when the release could not be posted to it. That last one is not
+  // waited for unless its termination was already pending when the release
+  // began. An 'error' alone does not count: the thread is still on its way out.
+  private releases = new Map<number, PendingRelease>();
+  // Each worker's termination once terminate() was called on it (settled when
+  // the thread has stopped), so every caller waits on the one termination.
+  private terminations = new WeakMap<PoolWorker, Promise<void>>();
+  // Terminations not settled yet: releaseProject and destroy() wait for them,
+  // since a worker being terminated may still hold its connections.
+  private pendingTerminations = new Set<Promise<void>>();
+  // Set by destroy(): settles once every worker has stopped. A release asked
+  // for after destroy() started waits on it.
+  private destroying: Promise<void> | null = null;
+  private nextReleaseId = 1;
   private nextId = 1;
   private totalCrashes = 0;
   private destroyed = false;
@@ -308,14 +353,18 @@ export class QueryPool {
     w.on('message', (m) => this.onMessage(w, (m ?? {}) as WorkerMessage));
     // A retiring worker's exit (any code) or error belongs to a deliberate
     // retirement, not a crash: endRetiring takes it and the crash path never
-    // sees it. It leaves the retiring set then, unless its terminate() is
-    // still pending (see endRetiring).
+    // sees it. On its exit it leaves the retiring set, unless its terminate()
+    // is still pending (see endRetiring); on an error it is terminated, and
+    // leaves the set once that settles. An error does not end a pending
+    // release for the worker: the thread has not stopped yet, so the release
+    // waits for its exit or its termination (onWorkerGone terminates it).
     w.on('error', () => {
       this.startSettled(w);
-      if (!this.endRetiring(w, false)) this.onWorkerGone(w);
+      if (!this.endRetiring(w, true)) this.onWorkerGone(w);
     });
     w.on('exit', (code) => {
       this.startSettled(w);
+      this.releaseAcked(w, null);
       if (!this.endRetiring(w, false) && code !== 0) this.onWorkerGone(w);
     });
   }
@@ -330,6 +379,12 @@ export class QueryPool {
     // Before the let-go check below: destroy() waits on this for a worker it
     // has already let go of.
     if (m?.type === 'ready') this.startSettled(w);
+    // A release ack counts from any worker the release was sent to, a
+    // retiring one included: it closed the project either way.
+    if (m?.type === 'released') {
+      this.releaseAcked(w, typeof m.id === 'number' ? m.id : null, m.ok === false ? (m.error ?? 'release failed') : undefined);
+      return;
+    }
     // Ignore messages from workers the pool has let go of: retiring ones
     // (their 'retired' reply included) and ones a crash or destroy() removed.
     if (!m || !this.workers.has(w)) return;
@@ -366,7 +421,7 @@ export class QueryPool {
     this.totalCrashes++;
     const job = this.inflight.get(w);
     this.inflight.delete(w);
-    try { void w.terminate(); } catch { /* already gone */ }
+    void this.terminateWorker(w);
     if (this.healthy) this.spawnOne(); // keep capacity
     if (job) {
       if (job.retries < this.maxRetries && this.healthy) {
@@ -466,15 +521,15 @@ export class QueryPool {
   }
 
   /**
-   * End a worker's retirement. On its exit or error (`terminate` false) it
-   * leaves the retiring set at once. With `terminate` (it has not exited within
-   * `startSettleMs`, or the retire message could not be posted) it is
+   * End a worker's retirement. On its exit (`terminate` false) it leaves the
+   * retiring set at once. With `terminate` (it raised an error, has not exited
+   * within `startSettleMs`, or the retire message could not be posted) it is
    * terminated and stays in the set, marked `terminating`, until terminate()
-   * settles, so destroy() waits for it. An exit or error in that window still
-   * lands here and changes nothing: only terminate() settling releases the
-   * worker. Returns true for any retiring worker, so its exit or error never
-   * reaches onWorkerGone; false when the worker was not retiring, so the
-   * caller handles the event itself.
+   * settles, so destroy() and releaseProject wait for it. An exit or error in
+   * that window still lands here and changes nothing: only terminate()
+   * settling releases the worker. Returns true for any retiring worker, so its
+   * exit or error never reaches onWorkerGone; false when the worker was not
+   * retiring, so the caller handles the event itself.
    */
   private endRetiring(w: PoolWorker, terminate: boolean): boolean {
     const r = this.retiring.get(w);
@@ -487,14 +542,118 @@ export class QueryPool {
       return true;
     }
     r.terminating = true;
-    const finish = () => {
+    void this.terminateWorker(w).then(() => {
       if (this.retiring.get(w) === r) this.retiring.delete(w);
       r.done();
-    };
-    let ended: Promise<unknown> = Promise.resolve();
-    try { ended = Promise.resolve(w.terminate()); } catch { /* already gone */ }
-    void ended.then(finish, finish);
+    });
     return true;
+  }
+
+  /**
+   * Terminate `w` once, whoever asks: the promise settles (never rejects)
+   * when its terminate() has, i.e. the thread has stopped, and every caller
+   * gets the same one. While it is pending the worker counts as holding its
+   * connections (`pendingTerminations`); once it settles the worker leaves
+   * every pending release.
+   */
+  private terminateWorker(w: PoolWorker): Promise<void> {
+    const known = this.terminations.get(w);
+    if (known) return known;
+    let ended: Promise<unknown>;
+    try {
+      ended = Promise.resolve(w.terminate());
+    } catch {
+      ended = Promise.resolve(); // already gone
+    }
+    const stopped: Promise<void> = ended.then(() => undefined, () => undefined).then(() => {
+      this.pendingTerminations.delete(stopped);
+      this.releaseAcked(w, null);
+    });
+    this.terminations.set(w, stopped);
+    this.pendingTerminations.add(stopped);
+    return stopped;
+  }
+
+  /**
+   * Close `root` on every worker: post `{ type: 'release', id, root }` to each
+   * live worker (busy and still-starting ones included; a worker handles it
+   * after the call it is running) and resolve once each has acked with
+   * `released` or gone away. The worker closes the project through its own
+   * ToolHandler's releaseProjectRoot, which waits for every call the worker is
+   * running first; a later call that names the project simply opens it again.
+   * It also waits for every worker retiring when it is called: retirement
+   * takes a worker out of the live set before the worker has closed its
+   * connections, which it does only on its way out, so its exit (or, past
+   * its start-settle cap, its termination) is what frees the project there.
+   * Likewise for every worker whose termination is pending (one that crashed
+   * or raised an error): it may hold the project until its terminate()
+   * settles. A live worker that raises an error before it acks leaves the
+   * release the same way, once its termination settles.
+   *
+   * Rejects when a worker reports its close failed, or has not acked within
+   * RELEASE_ACK_TIMEOUT_MS: the caller must not treat that project's files as
+   * free. Resolves at once with no live, retiring or terminating workers.
+   * Once destroy() has started it answers destroy's own termination: it
+   * resolves when every worker has stopped.
+   */
+  releaseProject(root: string): Promise<void> {
+    if (this.destroyed) return this.destroying ?? Promise.resolve();
+    const leaving = [...[...this.retiring.values()].map((r) => r.gone), ...this.pendingTerminations];
+    const acked = this.postRelease(root);
+    return leaving.length === 0 ? acked : Promise.all([acked, ...leaving]).then(() => undefined);
+  }
+
+  /** The live-worker half of {@link releaseProject}: post and collect acks. */
+  private postRelease(root: string): Promise<void> {
+    const targets = [...this.workers];
+    if (targets.length === 0) return Promise.resolve();
+    const id = this.nextReleaseId++;
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const pending = this.releases.get(id);
+        if (!pending) return;
+        this.releases.delete(id);
+        reject(new Error(`query worker(s) did not release ${root} within ${RELEASE_ACK_TIMEOUT_MS} ms`));
+      }, RELEASE_ACK_TIMEOUT_MS);
+      timer.unref?.();
+      const pending: PendingRelease = { root, waiting: new Set(targets), failures: [], resolve, reject, timer };
+      this.releases.set(id, pending);
+      for (const w of targets) {
+        try {
+          w.postMessage({ type: 'release', id, root });
+        } catch {
+          pending.waiting.delete(w); // could not reach it: it is going away
+        }
+      }
+      this.finishRelease(id);
+    });
+  }
+
+  /**
+   * Worker `w` acked release `id` (`failure` set when its close failed), or,
+   * with `id` null, went away: it leaves every pending release.
+   */
+  private releaseAcked(w: PoolWorker, id: number | null, failure?: string): void {
+    const ids = id === null ? [...this.releases.keys()] : [id];
+    for (const rid of ids) {
+      const pending = this.releases.get(rid);
+      if (!pending || !pending.waiting.delete(w)) continue;
+      if (failure) pending.failures.push(failure);
+      this.finishRelease(rid);
+    }
+  }
+
+  /** Settle release `id` once no worker is left to ack it. */
+  private finishRelease(id: number): void {
+    const pending = this.releases.get(id);
+    if (!pending || pending.waiting.size > 0) return;
+    this.releases.delete(id);
+    clearTimeout(pending.timer);
+    if (pending.failures.length > 0) {
+      pending.reject(new Error(`query worker could not release ${pending.root}: ${pending.failures.join('; ')}`));
+    } else {
+      pending.resolve();
+    }
   }
 
   private settle(job: Job, result: ToolResult): void {
@@ -545,7 +704,7 @@ export class QueryPool {
       ]);
       clearTimeout(cap);
     }
-    try { await w.terminate(); } catch { /* already gone */ }
+    await this.terminateWorker(w);
   }
 
   /**
@@ -553,16 +712,20 @@ export class QueryPool {
    * still starting up is terminated once it has started (see
    * WORKER_START_SETTLE_MS); outstanding calls are answered first. A worker
    * already retiring keeps the rest of its `startSettleMs` to exit and is then
-   * terminated, and one already being terminated is waited for until its
-   * terminate() settles, so none is left running when this resolves.
+   * terminated, and one already being terminated (retiring, or after a crash)
+   * is waited for until its terminate() settles, so none is left running when
+   * this resolves. A pending releaseProject, and any asked for from now on,
+   * resolves with it, once every worker has stopped: their connections close
+   * as they stop. A second call returns the first one's promise.
    */
-  async destroy(): Promise<void> {
-    if (this.destroyed) return;
+  destroy(): Promise<void> {
+    if (this.destroying) return this.destroying;
     this.destroyed = true;
     if (this.retireTimer) clearTimeout(this.retireTimer);
     this.retireTimer = null;
     const ws = [...this.workers];
     const retiring = [...this.retiring.values()].map((r) => r.gone);
+    const terminating = [...this.pendingTerminations];
     this.workers.clear();
     this.pendingWorkers.clear();
     this.idle = [];
@@ -572,6 +735,17 @@ export class QueryPool {
     }
     this.inflight.clear();
     this.queue = [];
-    await Promise.all([...ws.map((w) => this.terminateStarted(w)), ...retiring]);
+    const stopped = Promise.all([...ws.map((w) => this.terminateStarted(w)), ...retiring, ...terminating])
+      .then(() => undefined);
+    this.destroying = stopped;
+    // Every pending release now waits for the workers to stop, not for acks:
+    // a worker being terminated never sends one.
+    const pending = [...this.releases.values()];
+    this.releases.clear();
+    for (const p of pending) {
+      clearTimeout(p.timer);
+      void stopped.then(() => p.resolve());
+    }
+    return stopped;
   }
 }

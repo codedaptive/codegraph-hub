@@ -76,6 +76,9 @@ import { goPackageReaderFor } from '../graph/go-package';
 import type { Node, Edge } from '../types';
 import { isTestPath } from '../search/query-utils';
 import { registerExtensionCommands } from '../extensions/host/registry';
+// Static: .option() needs the --fresh / --checkpoint help text when the program is built.
+import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
+import type { FreshAnswer } from '../extensions/host/fresh/cli';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -1365,8 +1368,11 @@ program
   .option('-l, --limit <number>', 'Maximum results', '10')
   .option('-k, --kind <kind>', 'Filter by node kind (function, class, etc.)')
   .option('-j, --json', 'Output as JSON')
-  .action(async (search: string, options: { path?: string; limit?: string; kind?: string; json?: boolean }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (search: string, options: { path?: string; limit?: string; kind?: string; json?: boolean } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1374,6 +1380,8 @@ program
         process.exit(1);
       }
 
+      // Loaded per command so other commands never load it; loadCodeGraph is passed so a load failure under --fresh prints this file's banner and exits 1.
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
 
       const limit = parseInt(options.limit || '10', 10);
@@ -1429,9 +1437,10 @@ program
         }
       }
 
-      cg.destroy();
+      await fresh.end(cg);
     } catch (err) {
       error(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -1450,8 +1459,11 @@ program
   .description('Explore an area: relevant symbols\' source + call paths in one shot (same output as the codegraph_explore MCP tool)')
   .option('-p, --path <path>', 'Project path')
   .option('--max-files <number>', 'Maximum number of files to include source from')
-  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1459,6 +1471,7 @@ program
         process.exit(1);
       }
 
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
@@ -1468,10 +1481,11 @@ program
       const result = await handler.execute('codegraph_explore', args);
 
       console.log(result.content[0]?.text ?? '');
-      cg.destroy();
+      await fresh.end(cg, result.isError ? 1 : undefined);
       if (result.isError) process.exit(1);
     } catch (err) {
       error(`Explore failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -1734,7 +1748,9 @@ program
   .option('--offset <number>', 'File mode: 1-based start line')
   .option('--limit <number>', 'File mode: maximum lines')
   .option('--symbols-only', 'File mode: just the symbol map + dependents')
-  .action(async (name: string | undefined, options: { path?: string; file?: string; offset?: string; limit?: string; symbolsOnly?: boolean }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (name: string | undefined, options: { path?: string; file?: string; offset?: string; limit?: string; symbolsOnly?: boolean } & FreshFlags) => {
     // Need a symbol (positional) OR a file (--file / a path-like positional).
     // With [name] optional, a bare `codegraph node` reaches here with neither
     // and must be told what to pass, rather than crashing downstream.
@@ -1744,6 +1760,7 @@ program
     }
 
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1751,6 +1768,7 @@ program
         process.exit(1);
       }
 
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
@@ -1784,10 +1802,11 @@ program
       const result = await handler.execute('codegraph_node', args);
 
       console.log(result.content[0]?.text ?? '');
-      cg.destroy();
+      await fresh.end(cg, result.isError ? 1 : undefined);
       if (result.isError) process.exit(1);
     } catch (err) {
       error(`Node lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -2385,8 +2404,11 @@ for (const direction of ['callers', 'callees'] as const) {
     .option('-f, --file <path>', 'Narrow definitions by file path or suffix (no match: show all with a note)')
     .option('-l, --limit <number>', 'Maximum results per definition (also caps the JSON union)', '20')
     .option('-j, --json', 'Output as JSON')
-    .action(async (symbol: string, options: { path?: string; file?: string; limit?: string; json?: boolean }) => {
+    .option('--fresh', FRESH_OPTION_HELP)
+    .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+    .action(async (symbol: string, options: { path?: string; file?: string; limit?: string; json?: boolean } & FreshFlags) => {
       const projectPath = resolveProjectPath(options.path);
+      let fresh: FreshAnswer | undefined;
 
       try {
         if (!isInitialized(projectPath)) {
@@ -2394,7 +2416,11 @@ for (const direction of ['callers', 'callees'] as const) {
           process.exit(1);
         }
 
+        fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
         const cg = await openIndexToRead(projectPath);
+        // Set only when the answer threw: then the outer catch prints the error first and finishes
+        // with exit status 1, so the finally below must not finish ahead of it.
+        let failed = false;
         try {
           const limit = parseInt(options.limit || '20', 10);
           const { nodes: targets } = lookupSymbolNodes(cg, symbol, goPackageReaderFor(cg));
@@ -2488,11 +2514,17 @@ for (const direction of ['callers', 'callees'] as const) {
               if (truncated) console.log(chalk.dim(`Showing ${limited.length} of ${total}; pass --limit to widen.`));
             }
           }
+        } catch (err) {
+          failed = true;
+          throw err;
         } finally {
-          cg.destroy();
+          // Here so a "not found" answer (the early return above) reports its checkpoint, and
+          // finishes the --fresh wait, too.
+          await fresh.end(cg, failed ? false : undefined);
         }
       } catch (err) {
         error(`${direction} failed: ${err instanceof Error ? err.message : String(err)}`);
+        await fresh?.fail();
         process.exit(1);
       }
     });
@@ -2508,8 +2540,11 @@ program
   .option('-f, --file <path>', 'Narrow definitions by file path or suffix (no match: show all with a note)')
   .option('-d, --depth <number>', 'Traversal depth', '2')
   .option('-j, --json', 'Output as JSON')
-  .action(async (symbol: string, options: { path?: string; file?: string; depth?: string; json?: boolean }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (symbol: string, options: { path?: string; file?: string; depth?: string; json?: boolean } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -2517,7 +2552,11 @@ program
         process.exit(1);
       }
 
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
+      // Set only when the answer threw: then the outer catch prints the error first and finishes
+      // with exit status 1, so the finally below must not finish ahead of it.
+      let failed = false;
       try {
         const depth = Math.min(Math.max(parseInt(options.depth || '2', 10), 1), 10);
         const { nodes: targets } = lookupSymbolNodes(cg, symbol, goPackageReaderFor(cg));
@@ -2598,11 +2637,17 @@ program
             }
           }
         }
+      } catch (err) {
+        failed = true;
+        throw err;
       } finally {
-        cg.destroy();
+        // Here so a "not found" answer (the early return above) reports its checkpoint, and
+        // finishes the --fresh wait, too.
+        await fresh.end(cg, failed ? false : undefined);
       }
     } catch (err) {
       error(`impact failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });

@@ -6,7 +6,9 @@
 
 import type CodeGraph from '../index';
 import type { QueryPool } from './query-pool';
-import { findNearestCodeGraphRoot, isSameIndexRoot } from '../directory';
+import { canonicalProjectRoot, findNearestCodeGraphRoot, isSameIndexRoot } from '../directory';
+import { isPinned } from '../extensions/host/worktree-lifecycle/project-registry';
+import { worktreeSeedMayApply } from '../extensions/host/worktree-lifecycle/seed-check';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
 import { DatabaseOpenError, isDatabaseOpenFailure } from '../db/open-error';
 import type { NodeSqliteUnavailableError } from '../db/node-sqlite';
@@ -66,6 +68,7 @@ import {
 import { getUpdateNotice } from '../upgrade/update-check';
 import { measurePendingChanges } from './index-freshness';
 import { validateAnswerFiles, type AnswerFile } from './answer-freshness';
+import { appendCheckpointFooter, waitForFresh } from '../extensions/host/fresh/checkpoint';
 import { ExploreDiagnostics } from './explore-diagnostics';
 import {
   EXPLORE_EMISSION_KEY,
@@ -1651,16 +1654,25 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'Absolute path to the project to query (or any directory inside it) — codegraph uses the nearest .codegraph/ index at or above that path. Omit to use this session\'s default project. Pass it to query a second codebase, or when the server root has no index of its own (e.g. a monorepo where only sub-projects are indexed, so there is no default project).',
+  description: 'Absolute path to the project to query (or any directory inside it) — codegraph uses the nearest .codegraph/ index at or above that path. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call. Omit to use this session\'s default project. Pass it to query a second codebase, or when the server root has no index of its own (e.g. a monorepo where only sub-projects are indexed, so there is no default project).',
 };
 
 /**
- * EVERY codegraph tool is query-only: it reads the pre-built index and never
- * mutates the workspace (indexing is the user's explicit CLI call, never the
- * agent's). Advertising this read-only contract lets clients that gate on it run
- * the tools where a possibly-mutating tool would be blocked — most concretely,
+ * EVERY codegraph tool leaves the workspace files untouched: it answers from
+ * the index under `.codegraph/` and never touches a source file. A tool writes
+ * only index state, in two cases. `fresh: true` syncs an existing index before
+ * answering. And a query may CREATE an index: a git worktree with no index of
+ * its own is seeded from an indexed sibling worktree of the same repository
+ * (or, when the user opted in with CODEGRAPH_AUTO_INDEX=1 or a registered
+ * repository, built in the background), writing only that worktree's
+ * `.codegraph/` and its record in the project registry (`~/.codegraph/projects/`;
+ * see src/extensions/host/worktree-lifecycle/seed.ts). That is an index the
+ * user already chose to have, not a change to the workspace, so readOnlyHint
+ * (about the user's workspace) stays true. Advertising this read-only contract lets clients that gate on it
+ * run the tools where a possibly-mutating tool would be blocked — most concretely,
  * Cursor's Ask mode, which rejects any MCP tool lacking `readOnlyHint: true`
- * (issue #1018). `idempotentHint`: a repeated query has no additional effect.
+ * (issue #1018). `idempotentHint`: a repeated call has no further effect (a
+ * repeated `fresh` sync finds nothing pending).
  * `openWorldHint: false`: the domain is the closed local index, not an open
  * external world. Shared so the contract is declared once; a hypothetical
  * mutating tool would simply not reference it.
@@ -1679,7 +1691,9 @@ const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
  * (one call usually answers the whole question), and only use other tools for
  * targeted follow-up queries.
  *
- * All tools support cross-project queries via the optional `projectPath` parameter.
+ * All tools support cross-project queries via the optional `projectPath` parameter,
+ * and the optional `fresh` / `checkpoint` parameters (added in allToolDefinitions,
+ * handled in ToolHandler.execute).
  */
 export const tools: ToolDefinition[] = [
   {
@@ -1898,9 +1912,33 @@ export const tools: ToolDefinition[] = [
 // Extension tools (src/extensions/host) may not take a built-in's name, and carry the built-ins' annotations.
 setBuiltins(() => tools.map(t => t.name), READ_ONLY_ANNOTATIONS);
 
-/** Built-in tool definitions followed by the loaded extensions' tools (src/extensions/host). */
+/**
+ * Optional on every tool; handled in ToolHandler.execute, never by a tool's own handler.
+ * `fresh` waits for the index to catch up, `checkpoint` only reports where it stands.
+ */
+const ANSWER_CHECKPOINT_PROPERTIES: Record<string, PropertySchema> = {
+  fresh: {
+    type: 'boolean',
+    description: 'Wait (bounded) until the index matches the working tree, then answer; ends a successful answer with a Checkpoint line.',
+  },
+  checkpoint: {
+    type: 'boolean',
+    description: 'End the answer with a Checkpoint line (git HEAD, hash of uncommitted changes, files the index has not caught up with) without waiting.',
+  },
+};
+
+/**
+ * Built-in tool definitions followed by the loaded extensions' tools (src/extensions/host),
+ * each schema cloned with the optional `fresh` and `checkpoint` properties (`required` untouched).
+ */
 function allToolDefinitions(): ToolDefinition[] {
-  return [...tools, ...extensionTools().map(t => t.definition)];
+  return [...tools, ...extensionTools().map(t => t.definition)].map(tool => ({
+    ...tool,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: { ...tool.inputSchema.properties, ...ANSWER_CHECKPOINT_PROPERTIES },
+    },
+  }));
 }
 
 /**
@@ -1978,6 +2016,8 @@ function canonicalPath(p: string): string {
  * SQLite connection, so the cache is bounded LRU: opening one more than this
  * closes the least recently used. Small on purpose — a session that queries
  * many repositories still leaks nothing; it only pays a reopen + catch-up.
+ * Pinned projects (`codegraph project pin`, the project registry) are never
+ * evicted and do not count toward this bound: it limits the unpinned ones.
  */
 export const MAX_CACHED_PROJECTS = 8;
 
@@ -1987,9 +2027,40 @@ export const MAX_CACHED_PROJECTS = 8;
  * writer lock the engine may hold on that project — which otherwise stays held
  * for the whole life of this daemon, locking the project's own daemon and
  * `codegraph index` out. The next call reopens it and catches up.
- * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases.
+ * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases. A
+ * pinned project is never idle-released; it closes on shutdown, or when
+ * housekeeping releases it (`releaseProjectRoot`: its worktree was torn down,
+ * or its directory or database is gone).
  */
 const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
+
+/**
+ * The worktree seeder (src/extensions/host/worktree-lifecycle/seed.ts), once a
+ * tool call first needed it (see ToolHandler.seedWorktreeIndex).
+ */
+let worktreeSeedModule: typeof import('../extensions/host/worktree-lifecycle/seed') | null = null;
+
+/**
+ * Bound on {@link ToolHandler}'s unseeded-worktree memo; past it the memo
+ * starts over. The bound keeps a long-lived handler asked about many paths
+ * from growing the memo without limit; 256 is ample because it holds only
+ * paths inside git worktrees that could not be seeded or built yet, and the
+ * seeding hook fills a cleared entry again on that path's next call.
+ */
+const MAX_UNSEEDED_WORKTREES = 256;
+
+/**
+ * Whether a cached root is pinned in the project registry. An unreadable
+ * registry pins nothing: every cached root is then subject to the LRU bound
+ * and the idle timeout.
+ */
+function projectRootPinned(root: string): boolean {
+  try {
+    return isPinned(root);
+  } catch {
+    return false;
+  }
+}
 function resolveProjectIdleTimeoutMs(): number {
   const raw = process.env.CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS;
   if (raw === undefined || raw === '') return DEFAULT_PROJECT_IDLE_TIMEOUT_MS;
@@ -2032,6 +2103,11 @@ export class ToolHandler {
   private projectLifecycle: ProjectLifecycle | null = null;
   // Every concurrent call shares its project's pending catch-up promise.
   private projectGates: Map<CodeGraph, Promise<void>> = new Map();
+  // projectPath → the git worktree it is in, for paths the seeding hook
+  // considered and could not seed or build yet; picks their not-indexed text.
+  private unseededWorktrees: Map<string, string> = new Map();
+  // releaseProjectRoot calls waiting for every in-flight tool call to finish.
+  private idleCallWaiters: Array<() => void> = [];
   private activeCalls = 0;
   private closing = false;
   private pendingCloses = 0;
@@ -2102,12 +2178,30 @@ export class ToolHandler {
   }
 
   /**
-   * Update the default CodeGraph instance (e.g. after lazy initialization)
+   * Engine-only: set the default CodeGraph instance (after lazy
+   * initialization, or when the engine re-adopts a retired default).
+   * {@link detachDefaultProject} drops it again.
    */
   setDefaultCodeGraph(cg: CodeGraph): void {
     this.cg = cg;
     this.defaultOpenFailure = null;
     this.defaultRootRefusal = null;
+  }
+
+  /**
+   * Engine-only: drop the default project, which the engine is retiring
+   * because its directory or database is gone. Detaches at once, together
+   * with its catch-up gate, so no call that starts from now on reaches the
+   * default graph: a call without `projectPath` gets the no-default-project
+   * guidance. Resolves once no tool call is in flight (the handler counts
+   * calls, not calls per project, as {@link releaseProjectRoot} does), so the
+   * engine may then close the graph a call already holding it was reading.
+   * The handler never closes the default graph itself; the engine owns it.
+   */
+  async detachDefaultProject(): Promise<void> {
+    this.cg = null;
+    this.setCatchUpGate(null);
+    if (this.activeCalls > 0) await new Promise<void>((resolve) => this.idleCallWaiters.push(resolve));
   }
 
   /**
@@ -2411,6 +2505,10 @@ export class ToolHandler {
     const canonicalRoot = resolvedRoot ? canonicalPath(resolvedRoot) : null;
 
     if (!resolvedRoot || !canonicalRoot) {
+      // A git worktree the seeding hook looked at but could not seed or build
+      // gets the seeder's guidance: a later call may still copy an index in.
+      const worktree = this.unseededWorktrees.get(projectPath);
+      if (worktree && worktreeSeedModule) throw new NotIndexedError(worktreeSeedModule.unseededWorktreeNote(projectPath, worktree));
       throw new NotIndexedError(
         `The project at ${projectPath} isn't indexed with codegraph (no .codegraph/ directory found ` +
         'walking up from it), so codegraph cannot query it. Use your built-in tools (Read/Grep/Glob) ' +
@@ -2543,7 +2641,36 @@ export class ToolHandler {
     }
   }
 
+  /**
+   * Give a git worktree with no index of its own one before the call resolves
+   * it (src/extensions/host/worktree-lifecycle/seed.ts): seeded from an
+   * indexed sibling worktree, or, when the user opted in, a background build,
+   * answered with the building note (success-shaped, through NotIndexedError)
+   * until it is done. Only on a handler that owns a project lifecycle; CLI and
+   * worker handlers never seed. The module is loaded lazily, keeping its
+   * writer-lock dependency off the startup path, and only once a path passes
+   * the git-free pre-check (`worktreeSeedMayApply`): a call against a finished
+   * index of the tree's own does not load it before it is needed, and never
+   * spawns git; once loaded, such a call costs a few stats.
+   */
+  private async seedWorktreeIndex(projectPath: string): Promise<void> {
+    if (!worktreeSeedModule) {
+      if (!worktreeSeedMayApply(projectPath)) return;
+      worktreeSeedModule = await import('../extensions/host/worktree-lifecycle/seed');
+    }
+    const seed = worktreeSeedModule;
+    const outcome = await seed.ensureWorktreeIndex(projectPath);
+    if (outcome.kind === 'building') throw new NotIndexedError(seed.buildingNote(outcome.root));
+    if (outcome.kind === 'none' && outcome.worktree) {
+      if (this.unseededWorktrees.size >= MAX_UNSEEDED_WORKTREES) this.unseededWorktrees.clear();
+      this.unseededWorktrees.set(projectPath, outcome.worktree);
+    } else {
+      this.unseededWorktrees.delete(projectPath);
+    }
+  }
+
   private async awaitProjectGate(projectPath: string): Promise<void> {
+    if (this.projectLifecycle) await this.seedWorktreeIndex(projectPath);
     const cg = this.getCodeGraph(projectPath);
     if (!this.projectLifecycle || cg === this.cg) return;
     let gate = this.projectGates.get(cg);
@@ -2561,16 +2688,35 @@ export class ToolHandler {
   /**
    * Never evict a graph while a tool call or its timed-out reconcile uses it.
    * Evicts over the LRU bound, on close, and once idle past the timeout
-   * (#2087). The cache is in last-use order, so idle entries lead it.
+   * (#2087). The cache is in last-use order, so idle entries lead it. A
+   * pinned root is skipped by both the bound and the idle timeout and is not
+   * counted toward the bound; only close releases it here. The trim reads the
+   * registry (one small file per root) only when the cache is over the bound
+   * or an entry is idle; arming the idle timer reads it for the oldest roots,
+   * up to the first unpinned one.
    */
   private trimProjects(): void {
     if (this.activeCalls > 0) return;
+    for (const resolve of this.idleCallWaiters.splice(0)) resolve();
     const idleMs = resolveProjectIdleTimeoutMs();
     const now = Date.now();
+    const pinnedMemo = new Map<string, boolean>();
+    const pinned = (root: string): boolean => {
+      let p = pinnedMemo.get(root);
+      if (p === undefined) pinnedMemo.set(root, (p = projectRootPinned(root)));
+      return p;
+    };
+    const overBound = (): boolean => {
+      if (this.projectCache.size <= MAX_CACHED_PROJECTS) return false;
+      let unpinned = 0;
+      for (const root of this.projectCache.keys()) if (!pinned(root)) unpinned++;
+      return unpinned > MAX_CACHED_PROJECTS;
+    };
     for (const [root, cg] of this.projectCache) {
       const idle = idleMs > 0 && now - (this.projectUsedAt.get(root) ?? now) >= idleMs;
-      if (!this.closing && this.projectCache.size <= MAX_CACHED_PROJECTS && !idle) break;
+      if (!this.closing && !idle && !overBound()) break;
       if (this.projectGates.has(cg)) continue;
+      if (!this.closing && pinned(root)) continue;
       this.projectCache.delete(root);
       this.projectUsedAt.delete(root);
       if (this.projectLifecycle) {
@@ -2592,7 +2738,8 @@ export class ToolHandler {
    * project whose catch-up is still running is trimmed when that settles; the
    * 1s floor keeps a project a trim must skip from re-arming in a tight loop.
    * Each call replaces the armed timer, so an older project whose catch-up
-   * settles after a newer one armed the timer keeps its own deadline.
+   * settles after a newer one armed the timer keeps its own deadline. A
+   * pinned project never idles out, so it arms nothing.
    */
   private scheduleIdleRelease(idleMs: number): void {
     if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer);
@@ -2600,6 +2747,7 @@ export class ToolHandler {
     if (this.closing || idleMs <= 0) return;
     for (const [root, cg] of this.projectCache) {
       if (this.projectGates.has(cg)) continue;
+      if (projectRootPinned(root)) continue;
       const due = (this.projectUsedAt.get(root) ?? Date.now()) + idleMs - Date.now();
       this.idleReleaseTimer = setTimeout(() => {
         this.idleReleaseTimer = null;
@@ -2637,11 +2785,63 @@ export class ToolHandler {
   }
 
   /**
+   * The canonical roots of the explicit projects this handler holds open
+   * now, in last-use order. A call that names the default project by
+   * `projectPath` is served from the default graph and not cached, so the
+   * default root is among them only when it was cached before it became the
+   * default. The engine's housekeeping pass reads it, adds the default root
+   * itself, and releases the ones whose index is gone.
+   */
+  cachedProjectRoots(): string[] {
+    return [...this.projectCache.keys()];
+  }
+
+  /**
+   * Release one cached explicit project (worktree teardown, or a housekeeping
+   * pass that found its directory or database gone): `root` is matched
+   * canonically against the cached roots, so any spelling of it works, and a
+   * root whose directory is already gone still matches its realpath'd key. It
+   * leaves the cache at once; a call that names the root meanwhile opens it
+   * again (through a lifecycle, possibly the same instance, on a lease of its
+   * own that this release leaves alone). The close waits for its catch-up and
+   * every in-flight tool call to finish (the handler counts calls, not calls
+   * per project), then goes through the lifecycle's release, or `close()`
+   * without one. Pinned or not, it is released. A root that is not cached is
+   * a no-op.
+   */
+  async releaseProjectRoot(root: string): Promise<void> {
+    const wanted = canonicalProjectRoot(root);
+    let key: string | undefined;
+    for (const cached of this.projectCache.keys()) {
+      if (cached === root || canonicalProjectRoot(cached) === wanted) {
+        key = cached;
+        break;
+      }
+    }
+    if (key === undefined) return;
+    const cg = this.projectCache.get(key)!;
+    this.projectCache.delete(key);
+    this.projectUsedAt.delete(key);
+    this.pendingCloses++;
+    try {
+      const gate = this.projectGates.get(cg);
+      if (gate) await gate;
+      if (this.activeCalls > 0) await new Promise<void>((resolve) => this.idleCallWaiters.push(resolve));
+      if (this.projectLifecycle) await this.projectLifecycle.release(cg);
+      else cg.close();
+    } finally {
+      this.pendingCloses--;
+      this.trimProjects();
+    }
+  }
+
+  /**
    * Close all cached project connections
    */
   closeAll(): Promise<void> {
     this.closing = true;
     this.worktreeMismatchCache.clear();
+    this.unseededWorktrees.clear();
     if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer);
     this.idleReleaseTimer = null;
     this.nestedRepoCache.clear();
@@ -3000,13 +3200,20 @@ export class ToolHandler {
         process.stderr.write('[CodeGraph MCP] Re-armed file watcher; full catch-up pending.\n');
       }
 
+      // `fresh: true`: bounded wait for the index to match the working tree,
+      // here on the main thread before dispatch (pooled or not), so the answer
+      // comes from the synced index. Never throws. The checkpoint (including a
+      // passed bound or a sync error) is appended to a successful answer; an
+      // isError result or a stale-file refusal is returned without it.
+      const freshCp = args.fresh === true ? await waitForFresh(project) : undefined;
+
       // codegraph_status reports watcher state (pending files, degraded mode,
       // worktree warning) and embeds its own sections — it must run on the MAIN
       // thread against the watched default instance, so it is NEVER off-loaded to
       // a worker (whose read connection has no watcher). It also skips the
       // auto-banner wrapper to avoid duplicating its own pending-files section.
       if (toolName === 'codegraph_status') {
-        return await this.handleStatus(args);
+        return await appendCheckpointFooter(await this.handleStatus(args), args, project, freshCp);
       }
 
       // Read tools: off-load the CPU-heavy dispatch to the worker pool when one
@@ -3067,7 +3274,7 @@ export class ToolHandler {
       // caller passed session state.
       const result = this.takeExploreEmission(raw, sessionState);
       const withWorktree = this.withWorktreeNotice(result, args.projectPath as string | undefined);
-      return this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
+      return await appendCheckpointFooter(this.withStalenessNotice(withWorktree, args.projectPath as string | undefined), args, project, freshCp);
     } catch (err) {
       // Expected condition, not a malfunction: answer as a SUCCESS so the
       // agent keeps trusting the toolset for projects that ARE indexed.

@@ -71,8 +71,9 @@ calls; a grep/read exploration is dozens.
 
 ## Limitations
 
-- If a tool reports a project isn't indexed (no \`.codegraph/\`), stop calling codegraph tools for that project for the rest of the session and use your built-in tools there instead. Indexing is the user's decision — mention they can run \`codegraph init\` if it comes up, but don't run it yourself.
-- Index lags file writes by ~1 second.
+- If a tool reports a project isn't indexed (no \`.codegraph/\`), stop calling codegraph tools for that project for the rest of the session and use your built-in tools there instead — unless the answer says the index is being built or will be copied in from another git worktree, in which case retry later. Indexing is the user's decision — mention they can run \`codegraph init\` if it comes up, but don't run it yourself.
+- A git worktree with no index of its own gets one automatically on its first call when another worktree of the same repository is indexed: just pass the worktree as \`projectPath\`.
+- Index lags file writes by ~1 second. Pass \`fresh: true\` to any tool to wait (bounded) until the index matches the working tree before it answers; \`fresh\` or \`checkpoint: true\` ends a successful answer with a \`Checkpoint:\` line (git HEAD, uncommitted-changes hash, pending file count). (\`fresh\` itself never creates an index.)
 - Cross-file resolution is best-effort name matching; ambiguous calls may return multiple candidates.
 - No live correctness validation — that's still the TypeScript compiler / test suite / linter's job. Codegraph supplements those with structural context they don't have.
 `;
@@ -104,8 +105,11 @@ default project — but the tools are available and work **per project**:
   \`codegraph_explore\` (and any other codegraph tool). Codegraph resolves the
   nearest \`.codegraph/\` at or above that path and answers from it — for as many
   projects as you like in one session.
-- For a project with no \`.codegraph/\`, use your built-in tools (Read/Grep/Glob)
-  for that project. Indexing is the user's decision — don't run it yourself, but
-  if it comes up they can run \`codegraph init\` in a project to enable codegraph
-  there (a new index is picked up live, no restart).
+- A git worktree with no \`.codegraph/\` of its own gets one on its first call
+  when another worktree of the same repository is indexed: pass the worktree
+  itself as \`projectPath\`.
+- For any other project with no \`.codegraph/\`, use your built-in tools
+  (Read/Grep/Glob) for that project. Indexing is the user's decision — don't run
+  it yourself, but if it comes up they can run \`codegraph init\` in a project to
+  enable codegraph there (a new index is picked up live, no restart).
 `;

@@ -13,8 +13,9 @@
  * look like a daemon. `writer.pid` is only about "who owns live auto-sync".
  *
  * Every record also carries a {@link LockStamp}: the writer's canonical
- * project root and the identity of the physical index it had open, the
- * `dev:ino` of the `.codegraph` directory and of `codegraph.db`. A copied
+ * project root, the identity of the physical index it had open (the
+ * `dev:ino` of the `.codegraph` directory and of `codegraph.db`), and the
+ * writer's pid and OS start time (see the last paragraph). A copied
  * project carries its original's `.codegraph/` records with it, and their pids
  * are live (the original's server), so pid liveness alone would keep the copy
  * locked out forever. A record is FOREIGN ({@link isForeignLockRecord}) when
@@ -24,8 +25,9 @@
  * database with one link) has foreign records, and they are treated like a
  * dead holder: stale, cleared, retried, and invisible to readers.
  *
- * Everything else is decided by pid liveness, because the live holder may
- * still have that database open and calling it stale would start a second
+ * No other copied or moved index makes its records foreign by this rule; pid
+ * liveness and the start-time check below decide them, because the live holder
+ * may still have that database open and calling it stale would start a second
  * writer on it:
  *   - a record at this same root, even with both inodes new: a `.codegraph/`
  *     moved aside and copied back to the same path (a restore) is followed by
@@ -39,6 +41,18 @@
  * A move across filesystems copies: new inodes and a new root, so its records
  * are foreign there, which is safe: the old holder has only the old, now
  * unlinked files open, not the moved index.
+ *
+ * The stamp also names its writer: `pid` and `pidStart`, that process's OS
+ * start time ({@link processStartTime}). A holder killed while it holds a lock
+ * leaves its record behind, and once the OS gives its pid to an unrelated
+ * process, pid liveness would call it held forever. So a record whose pid is
+ * alive but started at another time than `pidStart` is treated as foreign
+ * too, wherever it was written, this project's own root and a shared
+ * (hard-linked) database included: stale, cleared, retried and invisible to
+ * readers, like a dead holder's. A record written without `pidStart`
+ * (Windows, where no start time is read; a lookup that failed when it was
+ * written; a writer that did not record one), or whose
+ * holder's start time cannot be read now, is decided by pid liveness alone.
  */
 
 import * as fs from 'fs';
@@ -52,6 +66,7 @@ import {
   writeExclusiveTemp,
   type LockSnapshot,
 } from './lock-takeover';
+import { processStartTime } from './process-identity';
 /** Signal-0 liveness (EPERM ⇒ alive). Local copy to avoid a daemon↔writer cycle. */
 function isProcessAlive(pid: number): boolean {
   try {
@@ -75,14 +90,30 @@ export interface LockStamp {
   /**
    * `canonicalProjectRoot` of the writer's project. Alone it decides nothing,
    * because a path can name a different index than the one the writer opened;
-   * it limits {@link isForeignLockRecord}: a record at the reader's own root is
-   * never foreign.
+   * it limits the copied-index rule of {@link isForeignLockRecord}: a record at
+   * the reader's own root is never a copied-in record. Such a record is still
+   * foreign when its pid was reused (see `pidStart`).
    */
   root: string;
   /** Identity of the writer's `.codegraph` directory. Present together with `dbId`, or not at all. */
   dirId?: string;
   /** Identity of the writer's `codegraph.db`. Present together with `dirId`, or not at all. */
   dbId?: string;
+  /**
+   * The writing process's pid. The same as the record's own `pid` in the JSON
+   * records; in `codegraph.lock` the stamp is the whole second line, so this
+   * is the only pid that line carries. Absent in records written without it.
+   */
+  pid?: number;
+  /**
+   * The writing process's OS start time ({@link processStartTime}): ISO8601
+   * UTC to the second on macOS and the BSDs, `linux:<boot_id>:<ticks>` on
+   * Linux. Absent when it could not be read (always on Windows) and in
+   * records written without it; such a record is never foreign by the
+   * reused-pid rule, so pid liveness decides it unless the copied-index rule
+   * of {@link isForeignLockRecord} applies.
+   */
+  pidStart?: string;
 }
 
 /**
@@ -112,23 +143,63 @@ function readIndexIdentity(projectRoot: string): { dirId: string; dbId: string; 
 
 /**
  * The {@link LockStamp} for a record this process writes on `projectRoot`:
- * its canonical root, and its index identity when that can be read. A record
- * written without an identity is never foreign anywhere: pid liveness alone
- * decides it, as for a record of the older format. The link count is read
- * fresh by every reader and never recorded.
+ * its canonical root, its index identity when that can be read, this
+ * process's pid, and its start time when that can be read (kept once known).
+ * A record written without an identity is never foreign by the copied-index
+ * rule, and one without a start time never by the reused-pid rule; one
+ * written without either is decided by pid liveness alone, as for a record of
+ * the older format. The link count is read fresh by every reader and never
+ * recorded.
  */
 export function lockStamp(projectRoot: string): LockStamp {
   const identity = readIndexIdentity(projectRoot);
+  const pidStart = processStartTime(process.pid);
   return {
     root: canonicalProjectRoot(projectRoot),
     ...(identity !== null ? { dirId: identity.dirId, dbId: identity.dbId } : {}),
+    pid: process.pid,
+    ...(pidStart !== null ? { pidStart } : {}),
   };
 }
 
 /**
- * Whether a lock record was written for another project's physical index,
- * i.e. it was copied in with a `.codegraph/` from elsewhere. True only when
- * ALL of these hold:
+ * Whether a record names a live pid that is no longer its writer: it carries
+ * `pid` and `pidStart`, the pid is alive, and the OS now reports another start
+ * time for it. A dead pid is not "reused" here (liveness already makes it
+ * stale), and an unreadable start time is no evidence. A mismatch seen through
+ * the start-time cache is re-read fresh before it counts, so a cached answer
+ * from before a new holder took the pid can never steal that holder's lock.
+ */
+function isReusedPidRecord(record: Record<string, unknown>): boolean {
+  const { pid, pidStart } = record;
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return false;
+  if (typeof pidStart !== 'string' || pidStart === '') return false;
+  if (!isProcessAlive(pid)) return false;
+  const now = processStartTime(pid);
+  if (now === null || now === pidStart) return false;
+  const fresh = processStartTime(pid, { fresh: true });
+  return fresh !== null && fresh !== pidStart;
+}
+
+/**
+ * Whether a lock record must be treated as no holder's: its pid was reused
+ * by another process, or it was written for another project's physical index
+ * (copied in with a `.codegraph/` from elsewhere). Either makes it stale even
+ * though its pid is alive.
+ *
+ * The two rules are checked in that order, and either one alone is enough.
+ *
+ * Reused pid: true when the record carries `pid` and `pidStart`, that pid is
+ * alive, and its current OS start time ({@link processStartTime}) differs from
+ * `pidStart`. It is checked first and applies to every record, whatever its
+ * root and whatever the database's link count: a record at this project's own
+ * root, or on a shared (hard-linked) database, is foreign when its pid was
+ * reused. A record without `pidStart`, or whose holder's start time cannot be
+ * read now (Windows, a `ps` that failed or ran out, a hidden `/proc` entry),
+ * is not reused by this rule.
+ *
+ * Copied index: checked only for a record whose pid was not found reused, and
+ * true only when ALL of these hold:
  *
  *   - the recorded `root` is a non-empty string that differs from
  *     `canonicalProjectRoot(projectRoot)`, compared exactly as recorded (no
@@ -142,33 +213,39 @@ export function lockStamp(projectRoot: string): LockStamp {
  *
  * So a copy at another path, which has a new root, a new directory and a new
  * database with one link (cp -R, rsync and clonefile all write a new file), is
- * foreign. A record at this same root is never foreign, even when both inodes
- * changed: a `.codegraph/` moved aside and copied back (a restore) is followed
- * by its live holder (`CodeGraph.reopenIfReplaced` opens the replaced database
- * at the same path), so calling that holder stale would start a second writer
- * on the database it now has open. Nothing is foreign at a project whose
- * database has more than one hard link: that file is shared by definition, and
- * another project's live holder may have it open. A project moved within one
- * filesystem (same inodes, new root) is not foreign either. Every record that
- * is not foreign, including one with no root or no identity (older formats),
- * is decided by pid liveness alone. `record` is any parsed record; only its
- * `root`, `dirId` and `dbId` are read.
+ * foreign. A record at this same root is never a copied-in record, even when
+ * both inodes changed: a `.codegraph/` moved aside and copied back (a restore)
+ * is followed by its live holder (`CodeGraph.reopenIfReplaced` opens the
+ * replaced database at the same path), so calling that holder stale would
+ * start a second writer on the database it now has open. No record is a
+ * copied-in one at a project whose database has more than one hard link: that
+ * file is shared by definition, and another project's live holder may have it
+ * open. A project moved within one filesystem (same inodes, new root) is not a
+ * copy either. These exemptions are from the copied-index rule only; the
+ * reused-pid rule above still applies to every one of those records. A record
+ * that neither rule makes foreign, including one with no root, no identity
+ * and no `pidStart` (older formats), is decided by pid liveness. `record` is
+ * any parsed record; only its `root`, `dirId`, `dbId`, `pid` and `pidStart`
+ * are read.
  *
  * Limits. A record's stamp describes the index its writer opened, and a writer
  * that later follows a database replaced in place keeps its original stamp
- * (same-root records and hardlinked databases are never foreign, which covers
- * that). A filesystem alias that reports different `dev:ino` for one file
- * (some FUSE or network mounts) is outside what the stamp can see.
+ * (the copied-index rule exempts same-root records and hardlinked databases,
+ * which covers that; the stamp's `pid` and `pidStart` stay true of that
+ * writer, so the reused-pid rule is unaffected). A filesystem alias that
+ * reports different `dev:ino` for one file (some FUSE or network mounts) is
+ * outside what the stamp can see.
  */
 export function isForeignLockRecord(record: unknown, projectRoot: string): boolean {
   if (record === null || typeof record !== 'object') return false;
+  if (isReusedPidRecord(record as Record<string, unknown>)) return true;
   const { root, dirId, dbId } = record as Record<string, unknown>;
   if (typeof root !== 'string' || root === '' || root === canonicalProjectRoot(projectRoot)) return false;
   if (typeof dirId !== 'string' || dirId === '' || typeof dbId !== 'string' || dbId === '') return false;
   const current = readIndexIdentity(projectRoot);
   if (current === null) return false;
-  // A database with a second name is shared: pid liveness decides, as for a
-  // record of the older format.
+  // A database with a second name is shared, so the record is not a copied-in
+  // one and pid liveness decides it; a reused pid was already caught above.
   if (current.dbLinks > 1n) return false;
   return dirId !== current.dirId && dbId !== current.dbId;
 }
@@ -202,10 +279,12 @@ function encode(info: WriterLockInfo): string {
 }
 
 /**
- * Parse a writer record. Passes the stamp fields (`root`, `dirId`, `dbId`)
- * through when they are strings. With `projectRoot`, a record foreign to that
- * project ({@link isForeignLockRecord}) decodes as null, exactly like an
- * unreadable record, so callers see no holder.
+ * Parse a writer record. Passes the stamp fields (`root`, `dirId`, `dbId`,
+ * `pidStart`) through when they are strings, so a record rewritten from its
+ * decode ({@link markWriterReady}, a hand-back through {@link swapWriterLock})
+ * keeps them. With `projectRoot`, a record foreign to that project
+ * ({@link isForeignLockRecord}: its pid reused, or another project's) decodes
+ * as null, exactly like an unreadable record, so callers see no holder.
  */
 export function decodeWriterLockInfo(raw: string, projectRoot?: string): WriterLockInfo | null {
   try {
@@ -220,6 +299,7 @@ export function decodeWriterLockInfo(raw: string, projectRoot?: string): WriterL
       ...(typeof parsed.root === 'string' ? { root: parsed.root } : {}),
       ...(typeof parsed.dirId === 'string' ? { dirId: parsed.dirId } : {}),
       ...(typeof parsed.dbId === 'string' ? { dbId: parsed.dbId } : {}),
+      ...(typeof parsed.pidStart === 'string' ? { pidStart: parsed.pidStart } : {}),
     };
   } catch {
     return null;
@@ -230,16 +310,18 @@ export function decodeWriterLockInfo(raw: string, projectRoot?: string): WriterL
  * Atomically create `writer.pid` (or `rebuild.pid`) with {@link createLockFile}
  * (link-into-place, O_EXCL fallback). The record carries this project's
  * {@link lockStamp}. If the lock is held by a dead PID, is malformed, or holds
- * a foreign record (another project's, copied in with its `.codegraph/`: see
+ * a foreign record (its pid now names a process that started at another time,
+ * or it is another project's, copied in with its `.codegraph/`: see
  * {@link isForeignLockRecord}), it is stale: judged from one
  * {@link snapshotLock}, removed with {@link removeLockIfUnchanged} only if it is
  * still that very file (under the `.takeover` guard, so a competing taker's
  * fresh lock is not deleted; see the residuals in lock-takeover.ts). An
  * unreadable lock is left in place and reported taken. The create is then
  * tried once more whatever the removal found, busy included; it stays
- * exclusive and wins only if no lock is in place. Never steals from a live holder whose
- * record is not foreign, which includes every record written at this
- * project's root.
+ * exclusive and wins only if no lock is in place. Never steals from a live
+ * holder whose record is not foreign: one whose recorded start time matches
+ * its pid's (or that records none, or whose start time cannot be read now),
+ * and that is not another project's copied-in record.
  */
 export function tryAcquireWriterLock(
   projectRoot: string,
@@ -266,7 +348,8 @@ export function tryAcquireWriterLock(
     let existing: WriterLockInfo | null = null;
     try {
       snapshot = snapshotLock(pidPath);
-      // A foreign record decodes as null, so it is stale below like a dead one.
+      // A foreign record (reused pid, or another project's) decodes as null,
+      // so it is stale below like a dead one.
       if (snapshot) existing = decodeWriterLockInfo(snapshot.raw, projectRoot);
     } catch { /* unreadable */ }
     return { result: { kind: 'taken', existing, pidPath }, snapshot };
@@ -353,9 +436,9 @@ export function releaseWriterLock(projectRoot: string, lockName: 'writer.pid' | 
 }
 
 /**
- * Read current lock without acquiring. A foreign record (another project's,
- * copied in with its `.codegraph/`: {@link isForeignLockRecord}) reads as
- * null: no holder.
+ * Read current lock without acquiring. A foreign record (its pid reused by
+ * another process, or another project's copied in with its `.codegraph/`:
+ * {@link isForeignLockRecord}) reads as null: no holder.
  */
 export function readWriterLock(projectRoot: string, lockName: 'writer.pid' | 'rebuild.pid' = 'writer.pid'): WriterLockInfo | null {
   const pidPath = getWriterPidPath(projectRoot, lockName);
@@ -368,6 +451,12 @@ export function readWriterLock(projectRoot: string, lockName: 'writer.pid' | 're
 
 /**
  * Actionable message when another live process owns the writer lock (#1740).
+ * A dead holder's lock, and one whose pid now names a process that started
+ * after the record was written, are reclaimed without anyone acting, so this
+ * is reached for a live holder that is the record's writer, or for a record
+ * that cannot be checked that far (no recorded start time, or none readable
+ * now). Deleting the file is advised only if that process is not a CodeGraph
+ * server.
  */
 export function writerLockHeldMessage(
   existing: WriterLockInfo | null,
@@ -381,7 +470,7 @@ export function writerLockHeldMessage(
     'Only one live MCP writer may serve a project (auto-sync / index). ' +
     'Stop the other server (if it is the shared daemon, pick it in `codegraph daemon` to stop it; otherwise end the other MCP session), ' +
     'or unset CODEGRAPH_NO_DAEMON so additional clients proxy to the shared daemon. ' +
-    'If this is stale, delete ' + pidPath
+    'If that process is not a CodeGraph server, delete ' + pidPath
   );
 }
 
@@ -405,7 +494,11 @@ export function assertNoRebuild(root: string): void {
  * index`). Rebuild intent is separate from writer ownership: the rebuild takes
  * `rebuild.pid` BEFORE stopping the daemon, so its disconnected proxies cannot
  * reopen SQLite in the gap. A foreign `rebuild.pid` (another project's,
- * copied in with its `.codegraph/`) is not a rebuild of this one.
+ * copied in with its `.codegraph/`) is not a rebuild of this one, and neither
+ * is one whose pid now names a process that started at another time than the
+ * record says (a rebuild killed, its pid since reused): that record reads as no
+ * holder, so a killed rebuild does not block the next query wherever a start
+ * time was recorded.
  */
 export function isRebuildInProgress(root: string): boolean {
   const lock = readWriterLock(root, 'rebuild.pid');
