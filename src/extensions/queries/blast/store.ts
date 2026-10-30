@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
 import type { BlastNode } from './blast';
-import { questionableCallSql } from '../shared/questionable';
+import { candidateEdgeSql } from '../../resolution/suspects';
 import { MAX_IDS_PER_QUERY, chunks, placeholders } from '../shared/sql';
 
 /** One incoming edge, as the BFS consumes it. */
@@ -28,7 +28,7 @@ export interface IncomingEdge {
   source: string;
   target: string;
   kind: string;
-  /** A `calls` edge the resolver bound by name only (`../shared/questionable.ts`). */
+  /** A `calls` edge the resolver bound by name only: resolution's candidate edge (`candidateEdgeSql`, src/extensions/resolution/suspects.ts). */
   questionable: boolean;
 }
 
@@ -137,7 +137,7 @@ export function storeOver(conn: DatabaseConnection): BlastStore {
       const out: IncomingEdge[] = [];
       for (const ids of chunks(targetIds, MAX_IDS_PER_QUERY)) {
         const stmt = db.prepare(
-          `SELECT source, target, kind, ${questionableCallSql('edges')} AS questionable FROM edges
+          `SELECT source, target, kind, ${candidateEdgeSql('edges')} AS questionable FROM edges
            WHERE target IN (${placeholders(ids.length)}) AND kind IN (${placeholders(kinds.length)})`,
         );
         // SQLite returns the boolean expression as 0/1.

@@ -30,7 +30,7 @@ import { CodeGraph } from '../../../src';
 import { DatabaseConnection, getDatabasePath } from '../../../src/db';
 import { runOrphans } from '../../../src/extensions/queries/orphans/index';
 import { isGuess } from '../../../src/extensions/queries/orphans/orphans';
-import { isQuestionableCall } from '../../../src/extensions/queries/shared/questionable';
+import { isCandidateEdge } from '../../../src/extensions/resolution/suspects';
 
 /** Run git in `root` with a local identity; throws on failure so a broken fixture is loud. */
 function git(root: string, ...args: string[]): string {
@@ -326,24 +326,26 @@ describe('orphans vectors', () => {
 });
 
 // grep, blast and orphans mark the same call edges: for `calls`, orphans' guess
-// rule is the shared questionable-call predicate exactly. Other kinds keep
-// orphans' own rule, since the shared predicate is defined over calls only.
-describe('orphans guess rule agrees with the shared questionable-call predicate', () => {
-  const callVectors: Array<[Record<string, unknown>, boolean]> = [
-    [{ resolvedBy: 'exact-match', confidence: 0.9 }, true],
-    [{ resolvedBy: 'import' }, false],
-    [{ resolvedBy: 'instance-method', confidence: 0.85 }, true],
-    [{ resolvedBy: 'instance-method', confidence: 0.9 }, false],
-    [{ resolvedBy: 'fuzzy' }, true],
+// rule is resolution's isCandidateEdge exactly, files included (a same-file
+// exact match is certain). Other kinds keep orphans' own rule, since the
+// shared predicate is defined over calls only.
+describe('orphans guess rule agrees with resolution\'s isCandidateEdge', () => {
+  const callVectors: Array<[Record<string, unknown>, string, string, boolean]> = [
+    [{ resolvedBy: 'exact-match', confidence: 0.9 }, 'src/a.ts', 'src/b.ts', true],
+    [{ resolvedBy: 'exact-match', confidence: 0.9 }, 'src/a.ts', 'src/a.ts', false],
+    [{ resolvedBy: 'import' }, 'src/a.ts', 'src/b.ts', false],
+    [{ resolvedBy: 'instance-method', confidence: 0.85 }, 'src/a.ts', 'src/a.ts', true],
+    [{ resolvedBy: 'instance-method', confidence: 0.9 }, 'src/a.ts', 'src/b.ts', false],
+    [{ resolvedBy: 'fuzzy' }, 'src/a.ts', 'src/a.ts', true],
   ];
-  it.each(callVectors)('calls %j: isGuess === isQuestionableCall === %s', (m, expected) => {
-    expect(isQuestionableCall('calls', m)).toBe(expected);
-    expect(isGuess('calls', m)).toBe(expected);
+  it.each(callVectors)('calls %j from %s to %s: isGuess === isCandidateEdge === %s', (m, from, to, expected) => {
+    expect(isCandidateEdge('calls', m, from, to)).toBe(expected);
+    expect(isGuess('calls', m, from, to)).toBe(expected);
   });
 
   it('a non-call edge below LOW_CONFIDENCE is a guess under orphans\' own rule', () => {
     const m = { confidence: 0.5 };
-    expect(isGuess('references', m)).toBe(true);
-    expect(isQuestionableCall('references', m)).toBe(false);
+    expect(isGuess('references', m, 'src/a.ts', 'src/a.ts')).toBe(true);
+    expect(isCandidateEdge('references', m, 'src/a.ts', 'src/a.ts')).toBe(false);
   });
 });

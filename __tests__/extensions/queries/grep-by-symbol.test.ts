@@ -6,10 +6,11 @@
  *
  * One fixture repo is indexed once in beforeAll. Its line numbers, spans and
  * edges were checked against the real indexer: Worker::run is L5-L7, helper is
- * called by callerOne and callerTwo, farAway by longOne, and notes.txt is not
- * indexed. Paths sort as src/a/... < src/ab/... < src/B.ts under localeCompare
- * (code-unit order would put src/B.ts first), so the cap and ranking vectors
- * also pin the localeCompare rule.
+ * called by callerOne and callerTwo, farAway by longOne (each an exact-match
+ * call from the target's own file, so certain, not questionable), and
+ * notes.txt is not indexed. Paths sort as src/a/... < src/ab/... < src/B.ts
+ * under localeCompare (code-unit order would put src/B.ts first), so the cap
+ * and ranking vectors also pin the localeCompare rule.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -330,7 +331,7 @@ describe('formatting', () => {
       [
         '"TOKEN" — 2 hits in 2 symbols across 1 files (searched 1 indexed files)',
         '',
-        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges (1 questionable)',
+        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges',
         '  L2: return "TOKEN far";',
         '',
         'zeroAb · function · src/ab/other.ts:L10-L12 · 0 in-edges',
@@ -347,10 +348,10 @@ describe('formatting', () => {
       [
         `"TOKEN" — 7 hits in 7 symbols across 3 files (searched ${INDEXED_COUNT} indexed files)`,
         '',
-        'helper · function · src/a/service.ts:L10-L12 · 2 in-edges (2 questionable)',
+        'helper · function · src/a/service.ts:L10-L12 · 2 in-edges',
         '  L11: return "TOKEN helper";',
         '',
-        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges (1 questionable)',
+        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges',
         '  L2: return "TOKEN far";',
         '',
         'src/a/service.ts (module level) · 0 in-edges',

@@ -1,20 +1,25 @@
 /**
  * grep marks questionable in-edges.
  *
- * A questionable edge is a `calls` edge the resolver bound by name only
- * (src/extensions/queries/shared/questionable.ts). Without strict, a group's
+ * A questionable edge is a `calls` edge resolution's candidate predicate
+ * accepts (`candidateEdgeSql` / `isCandidateEdge` in
+ * src/extensions/resolution/suspects.ts): bound by name across files, fuzzy,
+ * or an instance-method guess below 0.9. A same-file exact-match call is
+ * certain. Without strict, a group's
  * inDegree still counts them and the group carries `questionableInDegree`
  * (present only when > 0), and the text header reads
  * `N in-edges (Q questionable)`. With strict (CLI `--strict`, MCP
  * `strict: true`), inDegree leaves them out, groups rank by that count, and
  * the result carries `strict: true`.
  *
- * Fixture: lib.ts `alpha` is called by three same-file functions (resolvedBy
- * 'exact-match': questionable), and has no other in-edge. `beta` is called once
- * from use.ts through an import (resolvedBy 'import': certain), and that
- * file's `import { beta }` adds an `imports` edge onto beta, which grep's
- * in-degree also counts: beta has 2 certain in-edges. alpha's 3 against beta's
- * 2 keeps the unstrict ranking free of a tie. Both bodies hold MARKER, so one
+ * Fixture: lib.ts `alpha` is called by three functions in callers.ts that
+ * name it without importing it (resolvedBy 'exact-match' across files:
+ * questionable) and by `sibling` in lib.ts itself (exact-match in the same
+ * file: certain), and has no other in-edge: 4 in-edges, 3 questionable. `beta`
+ * is called once from use.ts through an import (resolvedBy 'import': certain),
+ * and that file's `import { beta }` adds an `imports` edge onto beta, which
+ * grep's in-degree also counts: beta has 2 certain in-edges. alpha's 4 against
+ * beta's 2 unstrict, and 1 against 2 strict, keep both rankings free of a tie. Both bodies hold MARKER, so one
  * pattern hits both groups. Indexed once in beforeAll and shared, read-only.
  *
  * Entry points mirror grep-extension.test.ts: the CLI through the registered
@@ -34,7 +39,7 @@ import {
   registerExtensionCommands,
 } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
-import { isQuestionableCall, questionableCallSql } from '../../../src/extensions/queries/shared/questionable';
+import { candidateEdgeSql, isCandidateEdge } from '../../../src/extensions/resolution/suspects';
 
 // node:sqlite through require, as wal-heal.test.ts does: vitest's import transform does not resolve it.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -50,6 +55,13 @@ const FILES: Record<string, string> = {
     "  return 'MARKER beta';",
     '}',
     '',
+    'export function sibling(): string {',
+    '  return alpha();',
+    '}',
+    '',
+  ].join('\n'),
+  // No import of alpha: each call is bound by name across files.
+  'callers.ts': [
     'export function firstCaller(): string {',
     '  return alpha();',
     '}',
@@ -93,38 +105,53 @@ afterAll(() => {
 // The predicate's pin.
 // ---------------------------------------------------------------------------
 
-/** [kind, metadata, questionable?] */
-const VECTORS: Array<[string, Record<string, unknown> | null, boolean]> = [
-  ['calls', { resolvedBy: 'exact-match', confidence: 0.9 }, true],
-  ['calls', { resolvedBy: 'fuzzy' }, true],
-  ['calls', { resolvedBy: 'instance-method', confidence: 0.85 }, true],
-  ['calls', { resolvedBy: 'instance-method' }, false],
-  ['calls', { resolvedBy: 'import' }, false],
-  ['calls', { resolvedBy: 'instance-method', confidence: 0.9 }, false],
+/**
+ * [kind, metadata, source node id, target node id, questionable?]. NODES gives
+ * the ids' files: s and t share one.ts, x is two.ts, and z is in no row (its
+ * file reads as null, so the pair is not same-file).
+ */
+const NODES: Array<[string, string]> = [['s', 'one.ts'], ['t', 'one.ts'], ['x', 'two.ts']];
+const fileOf = (id: string): string | null => NODES.find(([n]) => n === id)?.[1] ?? null;
+const VECTORS: Array<[string, Record<string, unknown> | null, string, string, boolean]> = [
+  ['calls', { resolvedBy: 'exact-match', confidence: 0.9 }, 's', 'x', true],
+  ['calls', { resolvedBy: 'exact-match', confidence: 0.9 }, 's', 't', false],
+  ['calls', { resolvedBy: 'exact-match' }, 'z', 't', true],
+  ['calls', { resolvedBy: 'fuzzy' }, 's', 't', true],
+  ['calls', { resolvedBy: 'instance-method', confidence: 0.85 }, 's', 'x', true],
+  ['calls', { resolvedBy: 'instance-method' }, 's', 'x', false],
+  ['calls', { resolvedBy: 'import' }, 's', 'x', false],
+  ['calls', { resolvedBy: 'instance-method', confidence: 0.9 }, 's', 'x', false],
   // Non-numeric confidence follows json_extract: a JSON boolean is 1/0, anything else (null, a string) counts as 1.
-  ['calls', { resolvedBy: 'instance-method', confidence: false }, true],
-  ['calls', { resolvedBy: 'instance-method', confidence: true }, false],
-  ['calls', { resolvedBy: 'instance-method', confidence: '0.5' }, false],
-  ['calls', { resolvedBy: 'instance-method', confidence: null }, false],
-  ['references', { resolvedBy: 'exact-match' }, false],
-  ['calls', null, false],
+  ['calls', { resolvedBy: 'instance-method', confidence: false }, 's', 'x', true],
+  ['calls', { resolvedBy: 'instance-method', confidence: true }, 's', 'x', false],
+  ['calls', { resolvedBy: 'instance-method', confidence: '0.5' }, 's', 'x', false],
+  ['calls', { resolvedBy: 'instance-method', confidence: null }, 's', 'x', false],
+  ['references', { resolvedBy: 'exact-match' }, 's', 'x', false],
+  ['calls', null, 's', 'x', false],
 ];
 
-describe('isQuestionableCall and questionableCallSql', () => {
-  for (const [kind, metadata, want] of VECTORS) {
-    it(`isQuestionableCall(${kind}, ${JSON.stringify(metadata)}) is ${want}`, () => {
-      expect(isQuestionableCall(kind, metadata)).toBe(want);
+describe('isCandidateEdge and candidateEdgeSql', () => {
+  for (const [kind, metadata, source, target, want] of VECTORS) {
+    it(`isCandidateEdge(${kind}, ${JSON.stringify(metadata)}, ${source}->${target}) is ${want}`, () => {
+      expect(isCandidateEdge(kind, metadata, fileOf(source), fileOf(target))).toBe(want);
     });
   }
 
-  it('questionableCallSql agrees with isQuestionableCall on every vector (in-memory node:sqlite)', () => {
+  it('candidateEdgeSql agrees with isCandidateEdge on every vector (in-memory node:sqlite)', () => {
     const db = new DatabaseSync(':memory:');
     try {
-      const stmt = db.prepare(`SELECT ${questionableCallSql('e')} AS q FROM (SELECT ? AS kind, ? AS metadata) e`);
-      for (const [kind, metadata, want] of VECTORS) {
-        const row = stmt.get(kind, metadata === null ? null : JSON.stringify(metadata)) as { q: number | bigint | null };
-        expect(Number(row.q ?? 0) !== 0, `${kind} ${JSON.stringify(metadata)}`).toBe(want);
-        expect(isQuestionableCall(kind, metadata)).toBe(want);
+      // candidateEdgeSql reads each end's file through subselects on nodes(id, file_path).
+      db.exec('CREATE TABLE nodes (id TEXT PRIMARY KEY, file_path TEXT)');
+      const insert = db.prepare('INSERT INTO nodes (id, file_path) VALUES (?, ?)');
+      for (const [id, file] of NODES) insert.run(id, file);
+      const stmt = db.prepare(
+        `SELECT ${candidateEdgeSql('e')} AS q FROM (SELECT ? AS source, ? AS target, ? AS kind, ? AS metadata) e`,
+      );
+      for (const [kind, metadata, source, target, want] of VECTORS) {
+        const row = stmt.get(source, target, kind, metadata === null ? null : JSON.stringify(metadata)) as { q: number | bigint | null };
+        const label = `${kind} ${JSON.stringify(metadata)} ${source}->${target}`;
+        expect(Number(row.q ?? 0) !== 0, label).toBe(want);
+        expect(isCandidateEdge(kind, metadata, fileOf(source), fileOf(target)), label).toBe(want);
       }
     } finally {
       db.close();
@@ -137,24 +164,26 @@ describe('isQuestionableCall and questionableCallSql', () => {
 // ---------------------------------------------------------------------------
 
 describe('fixture premise', () => {
-  it('alpha has three exact-match (questionable) call edges and nothing else; beta one import-resolved call and one imports edge, neither questionable', () => {
+  it('alpha has three cross-file exact-match (questionable) call edges and one same-file exact-match (certain) call; beta one import-resolved call and one imports edge, neither questionable', () => {
     const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'), { readOnly: true });
     try {
       const rows = db.prepare(
-        `SELECT t.name AS target, s.name AS source, e.kind AS kind, e.metadata AS metadata
+        `SELECT t.name AS target, s.name AS source, e.kind AS kind, e.metadata AS metadata,
+                s.file_path AS sf, t.file_path AS tf
            FROM edges e JOIN nodes t ON t.id = e.target JOIN nodes s ON s.id = e.source
           WHERE e.kind IN ('calls', 'references', 'imports', 'implements', 'extends') AND t.name IN ('alpha', 'beta')
           ORDER BY t.name, e.kind, s.name`,
-      ).all() as Array<{ target: string; source: string; kind: string; metadata: string | null }>;
+      ).all() as Array<{ target: string; source: string; kind: string; metadata: string | null; sf: string; tf: string }>;
       const seen = rows.map(r => {
         const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : null;
-        return { target: r.target, kind: r.kind, source: r.source, resolvedBy: meta?.resolvedBy, questionable: isQuestionableCall(r.kind, meta) };
+        return { target: r.target, kind: r.kind, source: r.source, resolvedBy: meta?.resolvedBy, questionable: isCandidateEdge(r.kind, meta, r.sf, r.tf) };
       });
       // The imports edge's source is use.ts's file node; its metadata is not pinned, only that it is not questionable.
       const beta = seen.filter(e => e.target === 'beta');
       expect(seen.filter(e => e.target === 'alpha')).toEqual([
         { target: 'alpha', kind: 'calls', source: 'firstCaller', resolvedBy: 'exact-match', questionable: true },
         { target: 'alpha', kind: 'calls', source: 'secondCaller', resolvedBy: 'exact-match', questionable: true },
+        { target: 'alpha', kind: 'calls', source: 'sibling', resolvedBy: 'exact-match', questionable: false },
         { target: 'alpha', kind: 'calls', source: 'thirdCaller', resolvedBy: 'exact-match', questionable: true },
       ]);
       expect(beta).toHaveLength(2);
@@ -243,7 +272,7 @@ describe('grep questionable marks', () => {
   function expectMarkedJson(r: Result): void {
     const alpha = groupNamed(r, 'alpha');
     const beta = groupNamed(r, 'beta');
-    expect(alpha.inDegree).toBe(3);
+    expect(alpha.inDegree).toBe(4);
     expect(alpha.questionableInDegree).toBe(3);
     expect(beta.inDegree).toBe(2);
     expect('questionableInDegree' in beta).toBe(false);
@@ -251,7 +280,7 @@ describe('grep questionable marks', () => {
     expect('strict' in r).toBe(false);
   }
   function expectMarkedText(text: string): void {
-    expect(headerLine(text, 'alpha')).toContain('· 3 in-edges (3 questionable)');
+    expect(headerLine(text, 'alpha')).toContain('· 4 in-edges (3 questionable)');
     const beta = headerLine(text, 'beta');
     expect(beta).toContain('· 2 in-edges');
     expect(beta).not.toContain('questionable');
@@ -259,7 +288,7 @@ describe('grep questionable marks', () => {
   function expectStrictJson(r: Result): void {
     const alpha = groupNamed(r, 'alpha');
     const beta = groupNamed(r, 'beta');
-    expect(alpha.inDegree).toBe(0);
+    expect(alpha.inDegree).toBe(1); // the same-file sibling call is certain and stays
     expect('questionableInDegree' in alpha).toBe(false);
     expect(beta.inDegree).toBe(2);
     expect('questionableInDegree' in beta).toBe(false);
@@ -267,31 +296,31 @@ describe('grep questionable marks', () => {
     expect(r.strict).toBe(true);
   }
 
-  it('CLI --json without --strict: alpha inDegree 3 with questionableInDegree 3, beta 2 unmarked, alpha first, no strict key', async () => {
+  it('CLI --json without --strict: alpha inDegree 4 with questionableInDegree 3, beta 2 unmarked, alpha first, no strict key', async () => {
     expectMarkedJson(await cliJson([]));
   });
 
-  it('MCP json without strict: alpha inDegree 3 with questionableInDegree 3, beta 2 unmarked, alpha first, no strict key', async () => {
+  it('MCP json without strict: alpha inDegree 4 with questionableInDegree 3, beta 2 unmarked, alpha first, no strict key', async () => {
     expectMarkedJson(await mcpJson({}));
   });
 
-  it('CLI text without --strict: alpha header reads "3 in-edges (3 questionable)", beta "2 in-edges" unmarked', async () => {
+  it('CLI text without --strict: alpha header reads "4 in-edges (3 questionable)", beta "2 in-edges" unmarked', async () => {
     const out = await runCommand(['grep', '-p', root, 'MARKER']);
     expect(out.exitCode).toBe(0);
     expectMarkedText(out.stdout);
   });
 
-  it('MCP text without strict: alpha header reads "3 in-edges (3 questionable)", beta "2 in-edges" unmarked', async () => {
+  it('MCP text without strict: alpha header reads "4 in-edges (3 questionable)", beta "2 in-edges" unmarked', async () => {
     const res = await mcpText({});
     expect(res.isError).toBeFalsy();
     expectMarkedText(res.text);
   });
 
-  it('CLI --json --strict: alpha inDegree 0 unmarked, beta 2, beta first, strict: true', async () => {
+  it('CLI --json --strict: alpha inDegree 1 (the same-file call) unmarked, beta 2, beta first, strict: true', async () => {
     expectStrictJson(await cliJson(['--strict']));
   });
 
-  it('MCP json strict: true: alpha inDegree 0 unmarked, beta 2, beta first, strict: true', async () => {
+  it('MCP json strict: true: alpha inDegree 1 (the same-file call) unmarked, beta 2, beta first, strict: true', async () => {
     expectStrictJson(await mcpJson({ strict: true }));
   });
 

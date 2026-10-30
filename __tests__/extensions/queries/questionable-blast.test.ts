@@ -2,8 +2,10 @@
  * Questionable marks and `--strict` for `codegraph blast`.
  *
  * A dependent the normal walk reaches only through a questionable call edge
- * (`src/extensions/queries/shared/questionable.ts`: a `calls` edge bound by
- * name only) carries `questionable: true`; `--strict` (CLI) / `strict: true`
+ * (resolution's `candidateEdgeSql` in `src/extensions/resolution/suspects.ts`:
+ * a `calls` edge bound by name across files, fuzzy, or an instance-method
+ * guess below 0.9; a same-file exact-match call is certain) carries
+ * `questionable: true`; `--strict` (CLI) / `strict: true`
  * (MCP) leaves those edges out of the walk, so the dependent is absent and the
  * JSON report carries top-level `strict: true`.
  *
@@ -13,15 +15,16 @@
  * fresh commander program for the CLI (in-process rather than the built
  * binary, so the gate does not depend on a rebuilt dist/).
  *
- * Fixture: target.ts holds `target` and `localCaller` (a same-file call, which
- * the TypeScript resolver binds as resolvedBy 'exact-match' — questionable);
+ * Fixture: target.ts holds `target` and `sibling` (a same-file call, which the
+ * TypeScript resolver binds as resolvedBy 'exact-match' — certain under the
+ * same-file rule, so never marked). loose.ts's `looseCaller` calls `target`
+ * by name without importing it (a cross-file exact-match — questionable).
  * other.ts imports `target` into `importer` (resolvedBy 'import' — certain).
- * outer.ts imports `localCaller` into `outer` (certain), so `outer` is reached
- * at depth 2 only through the questionable hop. The text and markdown module
- * lists leave out dependents inside changed files (localCaller is in the
- * changed target.ts), so those surfaces are checked on `outer`.
+ * outer.ts imports `looseCaller` into `outer` (certain), so `outer` is reached
+ * at depth 2 only through the questionable hop. The text and markdown surfaces
+ * are checked on `outer`, the json on all four.
  * C1 is tagged, C2 edits only target()'s body, so the diff seeds `target`
- * alone. Indexing three small files is cheap, so it is built once in beforeAll.
+ * alone. Indexing four small files is cheap, so it is built once in beforeAll.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -34,6 +37,7 @@ import { ToolHandler } from '../../../src/mcp/tools';
 import { __resetExtensionsForTests, registerExtension } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
 import { parseBlastArgv } from '../../../src/extensions/queries/blast/index';
+import { isCandidateEdge } from '../../../src/extensions/resolution/suspects';
 
 /** Run git in `root` with a local identity; throws on failure so a broken fixture is loud. */
 function git(root: string, ...args: string[]): string {
@@ -54,8 +58,10 @@ function write(root: string, rel: string, content: string): void {
 
 const TARGET =
   'export function target(): number {\n  return 1;\n}\n\n' +
-  'export function localCaller(): number {\n  return target();\n}\n';
-const OUTER = "import { localCaller } from './target';\n\nexport function outer(): number {\n  return localCaller();\n}\n";
+  'export function sibling(): number {\n  return target();\n}\n';
+/** No import of `target`: the resolver binds the call by name across files. */
+const LOOSE = 'export function looseCaller(): number {\n  return target();\n}\n';
+const OUTER = "import { looseCaller } from './loose';\n\nexport function outer(): number {\n  return looseCaller();\n}\n";
 const OTHER = "import { target } from './target';\n\nexport function importer(): number {\n  return target();\n}\n";
 
 interface ImpactedJson { name: string; questionable?: unknown; [k: string]: unknown }
@@ -69,6 +75,7 @@ beforeAll(async () => {
   write(repo, 'src/target.ts', TARGET);
   write(repo, 'src/other.ts', OTHER);
   write(repo, 'src/outer.ts', OUTER);
+  write(repo, 'src/loose.ts', LOOSE);
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'C1');
   git(repo, 'tag', 'C1');
@@ -86,25 +93,41 @@ afterAll(() => {
 const byName = (r: ReportJson, name: string) => r.impacted.find((s) => s.name === name);
 
 describe('fixture premise', () => {
-  it('indexes localCaller→target as exact-match, importer→target and outer→localCaller as import', () => {
-    // require, not import: vite cannot resolve the node:sqlite builtin (as in absent-member-calls.test.ts).
-    const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
-    const db = new DatabaseSync(path.join(repo, '.codegraph', 'codegraph.db'), { readOnly: true });
-    try {
-      const rows = db.prepare(
-        `SELECT s.name AS caller, json_extract(e.metadata, '$.resolvedBy') AS by
-           FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
-          WHERE e.kind = 'calls' AND t.name IN ('target', 'localCaller')`,
-      ).all() as Array<{ caller: string; by: string | null }>;
-      const by = Object.fromEntries(rows.map((r) => [r.caller, r.by]));
-      expect(by.localCaller).toBe('exact-match');
-      expect(by.importer).toBe('import');
-      expect(by.outer).toBe('import');
-    } finally {
-      db.close();
-    }
+  it('indexes sibling→target and looseCaller→target as exact-match (only the cross-file one a candidate), importer→target and outer→looseCaller as import', () => {
+    const rows = callRows(repo);
+    expect(rows['sibling->target']).toEqual({ by: 'exact-match', candidate: false });
+    expect(rows['looseCaller->target']).toEqual({ by: 'exact-match', candidate: true });
+    expect(rows['importer->target']).toEqual({ by: 'import', candidate: false });
+    expect(rows['outer->looseCaller']).toEqual({ by: 'import', candidate: false });
   });
 });
+
+/**
+ * Every `calls` edge in `root`'s index as `caller->callee` → its resolvedBy and
+ * whether resolution's candidate predicate (the one blast walks with) holds.
+ */
+function callRows(root: string): Record<string, { by: string | null; candidate: boolean }> {
+  // require, not import: vite cannot resolve the node:sqlite builtin (as in absent-member-calls.test.ts).
+  const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+  const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'), { readOnly: true });
+  try {
+    const rows = db.prepare(
+      `SELECT s.name AS caller, t.name AS callee, e.kind AS kind, e.metadata AS metadata,
+              s.file_path AS sf, t.file_path AS tf
+         FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+        WHERE e.kind = 'calls'`,
+    ).all() as Array<{ caller: string; callee: string; kind: string; metadata: string | null; sf: string; tf: string }>;
+    return Object.fromEntries(rows.map((r) => {
+      const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : null;
+      return [`${r.caller}->${r.callee}`, {
+        by: (meta?.resolvedBy as string | undefined) ?? null,
+        candidate: isCandidateEdge(r.kind, meta, r.sf, r.tf),
+      }];
+    }));
+  } finally {
+    db.close();
+  }
+}
 
 describe('parseBlastArgv --strict', () => {
   it('sets strict: true for --strict and leaves the key absent without it', () => {
@@ -137,13 +160,15 @@ describe('codegraph_blast questionable marks (MCP, in-process)', () => {
     return res.content[0].text;
   }
 
-  it('json: localCaller and outer are marked questionable, importer is not, and there is no strict key', async () => {
+  it('json: looseCaller and outer are marked questionable, importer and the same-file sibling are not, and there is no strict key', async () => {
     const r = JSON.parse(await call({ format: 'json' })) as ReportJson;
-    expect(byName(r, 'localCaller')?.questionable).toBe(true);
+    expect(byName(r, 'looseCaller')?.questionable).toBe(true);
     expect(byName(r, 'outer')?.questionable).toBe(true);
-    const importer = byName(r, 'importer');
-    expect(importer).toBeDefined();
-    expect(importer && 'questionable' in importer).toBe(false);
+    for (const name of ['importer', 'sibling']) {
+      const s = byName(r, name);
+      expect(s, name).toBeDefined();
+      expect(s && 'questionable' in s, name).toBe(false);
+    }
     expect('strict' in r).toBe(false);
   });
 
@@ -161,10 +186,11 @@ describe('codegraph_blast questionable marks (MCP, in-process)', () => {
     expect(text).toMatch(/— importer \([^)]*, depth \d+\)/);
   });
 
-  it('strict: true, json: importer present, localCaller and outer absent, nothing marked, strict: true at top level', async () => {
+  it('strict: true, json: importer and the same-file sibling present, looseCaller and outer absent, nothing marked, strict: true at top level', async () => {
     const r = JSON.parse(await call({ format: 'json', strict: true })) as ReportJson;
     expect(byName(r, 'importer')).toBeDefined();
-    expect(byName(r, 'localCaller')).toBeUndefined();
+    expect(byName(r, 'sibling')).toBeDefined();
+    expect(byName(r, 'looseCaller')).toBeUndefined();
     expect(byName(r, 'outer')).toBeUndefined();
     expect(r.impacted.some((s) => 'questionable' in s)).toBe(false);
     expect(r.strict).toBe(true);
@@ -181,16 +207,19 @@ describe('codegraph_blast questionable marks (MCP, in-process)', () => {
  * changed file's certain walk reaches carries no mark and survives strict, even
  * when a questionable route reaches it too, from the same file or another.
  *
- * Own repo. a.ts: `aTarget` and `aLocal` (same-file call: exact-match,
- * questionable); x.ts's `xBoth` imports and calls both, so it is reached from
- * a.ts by a questionable route (aTarget ← aLocal ← xBoth) and a certain one
- * (aTarget ← xBoth). p.ts: `pTarget` and `pLocal` (exact-match); q.ts: `qTarget`;
- * y.ts's `yBoth` calls pLocal and qTarget through imports, so from p.ts it is
- * reached only through the questionable pLocal hop, from q.ts by a certain one.
- * Depth boundary: d.ts holds `dTarget` and `dNear`, which calls dTarget in
- * the same file (exact-match, questionable: 1 hop) and `h2` through an import;
- * h2.ts's `h2` calls h1.ts's `h1`, which calls `dTarget`, all through imports.
- * So dNear is reached by a 1-hop questionable route and a 3-hop certain one
+ * Own repo. Every questionable hop is a cross-file call by name with no
+ * import (exact-match across files). a.ts: `aTarget` and `aSibling` (a
+ * same-file exact-match call: certain, never marked); al.ts: `aLoose` calls
+ * aTarget unimported (questionable); x.ts's `xBoth` imports and calls aTarget
+ * and aLoose, so it is reached from a.ts by a questionable route
+ * (aTarget ← aLoose ← xBoth) and a certain one (aTarget ← xBoth). p.ts:
+ * `pTarget`; pl.ts: `pLoose` calls pTarget unimported; q.ts: `qTarget`; y.ts's
+ * `yBoth` calls pLoose and qTarget through imports, so from p.ts it is reached
+ * only through the questionable pLoose hop, from q.ts by a certain one.
+ * Depth boundary: d.ts holds `dTarget`; dn.ts's `dNear` calls dTarget
+ * unimported (questionable: 1 hop) and `h2` through an import; h2.ts's `h2`
+ * calls h1.ts's `h1`, which calls `dTarget`, all through imports. So dNear is
+ * reached by a 1-hop questionable route and a 3-hop certain one
  * (dTarget ← h1 ← h2 ← dNear); whether it is marked depends on the depth.
  * History: M1 (tagged), then one commit per changed body, tagged after a.ts
  * (MA), after q.ts (MQ) and after p.ts (MP), d.ts last. Bases pick the
@@ -198,13 +227,15 @@ describe('codegraph_blast questionable marks (MCP, in-process)', () => {
  * for case b; d.ts reaches nothing in a, p, q or y); MP → d alone (depth).
  */
 describe('codegraph_blast mixed questionable and certain routes (MCP, in-process)', () => {
-  const A = 'export function aTarget(): number {\n  return 1;\n}\n\nexport function aLocal(): number {\n  return aTarget();\n}\n';
-  const X = "import { aTarget, aLocal } from './a';\n\nexport function xBoth(): number {\n  return aTarget() + aLocal();\n}\n";
-  const P = 'export function pTarget(): number {\n  return 1;\n}\n\nexport function pLocal(): number {\n  return pTarget();\n}\n';
+  const A = 'export function aTarget(): number {\n  return 1;\n}\n\nexport function aSibling(): number {\n  return aTarget();\n}\n';
+  const AL = 'export function aLoose(): number {\n  return aTarget();\n}\n';
+  const X = "import { aTarget } from './a';\nimport { aLoose } from './al';\n\nexport function xBoth(): number {\n  return aTarget() + aLoose();\n}\n";
+  const P = 'export function pTarget(): number {\n  return 1;\n}\n';
+  const PL = 'export function pLoose(): number {\n  return pTarget();\n}\n';
   const Q = 'export function qTarget(): number {\n  return 1;\n}\n';
-  const Y = "import { pLocal } from './p';\nimport { qTarget } from './q';\n\nexport function yBoth(): number {\n  return pLocal() + qTarget();\n}\n";
-  const D = "import { h2 } from './h2';\n\nexport function dTarget(): number {\n  return 1;\n}\n\n" +
-    'export function dNear(): number {\n  return dTarget() + h2();\n}\n';
+  const Y = "import { pLoose } from './pl';\nimport { qTarget } from './q';\n\nexport function yBoth(): number {\n  return pLoose() + qTarget();\n}\n";
+  const D = 'export function dTarget(): number {\n  return 1;\n}\n';
+  const DN = "import { h2 } from './h2';\n\nexport function dNear(): number {\n  return dTarget() + h2();\n}\n";
   const H1 = "import { dTarget } from './d';\n\nexport function h1(): number {\n  return dTarget();\n}\n";
   const H2 = "import { h1 } from './h1';\n\nexport function h2(): number {\n  return h1();\n}\n";
 
@@ -214,8 +245,8 @@ describe('codegraph_blast mixed questionable and certain routes (MCP, in-process
   beforeAll(async () => {
     mixed = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-blast-mixed-')));
     git(mixed, 'init', '-q');
-    for (const [rel, body] of [['src/a.ts', A], ['src/x.ts', X], ['src/p.ts', P], ['src/q.ts', Q], ['src/y.ts', Y],
-      ['src/d.ts', D], ['src/h1.ts', H1], ['src/h2.ts', H2]]) {
+    for (const [rel, body] of [['src/a.ts', A], ['src/al.ts', AL], ['src/x.ts', X], ['src/p.ts', P], ['src/pl.ts', PL],
+      ['src/q.ts', Q], ['src/y.ts', Y], ['src/d.ts', D], ['src/dn.ts', DN], ['src/h1.ts', H1], ['src/h2.ts', H2]]) {
       write(mixed, rel!, body!);
     }
     git(mixed, 'add', '-A');
@@ -262,44 +293,39 @@ describe('codegraph_blast mixed questionable and certain routes (MCP, in-process
     return r;
   }
 
-  it('fixture premise: same-file calls are exact-match, the imported calls are import', () => {
-    const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
-    const db = new DatabaseSync(path.join(mixed, '.codegraph', 'codegraph.db'), { readOnly: true });
-    try {
-      const rows = db.prepare(
-        `SELECT s.name AS caller, t.name AS callee, json_extract(e.metadata, '$.resolvedBy') AS by
-           FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
-          WHERE e.kind = 'calls'`,
-      ).all() as Array<{ caller: string; callee: string; by: string | null }>;
-      const by = Object.fromEntries(rows.map((r) => [`${r.caller}->${r.callee}`, r.by]));
-      expect(by['aLocal->aTarget']).toBe('exact-match');
-      expect(by['xBoth->aTarget']).toBe('import');
-      expect(by['xBoth->aLocal']).toBe('import');
-      expect(by['pLocal->pTarget']).toBe('exact-match');
-      expect(by['yBoth->pLocal']).toBe('import');
-      expect(by['yBoth->qTarget']).toBe('import');
-      expect(by['dNear->dTarget']).toBe('exact-match');
-      expect(by['h1->dTarget']).toBe('import');
-      expect(by['h2->h1']).toBe('import');
-      expect(by['dNear->h2']).toBe('import');
-    } finally {
-      db.close();
-    }
+  it('fixture premise: unimported cross-file calls are exact-match candidates, the same-file call is exact-match and not one, the imported calls are import', () => {
+    const rows = callRows(mixed);
+    const loose = { by: 'exact-match', candidate: true };
+    const certain = { by: 'import', candidate: false };
+    expect(rows['aSibling->aTarget']).toEqual({ by: 'exact-match', candidate: false });
+    expect(rows['aLoose->aTarget']).toEqual(loose);
+    expect(rows['xBoth->aTarget']).toEqual(certain);
+    expect(rows['xBoth->aLoose']).toEqual(certain);
+    expect(rows['pLoose->pTarget']).toEqual(loose);
+    expect(rows['yBoth->pLoose']).toEqual(certain);
+    expect(rows['yBoth->qTarget']).toEqual(certain);
+    expect(rows['dNear->dTarget']).toEqual(loose);
+    expect(rows['h1->dTarget']).toEqual(certain);
+    expect(rows['h2->h1']).toEqual(certain);
+    expect(rows['dNear->h2']).toEqual(certain);
   });
 
-  it('(a) same file: xBoth, reached by a questionable and a certain route from a.ts, is unmarked and survives strict', async () => {
+  it('(a) same changed file: xBoth, reached by a questionable and a certain route from a.ts, is unmarked and survives strict, as is the same-file aSibling', async () => {
     const r = await blastJson('M1');
-    expect(byName(r, 'aLocal')?.questionable).toBe(true); // the questionable route exists
-    const x = byName(r, 'xBoth');
-    expect(x).toBeDefined();
-    expect(x && 'questionable' in x).toBe(false);
+    expect(byName(r, 'aLoose')?.questionable).toBe(true); // the questionable route exists
+    for (const name of ['xBoth', 'aSibling']) { // aSibling: a same-file exact-match call is certain
+      const d = byName(r, name);
+      expect(d, name).toBeDefined();
+      expect(d && 'questionable' in d, name).toBe(false);
+    }
     const s = await blastJson('M1', true);
-    expect(byName(s, 'aLocal')).toBeUndefined();
+    expect(byName(s, 'aLoose')).toBeUndefined();
     expect(byName(s, 'xBoth')).toBeDefined();
+    expect(byName(s, 'aSibling')).toBeDefined();
     expect(s.strict).toBe(true);
   });
 
-  it('(b) control: q.ts unchanged (base MQ changes p.ts and d.ts), yBoth is reached only through p.ts\'s questionable pLocal hop, so it is marked and strict drops it', async () => {
+  it('(b) control: q.ts unchanged (base MQ changes p.ts and d.ts), yBoth is reached only through p.ts\'s questionable pLoose hop, so it is marked and strict drops it', async () => {
     const r = await blastJson('MQ');
     expect(byName(r, 'yBoth')?.questionable).toBe(true);
     expect(byName(await blastJson('MQ', true), 'yBoth')).toBeUndefined();
@@ -307,7 +333,7 @@ describe('codegraph_blast mixed questionable and certain routes (MCP, in-process
 
   it('(b) cross file: with p.ts and q.ts changed, q.ts reaches yBoth certainly, so it is unmarked and survives strict', async () => {
     const r = await blastJson('MA');
-    expect(byName(r, 'pLocal')?.questionable).toBe(true); // p.ts's route to yBoth is still questionable
+    expect(byName(r, 'pLoose')?.questionable).toBe(true); // p.ts's route to yBoth is still questionable
     const y = byName(r, 'yBoth');
     expect(y).toBeDefined();
     expect(y && 'questionable' in y).toBe(false);
@@ -355,14 +381,16 @@ describe('codegraph blast questionable marks (CLI, registered commander command)
     }
   }
 
-  it('--format json: localCaller and outer are marked questionable, importer is not, and there is no strict key', async () => {
+  it('--format json: looseCaller and outer are marked questionable, importer and the same-file sibling are not, and there is no strict key', async () => {
     const res = await cli(['--format', 'json']);
     const r = JSON.parse(res.stdout) as ReportJson;
-    expect(byName(r, 'localCaller')?.questionable).toBe(true);
+    expect(byName(r, 'looseCaller')?.questionable).toBe(true);
     expect(byName(r, 'outer')?.questionable).toBe(true);
-    const importer = byName(r, 'importer');
-    expect(importer).toBeDefined();
-    expect(importer && 'questionable' in importer).toBe(false);
+    for (const name of ['importer', 'sibling']) {
+      const s = byName(r, name);
+      expect(s, name).toBeDefined();
+      expect(s && 'questionable' in s, name).toBe(false);
+    }
     expect('strict' in r).toBe(false);
   });
 
@@ -374,12 +402,13 @@ describe('codegraph blast questionable marks (CLI, registered commander command)
     expect(imp).toMatch(/\[depth \d+\]$/);
   });
 
-  it('--strict --format json: importer present, localCaller and outer absent, nothing marked, strict: true at top level', async () => {
+  it('--strict --format json: importer and the same-file sibling present, looseCaller and outer absent, nothing marked, strict: true at top level', async () => {
     const res = await cli(['--strict', '--format', 'json']);
     expect(res.exitCode ?? 0).toBe(0);
     const r = JSON.parse(res.stdout) as ReportJson;
     expect(byName(r, 'importer')).toBeDefined();
-    expect(byName(r, 'localCaller')).toBeUndefined();
+    expect(byName(r, 'sibling')).toBeDefined();
+    expect(byName(r, 'looseCaller')).toBeUndefined();
     expect(byName(r, 'outer')).toBeUndefined();
     expect(r.impacted.some((s) => 'questionable' in s)).toBe(false);
     expect(r.strict).toBe(true);

@@ -3,7 +3,9 @@
  * (those whose real location is inside the project; see searchablePaths), with
  * every hit attributed to its innermost enclosing symbol and the groups ranked
  * by in-degree (incoming calls/references/imports/implements/extends).
- * Questionable incoming calls (bound by name only; ../shared/questionable.ts)
+ * Questionable incoming calls (bound by name only: resolution's candidate edge,
+ * candidateEdgeSql in src/extensions/resolution/suspects.ts; a same-file
+ * exact-match call is certain, not questionable)
  * stay in the in-degree and are also reported as `questionableInDegree`; under
  * `strict` they are left out of the in-degree, and so of the ranking.
  *
@@ -23,7 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
-import { questionableCallSql } from '../shared/questionable';
+import { candidateEdgeSql } from '../../resolution/suspects';
 
 /** graft's DEFAULT_MAX_HITS. */
 export const DEFAULT_MAX_HITS = 300;
@@ -64,11 +66,11 @@ const ENCLOSING_SQL = `
   LIMIT 1`;
 /**
  * Served by idx_edges_target_kind (target, kind). `n` counts every in-degree
- * edge; `q` counts those that are questionable calls (questionableCallSql),
+ * edge; `q` counts those that are questionable calls (candidateEdgeSql),
  * so one statement gives both the full and the strict count.
  */
 const IN_DEGREE_SQL =
-  `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ${questionableCallSql('edges')} THEN 1 ELSE 0 END), 0) AS q ` +
+  `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ${candidateEdgeSql('edges')} THEN 1 ELSE 0 END), 0) AS q ` +
   `FROM edges WHERE target = ? AND kind IN (${sqlList(IN_DEGREE_EDGE_KINDS)})`;
 const FILE_SIZE_SQL = 'SELECT size FROM files WHERE path = ?';
 const ALL_FILES_SQL = 'SELECT path FROM files';

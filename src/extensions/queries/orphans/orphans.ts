@@ -75,19 +75,23 @@
  * the search could open (`searchUnread` counts the ones it could not).
  *
  * GUESS (the guess rule), per incoming edge, by its kind:
- *   - `calls`: the questionable-call predicate grep and blast mark, exactly
- *     (`isQuestionableCall` in ../shared/questionable.ts, a copy of
- *     resolution's CANDIDATE EDGE from suspects.ts): `resolvedBy` is
- *     `exact-match` or `fuzzy` at any confidence, or `instance-method` with a
- *     confidence below 0.9 (a missing confidence counts as 1). So a
- *     single-candidate `exact-match` call at 0.9 is a guess here as it is in
- *     grep and blast, and the three checks mark the same call edges.
+ *   - `calls`: resolution's shared questionable-edge predicate, exactly
+ *     (`isCandidateEdge` in src/extensions/resolution/suspects.ts, whose SQL
+ *     form `candidateEdgeSql` grep and blast use, so the three checks mark the
+ *     same call edges): `resolvedBy` is `fuzzy` at any confidence; or
+ *     `exact-match` when the caller's file differs from the edge's own target's
+ *     file (a same-file exact match is the local definition, so it is certain;
+ *     for a type the target may be another node of its same-name group, in
+ *     another file than S's); or
+ *     `instance-method` with a confidence below 0.9 (a missing confidence
+ *     counts as 1).
  *   - every other counted kind (references, imports, extends, ...): the shared
  *     predicate is defined over `calls` only, and orphans counts every incoming
- *     kind but `contains` / `exports`, so these keep orphans' own rule:
- *     `resolvedBy` is `fuzzy`; or `exact-match` with a numeric confidence below
- *     `CERTAIN_NAME_MATCH` (0.9; multi-candidate matches score 0.4 / 0.7); or
- *     any numeric confidence is below `LOW_CONFIDENCE` (0.7).
+ *     kind but `contains` / `exports`, so these keep orphans' own rule, which
+ *     reads the resolver's confidence rather than the files: `resolvedBy` is `fuzzy`; or
+ *     `exact-match` with a numeric confidence below `CERTAIN_NAME_MATCH` (0.9;
+ *     multi-candidate matches score 0.4 / 0.7); or any numeric confidence is
+ *     below `LOW_CONFIDENCE` (0.7).
  * Any other edge is certain; under both rules that includes an edge with no
  * metadata (extraction-local, synthesized).
  *
@@ -143,7 +147,7 @@ import { getParser, loadGrammarsForLanguages } from '../../../extraction/grammar
 import { parseWithinBudget } from '../../../extraction/parse-budget';
 import type { BlastNode } from '../blast/blast';
 import type { ChangedFile } from '../blast/diff';
-import { isQuestionableCall } from '../shared/questionable';
+import { isCandidateEdge } from '../../resolution/suspects';
 import { TEST_PATH } from '../shared/test-path';
 import type { FailedRef, IncomingUse, OrphanNode, OrphansStore } from './store';
 
@@ -162,9 +166,9 @@ const MEMBER_KINDS: ReadonlySet<string> = new Set(['method', 'function']);
 /** Names the constructor exclusion applies to. */
 const CONSTRUCTOR_NAMES: ReadonlySet<string> = new Set(['constructor', 'init', '__init__', 'new']);
 
-/** Below this, a non-call edge is a guess: 0.7 is the lowest common resolver tier (single-candidate file-path fallback and the like). */
+/** Below this, a non-call edge is a guess (a call is judged by resolution's isCandidateEdge instead): 0.7 is the lowest common resolver tier (single-candidate file-path fallback and the like). */
 export const LOW_CONFIDENCE = 0.7;
-/** A non-call `exact-match` edge at or above this is the single-candidate name match, treated as certain (a call is judged by the shared predicate). */
+/** A non-call `exact-match` edge at or above this is the single-candidate name match, treated as certain (a call is judged by resolution's isCandidateEdge instead). */
 export const CERTAIN_NAME_MATCH = 0.9;
 
 /** Test-function naming conventions: `testFoo` / `test_foo` / `test1` (XCTest, Rust, Python), `TestFoo` (Go). */
@@ -428,12 +432,14 @@ export interface OrphansIO {
 
 /**
  * True when an edge of `kind` carrying `metadata` (edges.metadata, parsed) is a
- * guess under the guess rule (see the header): a `calls` edge exactly when the
- * shared questionable-call predicate holds; any other kind by orphans' own
- * rule, where `fuzzy` is a guess whatever its confidence.
+ * guess under the guess rule (see the header). A `calls` edge is a guess
+ * exactly when resolution's `isCandidateEdge` holds for it, given the caller's
+ * file `sourcePath` and the target's file `targetPath` (a same-file exact
+ * match is certain); any other kind by orphans' own confidence rule, where
+ * `fuzzy` is a guess whatever its confidence and the files are not read.
  */
-export function isGuess(kind: string, metadata: Record<string, unknown>): boolean {
-  if (kind === 'calls') return isQuestionableCall(kind, metadata);
+export function isGuess(kind: string, metadata: Record<string, unknown>, sourcePath: string, targetPath: string): boolean {
+  if (kind === 'calls') return isCandidateEdge(kind, metadata, sourcePath, targetPath);
   const by = metadata.resolvedBy;
   const c = metadata.confidence;
   const conf = typeof c === 'number' && Number.isFinite(c) ? c : null;
@@ -889,7 +895,8 @@ export async function findOrphans(
     };
     if (uses.length === 0) {
       suspects.push({ s, entry });
-    } else if (uses.every((u) => isGuess(u.kind, u.metadata))) {
+    } else if (uses.every((u) => isGuess(u.kind, u.metadata, u.sourcePath, u.targetPath))) {
+      // Each edge's own target file, not S's: a type's uses come from its whole same-name group.
       const edges = uses
         .map((u): GuessEdge => ({
           source: u.source,

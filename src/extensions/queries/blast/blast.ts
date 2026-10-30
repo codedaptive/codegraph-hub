@@ -17,7 +17,9 @@
  *   - the walk also follows `instantiates` and `decorates` (`BLAST_WALK_KINDS`);
  *   - a dependent that no walk reaches within the depth without crossing a
  *     questionable call edge (`calls` edges the resolver bound by name only,
- *     `../shared/questionable.ts`) is marked `questionable`, and `strict`
+ *     resolution's candidate edge, `candidateEdgeSql` in
+ *     src/extensions/resolution/suspects.ts; a same-file exact-match call is
+ *     certain) is marked `questionable`, and `strict`
  *     leaves such dependents out (graft has no notion of edge certainty).
  *
  * Seeding (graft's code rather than its header comment): a changed line seeds
