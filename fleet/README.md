@@ -15,9 +15,7 @@ Fork-only (`codedaptive/codegraph`); never offered upstream. Maintained by the f
 
 Every upstream file a feature on `ours` changes, by feature, from each feature's DONE report (settled S-12). Our
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not listed. Checked against
-`git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream 60b0d7a9 on exchange 2026-10-29: 35 files,
-the 33 in the table plus `src/mcp/answer-freshness.ts` and `src/mcp/server-instructions.ts` from host's
-`fresh-answers`, whose row comes when it integrates.
+`git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream 60b0d7a9 on exchange 2026-10-29: the same 34 files.
 
 | Feature | Upstream files |
 |---|---|
@@ -28,6 +26,7 @@ the 33 in the table plus `src/mcp/answer-freshness.ts` and `src/mcp/server-instr
 | `lock-takeover-race` (host) | `src/utils.ts` (`FileLock.acquire`), `src/mcp/writer-lock.ts`, `src/mcp/daemon.ts`, `src/mcp/daemon-registry.ts`, `src/mcp/lock-takeover.ts` (new file in upstream's tree) |
 | `rust-impl-in-fn` (resolution) | `src/extraction/tree-sitter.ts`, `codegraph-kernel/src/rustlang.rs`, `docs/design/rust-lang-kernel-port-checklist.md`, `__tests__/rust-impl-in-fn-body.test.ts` (new test in upstream's flat `__tests__/`, settled S-26) |
 | `swift-external-member-ref` (resolution) | `src/resolution/index.ts`, `src/resolution/swift-type-visibility.ts`, `__tests__/swift-external-member-ref.test.ts` (new test, settled S-26), `__tests__/swift-type-path-calls.test.ts` |
+| `fresh-answers` (host) | `src/bin/codegraph.ts`, `src/mcp/tools.ts`, `src/mcp/server-instructions.ts` |
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of
 its own: never inside the product feature's squash, which must stay cherry-pickable upstream (settled S-12).
