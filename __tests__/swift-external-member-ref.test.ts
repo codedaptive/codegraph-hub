@@ -266,8 +266,17 @@ describe('Swift: a static call to an external member of a project type', () => {
 
   it.todo('alias receiver → references edge to the alias once extraction stores its target and visibility');
 
-  it('keeps the reference through a sync, and drops it when the type goes away', async () => {
-    const root = makeProject('cg-swift-ext-member-sync-');
+  // One cold index and two syncs. The project is only the two files the check needs (1.6 s at
+  // load 110); the 30 s timeout is for a heavily loaded machine, where an index plus two syncs
+  // can run past vitest's 5 s default.
+  it('keeps the reference through a sync, and drops it when the type goes away', { timeout: 30_000 }, async () => {
+    const root = makeProjectOf('cg-swift-ext-member-sync-', {
+      'Sources/Tool/MyTool.swift': FILES['Sources/Tool/MyTool.swift'],
+      'Sources/Tool/Entry.swift': `enum Entry {
+    static func start() { MyTool.main() }
+}
+`,
+    });
     const cg = await CodeGraph.init(root, { index: true });
     try {
       // 5. Re-index the caller's file.
