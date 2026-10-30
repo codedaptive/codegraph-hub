@@ -32,3 +32,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Ruling: add `.codegraph/` to fulcrum's `.git/info/exclude` (local, uncommitted), as the other team repositories have.
 - Work implied: Orc-Codegraph adds the line and confirms with git check-ignore.
 - Done: 2026-10-30, Orc-Codegraph (#1029); git check-ignore on fulcrum exchange names the exclude line.
+
+## R-6. Q-9: install sm.4 and sm.5 when each passes its gate
+- Date: 2026-10-30 / Bob
+- Ruling: install 1.6.2-sm.4, and sm.5 when WP1 lands, globally once each passes the release gate and the tarball check, by the R-1/R-3 procedure (telemetry off confirmed; rollback to the previous sm.N on a failed check).
+- Work implied: Orc-Codegraph installs each and reports the version and checks.
