@@ -17,7 +17,9 @@
  *    subclass of it). `@State` in a view is SwiftUI's property wrapper, never
  *    `AccountsListViewModel.State` from another file. The index keeps a type
  *    reference by its last segment, so a site's qualifier (`Build.Id` vs
- *    `Package.Id`) is read back from the source line.
+ *    `Package.Id`) is read back from the source line. An inheritance entry
+ *    is the exception: its ref carries the dotted path the parse tree gives
+ *    it (`class QC: Kit.Runner` is a ref named `Kit.Runner`), used as is.
  *
  * 1 and 2 apply to every strategy's result at resolveOne's seam, so the
  * framework resolvers' name patterns and the name matcher obey them alike. A
@@ -25,13 +27,15 @@
  * extensions' members still reach the conformer: the static-call walk
  * (swiftSupertypeChain) maps the failed conformance's name to the project's
  * extensions of it, and getSupertypes' conformance pass reads it from the
- * declaration (`swiftExtendedConformances`). Resolution only: extraction,
- * and the kernel's, are unchanged.
+ * declaration (`swiftExtendedConformances`). The walk reads the inheritance
+ * refs both extractors write.
  *
  * 3. A static call on a project type resolves on that type or not at all:
  *    `API.PackageController.GetRoute.query(on:)` through
  *    `resolveSwiftTypePathCall`, the single-segment `TestHelpers.make()`
  *    through `resolveSwiftTypeCall`, both dispatched from the name matcher.
+ *    Either lands on a method, a function, or one of the type's own cases
+ *    (`Pred.literal(x)`); a case is never reached through a supertype.
  *    The single-segment call sees a declaration only in a SwiftPM module its
  *    file can see (swiftStaticCallVisible: its own module, one an `import`
  *    node of the file names, or one a seen module re-exports with
@@ -48,6 +52,7 @@
  */
 import type { Edge, Node } from '../types';
 import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
+import { isInheritanceRef } from './types';
 import { escapeRegExp } from '../utils';
 import { SWIFT_RAW_VALUE_TYPES } from './swift-builtins';
 import { swiftModule, swiftModuleIdentity } from './swift-module';
@@ -241,10 +246,12 @@ const QUALIFIER_BEFORE = new RegExp(String.raw`((?:${QUALIFIER_SEGMENT})+)$`);
 
 /**
  * The reference as its site writes it. The index keeps a Swift type
- * reference by its last segment — `Build.Id` is a ref named `Id` — so whether
- * the name was qualified is read back from the line: a type annotation's
- * column is the name's (`Build.|Id`), a construction's is the chain's
- * (`|API.PackageController.GetRoute.Model(`).
+ * annotation or construction by its last segment — `Build.Id` is a ref named
+ * `Id` — so whether the name was qualified is read back from the line: a type
+ * annotation's column is the name's (`Build.|Id`), a construction's is the
+ * chain's (`|API.PackageController.GetRoute.Model(`). Never called for an
+ * inheritance entry, whose ref already carries its dotted path
+ * (gateSwiftTypeTarget).
  */
 function writtenName(ref: UnresolvedRef, context: ResolutionContext): string {
   const name = ref.referenceName;
@@ -505,7 +512,22 @@ export function gateSwiftTypeTarget(result: ResolvedRef | null, ref: UnresolvedR
   const target = context.getNodeById?.(result.targetNodeId);
   if (!target || target.language !== 'swift' || !TYPE_KINDS.has(target.kind)) return result;
   const from = context.getNodeById?.(ref.fromNodeId) ?? null;
-  const written = writtenName(ref, context);
+  // An inheritance entry's ref is its dotted path from the parse tree
+  // (`Kit.Runner`), so its qualifier is taken as is, not read back from the
+  // source line.
+  const written = isInheritanceRef(ref) ? ref.referenceName : writtenName(ref, context);
+  // A supertype written with a qualifier none of whose segments names a
+  // project type (`struct Y: Swift.Error`, `class Z: Foundation.Operation`)
+  // names an external module's type: Swift never lets a project type be named
+  // through another module's qualifier. The extraction cannot tell a module
+  // from a type, and fitsPath reads such a qualifier as a module that fits a
+  // top-level project type of the same last segment, so the entry gets no
+  // target rather than a wrong one. Supertype refs only: a type annotation or
+  // a call keeps fitsPath's reading.
+  if ((ref.referenceKind === 'extends' || ref.referenceKind === 'implements') && written.includes('.')) {
+    const qualifier = written.split('.').slice(0, -1);
+    if (!qualifier.some((seg) => context.getNodesByName(seg).some((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind)))) return null;
+  }
   if (!isSwiftExtension(target, context)) {
     if (!written.includes('.')) {
       if (bareScopeDepth(target, from, context) !== null) return result;
@@ -576,6 +598,22 @@ export function resolveSwiftTypePathCall(ref: UnresolvedRef, context: Resolution
   // Of one type's overloads, the first declared.
   const target = fit.reduce((a, b) => (a.filePath < b.filePath || (a.filePath === b.filePath && a.startLine <= b.startLine) ? a : b));
   return { original: ref, targetNodeId: target.id, confidence: 0.9, resolvedBy: 'qualified-name' };
+}
+
+/**
+ * A qualified Swift inheritance entry, `class QC: Kit.Runner`, whose ref is
+ * the dotted path the parse tree gives (`Kit.Runner`): the project's own
+ * declaration of the type on that path (declarationFor, by the last segment),
+ * or null. ResolveOne's gates still run on the result: gateSwiftTypeTarget
+ * drops it when no qualifier segment names a project type. (createEdges later
+ * writes an `extends` onto a protocol as `implements` when the source is not
+ * itself an interface or protocol.)
+ */
+export function resolveSwiftQualifiedSupertype(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
+  const name = ref.referenceName;
+  const from = context.getNodeById?.(ref.fromNodeId) ?? null;
+  const decl = declarationFor(name.slice(name.lastIndexOf('.') + 1), name, ref, from, context);
+  return decl ? { original: ref, targetNodeId: decl.id, confidence: 0.9, resolvedBy: 'qualified-name' } : null;
 }
 
 /** Is this case declared in a `@Reducer enum`? */
@@ -709,10 +747,13 @@ function memberTypePath(member: Node, context: ResolutionContext): string | null
 /**
  * The Swift node kinds a type inherits from or conforms to: a class, or a
  * protocol (a protocol_declaration is indexed as an `interface`). A struct or
- * enum is no supertype, so an `extends` edge onto one is not followed: the
- * extraction takes a module-qualified entry's first segment, so
- * `struct Q: Kit.Runner` holds an edge to the namespace `enum Kit`. Onto a
- * class it is the same edge, so swiftSupertypeChain also asks who holds it.
+ * enum is no supertype, so an `extends` edge onto one is not followed: a bare
+ * entry naming an external type whose name a project struct or enum in
+ * another target shares (`struct Y: Error` meaning Swift's, with a project
+ * `enum Error`) holds an edge to that project type, which Swift could never
+ * inherit from. (A qualified entry naming an external module's type gets no
+ * edge at all: gateSwiftTypeTarget.) Onto a class it is the same edge, so
+ * swiftSupertypeChain also asks who holds it.
  */
 const SUPERTYPE_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['class', 'interface', 'protocol']);
 
@@ -777,10 +818,11 @@ export function swiftExtensionOnlyNames(context: ResolutionContext): string[] {
  *   (SUPERTYPE_KINDS), with that type's extensions. The edges exist by the
  *   time a call resolves: `extends`/`implements` references resolve first.
  *   A class target is followed only from a class declaration: a struct, an
- *   enum or an extension inherits from no class, so such an edge is a
- *   qualified entry's first segment (`struct QK: Kit.Runner` holds
- *   `extends Kit` onto `class Kit`); a protocol's class constraint
- *   (`protocol P: Kit`) is not walked either, as it cannot be told from that.
+ *   enum or an extension inherits from no class, so such an edge is a bare
+ *   entry naming an external type landing on a project class of the same
+ *   name (`struct Y: Error` with a project `class Error`); a protocol's
+ *   class constraint (`protocol P: Kit`) is not walked either, as it cannot
+ *   be told from that.
  * - A reference that resolved to nothing (getUnresolvedSupertypeNames, which
  *   reads only names swiftExtensionOnlyNames lists): the
  *   project's extensions of that name when it declares no such type
@@ -863,17 +905,25 @@ export const SWIFT_TYPE_CALL = /^(?!Self\.)[A-Z]\w*\.[a-z_]\w*$/;
 
 /**
  * What a single-segment `Type.member(…)` call lands on: a method or a free
- * function the grammar indexes under the type. A case or a static closure
+ * function the grammar indexes under the type, or one of the type's own cases
+ * (`Pred.literal(x)`, `Err.failure(reason:)`). A case is a target only as a
+ * member of the receiver type itself, never one a supertype declares
+ * (TYPE_CALL_INHERITED_KINDS): Swift does not inherit cases. A static closure
  * property the type declares is not a target here (the call gets no edge).
  */
-const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function']);
+const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function', 'enum_member']);
+
+/** Of TYPE_CALL_MEMBER_KINDS, those a supertype in swiftSupertypeChain may supply. */
+const TYPE_CALL_INHERITED_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['method', 'function']);
 
 /**
  * `TestHelpers.make()` lands on the `make` the type `TestHelpers` declares:
  * its own, one an `extension TestHelpers` adds in any file, or one a project
  * supertype or a conformed protocol's extension supplies, as
  * swiftSupertypeChain walks them (never through a class reached from a
- * non-class). The receiver is
+ * non-class). `Pred.literal(x)` lands on the case `literal` only as the
+ * type's own member: a case a supertype declares, or one of an enum nested in
+ * a supertype, is never a target. The receiver is
  * the project's declaration of that name (declarationFor): only one in a
  * module the caller's file can see (swiftStaticCallVisible: the caller's own
  * SwiftPM module, one its file imports, one a seen module re-exports with
@@ -887,8 +937,9 @@ const TYPE_CALL_MEMBER_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(
  * `MyTool.main()` to the project's only other `main` (`Other.main`). So once
  * the receiver is a project type, the call resolves on it or not at all:
  *
- * - the type declares no such method or function → null; when it declares
- *   no member of the name at all, the parked failure then gets
+ * - the type declares no such method, function or case, and no supertype
+ *   supplies such a method or function → null; when it declares no member
+ *   of the name at all, the parked failure then gets
  *   swiftUnresolvedTypeMemberEdges' `references` edge to the type;
  * - the type does not declare it and two supertypes supply it, neither
  *   overriding the other (two protocols' extensions) → null; of an override
@@ -960,6 +1011,9 @@ export function resolveSwiftTypeCall(
       own.push(n);
       continue;
     }
+    // A case is the receiver's own member or no target: Swift does not
+    // inherit cases, so a supertype's case never answers the call.
+    if (!TYPE_CALL_INHERITED_KINDS.has(n.kind)) continue;
     chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
     if (chainKey(owner, chain, context) !== undefined) inherited.push(n);
   }
@@ -1069,18 +1123,17 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  *   `references` edge;
  * - a member the extraction does not index (a member of an extension the
  *   parse ends early) reads as external, so the receiver gets the edge;
- * - a module-qualified conformance (`struct Q: Kit.Runner`) is extracted as
- *   its first segment, `Kit`, so the supertype walk does not reach `Runner`
- *   (swiftSupertypeChain drops the edge onto a struct or enum `Kit`, and onto
- *   a class `Kit` from anything but a class declaration): a member only
- *   `Runner` or its extensions supply reads as external, so the receiver gets
- *   the edge (pinned for the static-call path in swift-static-calls.test.ts;
- *   not pinned for this edge). A class `Kit` reached from a class declaration
- *   is walked as a superclass, so a member Kit itself declares is taken
- *   (pinned in swift-static-calls.test.ts). An entry whose first segment is a
- *   type the project only extends (`Ext.Runner` with `extension Ext {}`) is
- *   walked to Ext's extensions too, so a member they add is taken (pinned in
- *   swift-static-calls.test.ts);
+ * - a supertype written with the project's own module name (`MyModule.Base`,
+ *   where no qualifier segment names a project type) gets no edge:
+ *   gateSwiftTypeTarget cannot tell that module from an external one, so it
+ *   gives every such entry no target (`Swift.Error` and
+ *   `Foundation.Operation` with a project `Error` / `Operation` are pinned to
+ *   no edge in swift-qualified-inheritance.test.ts, tests g and h);
+ * - a module-qualified conformance to a type the project only extends
+ *   (`struct HV: SwiftUI.View2` with a project `extension View2`) is
+ *   recorded as `SwiftUI.View2`, and the extension-only walk
+ *   (swiftSupertypeChain) matches supertype names exactly, so the extension's members do not reach HV
+ *   (swift-qualified-inheritance.test.ts, test i, `it.fails`);
  * - the module rule reads the index's `import` nodes (the caller file's, and
  *   every `@_exported import` of a module it sees) and the SwiftPM directory
  *   layout, never Package.swift, so a SwiftPM target whose Package.swift

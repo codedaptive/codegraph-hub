@@ -320,7 +320,7 @@ func useTag() { _ = Cache.entryNames(tag: 1) }
   });
 });
 
-describe('Swift: a static call the type does not declare as a method', () => {
+describe('Swift: a static call on a type member that is not a method', () => {
   let cg: CodeGraph;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-declined-', {
@@ -357,9 +357,13 @@ func digest(_ d: Data) { _ = SHA256.hash(data: d) }
   afterAll(() => cg?.close());
 
   it("gives no calls edge to a local function of one of the type's methods", () => {
-    // `literal` here is a case of Pred (not this feature's target); `render`'s
-    // local `literal` is no member of Pred.
+    // `literal` here is a case of Pred with an associated value, so the call
+    // lands on that case; `render`'s local `literal` is no member of Pred.
     expect(callsFrom(cg, 'usePred').filter((c) => c.target.includes('::render::'))).toEqual([]);
+  });
+
+  it("resolves a call on one of the type's cases to that case", () => {
+    expectQualified(onlyCall(cg, 'usePred', 'Sources/Store/Predicate.swift:Pred::literal'));
   });
 
   // The grammar (tree-sitter-swift 0.7.3, S-29) can end a method late and
@@ -455,9 +459,7 @@ func c6() { _ = Leaf.make() }
     expectQualified(onlyCall(cg, 'c6', 'Sources/App/Classes.swift:Base::make'));
   });
 
-  // Known limit: the extraction records `Kit.Runner` as `Kit`, so the walk
-  // never reaches the protocol, and Q.run() gets no edge.
-  it.fails("resolves a member a module-qualified conformance's extension supplies", () => {
+  it("resolves a member a module-qualified conformance's extension supplies", () => {
     expectQualified(onlyCall(cg, 'c7', 'Sources/App/Kit+Run.swift:Runner::run'));
   });
 });
@@ -476,7 +478,7 @@ describe('Swift: a static call through a qualified conformance or a raw type', (
       'Sources/App/QK.swift': `struct QK: Kit.Runner {}
 func classNsCaller() { QK.foo() }
 `,
-      // The same entry on a class: the index holds `QC extends Kit` exactly as for `class QC: Kit`.
+      // The same entry on a class: the index holds `QC implements Runner`, Kit's nested protocol, not Kit.
       'Sources/App/QC.swift': `class QC: Kit.Runner {}
 func classOnClassCaller() { QC.foo() }
 `,
@@ -489,7 +491,7 @@ func classOnClassCaller() { QC.foo() }
       'Sources/App/QE.swift': `struct QE: Ext.Runner {}
 func extNsCaller() { QE.bar() }
 `,
-      // A protocol whose parent is a qualified entry: the index holds `QP extends Kit`.
+      // A protocol whose parent is a qualified entry: the index holds `QP extends Runner`, Kit's nested protocol.
       'Sources/App/QP.swift': `protocol QP: Kit.Runner {}
 struct QS: QP {}
 func protoParentCaller() { QS.foo() }
@@ -528,7 +530,7 @@ func rawCaller() { K.rawX() }
   afterAll(() => cg?.close());
 
   it('gives no calls edge to a member of the class namespace a module-qualified conformance names', () => {
-    // The supertype edges QK's inheritance clause gave, shown when the call lands on Kit.
+    // The supertype edges QK's inheritance clause gave (the nested Runner, not Kit), shown if the call lands on Kit.
     const qk = cg.getNodesByName('QK').filter((n) => n.language === 'swift' && n.kind === 'struct');
     const supers = cg
       .getOutgoingEdgesFrom(qk.map((n) => n.id), ['extends', 'implements'])
@@ -539,15 +541,11 @@ func rawCaller() { K.rawX() }
     ).toEqual([]);
   });
 
-  // Known limit: the extraction keeps a qualified inheritance entry's first
-  // segment, so `class QC: Kit.Runner` is indexed exactly as `class QC: Kit` and Kit's foo is taken.
-  it.fails('gives no calls edge to a member of the class namespace a qualified superclass entry names', () => {
+  it('gives no calls edge to a member of the class namespace a qualified superclass entry names', () => {
     expect(callsFrom(cg, 'classOnClassCaller').filter((c) => c.target.startsWith('Sources/App/ClassKit.swift:'))).toEqual([]);
   });
 
-  // Known limit: the extraction keeps a qualified entry's first segment, so `struct QE: Ext.Runner`
-  // is indexed as `struct QE: Ext`, the same as a conformance to a type the project only extends.
-  it.fails('gives no calls edge to a member of an extended-only namespace a qualified conformance names', () => {
+  it('gives no calls edge to a member of an extended-only namespace a qualified conformance names', () => {
     expect(callsFrom(cg, 'extNsCaller').filter((c) => c.target.startsWith('Sources/App/Ext+Runner.swift:'))).toEqual([]);
   });
 
