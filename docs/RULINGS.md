@@ -130,3 +130,6 @@ General as a RULING line. Decisions already settled by a document live in `team/
   product guide himself (points at the spec, no Node ceiling); bilby.md stays as it is.
 - Supersedes: any harness work implied by earlier rulings (R-7, S-43 publication, the catalog half of R-12's Q-12).
 - Work implied: Orc-Codegraph passes the rule to every lane.
+- Restated 2026-10-30 (#1252) for the whole team, wider: the harness also includes the team's `.claude` settings,
+  rules and hooks, and Claude Code's and herdr's settings. A hook now refuses writes to it. The product-guide and
+  bilby.md questions are closed.
