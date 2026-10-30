@@ -15,7 +15,7 @@ Fork-only (`codedaptive/codegraph`); never offered upstream. Maintained by the f
 
 Every upstream file a feature on `ours` changes, by feature, from each feature's DONE report (settled S-12). Our
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not listed. Checked against
-`git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream 60b0d7a9 on exchange 2026-10-29: the same 39 files.
+`git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream 60b0d7a9 on exchange 2026-10-29: the same 43 files.
 
 | Feature | Upstream files |
 |---|---|
@@ -30,6 +30,7 @@ own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is
 | `rust-crate-calls` (resolution) | `src/resolution/name-matcher.ts`, `__tests__/rust-crate-path-calls.test.ts` (new test, settled S-26) |
 | `swift-builtins` (resolution) | `src/resolution/name-matcher.ts`, `src/resolution/swift-builtins.ts` (new file in upstream's tree), `__tests__/swift-std-method-calls.test.ts` (new test, settled S-26) |
 | `swift-method-range` (resolution) | `__tests__/swift-try-await-condition.test.ts` (new test, settled S-26; pins a tree-sitter-swift 0.7.3 behavior, S-29) |
+| `swift-enum-cases` (resolution) | `src/extraction/tree-sitter.ts`, `codegraph-kernel/src/swift.rs`, `docs/design/swift-kernel-port-checklist.md`, `src/resolution/swift-type-visibility.ts`, `__tests__/swift-enum-multi-case.test.ts` (new test, settled S-26), `__tests__/kernel-swift-parity.test.ts`, `__tests__/swift-external-member-ref.test.ts` |
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of
 its own: never inside the product feature's squash, which must stay cherry-pickable upstream (settled S-12).
