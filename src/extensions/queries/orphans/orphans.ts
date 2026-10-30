@@ -74,15 +74,22 @@
  * as `==` are not searched), no word match outside S's own span in the files
  * the search could open (`searchUnread` counts the ones it could not).
  *
- * GUESS (the guess rule). Reads metadata.resolvedBy / metadata.confidence
- * directly: resolution's `suspects` predicate (MISSION WP5), meant to be shared
- * with this check, does not exist yet. An edge is a guess when `resolvedBy` is `fuzzy`; or
- * `resolvedBy` is `exact-match` with a numeric confidence below
- * `CERTAIN_NAME_MATCH` (0.9, the single-candidate name match, which is the
- * main Swift/Rust resolver and is treated as certain; multi-candidate matches
- * score 0.4 / 0.7); or any numeric confidence is below `LOW_CONFIDENCE` (0.7).
- * Otherwise an edge with no metadata or no confidence (extraction-local,
- * synthesized) is certain: a `fuzzy` edge is a guess whatever its confidence.
+ * GUESS (the guess rule), per incoming edge, by its kind:
+ *   - `calls`: the questionable-call predicate grep and blast mark, exactly
+ *     (`isQuestionableCall` in ../shared/questionable.ts, a copy of
+ *     resolution's CANDIDATE EDGE from suspects.ts): `resolvedBy` is
+ *     `exact-match` or `fuzzy` at any confidence, or `instance-method` with a
+ *     confidence below 0.9 (a missing confidence counts as 1). So a
+ *     single-candidate `exact-match` call at 0.9 is a guess here as it is in
+ *     grep and blast, and the three checks mark the same call edges.
+ *   - every other counted kind (references, imports, extends, ...): the shared
+ *     predicate is defined over `calls` only, and orphans counts every incoming
+ *     kind but `contains` / `exports`, so these keep orphans' own rule:
+ *     `resolvedBy` is `fuzzy`; or `exact-match` with a numeric confidence below
+ *     `CERTAIN_NAME_MATCH` (0.9; multi-candidate matches score 0.4 / 0.7); or
+ *     any numeric confidence is below `LOW_CONFIDENCE` (0.7).
+ * Any other edge is certain; under both rules that includes an edge with no
+ * metadata (extraction-local, synthesized).
  *
  * EXCLUSIONS, checked in this order before the orphan rule and counted per
  * reason:
@@ -136,6 +143,7 @@ import { getParser, loadGrammarsForLanguages } from '../../../extraction/grammar
 import { parseWithinBudget } from '../../../extraction/parse-budget';
 import type { BlastNode } from '../blast/blast';
 import type { ChangedFile } from '../blast/diff';
+import { isQuestionableCall } from '../shared/questionable';
 import { TEST_PATH } from '../shared/test-path';
 import type { FailedRef, IncomingUse, OrphanNode, OrphansStore } from './store';
 
@@ -154,9 +162,9 @@ const MEMBER_KINDS: ReadonlySet<string> = new Set(['method', 'function']);
 /** Names the constructor exclusion applies to. */
 const CONSTRUCTOR_NAMES: ReadonlySet<string> = new Set(['constructor', 'init', '__init__', 'new']);
 
-/** Below this, any edge is a guess: 0.7 is the lowest common resolver tier (single-candidate file-path fallback and the like). */
+/** Below this, a non-call edge is a guess: 0.7 is the lowest common resolver tier (single-candidate file-path fallback and the like). */
 export const LOW_CONFIDENCE = 0.7;
-/** An `exact-match` edge at or above this is the single-candidate name match, treated as certain. */
+/** A non-call `exact-match` edge at or above this is the single-candidate name match, treated as certain (a call is judged by the shared predicate). */
 export const CERTAIN_NAME_MATCH = 0.9;
 
 /** Test-function naming conventions: `testFoo` / `test_foo` / `test1` (XCTest, Rust, Python), `TestFoo` (Go). */
@@ -419,10 +427,13 @@ export interface OrphansIO {
 }
 
 /**
- * True when an edge carrying `metadata` (edges.metadata, parsed) is a guess under the
- * guess rule (see the header): `fuzzy` always, whatever its confidence.
+ * True when an edge of `kind` carrying `metadata` (edges.metadata, parsed) is a
+ * guess under the guess rule (see the header): a `calls` edge exactly when the
+ * shared questionable-call predicate holds; any other kind by orphans' own
+ * rule, where `fuzzy` is a guess whatever its confidence.
  */
-export function isGuess(metadata: Record<string, unknown>): boolean {
+export function isGuess(kind: string, metadata: Record<string, unknown>): boolean {
+  if (kind === 'calls') return isQuestionableCall(kind, metadata);
   const by = metadata.resolvedBy;
   const c = metadata.confidence;
   const conf = typeof c === 'number' && Number.isFinite(c) ? c : null;
@@ -878,7 +889,7 @@ export async function findOrphans(
     };
     if (uses.length === 0) {
       suspects.push({ s, entry });
-    } else if (uses.every((u) => isGuess(u.metadata))) {
+    } else if (uses.every((u) => isGuess(u.kind, u.metadata))) {
       const edges = uses
         .map((u): GuessEdge => ({
           source: u.source,

@@ -5,9 +5,15 @@
  */
 import type { GrepGroup, GrepResult } from './grep-core';
 
+/** `N in-edges`, plus ` (Q questionable)` when some of them are questionable calls. */
+function inEdges(g: GrepGroup): string {
+  const q = g.questionableInDegree ?? 0;
+  return q > 0 ? `${g.inDegree} in-edges (${q} questionable)` : `${g.inDegree} in-edges`;
+}
+
 function groupHeader(g: GrepGroup): string {
-  if (g.symbol) return `${g.symbol.name} · ${g.symbol.kind} · ${g.symbol.path}:${g.symbol.span} · ${g.inDegree} in-edges`;
-  return `${g.path} (module level) · ${g.inDegree} in-edges`;
+  if (g.symbol) return `${g.symbol.name} · ${g.symbol.kind} · ${g.symbol.path}:${g.symbol.span} · ${inEdges(g)}`;
+  return `${g.path} (module level) · ${inEdges(g)}`;
 }
 
 function formatGroup(g: GrepGroup): string {

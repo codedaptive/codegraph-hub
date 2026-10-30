@@ -14,7 +14,11 @@
  *   - seeds come in position order and the edges within a walk level in
  *     (target, kind, source) order, where graft uses graph.json order, so the
  *     relation recorded for a node reached by two edges can differ from graft's;
- *   - the walk also follows `instantiates` and `decorates` (`BLAST_WALK_KINDS`).
+ *   - the walk also follows `instantiates` and `decorates` (`BLAST_WALK_KINDS`);
+ *   - a dependent that no walk reaches within the depth without crossing a
+ *     questionable call edge (`calls` edges the resolver bound by name only,
+ *     `../shared/questionable.ts`) is marked `questionable`, and `strict`
+ *     leaves such dependents out (graft has no notion of edge certainty).
  *
  * Seeding (graft's code rather than its header comment): a changed line seeds
  * the innermost symbol whose span contains it; the file node is the walk seed
@@ -30,7 +34,7 @@
  */
 import { TEST_PATH } from '../shared/test-path';
 import type { ChangedFile } from './diff';
-import type { BlastStore } from './store';
+import type { BlastStore, IncomingEdge } from './store';
 
 /**
  * Incoming edge kinds the walk follows. graft's graph has six relations and its
@@ -65,6 +69,12 @@ export interface Impacted extends BlastNode {
   relation: string;
   /** Hops from the nearest seed, 1-based. */
   depth: number;
+  /**
+   * Set (always to true) when the walk reaches this dependent within the depth
+   * only through at least one questionable call edge, from every changed file
+   * that reaches it. Absent otherwise, and always absent under `strict`.
+   */
+  questionable?: true;
 }
 
 export interface Module {
@@ -104,6 +114,13 @@ export interface BlastReport {
   modules: Module[];
   testModules: Module[];
   areas: Area[];
+  /** Set (to true) only when the report was computed with `strict`. */
+  strict?: true;
+}
+
+export interface BlastOptions {
+  /** Walk only certain edges: dependents reached only through questionable call edges drop out. */
+  strict?: boolean;
 }
 
 const SPAN_RE = /^L(\d+)-L(\d+)$/;
@@ -153,47 +170,85 @@ interface Hit {
  * `incomingEdges` query per depth level and one `nodesByIds` for the ids that
  * level discovered, instead of graft's whole-graph adjacency build.
  *
+ * Runs one walk per entry of `skipQuestionable` from the same seeds, in
+ * lockstep: each level's query covers the union of the walks' frontiers, so
+ * a certain walk run alongside the normal one costs no extra query. A walk
+ * with `skipQuestionable` true does not follow questionable call edges. The
+ * result has one hit list per walk, in the same order.
+ *
  * Seeds are pre-visited, so a seed is never its own hit and an edge between two
- * seeds is never reported. Each node is reported once, at the depth it was first
- * reached. The visited set is also what ends a `depth = Infinity` walk: the
- * frontier empties once no unvisited node points into it.
+ * seeds is never reported. Each node is reported once per walk, at the depth it
+ * was first reached. The visited set is also what ends a `depth = Infinity`
+ * walk: the frontier empties once no unvisited node points into it.
  *
  * Within a level the frontier is expanded in order, as graft's loop does, but
  * each node's edges come in the store's (kind, source) order, not graph.json's.
  */
-function impactOfMany(store: BlastStore, seeds: readonly BlastNode[], maxDepth: number): Hit[] {
-  const visited = new Set(seeds.map((s) => s.id));
-  const hits: Hit[] = [];
-  let frontier = [...visited];
-  for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
-    const byTarget = new Map<string, { source: string; kind: string }[]>();
-    for (const e of store.incomingEdges(frontier, BLAST_WALK_KINDS)) {
+function impactOfMany(
+  store: BlastStore,
+  seeds: readonly BlastNode[],
+  maxDepth: number,
+  skipQuestionable: readonly boolean[],
+): Hit[][] {
+  const walks = skipQuestionable.map((skip) => ({
+    skip,
+    visited: new Set(seeds.map((s) => s.id)),
+    hits: [] as Hit[],
+    frontier: seeds.map((s) => s.id),
+  }));
+  for (let depth = 1; depth <= maxDepth && walks.some((w) => w.frontier.length > 0); depth++) {
+    const targets = [...new Set(walks.flatMap((w) => w.frontier))];
+    const byTarget = new Map<string, IncomingEdge[]>();
+    for (const e of store.incomingEdges(targets, BLAST_WALK_KINDS)) {
       const at = byTarget.get(e.target);
       if (at) at.push(e);
       else byTarget.set(e.target, [e]);
     }
-    const level: Hit[] = [];
-    const next: string[] = [];
-    for (const current of frontier) {
-      for (const { source, kind } of byTarget.get(current) ?? []) {
-        if (visited.has(source)) continue;
-        visited.add(source);
-        level.push({ node: null, id: source, relation: kind, depth });
-        next.push(source);
+    const levels: Hit[][] = [];
+    const discovered = new Set<string>();
+    for (const w of walks) {
+      const level: Hit[] = [];
+      const next: string[] = [];
+      for (const current of w.frontier) {
+        for (const { source, kind, questionable } of byTarget.get(current) ?? []) {
+          if (w.skip && questionable) continue;
+          if (w.visited.has(source)) continue;
+          w.visited.add(source);
+          level.push({ node: null, id: source, relation: kind, depth });
+          next.push(source);
+          discovered.add(source);
+        }
       }
+      levels.push(level);
+      w.frontier = next;
     }
-    if (next.length > 0) {
-      const nodes = new Map(store.nodesByIds(next).map((n) => [n.id, n]));
-      for (const h of level) h.node = nodes.get(h.id) ?? null;
+    if (discovered.size > 0) {
+      const nodes = new Map(store.nodesByIds([...discovered]).map((n) => [n.id, n]));
+      for (const level of levels) for (const h of level) h.node = nodes.get(h.id) ?? null;
     }
-    hits.push(...level);
-    frontier = next;
+    walks.forEach((w, i) => w.hits.push(...(levels[i] ?? [])));
   }
-  return hits;
+  return walks.map((w) => w.hits);
 }
 
-/** Compute the blast radius of `changed` against the index behind `store`. */
-export function blastRadius(store: BlastStore, changed: ChangedFile[], basis: string, depth: number): BlastReport {
+/**
+ * Compute the blast radius of `changed` against the index behind `store`.
+ *
+ * Without `strict`, each changed file's walk runs twice in lockstep: the normal
+ * walk, which follows every `BLAST_WALK_KINDS` edge, and a certain walk, which
+ * skips questionable call edges. A dependent the normal walk reaches but no
+ * file's certain walk reaches within the depth is marked `questionable`. With
+ * `strict`, only the certain walk runs, so those dependents are left out and
+ * every relation and depth comes from it.
+ */
+export function blastRadius(
+  store: BlastStore,
+  changed: ChangedFile[],
+  basis: string,
+  depth: number,
+  opts: BlastOptions = {},
+): BlastReport {
+  const strict = opts.strict === true;
   const seeds: Seed[] = [];
   const unindexed: string[] = [];
   const deleted: string[] = [];
@@ -201,6 +256,8 @@ export function blastRadius(store: BlastStore, changed: ChangedFile[], basis: st
   const seedNodes = new Map<string, BlastNode[]>();
   /** Merged dependents at the shallowest depth any file reached them, plus which files reached them. */
   const merged = new Map<string, { hit: Impacted; from: Set<string> }>();
+  /** Dependents some file's certain walk reached (non-strict only): these carry no mark. */
+  const certain = new Set<string>();
 
   for (const file of changed) {
     if (file.status === 'deleted') {
@@ -221,7 +278,9 @@ export function blastRadius(store: BlastStore, changed: ChangedFile[], basis: st
     // changed files that actually reach it rather than every file in the diff.
     const walkSeeds = symbolSeeds.length > 0 ? symbolSeeds : [fileNode];
     seedNodes.set(file.path, walkSeeds);
-    for (const h of impactOfMany(store, walkSeeds, depth)) {
+    const [reached = [], certainHits = []] = impactOfMany(store, walkSeeds, depth, strict ? [true] : [false, true]);
+    for (const h of certainHits) certain.add(h.id);
+    for (const h of reached) {
       // A dangling endpoint has no location to group or open; graft drops it too.
       if (h.node === null) continue;
       const hit: Impacted = { ...h.node, relation: h.relation, depth: h.depth };
@@ -236,9 +295,11 @@ export function blastRadius(store: BlastStore, changed: ChangedFile[], basis: st
   }
 
   const impacted = [...merged.values()].map((m) => m.hit);
+  // Marked after the merge, so a certain reach from any changed file clears the mark.
+  if (!strict) for (const hit of impacted) if (!certain.has(hit.id)) hit.questionable = true;
   const origins = new Map([...merged].map(([id, m]) => [id, m.from]));
   const grouped = groupByModule(impacted, changed, origins);
-  return {
+  const report: BlastReport = {
     basis,
     depth,
     changed,
@@ -250,6 +311,8 @@ export function blastRadius(store: BlastStore, changed: ChangedFile[], basis: st
     testModules: grouped.testModules,
     areas: changedAreas(store, changed, seedNodes, grouped.modules),
   };
+  if (strict) report.strict = true;
+  return report;
 }
 
 /**
@@ -261,7 +324,9 @@ export function blastRadius(store: BlastStore, changed: ChangedFile[], basis: st
  * The two whole-graph scans graft does here (in-degree, and test-file sources
  * per target) become two batched store queries over the seed ids only, and do
  * not go through `incomingEdges`: they count every edge kind, as graft's
- * unfiltered `graph.edges` loop does.
+ * unfiltered `graph.edges` loop does. Neither is filtered by `strict`: they are
+ * side counts about the seeds (hub ranking and the test signal), not the walk,
+ * so a questionable call edge still counts there.
  */
 function changedAreas(
   store: BlastStore,

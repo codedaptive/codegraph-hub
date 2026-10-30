@@ -1,0 +1,307 @@
+/**
+ * grep marks questionable in-edges.
+ *
+ * A questionable edge is a `calls` edge the resolver bound by name only
+ * (src/extensions/queries/shared/questionable.ts). Without strict, a group's
+ * inDegree still counts them and the group carries `questionableInDegree`
+ * (present only when > 0), and the text header reads
+ * `N in-edges (Q questionable)`. With strict (CLI `--strict`, MCP
+ * `strict: true`), inDegree leaves them out, groups rank by that count, and
+ * the result carries `strict: true`.
+ *
+ * Fixture: lib.ts `alpha` is called by three same-file functions (resolvedBy
+ * 'exact-match': questionable), and has no other in-edge. `beta` is called once
+ * from use.ts through an import (resolvedBy 'import': certain), and that
+ * file's `import { beta }` adds an `imports` edge onto beta, which grep's
+ * in-degree also counts: beta has 2 certain in-edges. alpha's 3 against beta's
+ * 2 keeps the unstrict ranking free of a tie. Both bodies hold MARKER, so one
+ * pattern hits both groups. Indexed once in beforeAll and shared, read-only.
+ *
+ * Entry points mirror grep-extension.test.ts: the CLI through the registered
+ * `codegraph grep` command on a fresh commander program, MCP through
+ * ToolHandler.execute('codegraph_grep').
+ */
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { Command, CommanderError } from 'commander';
+import { CodeGraph } from '../../../src';
+import { ToolHandler } from '../../../src/mcp/tools';
+import {
+  __resetExtensionsForTests,
+  registerExtension,
+  registerExtensionCommands,
+} from '../../../src/extensions/host/registry';
+import queriesExtension from '../../../src/extensions/queries/extension';
+import { isQuestionableCall, questionableCallSql } from '../../../src/extensions/queries/shared/questionable';
+
+// node:sqlite through require, as wal-heal.test.ts does: vitest's import transform does not resolve it.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+
+const FILES: Record<string, string> = {
+  'lib.ts': [
+    'export function alpha(): string {',
+    "  return 'MARKER alpha';",
+    '}',
+    '',
+    'export function beta(): string {',
+    "  return 'MARKER beta';",
+    '}',
+    '',
+    'export function firstCaller(): string {',
+    '  return alpha();',
+    '}',
+    '',
+    'export function secondCaller(): string {',
+    '  return alpha();',
+    '}',
+    '',
+    'export function thirdCaller(): string {',
+    '  return alpha();',
+    '}',
+    '',
+  ].join('\n'),
+  'use.ts': [
+    "import { beta } from './lib';",
+    '',
+    'export function useBeta(): string {',
+    '  return beta();',
+    '}',
+    '',
+  ].join('\n'),
+};
+
+let root: string;
+let cg: CodeGraph;
+
+beforeAll(async () => {
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-questionable-grep-')));
+  for (const [rel, content] of Object.entries(FILES)) {
+    fs.writeFileSync(path.join(root, rel), content);
+  }
+  cg = await CodeGraph.init(root, { index: true });
+});
+
+afterAll(() => {
+  cg?.close();
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+});
+
+// ---------------------------------------------------------------------------
+// The predicate's pin.
+// ---------------------------------------------------------------------------
+
+/** [kind, metadata, questionable?] */
+const VECTORS: Array<[string, Record<string, unknown> | null, boolean]> = [
+  ['calls', { resolvedBy: 'exact-match', confidence: 0.9 }, true],
+  ['calls', { resolvedBy: 'fuzzy' }, true],
+  ['calls', { resolvedBy: 'instance-method', confidence: 0.85 }, true],
+  ['calls', { resolvedBy: 'instance-method' }, false],
+  ['calls', { resolvedBy: 'import' }, false],
+  ['calls', { resolvedBy: 'instance-method', confidence: 0.9 }, false],
+  // Non-numeric confidence follows json_extract: a JSON boolean is 1/0, anything else (null, a string) counts as 1.
+  ['calls', { resolvedBy: 'instance-method', confidence: false }, true],
+  ['calls', { resolvedBy: 'instance-method', confidence: true }, false],
+  ['calls', { resolvedBy: 'instance-method', confidence: '0.5' }, false],
+  ['calls', { resolvedBy: 'instance-method', confidence: null }, false],
+  ['references', { resolvedBy: 'exact-match' }, false],
+  ['calls', null, false],
+];
+
+describe('isQuestionableCall and questionableCallSql', () => {
+  for (const [kind, metadata, want] of VECTORS) {
+    it(`isQuestionableCall(${kind}, ${JSON.stringify(metadata)}) is ${want}`, () => {
+      expect(isQuestionableCall(kind, metadata)).toBe(want);
+    });
+  }
+
+  it('questionableCallSql agrees with isQuestionableCall on every vector (in-memory node:sqlite)', () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      const stmt = db.prepare(`SELECT ${questionableCallSql('e')} AS q FROM (SELECT ? AS kind, ? AS metadata) e`);
+      for (const [kind, metadata, want] of VECTORS) {
+        const row = stmt.get(kind, metadata === null ? null : JSON.stringify(metadata)) as { q: number | bigint | null };
+        expect(Number(row.q ?? 0) !== 0, `${kind} ${JSON.stringify(metadata)}`).toBe(want);
+        expect(isQuestionableCall(kind, metadata)).toBe(want);
+      }
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fixture premise.
+// ---------------------------------------------------------------------------
+
+describe('fixture premise', () => {
+  it('alpha has three exact-match (questionable) call edges and nothing else; beta one import-resolved call and one imports edge, neither questionable', () => {
+    const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'), { readOnly: true });
+    try {
+      const rows = db.prepare(
+        `SELECT t.name AS target, s.name AS source, e.kind AS kind, e.metadata AS metadata
+           FROM edges e JOIN nodes t ON t.id = e.target JOIN nodes s ON s.id = e.source
+          WHERE e.kind IN ('calls', 'references', 'imports', 'implements', 'extends') AND t.name IN ('alpha', 'beta')
+          ORDER BY t.name, e.kind, s.name`,
+      ).all() as Array<{ target: string; source: string; kind: string; metadata: string | null }>;
+      const seen = rows.map(r => {
+        const meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : null;
+        return { target: r.target, kind: r.kind, source: r.source, resolvedBy: meta?.resolvedBy, questionable: isQuestionableCall(r.kind, meta) };
+      });
+      // The imports edge's source is use.ts's file node; its metadata is not pinned, only that it is not questionable.
+      const beta = seen.filter(e => e.target === 'beta');
+      expect(seen.filter(e => e.target === 'alpha')).toEqual([
+        { target: 'alpha', kind: 'calls', source: 'firstCaller', resolvedBy: 'exact-match', questionable: true },
+        { target: 'alpha', kind: 'calls', source: 'secondCaller', resolvedBy: 'exact-match', questionable: true },
+        { target: 'alpha', kind: 'calls', source: 'thirdCaller', resolvedBy: 'exact-match', questionable: true },
+      ]);
+      expect(beta).toHaveLength(2);
+      expect(beta[0]).toEqual({ target: 'beta', kind: 'calls', source: 'useBeta', resolvedBy: 'import', questionable: false });
+      expect(beta[1]).toMatchObject({ target: 'beta', kind: 'imports', questionable: false });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The gate: CLI and MCP.
+// ---------------------------------------------------------------------------
+
+interface Group { symbol: { name: string } | null; inDegree: number; questionableInDegree?: number }
+interface Result { groups: Group[]; strict?: boolean }
+
+function groupNamed(r: Result, name: string): Group {
+  const g = r.groups.find(x => x.symbol?.name === name);
+  expect(g, `group ${name}`).toBeDefined();
+  return g!;
+}
+function rankOf(r: Result, name: string): number {
+  return r.groups.findIndex(x => x.symbol?.name === name);
+}
+function headerLine(text: string, name: string): string {
+  const line = text.split(/\r?\n/).find(l => l.startsWith(`${name} · `));
+  expect(line, `header for ${name} in:\n${text}`).toBeDefined();
+  return line!;
+}
+
+describe('grep questionable marks', () => {
+  beforeEach(() => {
+    vi.stubEnv('CODEGRAPH_EXTENSION_MODULES', '');
+    vi.stubEnv('CODEGRAPH_MCP_TOOLS', '');
+    __resetExtensionsForTests();
+    registerExtension(queriesExtension);
+  });
+
+  afterEach(() => {
+    __resetExtensionsForTests();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  /** Runs `codegraph <argv>` against a fresh program carrying the extension's commands. */
+  async function runCommand(argv: string[]): Promise<{ stdout: string; stderr: string; exitCode: number | undefined }> {
+    const program = new Command().name('codegraph').exitOverride();
+    registerExtensionCommands(program);
+    let stdout = '';
+    let stderr = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((c: string | Uint8Array) => { stdout += String(c); return true; });
+    vi.spyOn(process.stderr, 'write').mockImplementation((c: string | Uint8Array) => { stderr += String(c); return true; });
+    let exitCode: number | undefined;
+    try {
+      await program.parseAsync(argv, { from: 'user' });
+      exitCode = process.exitCode === undefined ? undefined : Number(process.exitCode);
+    } catch (err) {
+      // An option commander does not know throws under exitOverride; report it as the CLI would exit.
+      if (!(err instanceof CommanderError)) throw err;
+      exitCode = err.exitCode;
+    } finally {
+      vi.restoreAllMocks();
+    }
+    return { stdout, stderr, exitCode };
+  }
+
+  async function cliJson(extra: string[]): Promise<Result> {
+    const out = await runCommand(['grep', '--json', ...extra, '-p', root, 'MARKER']);
+    expect(out.stderr).toBe('');
+    expect(out.exitCode).toBe(0);
+    return JSON.parse(out.stdout) as Result;
+  }
+  async function mcpText(args: Record<string, unknown>): Promise<{ text: string; isError?: boolean }> {
+    const res = await new ToolHandler(cg).execute('codegraph_grep', { pattern: 'MARKER', projectPath: root, ...args });
+    return { text: res.content[0]!.text, isError: res.isError };
+  }
+  async function mcpJson(args: Record<string, unknown>): Promise<Result> {
+    const res = await mcpText({ json: true, ...args });
+    expect(res.isError).toBeFalsy();
+    return JSON.parse(res.text) as Result;
+  }
+
+  function expectMarkedJson(r: Result): void {
+    const alpha = groupNamed(r, 'alpha');
+    const beta = groupNamed(r, 'beta');
+    expect(alpha.inDegree).toBe(3);
+    expect(alpha.questionableInDegree).toBe(3);
+    expect(beta.inDegree).toBe(2);
+    expect('questionableInDegree' in beta).toBe(false);
+    expect(rankOf(r, 'alpha')).toBeLessThan(rankOf(r, 'beta'));
+    expect('strict' in r).toBe(false);
+  }
+  function expectMarkedText(text: string): void {
+    expect(headerLine(text, 'alpha')).toContain('· 3 in-edges (3 questionable)');
+    const beta = headerLine(text, 'beta');
+    expect(beta).toContain('· 2 in-edges');
+    expect(beta).not.toContain('questionable');
+  }
+  function expectStrictJson(r: Result): void {
+    const alpha = groupNamed(r, 'alpha');
+    const beta = groupNamed(r, 'beta');
+    expect(alpha.inDegree).toBe(0);
+    expect('questionableInDegree' in alpha).toBe(false);
+    expect(beta.inDegree).toBe(2);
+    expect('questionableInDegree' in beta).toBe(false);
+    expect(rankOf(r, 'beta')).toBeLessThan(rankOf(r, 'alpha'));
+    expect(r.strict).toBe(true);
+  }
+
+  it('CLI --json without --strict: alpha inDegree 3 with questionableInDegree 3, beta 2 unmarked, alpha first, no strict key', async () => {
+    expectMarkedJson(await cliJson([]));
+  });
+
+  it('MCP json without strict: alpha inDegree 3 with questionableInDegree 3, beta 2 unmarked, alpha first, no strict key', async () => {
+    expectMarkedJson(await mcpJson({}));
+  });
+
+  it('CLI text without --strict: alpha header reads "3 in-edges (3 questionable)", beta "2 in-edges" unmarked', async () => {
+    const out = await runCommand(['grep', '-p', root, 'MARKER']);
+    expect(out.exitCode).toBe(0);
+    expectMarkedText(out.stdout);
+  });
+
+  it('MCP text without strict: alpha header reads "3 in-edges (3 questionable)", beta "2 in-edges" unmarked', async () => {
+    const res = await mcpText({});
+    expect(res.isError).toBeFalsy();
+    expectMarkedText(res.text);
+  });
+
+  it('CLI --json --strict: alpha inDegree 0 unmarked, beta 2, beta first, strict: true', async () => {
+    expectStrictJson(await cliJson(['--strict']));
+  });
+
+  it('MCP json strict: true: alpha inDegree 0 unmarked, beta 2, beta first, strict: true', async () => {
+    expectStrictJson(await mcpJson({ strict: true }));
+  });
+
+  it('MCP strict: null behaves as no strict (marked, unstrict ranking), not isError', async () => {
+    expectMarkedJson(await mcpJson({ strict: null }));
+  });
+
+  it('MCP strict: "yes" (not a boolean) answers success-shaped guidance, not isError', async () => {
+    const res = await mcpText({ strict: 'yes' });
+    expect(res.isError).toBeFalsy();
+    expect(res.text).toMatch(/strict/);
+  });
+});

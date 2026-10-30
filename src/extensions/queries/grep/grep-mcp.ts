@@ -5,9 +5,9 @@
  * (src/extensions/host).
  *
  * Every expected condition (zero hits, bad pattern, unknown --in prefix, a
- * project with no index) answers success-shaped guidance: an isError early in
- * a session teaches the agent to stop calling codegraph (AGENTS.md, "errors
- * teach abandonment"). isError is kept for a security refusal (a project path
+ * project with no index, a `strict` that is neither a boolean nor null/absent)
+ * answers success-shaped guidance: an isError early in a session teaches the
+ * agent to stop calling codegraph (AGENTS.md, "errors teach abandonment"). isError is kept for a security refusal (a project path
  * under a sensitive directory, as validateProjectPath decides) and a real
  * malfunction: ripgrep missing, or an unexpected failure.
  */
@@ -50,6 +50,10 @@ export async function handleGrepTool(args: Record<string, unknown>, defaultProje
   if (projectPath === undefined) {
     return text('No project to search: pass `projectPath` pointing into a project that has a .codegraph/ index.');
   }
+  // null is absent, as blast treats it (its absent() convention); any other non-boolean gets guidance.
+  if (args.strict !== undefined && args.strict !== null && typeof args.strict !== 'boolean') {
+    return text('strict must be true or false.');
+  }
   const resolved = resolveRoot(projectPath);
   if ('refusal' in resolved) return text(resolved.refusal, true);
   const root = resolved.root;
@@ -58,6 +62,7 @@ export async function handleGrepTool(args: Record<string, unknown>, defaultProje
       in: typeof args.in === 'string' ? args.in : undefined,
       fixed: args.fixed === true,
       ignoreCase: args.ignore_case === true,
+      strict: args.strict === true,
     });
     if (args.json === true) return text(JSON.stringify(result, null, 2));
     if (result.totalHits === 0) return text(zeroHitNote(result));

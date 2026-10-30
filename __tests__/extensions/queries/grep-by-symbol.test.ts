@@ -330,7 +330,7 @@ describe('formatting', () => {
       [
         '"TOKEN" — 2 hits in 2 symbols across 1 files (searched 1 indexed files)',
         '',
-        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges',
+        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges (1 questionable)',
         '  L2: return "TOKEN far";',
         '',
         'zeroAb · function · src/ab/other.ts:L10-L12 · 0 in-edges',
@@ -347,10 +347,10 @@ describe('formatting', () => {
       [
         `"TOKEN" — 7 hits in 7 symbols across 3 files (searched ${INDEXED_COUNT} indexed files)`,
         '',
-        'helper · function · src/a/service.ts:L10-L12 · 2 in-edges',
+        'helper · function · src/a/service.ts:L10-L12 · 2 in-edges (2 questionable)',
         '  L11: return "TOKEN helper";',
         '',
-        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges',
+        'farAway · function · src/ab/other.ts:L1-L3 · 1 in-edges (1 questionable)',
         '  L2: return "TOKEN far";',
         '',
         'src/a/service.ts (module level) · 0 in-edges',
@@ -486,7 +486,7 @@ describe('MCP tool', () => {
     expect(schema.type).toBe('object');
     expect(schema.required).toEqual(['pattern']);
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ['fixed', 'ignore_case', 'in', 'json', 'pattern', 'projectPath'].sort(),
+      ['fixed', 'ignore_case', 'in', 'json', 'pattern', 'projectPath', 'strict'].sort(),
     );
   });
 

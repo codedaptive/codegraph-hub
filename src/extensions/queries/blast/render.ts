@@ -2,9 +2,9 @@
  * Renderers for a `BlastReport`: terminal text, a PR-comment markdown body, and JSON.
  *
  * A port of graft 0.16 `dist/blast/render.js`. `textReport` is byte-compatible
- * with graft's for the same report; it has no "who to tag" block because this
- * port computes no reviewers. `markdownReport` keeps graft's headline, test
- * line, impact table, collapsed sections and caveats. One difference: the
+ * with graft's for a report with no questionable marks; it has no "who to
+ * tag" block because this port computes no reviewers. `markdownReport` keeps
+ * graft's headline, test line, impact table, collapsed sections and caveats. One difference: the
  * collapsed symbol list's "…N further symbols not listed" counts the rows it
  * left out and is omitted when none were. graft's count is one short when the
  * 60-row cap falls inside an area's list, and with exactly 60 rows graft prints
@@ -14,6 +14,10 @@
  * the tag line, the owner section, and the per-symbol evidence snippets
  * (graft's `evidence.js`, which reads the checkout). The markdown header is
  * "### blast radius" and the footer names `codegraph blast`.
+ *
+ * Added here (graft has no edge certainty): a dependent marked `questionable`
+ * says so on its line in text and markdown, and one caveat line counts the
+ * marked dependents. A report with no marks renders no questionable text.
  */
 import type { BlastReport } from './blast';
 
@@ -104,7 +108,9 @@ function impactTable(r: BlastReport): string[] {
   const rows = ['| Can be affected | Symbols | Nearest hop | Reached from |', '| --- | --: | --- | --- |'];
   for (const mod of shown) {
     const nearest = mod.symbols[0];
-    const hop = nearest ? `\`${nearest.path}:${nearest.span}\` ${nearest.name} — ${nearest.relation}, depth ${nearest.depth}` : '—';
+    const hop = nearest
+      ? `\`${nearest.path}:${nearest.span}\` ${nearest.name} — ${nearest.relation}, depth ${nearest.depth}${nearest.questionable ? ', questionable' : ''}`
+      : '—';
     // Two names, then a count, so the column cannot outgrow the table.
     const names = [...new Set(mod.from.map((f) => areaOf.get(f) ?? f))];
     const from = names.length === 0 ? '—'
@@ -136,7 +142,7 @@ function detailSections(r: BlastReport, symbols: number): string[] {
       out.push('');
       for (const s of mod.symbols) {
         if (listed >= MAX_SYMBOLS_LISTED) break;
-        out.push(`- \`${s.path}:${s.span}\` — ${s.name} (${s.relation}, depth ${s.depth})`);
+        out.push(`- \`${s.path}:${s.span}\` — ${s.name} (${s.relation}, depth ${s.depth}${s.questionable ? ', questionable' : ''})`);
         listed++;
       }
       out.push('');
@@ -199,7 +205,10 @@ function detailSections(r: BlastReport, symbols: number): string[] {
   return out;
 }
 
-/** What the report cannot see: deleted and unindexed files, so "no dependents" is not read as "safe". */
+/**
+ * What the report cannot see or vouch for: deleted and unindexed files, so "no
+ * dependents" is not read as "safe", and dependents marked questionable.
+ */
 function caveatLines(r: BlastReport): string[] {
   const out: string[] = [];
   if (r.deleted.length > 0) {
@@ -209,6 +218,13 @@ function caveatLines(r: BlastReport): string[] {
   if (r.unindexed.length > 0) {
     out.push(`⚠️ ${plural(r.unindexed.length, 'changed file')} not in the graph (${r.unindexed.slice(0, MAX_CAVEAT_PATHS).join(', ')}) — ` +
       'no parser claims the extension, or the index predates the file.');
+  }
+  // Counts every marked dependent in `impacted`, including those inside changed
+  // files and test files, which the module lists leave out. Never set under strict.
+  const marked = r.impacted.filter((s) => s.questionable).length;
+  if (marked > 0) {
+    out.push(`${plural(marked, 'dependent')} reached only through name-matched calls ${marked === 1 ? 'is' : 'are'} ` +
+      `marked questionable; strict (\`--strict\`, or \`strict: true\` over MCP) leaves ${marked === 1 ? 'it' : 'them'} out.`);
   }
   return out;
 }
@@ -229,7 +245,7 @@ export function textReport(r: BlastReport): string {
   for (const mod of r.modules) {
     lines.push(`${mod.label} — ${plural(mod.symbols.length, 'symbol')} in ${plural(mod.files.length, 'file')}`);
     for (const s of mod.symbols.slice(0, MAX_TEXT_SYMBOLS)) {
-      lines.push(`  ${s.relation} ← ${s.name} (${s.path}:${s.span}) [depth ${s.depth}]`);
+      lines.push(`  ${s.relation} ← ${s.name} (${s.path}:${s.span}) [depth ${s.depth}]${s.questionable ? ' [questionable]' : ''}`);
     }
     const hidden = mod.symbols.length - MAX_TEXT_SYMBOLS;
     if (hidden > 0) lines.push(`  …${plural(hidden, 'more symbol')}`);
