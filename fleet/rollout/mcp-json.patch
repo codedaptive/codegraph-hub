@@ -1,9 +1,11 @@
 --- a/share/mcp-codegraph.json
 +++ b/share/mcp-codegraph.json
-@@ -5,6 +5,7 @@
+@@ -4,7 +4,8 @@
+       "command": "/opt/homebrew/bin/codegraph",
        "args": ["serve", "--mcp"],
        "env": {
-         "CODEGRAPH_MCP_TOOLS": "explore,node,search,callers,callees,impact",
+-        "CODEGRAPH_MCP_TOOLS": "explore,node,search,callers,callees,impact",
++        "CODEGRAPH_MCP_TOOLS": "explore,node,search,callers,callees,impact,grep,blast,orphans,suspects",
 +        "CODEGRAPH_QUERY_POOL_SIZE": "0",
          "DO_NOT_TRACK": "1"
        }

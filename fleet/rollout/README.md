@@ -12,7 +12,7 @@ change to shared state with its exact diff and its undo. None has been applied.
 | # | Write-up | Shared state | Waits on |
 |---|---|---|---|
 | 1 | `global-install.md` | `/opt/homebrew` npm prefix: 1.5.0 out, 1.6.2-sm.N (`fleet/pack.sh`) in | nothing |
-| 2 | `mcp-json.md` (+ `mcp-json.patch`) | `codeteam/share/mcp-codegraph.json`: `CODEGRAPH_QUERY_POOL_SIZE=0` added to codeteam's staged entry | nothing |
+| 2 | `mcp-json.md` (+ `mcp-json.patch`) | `codeteam/share/mcp-codegraph.json`: the ten tools (sm.2) and `CODEGRAPH_QUERY_POOL_SIZE=0` in codeteam's staged entry | nothing |
 | 3 | `claude-json.md` | `~/.claude.json`: the stale user-scope 1.5.0 entry removed | nothing |
 | 4 | `per-team-mcp.md` (+ `codeteam-mcp.patch`) | codeteam's launch code: a manifest's `mcp_configs` adds MCP files for that team; then one manifest line per team switches it on | proposal to codeteam's maintainer; switching a team on waits on 1, 2 and host's `worktree-lifecycle` (S-9), and the order is Bob's (Q-7) |
 
