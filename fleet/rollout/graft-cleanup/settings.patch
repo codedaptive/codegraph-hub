@@ -1,0 +1,308 @@
+--- a/team-moot/team/claude/settings.json
++++ b/team-moot/team/claude/settings.json
+@@ -50,15 +50,6 @@
+             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/assert-stance.sh\""
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-start || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "SubagentStart": [
+@@ -226,15 +217,6 @@
+             "timeout": 30
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" stop || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "PreCompact": [
+@@ -287,39 +269,9 @@
+             "timeout": 10
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" post-edit || true",
+-            "timeout": 10000
+-          }
+-        ],
+-        "matcher": "Write|Edit|MultiEdit"
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" tool-savings || true",
+-            "timeout": 8000
+-          }
+-        ],
+-        "matcher": "Bash|mcp__graft__|Read|Grep|Glob"
+-      }
+-    ],
+-    "UserPromptSubmit": [
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" prompt || true",
+-            "timeout": 15000
+-          }
+-        ]
+-      }
+-    ]
++      }
++    ],
++    "UserPromptSubmit": []
+   },
+   "statusLine": {
+     "type": "command",
+--- a/team-aimodel/team/claude/settings.json
++++ b/team-aimodel/team/claude/settings.json
+@@ -60,15 +60,6 @@
+             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/assert-stance.sh\""
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-start || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "SubagentStart": [
+@@ -217,15 +208,6 @@
+             "timeout": 30
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" stop || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "PreCompact": [
+@@ -278,39 +260,9 @@
+             "timeout": 10
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" post-edit || true",
+-            "timeout": 10000
+-          }
+-        ],
+-        "matcher": "Write|Edit|MultiEdit"
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" tool-savings || true",
+-            "timeout": 8000
+-          }
+-        ],
+-        "matcher": "Bash|mcp__graft__|Read|Grep|Glob"
+-      }
+-    ],
+-    "UserPromptSubmit": [
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" prompt || true",
+-            "timeout": 15000
+-          }
+-        ]
+-      }
+-    ]
++      }
++    ],
++    "UserPromptSubmit": []
+   },
+   "statusLine": {
+     "type": "command",
+--- a/team-bench/team/claude/settings.json
++++ b/team-bench/team/claude/settings.json
+@@ -50,15 +50,6 @@
+             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/assert-stance.sh\""
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-start || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "SubagentStart": [
+@@ -216,15 +207,6 @@
+             "timeout": 30
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" stop || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "PreCompact": [
+@@ -277,39 +259,9 @@
+             "timeout": 10
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" post-edit || true",
+-            "timeout": 10000
+-          }
+-        ],
+-        "matcher": "Write|Edit|MultiEdit"
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" tool-savings || true",
+-            "timeout": 8000
+-          }
+-        ],
+-        "matcher": "Bash|mcp__graft__|Read|Grep|Glob"
+-      }
+-    ],
+-    "UserPromptSubmit": [
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" prompt || true",
+-            "timeout": 15000
+-          }
+-        ]
+-      }
+-    ]
++      }
++    ],
++    "UserPromptSubmit": []
+   },
+   "statusLine": {
+     "type": "command",
+--- a/team-fulcrum/team/claude/settings.json
++++ b/team-fulcrum/team/claude/settings.json
+@@ -50,15 +50,6 @@
+             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/assert-stance.sh\""
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-start || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "SubagentStart": [
+@@ -216,15 +207,6 @@
+             "timeout": 30
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" stop || true",
+-            "timeout": 8000
+-          }
+-        ]
+       }
+     ],
+     "PreCompact": [
+@@ -277,39 +259,9 @@
+             "timeout": 10
+           }
+         ]
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" post-edit || true",
+-            "timeout": 10000
+-          }
+-        ],
+-        "matcher": "Write|Edit|MultiEdit"
+-      },
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" tool-savings || true",
+-            "timeout": 8000
+-          }
+-        ],
+-        "matcher": "Bash|mcp__graft__|Read|Grep|Glob"
+-      }
+-    ],
+-    "UserPromptSubmit": [
+-      {
+-        "hooks": [
+-          {
+-            "type": "command",
+-            "command": "[ -f \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" ] && node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" prompt || true",
+-            "timeout": 15000
+-          }
+-        ]
+-      }
+-    ]
++      }
++    ],
++    "UserPromptSubmit": []
+   },
+   "statusLine": {
+     "type": "command",

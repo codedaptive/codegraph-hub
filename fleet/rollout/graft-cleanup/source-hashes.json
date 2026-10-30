@@ -1,0 +1,106 @@
+{
+  "catalog_root": "/Users/bob/dev_docs/simple-machines-docs/shared/agent_catalog",
+  "sources": [
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agents_source/_skills/blast-radius/SKILL.md",
+      "sha256": "c8984f8ac34e5b7c2d97f9230c9a5da18f082b2e45fa66aa8004e85b72bc78d6"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agents_source/_skills/orchestrator/SKILL.md",
+      "sha256": "0da9d40a987141b2d76fab3272799093010675f2da28baa829dca16c21f04c67"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agents_source/_skills/model-ladder/SKILL.md",
+      "sha256": "05da119b1c0df112fe71f1f6de79141958b7060a431ada1bc76df5dbea781b4b"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agent_catalog/skills/codegraph/SKILL.md",
+      "sha256": "117a1df976bfb855d9ca8fc2fd55aa059fba5338a5271bd22aa5761146894f1b"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agent_catalog/rules/search-tooling.md",
+      "sha256": "4766d2ba3ff09a79cd65a0969e67b3744ed6178a036c22980f3c54fb882b6467"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agent_catalog/products/codeteam/AGENTS.md",
+      "sha256": "e2ef6e53938d37da92f9dd85a27eeda51898b9fcb9d8abc14ecad7774bab335c"
+    },
+    {
+      "path": "/Users/bob/devlop/codeteam/teams/codegraph.toml",
+      "sha256": "5fb4ed189526e493df2f714f0bba54a86db812c42dce391b37d698131d10d041"
+    },
+    {
+      "path": "/Users/bob/devlop/codeteam/v2/smoke/claude-fab/agents/kong-opus-5-5-medium.md",
+      "sha256": "feaca45e7d8a4db4e6efb06a0f5a5c826b66967277ea78eef5e91382635b47f3"
+    },
+    {
+      "path": "/Users/bob/devlop/codeteam/v2/smoke/claude-fab/agents/nagatha-opus-5-5-medium.md",
+      "sha256": "d3bde26804cddd9925121c6b45cdc18a4375f7a386bc314bebceb2ad0ec0b113"
+    },
+    {
+      "path": "/Users/bob/devlop/team-moot/team/claude/settings.json",
+      "sha256": "0e4f3d516b25d22f7e4ef7f69ae2979c19fc8a76dd579debbe9eea80c7e9ad40"
+    },
+    {
+      "path": "/Users/bob/devlop/team-aimodel/team/claude/settings.json",
+      "sha256": "4dd037421210de246acd8c9dd79ea2a17b35032ce5f9151f69ddbf92a400457e"
+    },
+    {
+      "path": "/Users/bob/devlop/team-bench/team/claude/settings.json",
+      "sha256": "b4a04fb7152e31e29e58c819a3291d14998769f978104cecd9b5ab00aeaad5bb"
+    },
+    {
+      "path": "/Users/bob/devlop/team-fulcrum/team/claude/settings.json",
+      "sha256": "b4a04fb7152e31e29e58c819a3291d14998769f978104cecd9b5ab00aeaad5bb"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agents_source/_archive/_skills/blast-radius/references/critical-primitives.md",
+      "sha256": "85b63cc745ee42448d40d576fed2ae24011369ac1c56b4a5f28a9d0f03621580"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agents_source/_archive/_skills/blast-radius/references/anti-patterns.md",
+      "sha256": "be70069434c073168859c2fa9e18da307d1ed6d17fa99ed896842c261b0797ab"
+    },
+    {
+      "path": "/Users/bob/dev_docs/simple-machines-docs/shared/agents_source/_archive/_skills/blast-radius/references/examples.md",
+      "sha256": "3456784209ed831747dc4d25a6475e27c2f8325c885e0af4d71bec7b81c2a88d"
+    }
+  ],
+  "artifacts": {
+    "catalog": [
+      "skills/blast-radius/SKILL.md",
+      "skills/orchestrator/SKILL.md",
+      "skills/model-ladder/SKILL.md",
+      "skills/codegraph/SKILL.md",
+      "rules/search-tooling.md",
+      "products/codeteam/AGENTS.md"
+    ],
+    "codeteam": [
+      "teams/codegraph.toml",
+      "v2/smoke/claude-fab/agents/kong-opus-5-5-medium.md",
+      "v2/smoke/claude-fab/agents/nagatha-opus-5-5-medium.md"
+    ],
+    "settings": [
+      "team-moot/team/claude/settings.json",
+      "team-aimodel/team/claude/settings.json",
+      "team-bench/team/claude/settings.json",
+      "team-fulcrum/team/claude/settings.json"
+    ]
+  },
+  "checks": [
+    "fleet manifest: exactly fleet.job changed; all other parsed values preserved",
+    "kong-opus-5-5-medium: parsed frontmatter preserved except removal of obsolete search skill; no new fixture dependency; filename/name/model/effort/tools/persona retained",
+    "nagatha-opus-5-5-medium: parsed frontmatter preserved except removal of obsolete search skill; no new fixture dependency; filename/name/model/effort/tools/persona retained",
+    "moot: exactly 5 graft-only hook groups and 1 matcher removed; every unrelated parsed setting preserved",
+    "aimodel: exactly 5 graft-only hook groups and 1 matcher removed; every unrelated parsed setting preserved",
+    "bench: exactly 5 graft-only hook groups and 1 matcher removed; every unrelated parsed setting preserved",
+    "fulcrum: exactly 5 graft-only hook groups and 1 matcher removed; every unrelated parsed setting preserved",
+    "Review R1: three required blast-radius sections restored inline from complete legacy split sources; no dangling references/ links. Named-command -f guidance excludes explore."
+  ],
+  "baseline_note": "Whole-file manifest drift during preparation was reconciled against current sources. Snapshot TOML comparison preserves all current unrelated owner edits.",
+  "patch_sha256": {
+    "catalog.patch": "0dee8a8e138bb7a9d391bcac8e50aba3ec114efb0e0a6bbc51130d8940bbfdd7",
+    "codeteam.patch": "9cf9dced8744f6c43e3461f2dabed4de8be292de452ad74364768fabd802e420",
+    "settings.patch": "4cc14dce0a9bf76752c650ca43867d8494381510fe442ac0a812fbbf3bbac8ce"
+  }
+}

@@ -1,0 +1,1496 @@
+--- /dev/null
++++ b/skills/blast-radius/SKILL.md
+@@ -0,0 +1,592 @@
++---
++status: active-finalized
++tags: [skill, process, mandatory]
++created: 2026-04-23
++updated: 2026-10-30
++supersedes: none
++mandated_by: Bob's 2026-04-23 directive
++name: blast-radius
++effort: xhigh
++description: >-
++  Pre-flight protocol for missions that modify, remove, rename, or alter
++  the semantics of existing symbols. Maps call-site impact via the
++  CodeGraph call graph (callers, impact, blast) plus rg for non-code
++  references, and documents required updates before code changes are made.
++when_to_use: >-
++  Mission touches existing primitives (the core entities,
++  an entity, an archive store, the store, a compute engine, a scoring engine,
++  ProgressLeversEngine, RAGVerifier, SchemaValidator). Mission renames
++  or removes a symbol. Mission changes a function signature. Mission
++  deprecates a method. Mission alters CloudKit record fields, SQLite
++  columns, bitmap bits, NodeType cases, a core entity cases, or
++  ProgressLeversLevel cases. Trigger phrases: blast radius, MUST_UPDATE,
++  INTENTIONALLY_LEFT, RESCOPE_REQUIRED, rename, signature change,
++  symbol removal, deprecation, migration, orphan deprecation, bridge
++  helper, shim, partial migration, Critical Primitives Table, Blast
++  Radius Report, docs/blast_radius, swift test exit 0, baseline test
++  count, call sites, symbol being changed, codegraph, codegraph callers,
++  codegraph impact, codegraph blast, blast radius, call graph.
++placement: shared/skills/SKILL_BLAST_RADIUS.md
++---
++
++# Skill: Blast Radius Discipline
++## Claude Code Reference — The Top-to-Bottom Change Protocol
++### Version 1.0 — April 2026
++
++---
++
++## Commander's Standard
++
++*Bob is the Commander. He values accuracy and completeness over speed.
++Every rule in this document exists because a missed caller costs more
++than a slow mission.*
++
++*Right the first time, every time.*
++
++*A partial migration is worse than a delayed migration. A missing file
++is worse than slow sync. If the cascade cannot be completed in this
++mission, the mission pauses and rescopes — it never ships partial.*
++
++---
++
++## When This Skill Applies
++
++This skill is MANDATORY before Bilby makes any change to existing code
++that modifies, removes, renames, deprecates, or alters the semantics
++of a symbol that may be referenced elsewhere. Specifically, any of:
++
++- Renaming a type, function, parameter, or field
++- Changing the signature of a function (adding, removing, or reordering
++  parameters; changing types; changing return type)
++- Removing a property, parameter, accessor, or case
++- Adding `@available(*, deprecated, ...)` or any deprecation annotation
++- Changing the semantics of an existing symbol even if the signature
++  is preserved (for example: same function, different return value
++  contract)
++- Modifying a shared data-model field (stored property, computed
++  property, bitmap bit assignment)
++- Modifying persistence schema (SQLite column, CloudKit record field)
++- Modifying canonical constants (slider stops, date weights, effort
++  modifiers, bit assignments)
++
++This skill does NOT apply to purely additive changes:
++- Adding a new file with no external references yet
++- Adding a new case to a previously-private enum
++- Adding a new private helper
++- Pure formatting/whitespace changes
++- Comment-only edits
++
++If you are uncertain whether a change triggers this skill, it does.
++Err on the side of running the protocol.
++
++---
++
++## The Protocol — Five Steps
++
++### Step 0: Establish the baseline
++
++Before writing any production code, capture:
++
++```bash
++cd into the kit and run swift test 2>&1 | tail -5
++```
++
++Record the baseline test pass count. If `swift test` does not exit 0
++at mission start, STOP and write a .stuck signal with
++`ERROR="test suite broken at mission start; needs triage before this
++mission can proceed"`. Do not attempt to work around broken tests.
++Fix the test suite first in a separate mission if necessary.
++
++If `swift test` exits 0 cleanly, record the pass count. This is the
++gate value. At mission end, the pass count must be at least this
++number, and `swift test` must exit 0.
++
++#### Step 0b: Bring the index up to the working tree
++
++CodeGraph follows indexed repositories automatically; a new worktree seeds
++from an indexed sibling on its first call. There is no agent-run index
++build. Before a gate, request bounded catch-up and inspect its evidence:
++
++```bash
++codegraph checkpoint --fresh <wt>
++```
++
++Record the returned HEAD, working-tree hash and pending-file count. The
++wait is bounded: if files remain pending, do not claim a fresh graph or a
++complete radius; retry or report the incomplete gate.
++
++Pass your own absolute worktree on every call (`-p <wt>` on the CLI,
++`projectPath` on MCP). MCP gates use `fresh: true`; CLI `grep`, `blast`,
++`orphans` and `suspects` need the explicit checkpoint first, not a
++`--fresh` option. Treat returned source as already read; open a file only
++for an uncovered span or a staleness warning naming an on-disk change.
++
++If the answer says the index is building or being copied, retry shortly;
++do not abandon CodeGraph for the session. A repository never indexed is
++the user's decision: never run `init`, `index`, `uninit`, `unlock`,
++`install`, `uninstall`, `upgrade` or `telemetry`. When no graph is
++available, record `codegraph: unavailable` and the reason in the report;
++an rg-only radius is weaker and cannot be presented as graph-verified.
++
++### Step 1: Identify every symbol being changed
++
++List every symbol the mission will modify. For each:
++
++- Full symbol path (e.g., a computed field on an entity,
++  `RAGVerifier.testCorrectExclusion(targetRoleId:)`, `an archive store.init`)
++- Change class: rename / signature / removal / deprecation / semantic
++- Scope: public / internal / private / module-local
++
++For each symbol in the "Critical Primitives Table" (§Critical
++Primitives below), the blast radius protocol runs automatically
++regardless of how minor the change appears.
++
++### Step 2: Map call sites — CodeGraph primary, rg backstop
++
++The blast radius has two halves: **code call sites** (who calls or
++references the symbol in source) and **non-code references** (docs,
++canon, comments, schema strings). CodeGraph owns the first; rg owns
++the second.
++
++#### 2a. Code call sites — CodeGraph
++
++For each symbol being changed, query the call graph:
++
++```bash
++# Direct callers — who calls or references this symbol right now
++codegraph callers SYMBOL -p <wt>
++
++# Transitive blast radius — everything affected if SYMBOL changes,
++# walked out two levels (-d <n> for more). This is the reach rg never gave you.
++codegraph impact SYMBOL -p <wt>
++
++# For a rename or removal, also list what the symbol itself calls,
++# so you know what becomes orphaned if the symbol is deleted.
++codegraph callees SYMBOL -p <wt>
++```
++
++For a whole diff rather than one symbol:
++
++```bash
++codegraph checkpoint --fresh <wt>   # inspect HEAD, hash and pending count
++codegraph blast -b <base-ref> -p <wt> -f markdown
++```
++
++Record the actual base ref and returned checkpoint in the request. For a
++symbol not yet edited, run `codegraph impact SYMBOL -p <wt> --fresh`.
++The diff query starts from the changed ranges; impact starts from the
++named symbol (default depth 2, `-d <n>` for a wider walk).
++
++These are indexed dependency candidates, not proof that every binding is
++certain. Classify every returned site in Step 3 and investigate ambiguous
++or low-confidence bindings before treating the radius as complete.
++
++**Know its limits.** A name defined in several places can leave a caller
++bound by name only, or with low confidence; `codegraph suspects -p <wt>`
++lists such calls, ranked. Treat any that touch SYMBOL as gaps in the list
++and resolve them with `codegraph grep "SYMBOL" -p <wt>` (every hit,
++grouped under its enclosing symbol) before treating the radius as
++complete.
++
++This bites hardest on a DUAL-PORT repo, where the same name exists in both
++ports by design. `DistilledSavings` reported no callers and was being
++called perfectly well. So a zero-caller result is a SUSPICION, never a
++finding — confirm every one with `codegraph grep` before acting on it.
++Without that step the check produces a false positive on most symbols in
++the repo, and a check that cries wolf on most of its hits gets ignored.
++
++For a renamed symbol, run `callers` on the OLD name before the change and
++again after, to confirm the old name has zero surviving callers and the
++new name carries them all. Before squash/push, run a fresh checkpoint,
++inspect its pending count, then check additions:
++
++```bash
++codegraph checkpoint --fresh <wt>
++codegraph orphans -b <base-ref> -p <wt>
++```
++
++For each listed candidate run `rg -nw SYMBOL` for dynamic and string uses
++before calling it unwired. Protocol/trait implementations and tests are
++excluded by the orphan tool. MCP: `codegraph_orphans` with `base`,
++`projectPath` and `fresh: true`. Documented but unwired API is a finding,
++not permission to delete it.
++
++If CodeGraph is unavailable (Step 0b) and you are on the rg-only fallback,
++skip 2a and rely on 2b for code as well — but flag it: an rg-only blast
++radius is weaker and the reviewer must know.
++
++#### 2b. Non-code references — rg
++
++CodeGraph indexes symbols, not prose or schema strings. Docs, canon
++files, comments, SQLite column names, and CloudKit field names are
++NOT call edges and will not appear in `impact`. rg remains MANDATORY
++for these:
++
++```bash
++# Docs and canon — symbol named in prose
++rg -n "SYMBOL" docs/canon/ docs/decisions/ docs/missions/ docs/skills/
++
++# Schema and persistence — substitute the product's actual paths
++rg -n "SYMBOL" "$SCHEMA_FILE"
++rg -n "SYMBOL" "$SYNC_SOURCES"
++rg -n "SYMBOL" "$SCHEMA_VALIDATOR"
++rg -n "SYMBOL" "$KIT/Package.swift"
++
++# Comments and docstrings that name the symbol
++rg -n "SYMBOL" "$KIT/Sources/" -g '*.swift' -B 1 -A 1
++```
++
++If the symbol name is short or common, use `\bSYMBOL\b` or a
++uniquely-qualified form to cut noise.
++
++#### 2c. Reconcile
++
++Union the CodeGraph call sites (2a) and the rg non-code hits (2b)
++into one list. If rg surfaces a *code* call site that CodeGraph did
++NOT (e.g. a dynamic dispatch, a reflection-based call, a string
++selector), that is a signal the call graph could not see it statically
++— classify it MUST_UPDATE and note `dynamic — rg-only` in the
++justification, because the static index is blind to it.
++
++### Step 3: Classify every hit
++
++Every call site (from CodeGraph or rg) gets one of three
++classifications:
++
++**MUST_UPDATE** — this call site uses the symbol and must be changed
++to match the new signature / semantics / deprecation. This includes
++tests, docs, canon files, comments that name the symbol, and schema
++references.
++
++**INTENTIONALLY_LEFT** — this hit matches the grep pattern but does
++not actually reference the symbol being changed (false positive), OR
++references the symbol but legitimately does not need updating. Every
++INTENTIONALLY_LEFT hit requires a written justification.
++
++**RESCOPE_REQUIRED** — this call site must be updated, but doing so
++expands the mission scope beyond what was sanctioned. Mission pauses.
++Surface to Bob with a rescope request. Do not proceed.
++
++The RESCOPE_REQUIRED classification is the escape valve. When Bilby
++hits one, the mission stops. The correct action is to request that
++Skippy rescope (either expand this mission's scope or create a
++follow-up mission that handles the expansion before this one merges).
++The incorrect action is to silence the issue with a bridge, shim, or
++`@available(*, deprecated)` annotation. See "Anti-Patterns" below.
++
++### Step 4: Write the Blast Radius Report
++
++Use this exact template. Write to
++`docs/blast_radius/<task_id>_BLAST_RADIUS.md` and commit it as
++the first commit of the stream (before any production changes):
++
++```markdown
++# Blast Radius Report — <task_id>
++
++**Baseline:** swift test pass count at mission start: NNN
++**Mission:** <mission_title>
++**Symbols being changed:**
++
++## Symbol 1: <full.symbol.path>
++**Change class:** rename / signature / removal / deprecation / semantic
++**Scope:** public / internal / private
++
++### Call sites
++
++| File | Line | Source | Classification | Justification (if INTENTIONALLY_LEFT) |
++|---|---|---|---|---|
++| the kit's Sources/X.swift | 42 | codegraph | MUST_UPDATE | |
++| the kit's Sources/Y.swift | 87 | grep | INTENTIONALLY_LEFT | Matches pattern but refers to unrelated local var `boost` in sort comparator |
++| the kit's Tests/XTests.swift | 15 | codegraph | MUST_UPDATE | |
++| docs/canon/MATH_SPEC.md | 204 | grep | MUST_UPDATE | Prose references old signature |
++
++### Summary
++- MUST_UPDATE: N sites
++- INTENTIONALLY_LEFT: M sites (all justified below)
++- RESCOPE_REQUIRED: P sites (if P > 0, mission blocks)
++
++## Symbol 2: ...
++```
++
++Commit message for this commit:
++
++```
++docs(blast-radius): <task_id> Blast Radius Report
++
++Enumerates all call sites affected by the symbol changes in this
++mission. MUST_UPDATE: N sites. INTENTIONALLY_LEFT: M sites. Each
++INTENTIONALLY_LEFT has a written justification.
++
++Stream: <stream-id>
++```
++
++### Step 5: Implement — every MUST_UPDATE site must be touched
++
++When implementation begins, every file listed as MUST_UPDATE must
++appear in the final diff. If any MUST_UPDATE file is not in the
++diff at commit time, Bilby either:
++
++- Touches it to reflect the change, OR
++- Reclassifies it to INTENTIONALLY_LEFT in the Blast Radius Report
++  with a written justification, AND adds a commit amending the
++  report.
++
++Adams re-reads the Blast Radius Report in post-flight and verifies
++every MUST_UPDATE file appears in the diff. A MUST_UPDATE file
++missing from the diff is a CRITICAL finding.
++
++---
++
++
++## Critical Primitives Table
++
++The following symbols and surfaces are so cross-cutting that ANY
++change — including renames, signature changes, semantic changes, or
++removal — automatically triggers the full blast-radius protocol
++regardless of mission size or apparent triviality.
++
++| Primitive | Grep pattern guidance |
++|---|---|
++| `the entity` fields (stored properties) | `<fieldname>` across Sources/ Tests/ the iOS app/ CloudSync/ Persistence/ Validation/ CKRecordMapper |
++| `a settings entity` fields | Same as the entity |
++| `an entity`, `an entity`, `FKnowledgeDoc`, `a settings entity` fields | Same as the entity |
++| `an archive store.init` signature | `an archive store(` across all .swift files |
++| `the store` public API | `the store.` and `store.` across all callers |
++| Public APIs of `a compute engine`, `a scoring engine`, `ProgressLeversEngine`, `RAGVerifier`, `RAGRetriever` | Module name + `.` across Sources/ Tests/ the iOS app/ |
++| `SchemaValidator` rules (add/remove/change) | `SchemaValidator` + the specific field name being validated |
++| CloudKit record field names in `CKRecordMapper+Node.swift` | The exact string literal used as the record key |
++| SQLite column names in `SQLiteSchema.swift` and `SQLiteStore+*.swift` | The exact column name as string AND as Swift property |
++| `DATA_MODEL.md` version rev | Grep `DATA_MODEL` across canon/ decisions/ skills/ |
++| Bitmap bit assignments (any bit in `the bitmap field`, `the bitmap field`, `the bitmap field`, etc.) | Grep the bit constant AND the computed accessor name |
++| Canon file rev bumps (DATA_MODEL, MATH_SPEC, UI_SPEC_IOS, ARCHITECTURE, MANIFEST, PHASE_PLAN, PRODUCT_LINE, VOCABULARY, NEXUS_SPEC) | Grep the filename across Sources/ Tests/ missions/ decisions/ skills/ |
++| `ProgressLeversLevel` cases, `NodeType` cases, `a core entity` cases | Case name across all `.swift` files (switches especially — `default` branches can hide missed cases) |
++
++When the primitive being changed appears in this table, Step 2's grep
++command set is the MINIMUM — Bilby may need to extend it based on the
++primitive's specific distribution.
++
++The table is curated, not exhaustive. If Bilby encounters a primitive
++not listed here that feels similarly cross-cutting, Bilby treats it
++as critical by default (run the full protocol) and mentions the
++candidate to Skippy for inclusion in a future revision of this table.
++
++---
++
++## Anti-Patterns
++
++When the blast radius is larger than the mission scope, the following
++responses are PROHIBITED. All are forms of partial migration. All are
++"missing files" in Bob's framing.
++
++### 1. Bridge helpers that preserve old behavior
++
++Example: `legacyStaticBoost(for level: ProgressLeversLevel) -> Double`
++— a private helper that returns the same values the deprecated
++accessor returned, called from the single site that triggered the
++deprecation warning. Silences the warning without executing the
++migration.
++
++Why forbidden: the deprecated symbol is still effectively alive via
++the bridge. Downstream readers of the vestigial data still work on
++stale values. The migration was not done — just hidden.
++
++Correct response: RESCOPE_REQUIRED. Surface to Bob.
++
++### 2. Shim types or adapters
++
++Example: creating a wrapper type that forwards calls to a deprecated
++type, so the deprecated type "can be removed later." The deprecated
++type cannot be removed because the wrapper references it.
++
++Correct response: remove the deprecated type entirely in the same
++mission that introduces the replacement, OR RESCOPE_REQUIRED.
++
++### 3. `@available(*, deprecated, ...)` left alive
++
++Marking a symbol deprecated is a PROMISE to remove it in the same
++mission or an immediate follow-up. Missions that mark symbols
++deprecated and ship without scheduling the removal mission have
++created the exact situation we are currently cleaning up.
++
++Correct response: either remove in this mission, or open a follow-up
++mission in the same push that removes it, with the removal mission
++created as a hard dependency. No orphan deprecations.
++
++### 4. TODO / FIXME comments deferring same-symbol work
++
++Any TODO or FIXME comment referencing the symbol being changed is
++evidence of incomplete migration. If the work is needed, it is in
++scope. If the work is not needed, no comment should exist.
++
++Correct response: do the work in this mission, or rescope.
++
++### 5. "Out of scope, pre-existing issue"
++
++The ONLY legitimate out-of-scope items are genuinely unrelated
++pre-existing issues that happen to coexist with the mission's files
++— e.g., a pre-existing test-case typo in a different test unrelated
++to the symbol being changed. If a pre-existing issue involves the
++SAME symbol as the mission's change, it is not pre-existing to the
++blast radius: it is part of it.
++
++### 6. "Tests already broken, not caused by this mission"
++
++If `swift test` is broken at mission start, the mission STOPS (per
++Step 0). Bilby writes a .stuck signal and Bob dispatches a separate
++test-fix mission. Bilby never ships a mission on top of a broken
++test suite. The 0231 → 0239 gap existed because this rule was not
++yet codified.
++
++---
++
++## Test Verification — The Exit-Zero Rule
++
++`swift test` at mission-end MUST exit 0. Not "tests look fine." Not
++"the test target compiles." Not "my tests pass." The full test
++suite, exit 0, pass count at or above the baseline recorded in
++Step 0.
++
++Required in the completion report, §Test Verification Log:
++
++```markdown
++## Test Verification Log
++
++### Baseline (from Blast Radius Report, Step 0)
++- Pass count at mission start: NNN
++- Command: `cd into the kit and run swift test`
++
++### Final (post-commit, pre-signal)
++- Command: `cd into the kit and run swift test 2>&1 | tail -20`
++- Exit code: 0
++- Pass count: NNN (or higher)
++- Fail count: 0
++- Full tail output pasted below (verbatim, 20 lines minimum):
++
++```
++<PASTE FULL TAIL OUTPUT HERE — unmodified>
++```
++
++### iOS target
++- Command: `xcodebuild -workspace Fulcrum.xcworkspace -scheme the iOS app -destination 'platform=iOS Simulator,name=iPhone 17' test 2>&1 | tail -10`
++- Exit code: 0
++- Full tail output pasted below:
++
++```
++<PASTE FULL TAIL OUTPUT HERE — unmodified>
++```
++```
++
++Adams re-runs these commands in post-flight (or verifies the pasted
++output is genuine by spot-checking specific test names against the
++test files). A report with `swift test` output that doesn't match
++the tests actually present is a CRITICAL finding and blocks signal.
++
++---
++
++
++## Examples
++
++### Example 1: Proper MUST_UPDATE classification
++
++Mission: rename `the entity.importanceSlider` to `the entity.importance`.
++
++Grep results include:
++- `the kit's Sources/DataModel/Entities/the entity's source file:145` — stored
++  property declaration → MUST_UPDATE
++- `the kit's Sources/a compute engine/a scoring engine.swift:87` — reads
++  `node.importanceSlider` → MUST_UPDATE
++- `the kit's Tests/the entityTests/the entityTests.swift:42` — asserts
++  `node.importanceSlider == 0.5` → MUST_UPDATE
++- `docs/canon/DATA_MODEL.md:312` — prose references
++  `importanceSlider` → MUST_UPDATE
++- `docs/canon/MATH_SPEC.md:156` — formula uses `importanceSlider`
++  → MUST_UPDATE
++- `docs/decisions/ADR-007-scoring-model.md:88` — decision context
++  references `importanceSlider` → INTENTIONALLY_LEFT, with
++  justification: "ADR records the historical decision at the time
++  of its authorship. Updating the ADR would retcon history. A new
++  ADR documenting the rename is the correct artifact."
++- `docs/missions/MISSION_0042.md:22` — archived mission references
++  `importanceSlider` → INTENTIONALLY_LEFT, with justification:
++  "Archived missions are historical records and are not updated
++  when primitives rename."
++
++### Example 2: Improper INTENTIONALLY_LEFT (caught by Adams)
++
++Mission: remove a computed field on an entity.
++
++Grep hit:
++- `the kit's Sources/a compute engine/a scoring engine.swift:145` —
++  reads `node.progressLeverImportanceBoost` for its importance
++  calculation.
++
++Bilby classifies: INTENTIONALLY_LEFT, justification: "a scoring engine
++use of this field is pre-existing and unrelated to the scope of this
++mission."
++
++This classification is WRONG. a scoring engine's use of the field
++is exactly what the mission is trying to retire. If the field is
++removed, a scoring engine no longer compiles. The correct
++classification is MUST_UPDATE (migrate a scoring engine) or
++RESCOPE_REQUIRED (pause and rescope if the migration is complex).
++
++Adams catches this in post-flight by re-running the grep and
++seeing that `a scoring engine.swift:145` is in MUST_UPDATE territory
++but wasn't touched. Adams flags CRITICAL.
++
++### Example 3: RESCOPE_REQUIRED done correctly
++
++Mission: delete a computed field on an entity.
++
++Grep surfaces 11 call sites: 6 in production code across FCL, VMs,
++persistence, and sync; 3 in tests; 2 in canon docs. The mission
++was scoped to address 3-4 sites. Bilby classifies the remaining 7
++as RESCOPE_REQUIRED, writes the Blast Radius Report, commits it,
++and writes a .stuck signal with:
++
++```
++STREAM=pb
++MISSION=fulcrum/missions/MISSION_PROGRESS_BOOST_PURGE.md
++ERROR=Blast radius larger than mission scope — 7 additional
++MUST_UPDATE sites identified. See
++docs/blast_radius/TASK-FLX-2026-0241_BLAST_RADIUS.md.
++Rescope required.
++```
++
++Bob / Skippy either expand the mission or split into multiple
++sequential missions. Bilby does NOT proceed with the original
++narrow scope.
++
++---
++
++## Relationship with Other Skills
++
++- **SKILL_PRE_COMMIT.md** — §0 of pre-commit requires a Blast
++  Radius Report exists at `docs/blast_radius/<task_id>_BLAST_RADIUS.md`
++  before ANY commit beyond the report itself. The first commit of
++  every stream that touches existing code is the Blast Radius
++  Report.
++
++- **SKILL_SELF_REVIEW.md** — Step 0 requires verifying the final
++  diff matches the MUST_UPDATE list in the Blast Radius Report.
++
++- **SKILL_MISSION_TEMPLATE_v2.1.md** — execution order step 3.5 is
++  the Blast Radius HARD GATE. Bilby cannot proceed past step 3.5
++  without a Blast Radius Report.
++
++- **Agent: Adams (post-flight)** — MUST read the Blast Radius
++  Report as a required input. MUST re-run the queries to catch drift.
++  MUST verify every MUST_UPDATE file appears in the diff. MUST
++  verify test exit 0 via log capture or re-run.
++
++---
++
++## The Rule
++
++If a change to symbol X has any effect on other code that reads or
++writes X, every such call site is in scope. There is no "pre-existing,
++out of scope" escape hatch for call sites of the SAME symbol. If the
++mission as originally scoped cannot cover all call sites, the mission
++pauses and rescopes. It never ships partial.
++
++Right the first time, every time.
+--- /dev/null
++++ b/skills/orchestrator/SKILL.md
+@@ -0,0 +1,671 @@
++---
++name: orchestrator
++description: >-
++  The fleet as it stands: who exists, what each one is for, which model
++  each runs, and the two lifecycles. Read this when deciding who to
++  dispatch, when running interactively without the wormhole, or when the
++  structure itself is in question.
++when_to_use: >-
++  Deciding which agent to dispatch for a piece of work. Running
++  interactively outside the wormhole and needing the worktree lifecycle.
++  Asked what the fleet is or who does what. Unsure whether a role has a
++  4-variant or a 5-variant. Setting up a wave. Trigger phrases: who should
++  do this, which agent, the fleet, what agents exist, orchestrator
++  structure, worktree setup, who reviews, which model, 4 or 5 variant.
++status: active
++tags: [orchestration, fleet, lifecycle]
++created: 2026-08-16
++---
++
++# The fleet
++
++## Shape
++
++```
++Bob
++ └─ ORCHESTRATOR      skippy-orchestrate   opus-5-5    interactive, holds the plan
++     └─ COORDINATOR   bilby-coordinate     opus-5-5    one wave, dispatches, steers
++         ├─ GATES     smythe5 · adams5 · nagatha5
++         ├─ CODERS    bilby-mid · ace5 · newton5
++         └─ READ-ONLY kong5 · perkins5 · kinsta5 · scorandum5 · nert5
++                      friedlander5 · simms5
++```
++
++## Who to dispatch, and for what
++
++| Need | Agent | Model |
++| :--- | :--- | :--- |
++| Write code — the default | `bilby-mid` | opus-5-5 |
++| Write code — codeteam Sonnet lanes | `bilby-mid` | sonnet-5-5, high (the lane session's launch flag) |
++| Write code, third attempt | `ace5` | opus-5-5 |
++| Bitmap or numeric work | `newton5` | opus-5-5 |
++| Verify before implementing | `smythe5` | sonnet-5-5 |
++| Inspect the diff after | `adams5` | opus-5-5 |
++| Validate a submission | `nagatha5` | opus-5-5 |
++| Security review | `perkins5` | opus-5-5 |
++| Architecture review | `kong5` | opus-5-5 |
++| Root cause on a stuck unit | `kinsta5` | sonnet-5-5 |
++| Accessibility | `nert5` | sonnet-5-5 |
++| Performance | `scorandum5` | sonnet-5-5 |
++| Visual consistency | `friedlander5` | sonnet-5-5 |
++| User guides | `simms5` | sonnet-5-5 |
++
++## The suffix
++
++`4` and `5` state instruction density, and the model pin follows.
++
++- `<name>4` is full procedural doctrine, written for 4.x models
++- `<name>5` is lean, capability assumed, written for 5.x models
++
++Both variants exist for every role. The table above is which one the fleet
++dispatches today. `bilby-coordinate` is the stated exception and carries no
++suffix.
++
++Running a capable model against a `4` file is the common setup error: it
++spends context on scaffolding it does not need, has less left for the work,
++and starts doing the work itself rather than dispatching.
++
++## The fleet, machine-readable
++
++Same content as the tables above, denser. Use whichever you read faster.
++
++```yaml
++invariants:
++  max_concurrent_coordinators: 2    # OPERATOR SETTING, not a system property.
++                                    # Set while debugging the wave machinery.
++                                    # Ask to change it; do not reason past it.
++  every_agent_pinned: true          # dispatch gets the FILE's model
++  agent_tool: safe                  # follows from the above
++  workflow_agent: override_only     # to override a pin, not to set one
++  suffix_means: instruction_density # 4 = full doctrine, 5 = lean
++  blocking_gates: [smythe5, adams5] # all others report; the caller acts
++
++roles:
++  orchestrator: {agent: skippy-orchestrate,        model: claude-opus-5-5}
++  coordinator:  {agent: bilby-coordinate, model: claude-opus-5-5}   # no suffix, by decision
++    # 1M window REQUIRED: holds one mission end to end and accumulates the
++    # diffs it reviews. A 200k model compacts mid-wave and loses exactly the
++    # continuity that makes it a good reviewer of the next diff.
++    # Ruled 2026-10-14: opus-5-5 is better and cheaper than fable-5-1 as
++    # orchestrator and everywhere Fable was pinned; Fable was chosen before
++    # opus-5-5 could be tested. Viable: fable-5-1, opus-5-5. Not opus-5 (out on cost -- opus-5-5 is
++    # cheaper and newer). Not sonnet-5 (see models_excluded).
++  preflight:    {agent: smythe5,        model: claude-sonnet-5-5, blocking: true}
++  postflight:   {agent: adams5,         model: claude-opus-5-5, blocking: true}
++  coder:
++    default:   {agent: bilby-mid, model: claude-opus-5-5}
++    sonnet_lanes: {agent: bilby-mid, model: claude-sonnet-5-5, effort: high}  # codeteam lane_class.sonnet; launch flag sets the model
++    escalation: {agent: ace5, model: claude-opus-5-5, after: 2_failed_attempts}
++    # ace5 is a ROLE, not a bigger coder: it reads both failed attempts and
++    # may return RESCOPE_REQUIRED.
++    # attempt 1 bilby-mid, attempt 2 bilby-mid with a CORRECTED BRIEF, then ace5
++  math:         {agent: newton5,      model: claude-opus-5-5}
++  rootcause:    {agent: kinsta5,      model: claude-sonnet-5-5, read_only: true}
++  architecture: {agent: kong5,        model: claude-opus-5-5,  read_only: true}
++  performance:  {agent: scorandum5,   model: claude-sonnet-5-5, read_only: true}
++  accessibility: {agent: nert5,        model: claude-sonnet-5-5, read_only: true}
++  visual:       {agent: friedlander5, model: claude-sonnet-5-5, read_only: true}
++  docs:         {agent: simms5,       model: claude-sonnet-5-5}
++  security:     {agent: perkins5,     model: claude-opus-5-5, invoked_by: change_class}
++  submission:   {agent: nagatha5,     model: claude-opus-5-5}
++
++lifecycle:
++  wormhole: mechanical               # launches the coordinator as the first agent
++  interactive: orchestrator_owns
++  setup_order: [worktree_add, symlink_claude_from_main_checkout]   # CodeGraph seeds the index itself
++  symlink: [hooks, agents, skills, rules, commands, settings.json, agent-memory]
++  keep_local: [settings.local.json, active-mission.md, logs/, worktrees/]
++  teardown: [commit, squash_or_merge, worktree_remove]
++  silent_failures:
++    skip_symlink: "hooks ENOENT, write-scope and push gates become no-ops"
++
++search_order: [codegraph_explore, codegraph_callers, codegraph_impact, codegraph_grep, rg]
++
++measurements:
++  delegation_predicts_cost: {dispatched: 0.64, self_typed: "0.00-0.32", ratio: "3-4x"}
++  green_suite_is_not_evidence: "3 crash bugs shipped with passing tests"
++  brief_content_decides_output: "8 arms, one mission, conformance followed the brief"
++  sonnet-5: dominated_on_both_axes
++  opus-4-6: failed_both_arms
++
++models_excluded:
++  # Recorded with the REASON, because the reason decides what a re-test
++  # would have to show. Testing an excluded model for correctness misses
++  # why it was excluded.
++  sonnet-5: >-
++    TOKEN INEFFICIENCY. 23.0M full / 25.9M lean against sonnet-4-6's
++    12.4M / 14.6M -- nearly 2x the tokens for the same work. It is the
++    cheapest 1M model per token ($2/$10) and still costs more per task.
++    Cheap per token, expensive per job. A re-test must measure tokens per
++    accepted unit, not correctness or price sheet.
++  opus-5: >-
++    COST. opus-5-5 is newer and cheaper ($4/$20 vs $5/$25). Operator also
++    finds it behaviourally annoying. No remaining role.
++
++compare_models_per_accepted_unit: >-
++  Never per token. Price per token and cost per job diverged by nearly 2x
++  on sonnet-5. The same comparison decides whether opus-5-5 is worth +33%
++  per token over sonnet-4-6 as a coder: it depends on tokens per unit and
++  first-pass gate rate, neither known until a wave measures them.
++
++known_limits:
++  coder_evidence: >-
++    The gauntlet measured only sonnet-4-6 as a coder. The default coder,
++    bilby-mid on opus-5-5, rests on terminal-bench results. Its first waves
++    are its measurement.
++  # The gauntlet varied the ORCHESTRATOR; every arm used sonnet-4-6 workers.
++  # The fable and opus worker placements above are reasoning, not measurement.
++```
++
++## What gates a merge
++
++There is no wave reviewer. `adams5` is the fresh eye, per diff, and the
++ruling is yours.
++
++`adams5` is dispatched on every unit with the mission rather than the
++coordinator's reasoning, so it is structurally independent of whoever wrote
++the brief — which was the whole argument for a separate reviewer session.
++It runs the artifact, reads the diff, re-runs the suite, and checks every
++gate fails pre-fix. That is the per-diff work.
++
++What is left is cross-unit: does unit 3 contradict what unit 1 established,
++was the decomposition cut at the right seams, is a mission mis-scoped. That
++is yours, and it is the part you cannot delegate to a per-diff gate.
++
++So the merge gate is:
++
++- `smythe5` GREEN before the unit was built
++- `adams5` PASS on the returned diff
++- your ruling on the wave as a whole
++
++**When to launch a reviewer anyway.** For a wave that is large, security-
++touching, or one you will not read yourself, launch one deliberately for
++that wave: `skippy-review5` is in `_archive/`, the wormhole still honours
++`reviewer_agent`, and `launch_reviewer` is unchanged. It is a submit flag,
++not a rebuild. Default off, on by decision.
++
++## CHECK THE RUNNING COORDINATORS EVERY FIFTEEN MINUTES
++
++A coordinator that has gone wrong looks exactly like one that is working
++until you read its numbers. It is still running, still making tool calls,
++still not asking for anything. The failure is silent by construction.
++
++So every fifteen minutes, pull three numbers per running coordinator from
++its transcript. Do not read its content — that defeats the point and costs
++more than the check.
++
++```bash
++python3 ~/devlop/ddfactory/scripts/agent-health.py --minutes 15
++```
++
++It reads transcript METADATA only, never message content, and prints turns,
++output per turn, dispatch ratio and cache read per session with a verdict.
++Main sessions are exempt from the narration check — they talk to the
++operator and are supposed to produce prose. Only a subagent has one return,
++so only a subagent can narrate into the void.
++
++### Arming it
++
++The operator says **"arm the monitor"** or **"stop the monitor"**. Armed
++means the fifteen-minute timer re-arms after each check and wakes you
++whether or not a coordinator has reported. Stopped means you check when you
++look, not on a clock.
++
++Arm it when the operator steps away. That is the case the timer is for: a
++coordinator that goes wrong while nobody is watching runs to completion and
++produces work somebody has to review and probably discard.
++
++### The baseline
++
++A healthy coordinator, measured on a real wave:
++
++| | |
++| :--- | :--- |
++| output tokens per turn | **~136** |
++| dispatches vs shell calls | 4 Agent against 38 Bash |
++| cache read | 9.27M — the mission re-read each turn, the cheap tier |
++| real generation | 10.9k |
++
++Cache read being large is normal and is not the thing to watch. A
++1M-window coordinator re-reads its context every turn; that is what the
++tier costs and it is cheap. **Output tokens are the signal.**
++
++### What does not make sense, and what each means
++
++**Output per turn climbing above ~300.** It is narrating again — writing
++prose between tool calls to a reader that does not exist. The one-return
++rule is not being followed.
++
++**Zero or one Agent dispatch after many turns.** It is typing the work
++itself. That is the failure that costs three to four times as much, and it
++is the one worth stopping immediately.
++
++**Tool calls climbing with no dispatches and no return.** It is spinning:
++re-running something, polling, or stuck in a loop it cannot see. A reviewer
++once ran 203 tool calls and 15 test runs and produced zero findings.
++
++**Turns climbing with output near zero and no tool calls.** It is waiting
++for something that will not arrive. There is no channel; if it thinks it
++asked a question, nobody heard.
++
++**Anything that does not fit those.** Read the work. Check the worktree,
++check what actually got committed, check whether the units it claims to
++have dispatched exist. A number that makes no sense usually means the run
++diverged from the doctrine somewhere you have not looked.
++
++### When a check fails
++
++Stop it rather than letting it finish. A coordinator that has gone wrong
++produces work you then have to review and probably discard, and the review
++costs more than the restart. Re-dispatch with a corrected brief.
++
++## SCALING TO TWO COORDINATORS
++
++Not before two consecutive clean runs. One good run is a run; two is a
++shape.
++
++When you do go to two, the fifteen-minute check covers both, and the
++missions stay the same size — the point of the second coordinator is a
++second seam moving, not bigger missions. If sizing drifts up to justify the
++concurrency, that is the thing to stop, not the concurrency.
++
++## Two coordinators is your ceiling
++
++**A mission is at most three coders' worth of work.** The coordinator cuts
++a mission into units along the disjoint boundaries the blast radius shows,
++and it may run at most three in parallel. So a mission whose radius will
++not cut into three or fewer disjoint sets is too big — split it into two
++missions rather than handing the coordinator something it has to serialise.
++
++That is your ruling to make, not the coordinator's. A coordinator that
++reports "this needs more than three" is telling you the decomposition was
++wrong one level up.
++
++You may run two coordinators concurrently on your own judgment. A third
++requires permission, and where that permission comes from depends on how
++you are running:
++
++- **In the wormhole**, it comes from the MISSION BRIEF. If the brief does
++  not state a concurrency above two, you have two.
++- **Interactively**, it comes from the operator, in this session, asked for
++  and answered. Not inferred from the plan being large.
++
++This is a hard ceiling, not a default to optimise past. Two is enough to
++keep a second seam moving while the first is in gates, which is the whole
++benefit; the third is where the costs start compounding and they compound
++in ways that do not show up until later.
++
++**Why two.**
++
++A coordinator is a long-lived session on a 1M-window model holding one
++mission end to end, accumulating every diff it reviews. Three of those run
++concurrently and the spend is three times the most expensive thing in the
++fleet, at once. Measured in one hour: coordinators were 182M of 320M total,
++with workers at 46M. The coordinators ARE the cost.
++
++Your own attention does not divide three ways either. Every coordinator
++returns findings, rulings and `RESCOPE_REQUIRED` calls to you. Two you can
++hold. Three means one of them waits on you while burning context, or gets
++a decision you made without really reading it.
++
++And parallel worktrees share one real `agent-memory/`. Two racing on
++MEMORY.md is a last-write-wins you can live with; more of them is a
++correctness problem you will not notice until something is missing.
++
++**What to do instead of a third.** Sequence it. A plan with five missions
++is two, then two, then one, and that is normally faster in wall-clock terms
++than three concurrent because nothing is waiting on your attention.
++
++If you find yourself wanting a third often, the missions are too small.
++Two coordinators running well-sized missions beats three running thin ones.
++
++## Why the coordinator cannot be a 200k model
++
++The binding constraint on this role is the CONTEXT WINDOW, not capability.
++That is easy to get backwards, and the reasoning that gets it backwards
++sounds sensible: the coordinator mostly dispatches, dispatching is
++mechanical, so run it cheap.
++
++A coordinator holds one mission from start to finish. It reads the mission,
++writes a brief per unit, dispatches, reads every returned diff, drives both
++gates, and steers to done. That accumulates, and it accumulates the diffs
++themselves.
++
++At 200k it compacts mid-wave. What a compact discards is precisely the
++context that made it a good reviewer of the NEXT diff: what the last unit
++got wrong, why the brief was corrected, what the gate already ruled on. The
++model does not get worse; it gets amnesia at the point where continuity was
++the whole value.
++
++| Model | Window | As coordinator |
++| :--- | :--- | :--- |
++| `fable-5-1` | 1M | viable |
++| `opus-5` | 1M | viable |
++| `sonnet-5` | 1M | window is fine, the MODEL is not: crashed on full doctrine, format-failed on minimal, at roughly twice sonnet-4-6's cost |
++| `sonnet-4-6` | 200k | compacts mid-wave |
++| `opus-4-6` | 200k | compacts mid-wave, and failed both gauntlet arms |
++
++So there are two choices, and sonnet-5 having a 1M window is what makes
++that non-obvious. A big window does not make a model a coordinator.
++
++**Do not "save money" by moving this role to a 200k model.** The saving is
++real per token and it buys a coordinator that forgets the wave it is
++running. If the wave is small enough that 200k genuinely holds it, the
++better move is to run it interactively without a coordinator at all.
++
++### One-shot agents do not need a 1M window
++
++A one-shot agent reads a bounded input, applies one lens, reports, and
++dies. It never accumulates, so the large window buys it nothing and the
++premium tier is paying for a capability the job does not use.
++
++`smythe5` is the proof: a read-and-report gate on sonnet-4-6 that actually
++BLOCKS a merge. If that shape is good enough to gate the merge, it is good
++enough to check accessibility.
++
++So the read-only specialists dispatch their `4` variants: `nert5`,
++`scorandum5`, `friedlander5`, and `simms5` for doc deltas.
++
++Three stay premium, deliberately:
++
++- `perkins5` — a missed vulnerability is asymmetric. The cost of being
++  wrong is not symmetric with the cost of the tokens.
++- `newton5` — deriving arithmetic is reasoning, not pattern-matching, and
++  an off-by-one here is a silent wrong answer rather than a crash.
++- `kong5` — architecture judgment reaches across subsystems, which is the
++  one read-only job that is not really bounded.
++
++The coordinator and reviewer stay premium for the window, not the
++capability: see the section above.
++
++## Subagent models
++
++Coders choose each subagent's model and effort from the model-ladder skill:
++Haiku 5.5 xhigh and max, Sonnet 5.5 high, Opus 5.5 medium, high and xhigh.
++
++## The coder is `bilby-mid` until it has failed twice
++
++`bilby-mid` on Opus 5.5 is the default coder for every unit, on its
++terminal-bench results. The fleet's real work is terminal work: across
++1,400+ recorded runs every working role was dominated by Bash, which is
++what terminal-bench measures.
++
++### The escalation ladder
++
++**Attempt 1.** `bilby-mid`, with the brief you wrote.
++
++**Attempt 2.** `bilby-mid` again, with a CORRECTED brief.
++
++This step is the one that gets skipped, and it is the one that usually
++works. A unit that comes back wrong is your brief being wrong far more
++often than the model being short: measured across eight parallel
++implementations of one identical mission, the arms diverged on what the
++BRIEF named, not on what the model could do. The arm whose brief named a
++protocol three times conformed to it; the arm whose brief named a different
++one twenty times conformed to that instead.
++
++So before you change the model, ask what the brief failed to say. Name the
++conformances. Name the boundary cases. Name the exact wrong answer you got
++last time and say it is wrong.
++
++**Attempt 3.** `ace5` on opus-5-5. Not `bilby5` — a different ROLE, because
++the third attempt is a different job.
++
++`ace5` reads both failed diffs, both gate verdicts, and both briefs before
++writing anything, then establishes WHY they failed: the same way twice
++means the approach is wrong, differently means the brief is
++underspecified. It is also authorised to return `RESCOPE_REQUIRED` and rule
++that the unit cannot be built as written — which is a legitimate outcome
++from that role and not from `bilby-mid`.
++
++Say in one line what the corrected brief still could not carry. "Sonnet
++returned the same shape twice with an explicit counter-example in the
++brief" is a reason. "Complex" is not.
++
++`bilby-mid` is the default coder and both of the first two rungs. `ace5` is
++the third rung. `bilby5` is not on the ladder; it runs only where a wormhole
++mode names it.
++
++### When to skip the ladder
++
++Go straight to `bilby5` only when the unit is genuinely outside what a
++brief can specify: a design decision inside the implementation, an
++algorithm that has to be derived rather than described, or a change whose
++correct shape depends on reading several subsystems at once.
++
++That is a small set. If you find yourself using it often, the briefs are
++carrying too little, and escalating is hiding that rather than fixing it.
++
++### What this is guarding against
++
++Escalating feels like doing something. Rewriting a brief feels like
++admitting the first one was bad. That asymmetry is why the ladder exists
++and why the middle rung gets skipped.
++
++## How to launch a coordinator
++
++The coordinator is `bilby-coordinate`. It carries no `4` or `5` because it
++cannot have a 4 variant: a coordinator accumulates a whole mission and a
++200k model compacts mid-wave.
++
++```
++Agent(bilby-mid, bilby-coordinate)
++```
++
++You dispatch it with `Agent`, not `Workflow`. `Agent` takes the model from
++the agent file — `bilby-coordinate` is pinned `claude-opus-5-5` — so there is
++nothing to pass and nothing to get wrong.
++
++**This matters more than it looks.** A coordinator dispatched through
++`Workflow` becomes a subagent that then has no `Workflow` of its own, so it
++cannot dispatch its coders and reports the tool missing. The whole wave
++stops at the first fan-out.
++
++That is also why every agent in this fleet is pinned: `Agent` is the only
++dispatch path a subagent has, and it reads the model off the file.
++
++**Never dispatch `general-purpose` for this.** A general-purpose agent has
++none of the coordinator's doctrine: it does not know the escalation ladder,
++does not know the gates are mandatory, does not know a brief carries
++content rather than process, and does not know it is supposed to dispatch
++rather than type. You get an expensive session doing the work itself, which
++is the exact failure the whole fleet is shaped to prevent.
++
++If a dispatch fails, read the error. **The fix is the right agentType, not
++a fallback to `general-purpose`.** The common cause is a stale name: the
++agent name does not match a file in `.claude/agents/`. Use the exact name
++from the dispatch table above.
++
++Workers, for contrast — a different model and a different agentType:
++
++```js
++const W = { model: 'claude-sonnet-5-5', effort: 'high' }   // rung 3 of the model-ladder skill
++await agent(BRIEF, { ...W, agentType: 'bilby-mid', label: 'lexer' })
++```
++
++## What the subagents can actually do
++
++Dispatch fails in a specific way when you assume a capability an agent does
++not hold. A read-only agent asked to apply the fix reports that it cannot,
++and the round trip is wasted; an agent asked to file its own finding to the
++estate has no tool for it if it is not a producer.
++
++| Agent | Edits files | Runs commands | Spawns | Estate |
++| :--- | :--- | :--- | :--- | :--- |
++| `bilby5` | yes | yes | yes | write |
++| `ace5` | yes | yes | yes | write |
++| `newton5` | yes | yes | no | read |
++| `simms5` | yes | yes | no | read |
++| `nagatha5` | yes | yes | no | write + curate |
++| `smythe5` | **no** | yes | no | read |
++| `adams5` | **no** | yes | no | read |
++| `kong5` | **no** | yes | no | read |
++| `perkins5` | **no** | yes | no | read |
++| `kinsta5` | **no** | yes | no | read |
++| `scorandum5` | **no** | yes | no | read |
++| `nert5` | **no** | yes | no | read |
++| `friedlander5` | **no** | yes | no | read |
++
++**Read-only means it does not EDIT. It does not mean it cannot EXECUTE.**
++Every one of them has Bash. `adams5` re-runs the test command itself and
++compares against the claimed count; `smythe5` builds before it says the
++mission can be built; `scorandum5` measures rather than estimating. Asking
++a read-only agent to run something is correct. Asking it to change
++something is not.
++
++**Estate access is read for the gates and specialists.** They can search
++what was already tried and ruled out. They cannot file. If a finding needs
++to become a durable record, that is yours or Nagatha's, not theirs — so a
++brief that ends "file your findings to the estate" fails for eleven of the
++thirteen above.
++
++**Only the coders spawn.** If a unit needs a gate run inside it, the coder
++spawns it. Nothing else in that table can, so a brief telling `kong5` to
++"pull in Perkins if you see anything" cannot be honoured.
++
++## Two lifecycles, same steps
++
++**Inside the wormhole**, worktree and agent-home setup is mechanical.
++It creates the worktree, syncs `.claude/`, launches a coordinator as the
++job's first agent, and tears down at the end. CodeGraph independently
++seeds the index on the first query; the launcher does not build it.
++
++**Interactively, you own that setup.** There is no coordinator launched
++for you. Missing worktree or agent-home setup can silently leave an agent
++in the wrong place or without its hooks. Always scope graph calls to the
++agent's absolute worktree.
++
++Before dispatching:
++
++```bash
++REPO=<repo>; WT=../<repo>-<slug>
++
++git -C $REPO worktree add $WT -b stream/<slug> <base>
++
++# Symlink the shared-durable .claude/ entries from the MAIN CHECKOUT.
++# Not a copy, and not a sync from the docs repo: symlinks stay current
++# when the fleet is re-synced, and agent-memory writes survive teardown
++# instead of dying with the worktree.
++mkdir -p $WT/.claude
++for n in hooks agents skills rules commands settings.json agent-memory; do
++  [ -e "$REPO/.claude/$n" ] && ln -sfn "$(cd $REPO/.claude && pwd)/$n" "$WT/.claude/$n"
++done
++
++# Warm the build cache. On APFS -c is a copy-on-write clone: 22G in 17
++# seconds, zero disk consumed. Without it the worktree rebuilds Rust from
++# scratch, which is the usual reason someone skips cutting one at all.
++cp -Rc "$REPO/cargo-target" "$WT/cargo-target" 2>/dev/null || true
++```
++
++No index step: the worktree's first CodeGraph call copies the index of the
++nearest indexed worktree of the same repository and catches up from there.
++
++Leave `settings.local.json`, `active-mission.md`, `logs/` and `worktrees/`
++OUT. Those are per-session state; sharing them means parallel worktrees
++collide on mutable state, and `rm -f .claude/settings.local.json` in one
++worktree would reach into another.
++
++One caveat inherited from the wormhole: parallel worktrees share one real
++`agent-memory/`, so two agents finishing at once can race on MEMORY.md and
++last write wins. That is still better than the guaranteed loss a copy
++causes.
++
++If the main checkout has no `.claude/`, stop and sync it first
++(`python3 ~/devlop/ddfactory/scripts/sync-skills.py`). A worktree symlinked
++to nothing has every hook ENOENT and the gates run as silent no-ops.
++
++Order matters. `.claude/` is gitignored, so a fresh worktree checks out
++none of it and every hook in `settings.json` ENOENTs, leaving the
++write-scope and push gates as silent no-ops.
++
++Before writing a request, take a fresh checkpoint and map the diff (or
++use `impact SYMBOL --fresh` for a symbol not yet changed). Before squash
++and push, take another fresh checkpoint and check additions for orphans:
++
++```bash
++codegraph checkpoint --fresh <wt>
++codegraph blast -b <base-ref> -p <wt>
++# At the pre-push gate, after the final edits:
++codegraph checkpoint --fresh <wt>
++codegraph orphans -b <base-ref> -p <wt>
++```
++
++Record HEAD, working-tree hash and pending-file count. Catch-up waits are
++bounded: pending files mean the gate is incomplete, not fresh. For each
++orphan candidate, check `rg -nw SYMBOL` for dynamic/string uses before
++calling it unwired. MCP equivalents carry `projectPath` and `fresh: true`.
++
++After the work is accepted:
++
++```bash
++git -C <worktree> add -A && git -C <worktree> commit
++git -C <repo> merge --squash stream/<slug>     # or --no-ff
++git -C <repo> worktree remove ../<repo>-<slug>
++```
++
++Squash keeps the parent history clean for a security analyzer walking
++commit by commit, and loses bisect granularity inside the mission. The
++branch is retained either way, so the sequence survives on it.
++
++Tear the worktree down. One with no live task is something the next sweep
++flags and somebody investigates.
++
++## Search the graph before the text
++
++```bash
++codegraph explore <SymA> <SymB> -p <wt>   # locate and understand: source and the call path between them
++codegraph impact SYMBOL -p <wt>           # indexed dependency candidates (depth 2; -d <n>)
++codegraph grep "<regex>" -p <wt>          # every hit, grouped by enclosing symbol
++codegraph node -f <file> --symbols-only -p <wt>   # a file's surface, without reading it
++```
++
++Pass your own worktree on every call (`-p <wt>`, or `projectPath` on the
++MCP tools). Returned source is already read: open a file only for an
++uncovered span or a staleness warning naming a disk change. If the index
++is building or copying, retry shortly rather than abandoning CodeGraph.
++Indexing a repository never indexed is the user's decision; never run
++`init`, `index`, `uninit`, `unlock`, `install`, `uninstall`, `upgrade` or
++`telemetry`. `codegraph grep` groups hits by enclosing symbol and ranks
++by coupling. Use `rg` for prose, config and strings the graph does not index.
++
++A name defined in several places can leave a caller bound by name only;
++`codegraph suspects -p <wt>` lists such calls. Close any that touch the
++radius with `codegraph grep` before calling it complete.
++
++## R.O.W. — the mode picks the tiers
++
++```bash
++./scripts/skippy-submit.sh --product <p> --mission-file <path> \
++  --stream <xx> --slug <slug> --reservations '<paths>' --mode2
++```
++
++| Mode | Orchestrator | Agent file | Worker |
++| :--- | :--- | :--- | :--- |
++| `--mode1` | fable-5-1 | bilby-mid | opus-5-5 |
++| `--mode2` | opus-5-5 | bilby-mid | opus-5-5 |
++| `--mode3` | opus-5-5 | bilby-mid | opus-5-5 |
++| `--mode4` | sonnet-5-5 | bilby4 | sonnet-5-5 |
++
++Submit fails loudly if a declared tier does not reach the task record.
++
++## What the measurements say
++
++**Delegation predicts cost.** Streams that dispatched implementation units
++ran about 64% of tokens in subagents. Streams that typed it themselves ran
++0 to 32% and cost three to four times as much.
++
++**A green suite is not evidence.** Three crash bugs shipped from units
++whose own tests passed, all found by reading the diff.
++
++**Brief content decides output.** Eight arms, one identical mission: the
++brief naming `Equatable` three times shipped `Equatable`; the one naming
++`Sendable` twenty times shipped `Sendable` and lost structural testability.
++
++**Sonnet 5 has no slot.** Dominated on both axes: ~80% more tokens than
++Sonnet 4.6, no faster than Opus 4.6, and it crashed on full doctrine.
++
++**The gauntlet measured only Sonnet 4.6 as a coder.** It varied the
++orchestrator; workers were Sonnet 4.6 in every arm.
++
++The default coder is `bilby-mid` on Opus 5.5. That choice rests on
++terminal-bench results. Its first waves are its measurement.
+--- /dev/null
++++ b/skills/model-ladder/SKILL.md
+@@ -0,0 +1,45 @@
++---
++name: model-ladder
++description: Which model and effort to give each subagent you dispatch. Use whenever you launch a subagent with Workflow agent() — pre-flight, post-flight, documentation, comment trim, tests, inventories, escalation.
++---
++
++# Model ladder
++
++You run on the model your lane pins. Each subagent you dispatch gets its own
++model and effort, chosen from this ladder: the lowest rung that the task's row
++names. Measured on Terminal-Bench 4.0, cost per task, October 2026.
++
++| Rung | Model | Effort | Score | Cost per task | Use for |
++|---|---|---|---|---|---|
++| 1 | claude-haiku-5-5 | xhigh | 29.3% | $0.46 | Comment trim (trim5, one per port), mechanical renames, formatting |
++| 2 | claude-haiku-5-5 | max | 32.8% | $0.65 | Running tests and sorting failures, inventories with codegraph and rg, summarising logs into a report, pre-flight on a single-file unit |
++| 3 | claude-sonnet-5-5 | high | 43.9% | $2.19 | Pre-flight on larger units, documentation (simms5), read-only specialists (kinsta5, scorandum5, nert5, friedlander5), code units in a Sonnet lane |
++| 4 | claude-opus-5-5 | medium | 52.5% | $4.04 | Post-flight (adams5), architecture (kong5), security (perkins5), code units in an Opus lane |
++| 5 | claude-opus-5-5 | high | 56.6% | $5.12 | Escalation (ace5), math (newton5) |
++| 6 | claude-opus-5-5 | xhigh | 59.6% | $8.78 | A unit outside what a brief can specify (bilby5): a derived algorithm, a design choice inside the implementation, a change that needs several subsystems read together |
++
++## How to dispatch
++
++Workflow `agent()` takes the model and effort on every call. Spread one rung
++constant per call:
++
++```js
++const R1 = { model: 'claude-haiku-5-5',  effort: 'xhigh' }
++const R2 = { model: 'claude-haiku-5-5',  effort: 'max' }
++const R3 = { model: 'claude-sonnet-5-5', effort: 'high' }
++const R4 = { model: 'claude-opus-5-5',   effort: 'medium' }
++const R5 = { model: 'claude-opus-5-5',   effort: 'high' }
++const R6 = { model: 'claude-opus-5-5',   effort: 'xhigh' }
++
++await agent(BRIEF, { ...R1, agentType: 'simms5',  label: 'trim-batch-3' })
++await agent(BRIEF, { ...R4, agentType: 'adams5',  label: 'post-flight' })
++```
++
++## Moving up
++
++1. Start on the rung the task's row names.
++2. Check every result yourself. A result that falls short goes one rung up,
++   with a brief corrected to name exactly what fell short.
++3. Post-flight runs on rung 4 or higher.
++4. Record the rung of each dispatch in your feature report, with the result:
++   accepted, or sent up.
+--- a/skills/codegraph/SKILL.md
++++ b/skills/codegraph/SKILL.md
+@@ -1,62 +1,91 @@
+ ---
+ name: codegraph
+ description: >-
+-  This repo is indexed by CodeGraph. Before grepping or reading source to understand code, find it,
+-  trace who calls it or what a change reaches, ask CodeGraph. Its answers carry the source, so they
+-  replace the reads that would follow.
++  Ask the code index before reading source: locate symbols, follow calls,
++  map a change, and check additions for missing wiring.
+ when_to_use: >-
+-  How does X work, where is X, what calls X, what does X call, what breaks if X changes, blast radius,
+-  which tests cover this, a file's API, orphan check, deletion closure.
++  Code navigation, callers, callees, impact, request blast radius,
++  pre-push orphan checks and deletion closure.
+ status: active
+ tags: [context, code-graph, retrieval, codegraph]
+ created: 2026-10-29
+-source: /Users/bob/devlop/team-codegraph/CODEGRAPH-COMMANDS.md (1.6.2-sm.1). Replaces the graft skill.
++updated: 2026-10-30
++source: /Users/bob/devlop/team-codegraph/CODEGRAPH-COMMANDS.md
+ ---
+ 
+ # CodeGraph
+ 
+-## Four rules
++## Scope, freshness and source
+ 
+-1. **Always name your worktree.** CLI: `-p <wt>`, where `<wt>` is your worktree's absolute path (`pwd`).
+-   `status` takes it as an argument. MCP tools: `projectPath: "<wt>"` on every call. Without it a subagent
+-   gets the answer for its parent's worktree, silently.
+-2. **What it returns is already read.** Do not open the file again for code an answer showed you. Read a
+-   file only for a span no answer covered, or one an answer flags as changed on disk since its last sync.
+-3. **No build step.** The index follows the working tree by itself. Never run `codegraph init`, `index`,
+-   `sync`, `uninit`, `unlock`, `install`, `uninstall`, `upgrade` or `telemetry`. If it says the worktree is
+-   not indexed, use `rg`, say so in your report in one line, and carry on. Never stop or return RED for it.
+-4. **`rg` for text**: prose, docs, config, YAML, schema and string literals, and every-occurrence searches.
++1. **Name your absolute worktree on every call.** CLI: `-p <wt>`;
++   `status`, `sync` and `checkpoint` take the path as an argument.
++   MCP: `projectPath: "<wt>"`. A subagent shares its parent's connection;
++   the launch directory does not identify the subagent's worktree.
++2. **Returned source is already read.** Read only an uncovered span or a
++   file the answer flags as changed on disk since its last index sync.
++3. **No build step.** The host seeds new worktrees from an indexed sibling
++   and catches up automatically. If it reports building or copying,
++   retry shortly; do not abandon CodeGraph for the session. Indexing a
++   repository never indexed is the user's decision. Never run `init`,
++   `index`, `uninit`, `unlock`, `install`, `uninstall`, `upgrade` or
++   `telemetry`. Do not present an unavailable graph as a complete check.
++4. **Gates need evidence.** `codegraph checkpoint --fresh <wt>` requests
++   bounded catch-up. Inspect and record HEAD, the working-tree hash and
++   pending files. Pending files mean incomplete freshness: retry or
++   report the incomplete gate, never claim the tree is fully indexed.
++   MCP tools accept `fresh: true`; `checkpoint: true` reports without
++   waiting. CLI `explore`, `callers`, `callees`, `impact`, `node` and
++   `query` accept `--fresh` / `--checkpoint`; `grep`, `blast`, `orphans`
++   and `suspects` require the explicit checkpoint first instead.
++5. **Use `rg` for text.** Prose, config, YAML, docs, schema strings and
++   string literals are not call edges.
+ 
+-## Which command
++## Commands
++
++All CLI queries below carry `-p <wt>` unless the path is positional.
++Every MCP call carries `projectPath` too.
+ 
+ | Question | CLI | MCP tool |
+ |---|---|---|
+-| how does this flow work | `codegraph explore <SymA> <Type.method> … -p <wt>` | `codegraph_explore` |
+-| one symbol: source, callers, callees | `codegraph node <Symbol> [-f <file>] -p <wt>` | `codegraph_node` |
+-| a file's API without its bodies | `codegraph node -f <file> --symbols-only -p <wt>` | `codegraph_node` + `symbolsOnly: true` |
+-| some lines of a file | `codegraph node -f <file> --offset <n> --limit <n> -p <wt>` | `codegraph_node` |
+-| find a symbol by name | `codegraph query <name> [-k <kind>] -p <wt>` | `codegraph_search` |
+-| who calls it | `codegraph callers <Symbol> [-f <file>] -p <wt>` | `codegraph_callers` |
+-| what it calls | `codegraph callees <Symbol> [-f <file>] -p <wt>` | `codegraph_callees` |
+-| what a change reaches (blast radius) | `codegraph impact <Symbol> [-d <n>] [-f <file>] -p <wt>` (depth 2 by default) | `codegraph_impact` |
+-| tests touched by changed files | `codegraph affected <file> … -p <wt>` | (CLI only) |
+-| the repo's layout | `codegraph files -p <wt> [--filter <dir>] [--max-depth <n>]` | `codegraph_files` |
+-| index health | `codegraph status <wt>` | `codegraph_status` |
++| a flow's source and path | `codegraph explore <SymA> <Type.method> -p <wt>` | `codegraph_explore {query, projectPath}` |
++| a symbol's source and trail | `codegraph node <Symbol> -p <wt>` | `codegraph_node {symbol, projectPath}` |
++| a file's API | `codegraph node -f <file> --symbols-only -p <wt>` | `codegraph_node {file, symbolsOnly: true, projectPath}` |
++| a file span | `codegraph node -f <file> --offset <n> --limit <n> -p <wt>` | `codegraph_node {file, offset, limit, projectPath}` |
++| a symbol by name | `codegraph query <name> -p <wt>` | `codegraph_search {query, projectPath}` |
++| direct callers | `codegraph callers <Symbol> -p <wt>` | `codegraph_callers {symbol, projectPath}` |
++| outgoing calls | `codegraph callees <Symbol> -p <wt>` | `codegraph_callees {symbol, projectPath}` |
++| a symbol's reach | `codegraph impact <Symbol> -d 2 -p <wt>` | `codegraph_impact {symbol, depth: 2, projectPath}` |
++| hits grouped by symbol | `codegraph grep <pattern> -p <wt>` | `codegraph_grep {pattern, projectPath}` |
++| a diff's reach | `codegraph blast -b <base-ref> -p <wt>` | `codegraph_blast {base, projectPath}` |
++| added symbols with no incoming edges | `codegraph orphans -b <base-ref> -p <wt>` | `codegraph_orphans {base, projectPath}` |
++| questionable name/low-confidence bindings | `codegraph suspects -p <wt>` | `codegraph_suspects {projectPath}` |
++| affected tests | `codegraph affected <files...> -p <wt>` | CLI only |
++| layout | `codegraph files -p <wt>` | not enabled in the fleet |
++| health | `codegraph status <wt>` | not enabled in the fleet |
+ 
+-`explore` takes symbol names, not a sentence: name the symbols at both ends of the flow and it returns
+-their source and the call path between them, in one call. Prefer it to several `node` calls.
++`explore` takes precise symbol names: name both ends of the flow; qualify
++ambiguous endpoints as `Type.method`. The `-f <file>` selector belongs to
++named-symbol commands such as `node`, `callers`, `callees` and `impact`,
++not `explore`. Name-only bindings need inspection; an edge is not proof
++of certainty.
+ 
+-Same name in both ports (a Swift type and its Rust twin): add `-f <file>` to say which one you mean.
++## Two mandatory gates
+ 
+-## Zero callers is a question, not a verdict
++**Writing a request:** `codegraph checkpoint --fresh <wt>`, inspect its
++pending count, then `codegraph blast -b <base-ref> -p <wt>` over the diff.
++For a symbol not yet changed use `codegraph impact SYMBOL -p <wt> --fresh`.
++Use `rg` for string/config references. Quote the returned evidence.
+ 
+-A symbol reached through a protocol or trait, a closure, a string, reflection or a test harness can show no
+-callers while it is live. Before calling anything unwired: `codegraph callers <Symbol> -f <its file>`, then
+-`rg -nw <Symbol>` across the repo. Only a symbol with neither is unwired, and that is a finding to report,
+-not code to delete.
++**Before squash/push:** take a fresh checkpoint, then
++`codegraph orphans -b <base-ref> -p <wt>`. Follow each listed candidate
++with `rg -nw SYMBOL` for dynamic/string uses. Protocol/trait implementations
++and tests are excluded by the orphan tool. An apparent orphan is a question,
++not permission to delete documented API. MCP gates use the same base and
++worktree with `fresh: true`.
+ 
+-## A deletion closure needs both directions
++## Deletion closure
+ 
+-`codegraph callees` (and outward) from the arm being retired gives the candidates. Then `codegraph callers`
+-on every candidate: anything with a live caller leaves the set. Then check the published contract before
+-deleting what remains: documented and unwired is a defect to report, not a licence to delete.
++Follow `callees` outward from the retiring code for candidates; then
++inspect `callers` of each candidate. Anything with a live caller leaves
++the deletion set. Check dynamic/string uses and the published contract
++before deleting the rest: documented but unwired is a defect to report.
+--- a/rules/search-tooling.md
++++ b/rules/search-tooling.md
+@@ -9,7 +9,7 @@
+ created: 2026-06-02
+ 
+ scope: Simple Machines product line — all agents
+-updated: 2026-10-29 (graft retired; CodeGraph is the code index)
++updated: 2026-10-30 (CodeGraph is the code index)
+ ---
+ 
+ # Search Tooling — ripgrep is the default
+@@ -126,13 +126,16 @@
+ 
+ ## Two places the code index is mandatory
+ 
+-**Writing a request.** For each symbol the request changes, `codegraph impact SYMBOL -p <wt>` and
+-`codegraph callers SYMBOL -p <wt>`, plus `rg -nw` for string and config uses. The request quotes what they
+-returned, not memory. A hand-built radius misses the edges that make a change safe: the call site that is dead
+-once you remove the last caller, and the look-alike symbol in another kit that must NOT be touched.
++**Writing a request.** Take `codegraph checkpoint --fresh <wt>`, inspect
++HEAD, working-tree hash and pending count, then `codegraph blast -b <base-ref>
++-p <wt>` over the diff. For a symbol not yet changed use `codegraph impact
++SYMBOL -p <wt> --fresh` and callers; use `rg -nw` for string/config uses.
++Quote what the tools returned. Freshness waits are bounded; pending files
++mean the gate is incomplete, not fresh.
+ 
+-**Before squash and push.** For each symbol the work ADDED, `codegraph callers SYMBOL -f <its file> -p <wt>`.
+-A new type, function, file or flag with no callers was created and never wired up: finish the wiring or report
+-it before the push. A green suite does not catch this. Zero callers is a question, not a verdict: confirm with
+-`rg -nw SYMBOL` before calling anything unwired (protocol and trait conformances, closures, strings and the
+-other port's twin all show no direct caller). A deletion closure needs both directions; see the `codegraph` skill.
++**Before squash and push.** Take a fresh checkpoint, then `codegraph orphans
++-b <base-ref> -p <wt>`. Check each candidate with `rg -nw SYMBOL` for dynamic
++and string uses. Protocol/trait implementations and tests are excluded by
++the tool. Zero callers is a question, not permission to delete documented
++API. MCP gates carry `projectPath`, the same `base`, and `fresh: true`.
++CLI blast/orphans need the explicit checkpoint; they have no `--fresh` flag.
+--- a/products/codeteam/AGENTS.md
++++ b/products/codeteam/AGENTS.md
+@@ -42,4 +42,4 @@
+ 
+ ## Search tools
+ 
+-The role files mention graft; it is retired. Use `rg`, and CodeGraph once Bob switches it on.
++Use the released CodeGraph for indexed code, with an explicit worktree on every call. Use `rg` for prose, configuration and string uses. The `codegraph` skill carries the command and freshness contracts.
