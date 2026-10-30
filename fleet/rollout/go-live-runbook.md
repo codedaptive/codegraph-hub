@@ -2,7 +2,11 @@
 
 For Bob's go-ahead; the fleet lane applies none of it. Settled S-33 (one cold index per team repository at
 go-live) and S-34 (standing and tier worktrees pinned at go-live, and by codeteam when it
-creates one). Runs after `global-install.md`, `mcp-json.md` and a team's switch-on (`per-team-mcp.md`).
+creates one). Runs after `global-install.md` and before any team is switched on (`mcp-json.md`,
+`per-team-mcp.md`). The order matters: a session told that a project is not indexed stops calling codegraph for
+that project for the rest of the session (`src/mcp/server-instructions.ts`, Limitations). A team switched on
+before its repository is indexed and its worktrees pinned would have sessions give up on CodeGraph on their
+first call.
 
 ## Precondition: an sm.N with worktree-lifecycle
 
@@ -18,8 +22,18 @@ with its repository.
 
 Each repository gets one cold `codegraph init`, in the checkout its lanes are cut from: exchange where the team
 has one, the design checkout for the two lab teams (aimodel and bench, no exchange). Shortest first by baseline cold time, so a
-problem shows on a short run: codeteam first, mootx01-ee last. Post a STATUS with the load before each, and never start the next before
-the last has finished.
+problem shows on a short run: codeteam first, mootx01-ee last. Never start the next before the last has finished.
+Before each, post a STATUS with the load and the free memory:
+
+```bash
+uptime
+vm_stat | awk 'NR==1{gsub(/[^0-9]/,"",$0); ps=$0} /Pages free|Pages inactive|Pages speculative/{gsub(/\./,"",$NF); s+=$NF} END{printf "%.1f GB free or reclaimable\n", s*ps/1e9}'
+```
+
+Start an index only when its peak fits in that free memory with room to spare: the baselines below give each
+one's peak. mootx01-ee peaks at 5.4 GB, so wait for at least 8 GB free before starting it. That leaves about
+2.6 GB for everything else that grows while it runs, since sessions keep working. On 2026-10-30 at 00:52 the line
+printed 61.7 GB at load 37.
 
 ```bash
 export DO_NOT_TRACK=1
@@ -81,7 +95,11 @@ repository now registered its first call would start a cold build instead.
 
 Tested: the list mode against the live manifests (89 lines, exit 0). `--apply` and `--undo` against a scratch
 manifest whose only checkout is a scratch repository, `HOME` in a scratch folder, the throwaway build:
-- from an empty registry, the log said `new`, and the undo left "No registered projects";
+- the prior state comes from `codegraph project list --json` (a record's `flags` bit 0 is pinned), not the text
+  listing (Kong's K-31);
+- from an empty registry, `--apply` run twice logged `new` once, and the undo left "No registered projects";
+- with the project registered but not pinned before, the log said `registered`, and the undo left it registered,
+  unpinned;
 - with the project already pinned before, the log said `pinned`, and the undo left it pinned;
 - with a codegraph that cannot start, the run stopped with the error, exit 1.
 `--apply` was not run against the team worktrees: that is the go-live step itself.

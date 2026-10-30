@@ -12,7 +12,7 @@ line per worktree, and changes nothing. A worktree whose folder does not exist (
 and skipped. With --apply it pins each existing one and exits 1 if any pin failed.
 
 Pinning also registers a project that was not registered. --apply writes one `root<TAB>state` line per
-pin to the log (default pin-standing.log), the state from `codegraph project list` taken before it
+pin to the log (default pin-standing.log), the state from `codegraph project list --json` taken before it
 starts: new (not registered), registered, or pinned (already pinned). The log is appended to, and a
 root already in it keeps its first state, so re-running --apply after a partial failure leaves the
 undo record of the first run intact. --undo reads that log and puts
@@ -23,6 +23,7 @@ import argparse
 import glob
 import importlib.machinery
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -98,12 +99,11 @@ def main():
     ct = load_codeteam()
     before = {}
     if a.apply:
-        ok, out = cg("project", "list")
+        ok, out = cg("project", "list", "--json")
         if not ok:
-            sys.exit(f"codegraph project list failed: {out}")
-        # One project per line: `<root>  <flags>  registered <when> ...`, flags comma-separated or `-`;
-        # roots carry no spaces here.
-        before = {l.split()[0]: l.split()[1].split(",") for l in out.splitlines() if l.startswith("/")}
+            sys.exit(f"codegraph project list --json failed: {out}")
+        # The registry records, as JSON: root -> its flags bitmap (project-registry.ts).
+        before = {p["root"]: int(p.get("flags", 0)) for p in json.loads(out)}
         logged = read_log(Path(a.log))
         log = open(a.log, "a")
     failed = 0
@@ -122,7 +122,8 @@ def main():
         # The CLI pins the index root a tool call resolves to and prints it: `Pinned <root>`.
         root = out.split("Pinned ", 1)[1].strip() if "Pinned " in out else str(path)
         if root not in logged:
-            state = "new" if root not in before else ("pinned" if "pinned" in before[root] else "registered")
+            # PROJECT_FLAG_PINNED is bit 0 of the record's flags (project-registry.ts).
+            state = "new" if root not in before else ("pinned" if before[root] & (1 << 0) else "registered")
             log.write(f"{root}\t{state}\n")
             log.flush()
             logged[root] = state

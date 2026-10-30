@@ -36,7 +36,8 @@ byte for byte.
   The env reaches the daemon: tested, the daemon a proxy started logged that its query pool was disabled.
 - The staged entry's other settings stand as codeteam wrote them. No `CODEGRAPH_ALLOW_UNSAFE_NODE` is needed on
   Node 26 (`README.md`).
-- Go-live waits on host's `worktree-lifecycle` seeding (settled S-9).
+- Go-live waits on host's `worktree-lifecycle` seeding (settled S-9), and no team gets this entry before
+  `go-live-runbook.md` steps 1 and 2 (index and pin) have run.
 
 ## Undo
 
