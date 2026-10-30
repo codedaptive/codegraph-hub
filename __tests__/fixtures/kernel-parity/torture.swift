@@ -211,3 +211,12 @@ func fnRefExtras() {
 
 import class Darwin.FILE
 @testable import TortureKit
+
+// Qualified inheritance entries: the supertype is the last segment of the
+// user_type; the generic argument sits in type_arguments.
+enum QKit {
+    protocol Runner {}
+    enum Inner { protocol Deep {} }
+}
+class QI: QKit.Runner<Int> {}
+class QJ: QKit.Inner.Deep {}

@@ -487,19 +487,22 @@ namedChildren visited with the interface pushed: protocol_property_declaration
 → dedicated branch (§below); protocol_function_declaration /
 init_declaration / associatedtype_declaration → recursed, nothing.
 
-### Inheritance — extractInheritance (:5291), the swift case (:5619-5632)
+### Inheritance — extractInheritance, the swift inheritance_specifier case (tree-sitter.ts)
 
 Direct namedChildren scan of the declaration node; ONLY the
 `inheritance_specifier` case matches swift (one specifier per conformance,
 each `inherits_from: user_type`): userType = child.namedChildren
-`find(type==='user_type')` → typeId = ITS namedChildren
-`find(type==='type_identifier')` — the FIRST — → one **`extends`** ref
+`find(type==='user_type')` → typeId = the LAST of ITS namedChildren with
+`type==='type_identifier'` → one **`extends`** ref
 {from class/struct/enum/interface node, name = typeId text, line/col of the
 TYPE IDENTIFIER}. QUIRKS, PRESERVE: **everything is `extends`** — protocol
 conformance, protocol inheritance, raw-value types; swift emits NO
 `implements` refs from extraction (resolution's supertype machinery handles
-both kinds); a qualified base `: Module.Base` takes the FIRST segment
-(`Module`) — the outer namespace, not the type. Where-clause constraints and
+both kinds). Not a quirk: a qualified base `: Kit.Runner` (flat type_identifier siblings;
+`A.B.C` is three, `Kit.Runner<T>` adds a type_arguments child) takes the LAST
+segment (`Runner`) at THAT segment's line/col — the resolver reads the written
+qualifier back from the source at the ref's column to land on the nested
+type, so the position must be the last segment's node. Where-clause constraints and
 generic bounds (`type_parameter` `name:` bounds) emit nothing. None of the
 other clause cases (extends_clause/base_class_clause/delegation_specifier/…)
 match swift node types.

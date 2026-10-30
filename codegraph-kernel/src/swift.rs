@@ -11,7 +11,7 @@
 //! declarations descend so initializer calls attribute to the class. Also
 //! preserved on purpose: `parameter` field never resolves (zero param type
 //! refs, zero signatures), isAsync is present-false (dead hook), `open` →
-//! internal visibility, everything-is-`extends` inheritance (first
+//! internal visibility, everything-is-`extends` inheritance (last
 //! type_identifier of each specifier), no instantiates refs ever (`Foo()` is
 //! a plain call), subscript reads as `calls arr`, `defer` as `calls defer`,
 //! `/** */` block docs
@@ -1228,9 +1228,11 @@ impl<'t> Walker<'t> {
         }
     }
 
-    /// extractInheritance — the swift inheritance_specifier case: FIRST
+    /// extractInheritance — the swift inheritance_specifier case: LAST
     /// type_identifier of each specifier's user_type, everything as `extends`
-    /// (conformances included; `: Module.Base` takes `Module`).
+    /// (conformances included; `: Kit.Runner` takes `Runner`, at `Runner`'s
+    /// position — the resolver reads the written qualifier back from the
+    /// source at the ref's column to pick the nested type).
     fn extract_inheritance(&mut self, node: Node<'t>, class_row: u32) {
         let extends_kind = edge_kind_index("extends").unwrap();
         for i in 0..node.named_child_count() {
@@ -1244,7 +1246,8 @@ impl<'t> Walker<'t> {
             let Some(user_type) = user_type else { continue };
             let type_id = (0..user_type.named_child_count())
                 .filter_map(|j| user_type.named_child(j))
-                .find(|c| c.kind() == "type_identifier");
+                .filter(|c| c.kind() == "type_identifier")
+                .last();
             let Some(type_id) = type_id else { continue };
             let name = self.text(type_id).to_string();
             self.push_ref_at(class_row, &name, extends_kind, type_id);

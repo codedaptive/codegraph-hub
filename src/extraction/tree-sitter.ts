@@ -8125,10 +8125,15 @@ export class TreeSitterExtractor {
       }
 
       // Swift: inheritance_specifier > user_type > type_identifier
-      // Used for class inheritance, protocol conformance, and protocol inheritance
+      // Used for class inheritance, protocol conformance, and protocol inheritance.
+      // A qualified entry (`: Kit.Runner`, `: A.B.C`) is flat type_identifier
+      // siblings in one user_type; the ref takes the LAST segment's name and
+      // position. The resolver reads the written qualifier back from the source
+      // at the ref's column to pick the nested type, so the position must be the
+      // last segment's node.
       if (child.type === 'inheritance_specifier') {
         const userType = child.namedChildren.find((c: SyntaxNode) => c.type === 'user_type');
-        const typeId = userType?.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
+        const typeId = userType?.namedChildren.filter((c: SyntaxNode) => c.type === 'type_identifier').pop();
         if (typeId) {
           const name = getNodeText(typeId, this.source);
           this.unresolvedReferences.push({

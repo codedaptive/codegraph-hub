@@ -506,6 +506,18 @@ export function gateSwiftTypeTarget(result: ResolvedRef | null, ref: UnresolvedR
   if (!target || target.language !== 'swift' || !TYPE_KINDS.has(target.kind)) return result;
   const from = context.getNodeById?.(ref.fromNodeId) ?? null;
   const written = writtenName(ref, context);
+  // A supertype written with a qualifier none of whose segments names a
+  // project type (`struct Y: Swift.Error`, `class Z: Foundation.Operation`)
+  // names an external module's type: Swift never lets a project type be named
+  // through another module's qualifier. The extraction cannot tell a module
+  // from a type, and fitsPath reads such a qualifier as a module that fits a
+  // top-level project type of the same last segment, so the entry gets no
+  // target rather than a wrong one. Supertype refs only: a type annotation or
+  // a call keeps fitsPath's reading.
+  if ((ref.referenceKind === 'extends' || ref.referenceKind === 'implements') && written.includes('.')) {
+    const qualifier = written.split('.').slice(0, -1);
+    if (!qualifier.some((seg) => context.getNodesByName(seg).some((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind)))) return null;
+  }
   if (!isSwiftExtension(target, context)) {
     if (!written.includes('.')) {
       if (bareScopeDepth(target, from, context) !== null) return result;
@@ -709,10 +721,13 @@ function memberTypePath(member: Node, context: ResolutionContext): string | null
 /**
  * The Swift node kinds a type inherits from or conforms to: a class, or a
  * protocol (a protocol_declaration is indexed as an `interface`). A struct or
- * enum is no supertype, so an `extends` edge onto one is not followed: the
- * extraction takes a module-qualified entry's first segment, so
- * `struct Q: Kit.Runner` holds an edge to the namespace `enum Kit`. Onto a
- * class it is the same edge, so swiftSupertypeChain also asks who holds it.
+ * enum is no supertype, so an `extends` edge onto one is not followed: a bare
+ * entry naming an external type whose name a project struct or enum in
+ * another target shares (`struct Y: Error` meaning Swift's, with a project
+ * `enum Error`) holds an edge to that project type, which Swift could never
+ * inherit from. (A qualified entry naming an external module's type gets no
+ * edge at all: gateSwiftTypeTarget.) Onto a class it is the same edge, so
+ * swiftSupertypeChain also asks who holds it.
  */
 const SUPERTYPE_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['class', 'interface', 'protocol']);
 
@@ -777,10 +792,11 @@ export function swiftExtensionOnlyNames(context: ResolutionContext): string[] {
  *   (SUPERTYPE_KINDS), with that type's extensions. The edges exist by the
  *   time a call resolves: `extends`/`implements` references resolve first.
  *   A class target is followed only from a class declaration: a struct, an
- *   enum or an extension inherits from no class, so such an edge is a
- *   qualified entry's first segment (`struct QK: Kit.Runner` holds
- *   `extends Kit` onto `class Kit`); a protocol's class constraint
- *   (`protocol P: Kit`) is not walked either, as it cannot be told from that.
+ *   enum or an extension inherits from no class, so such an edge is a bare
+ *   entry naming an external type landing on a project class of the same
+ *   name (`struct Y: Error` with a project `class Error`); a protocol's
+ *   class constraint (`protocol P: Kit`) is not walked either, as it cannot
+ *   be told from that.
  * - A reference that resolved to nothing (getUnresolvedSupertypeNames, which
  *   reads only names swiftExtensionOnlyNames lists): the
  *   project's extensions of that name when it declares no such type
@@ -1069,18 +1085,12 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  *   `references` edge;
  * - a member the extraction does not index (a member of an extension the
  *   parse ends early) reads as external, so the receiver gets the edge;
- * - a module-qualified conformance (`struct Q: Kit.Runner`) is extracted as
- *   its first segment, `Kit`, so the supertype walk does not reach `Runner`
- *   (swiftSupertypeChain drops the edge onto a struct or enum `Kit`, and onto
- *   a class `Kit` from anything but a class declaration): a member only
- *   `Runner` or its extensions supply reads as external, so the receiver gets
- *   the edge (pinned for the static-call path in swift-static-calls.test.ts;
- *   not pinned for this edge). A class `Kit` reached from a class declaration
- *   is walked as a superclass, so a member Kit itself declares is taken
- *   (pinned in swift-static-calls.test.ts). An entry whose first segment is a
- *   type the project only extends (`Ext.Runner` with `extension Ext {}`) is
- *   walked to Ext's extensions too, so a member they add is taken (pinned in
- *   swift-static-calls.test.ts);
+ * - a supertype written with the project's own module name (`MyModule.Base`,
+ *   where no qualifier segment names a project type) gets no edge:
+ *   gateSwiftTypeTarget cannot tell that module from an external one, so it
+ *   gives every such entry no target (`Swift.Error` and
+ *   `Foundation.Operation` with a project `Error` / `Operation` are pinned to
+ *   no edge in swift-qualified-inheritance.test.ts, tests g and h);
  * - the module rule reads the index's `import` nodes (the caller file's, and
  *   every `@_exported import` of a module it sees) and the SwiftPM directory
  *   layout, never Package.swift, so a SwiftPM target whose Package.swift
