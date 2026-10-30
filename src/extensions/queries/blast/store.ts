@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
 import type { BlastNode } from './blast';
+import { candidateEdgeSql } from '../../resolution/suspects';
 import { MAX_IDS_PER_QUERY, chunks, placeholders } from '../shared/sql';
 
 /** One incoming edge, as the BFS consumes it. */
@@ -27,6 +28,8 @@ export interface IncomingEdge {
   source: string;
   target: string;
   kind: string;
+  /** A `calls` edge the resolver bound by name only: resolution's candidate edge (`candidateEdgeSql`, src/extensions/resolution/suspects.ts). */
+  questionable: boolean;
 }
 
 /** The queries `blastRadius` runs. An interface so the walk can be spied on and tested. */
@@ -35,7 +38,10 @@ export interface BlastStore {
   fileNode(path: string): BlastNode | null;
   /** Symbols in `path` whose span overlaps lines `start..end` (inclusive), seed kinds only. */
   symbolsOverlapping(path: string, start: number, end: number): BlastNode[];
-  /** Edges of the given kinds pointing AT any of `targetIds`, ordered by target, kind, source. */
+  /**
+   * Edges of the given kinds pointing AT any of `targetIds`, ordered by target,
+   * kind, source, each flagged when it is a questionable call.
+   */
   incomingEdges(targetIds: readonly string[], kinds: readonly string[]): IncomingEdge[];
   /** The nodes for `ids`; ids with no node are absent from the result. */
   nodesByIds(ids: readonly string[]): BlastNode[];
@@ -131,10 +137,12 @@ export function storeOver(conn: DatabaseConnection): BlastStore {
       const out: IncomingEdge[] = [];
       for (const ids of chunks(targetIds, MAX_IDS_PER_QUERY)) {
         const stmt = db.prepare(
-          `SELECT source, target, kind FROM edges
+          `SELECT source, target, kind, ${candidateEdgeSql('edges')} AS questionable FROM edges
            WHERE target IN (${placeholders(ids.length)}) AND kind IN (${placeholders(kinds.length)})`,
         );
-        out.push(...(stmt.all(...ids, ...kinds) as IncomingEdge[]));
+        // SQLite returns the boolean expression as 0/1.
+        const rows = stmt.all(...ids, ...kinds) as { source: string; target: string; kind: string; questionable: number }[];
+        for (const r of rows) out.push({ source: r.source, target: r.target, kind: r.kind, questionable: Number(r.questionable) === 1 });
       }
       // Sorted once over all chunks (not per statement) so the order is the same
       // whether the frontier needed one query or several.

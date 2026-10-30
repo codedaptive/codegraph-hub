@@ -10,7 +10,8 @@ export const GREP_TOOL = {
   description:
     'Regex search over every file the codegraph index has, with each hit grouped under its innermost enclosing ' +
     'symbol (function, method, class) and the groups ranked by how many incoming calls, references, imports and ' +
-    'inheritance edges they have. Use it when you need EVERY occurrence of a string or name, not the top ' +
+    'inheritance edges they have; a count marked `(N questionable)` includes N calls bound by name only, which ' +
+    '`strict: true` leaves out. Use it when you need EVERY occurrence of a string or name, not the top ' +
     'matches. Hits outside any symbol are listed as module level. Capped at 300 hits; narrow with `in`.',
   inputSchema: {
     type: 'object' as const,
@@ -28,6 +29,7 @@ export const GREP_TOOL = {
       in: { type: 'string', description: 'Repo-relative path prefix to search under, e.g. "src/db".' },
       ignore_case: { type: 'boolean', description: 'Case-insensitive match.' },
       fixed: { type: 'boolean', description: 'Treat the pattern as a literal string, not a regex.' },
+      strict: { type: 'boolean', description: 'Leave name-matched (questionable) incoming calls out of the in-edge counts and ranking.' },
       json: { type: 'boolean', description: 'Return the structured result as JSON instead of text.' },
       projectPath: { type: 'string', description: 'Path inside the project to search (the nearest .codegraph/ at or above it is used).' },
     },

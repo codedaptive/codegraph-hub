@@ -29,6 +29,8 @@ import { spawnSync } from 'child_process';
 import { CodeGraph } from '../../../src';
 import { DatabaseConnection, getDatabasePath } from '../../../src/db';
 import { runOrphans } from '../../../src/extensions/queries/orphans/index';
+import { isGuess } from '../../../src/extensions/queries/orphans/orphans';
+import { isCandidateEdge } from '../../../src/extensions/resolution/suspects';
 
 /** Run git in `root` with a local identity; throws on failure so a broken fixture is loud. */
 function git(root: string, ...args: string[]): string {
@@ -277,8 +279,15 @@ describe('orphans vectors', () => {
     expect(meta(incoming[0]).confidence).toBeGreaterThanOrEqual(0.9);
   });
 
-  it('V5 R1: a single-candidate name match is certain, so noImportTarget is in neither list', () => {
-    expect(listed()).not.toContain('noImportTarget');
+  it('V5 R1: a single-candidate name match call is questionable (as in grep and blast), so noImportTarget is guessed, not orphaned', () => {
+    expect(names(report.orphans)).not.toContain('noImportTarget');
+    const g = report.guessed.find((x) => x.name === 'noImportTarget');
+    expect(g).toBeDefined();
+    expect(g!.edges).toHaveLength(1);
+    expect(g!.edges[0]).toMatchObject({
+      sourceName: 'caller1', sourcePath: 'src/glob2.ts', kind: 'calls', resolvedBy: 'exact-match',
+    });
+    expect(g!.edges[0].confidence).toBeGreaterThanOrEqual(0.9);
   });
 
   it('V6 a pre-existing function whose signature line changed is not listed', () => {
@@ -313,5 +322,30 @@ describe('orphans vectors', () => {
     expect(listed()).not.toContain('constructor');
     expect(listed()).not.toContain('Widget');
     expect(report.excluded.constructor).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// grep, blast and orphans mark the same call edges: for `calls`, orphans' guess
+// rule is resolution's isCandidateEdge exactly, files included (a same-file
+// exact match is certain). Other kinds keep orphans' own rule, since the
+// shared predicate is defined over calls only.
+describe('orphans guess rule agrees with resolution\'s isCandidateEdge', () => {
+  const callVectors: Array<[Record<string, unknown>, string, string, boolean]> = [
+    [{ resolvedBy: 'exact-match', confidence: 0.9 }, 'src/a.ts', 'src/b.ts', true],
+    [{ resolvedBy: 'exact-match', confidence: 0.9 }, 'src/a.ts', 'src/a.ts', false],
+    [{ resolvedBy: 'import' }, 'src/a.ts', 'src/b.ts', false],
+    [{ resolvedBy: 'instance-method', confidence: 0.85 }, 'src/a.ts', 'src/a.ts', true],
+    [{ resolvedBy: 'instance-method', confidence: 0.9 }, 'src/a.ts', 'src/b.ts', false],
+    [{ resolvedBy: 'fuzzy' }, 'src/a.ts', 'src/a.ts', true],
+  ];
+  it.each(callVectors)('calls %j from %s to %s: isGuess === isCandidateEdge === %s', (m, from, to, expected) => {
+    expect(isCandidateEdge('calls', m, from, to)).toBe(expected);
+    expect(isGuess('calls', m, from, to)).toBe(expected);
+  });
+
+  it('a non-call edge below LOW_CONFIDENCE is a guess under orphans\' own rule', () => {
+    const m = { confidence: 0.5 };
+    expect(isGuess('references', m, 'src/a.ts', 'src/a.ts')).toBe(true);
+    expect(isCandidateEdge('references', m, 'src/a.ts', 'src/a.ts')).toBe(false);
   });
 });

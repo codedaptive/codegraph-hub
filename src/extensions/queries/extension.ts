@@ -22,6 +22,7 @@ interface GrepCliOptions {
   in?: string;
   fixed?: boolean;
   ignoreCase?: boolean;
+  strict?: boolean;
   json?: boolean;
   path?: string;
 }
@@ -36,6 +37,7 @@ export function grepArgv(pattern: string, opts: GrepCliOptions): string[] {
   if (opts.in !== undefined) argv.push('--in', opts.in);
   if (opts.fixed) argv.push('--fixed');
   if (opts.ignoreCase) argv.push('--ignore-case');
+  if (opts.strict) argv.push('--strict');
   if (opts.json) argv.push('--json');
   if (opts.path !== undefined) argv.push('--path', opts.path);
   argv.push('--', pattern);
@@ -50,6 +52,7 @@ function registerGrepCommand(program: Command): void {
     .option('--in <path>', 'repo-relative path prefix to search under, e.g. src/db')
     .option('--fixed', 'treat the pattern as a literal string, not a regex')
     .option('-i, --ignore-case', 'case-insensitive match')
+    .option('--strict', 'Leave name-matched (questionable) incoming calls out of the in-edge counts and ranking')
     .option('--json', 'print the structured result as JSON')
     .option('-p, --path <path>', 'project path (default: the nearest indexed project at or above the current directory)')
     .action(async (pattern: string, opts: GrepCliOptions) => {

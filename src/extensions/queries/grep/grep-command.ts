@@ -11,8 +11,8 @@ import { formatGrepResult, zeroHitNote } from './grep-format';
 export interface CommandOutput { stdout: string; stderr: string; exitCode: number }
 
 export const GREP_USAGE =
-  'usage: codegraph grep <pattern> [--in <path>] [--fixed] [-i|--ignore-case] [--json] [-p|--path <projectRoot>]\n' +
-  '  (put -- before a pattern that starts with "-")\n';
+  'usage: codegraph grep <pattern> [--in <path>] [--fixed] [-i|--ignore-case] [--strict] [--json] [-p|--path <projectRoot>]\n' +
+  '  (put -- before a pattern that starts with "-"; --strict leaves name-matched calls out of the in-edge counts)\n';
 
 interface ParsedArgs { pattern?: string; opts: GrepOptions; json: boolean; projectPath?: string }
 
@@ -50,6 +50,9 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
       case '-i':
       case '--ignore-case':
         out.opts.ignoreCase = true;
+        break;
+      case '--strict':
+        out.opts.strict = true;
         break;
       case '--json':
         out.json = true;

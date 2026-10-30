@@ -13,6 +13,16 @@
  *     only the source text marks it).
  *   - R10 requirements: trait `Tr`'s `req` (src/tr.rs), reached through
  *     `impl Tr for S`.
+ *   - Same-name type group, guess rule per edge: `enum Gadget` in
+ *     Sources/App/GadgetA.swift and another `enum Gadget` in
+ *     Sources/App/GadgetB.swift, whose only use is a same-file exact-match
+ *     `calls` edge from `makeGadget` (GadgetB.swift, `Gadget(rawValue:)`)
+ *     onto GadgetB's node. GadgetA's enum counts that use through its group;
+ *     the guess rule must judge the edge by its own target file (GadgetB.swift:
+ *     same file, certain), not GadgetA's. An enum, not a struct or an
+ *     extension: resolution turns a `calls` onto a class / struct / union into
+ *     `instantiates`, and an `extension`'s `rawValue` call resolves to the
+ *     enum's declaration in the other file, so neither gives the shape.
  *   - Controls: an uncalled `fn lonely_rs` and an uncalled Swift
  *     `func lonelySwift` stay orphans, so the rulings do not swallow
  *     everything.
@@ -71,10 +81,13 @@ const C2_FILES: Record<string, string> = {
   'src/lonely.rs': 'pub fn lonely_rs() -> u32 {\n    7\n}\n',
   'Sources/App/App.swift': '@main\nstruct App {\n    static func main() {\n        print("app")\n    }\n}\n',
   'Sources/App/Extra.swift': 'func lonelySwift() -> Int {\n    return 2\n}\n',
+  'Sources/App/GadgetA.swift': 'enum Gadget: Int {\n    case a = 1\n}\n',
+  'Sources/App/GadgetB.swift':
+    'enum Gadget: Int {\n    case b = 2\n}\n\nfunc makeGadget() -> Int {\n    return Gadget(rawValue: 1)!.rawValue\n}\n',
 };
 
 interface NodeRow { id: string; name: string; kind: string; file_path: string; start_line: number; end_line: number }
-interface EdgeRow { source: string; target: string; kind: string }
+interface EdgeRow { source: string; target: string; kind: string; metadata: string | null }
 
 let root = '';
 let report: OrphansJson;
@@ -101,7 +114,7 @@ beforeAll(async () => {
   try {
     const db = conn.getDb();
     nodes = db.prepare("SELECT id, name, kind, file_path, start_line, end_line FROM nodes WHERE kind NOT IN ('file','import','parameter')").all() as unknown as NodeRow[];
-    edges = db.prepare("SELECT source, target, kind FROM edges WHERE kind NOT IN ('contains','exports')").all() as unknown as EdgeRow[];
+    edges = db.prepare("SELECT source, target, kind, metadata FROM edges WHERE kind NOT IN ('contains','exports')").all() as unknown as EdgeRow[];
   } finally {
     conn.close();
   }
@@ -197,5 +210,34 @@ describe('orphans language controls', () => {
 
   it('an uncalled Swift func is still an orphan', () => {
     expect(report.orphans.find((o) => o.name === 'lonelySwift')).toMatchObject({ path: 'Sources/App/Extra.swift', kind: 'function' });
+  });
+});
+
+describe('orphans guess rule on a same-name type group', () => {
+  const A = 'Sources/App/GadgetA.swift';
+  const B = 'Sources/App/GadgetB.swift';
+  const byId = (id: string): NodeRow | undefined => nodes.find((n) => n.id === id);
+
+  it('fixture: Gadget is an enum in both files, and its only use is a same-file exact-match calls edge in GadgetB.swift onto GadgetB\'s enum', () => {
+    const a = nodeAt('Gadget', A);
+    const b = nodeAt('Gadget', B);
+    expect(a?.kind).toBe('enum');
+    expect(b?.kind).toBe('enum');
+    const gadgetIds = new Set(nodes.filter((n) => n.name === 'Gadget').map((n) => n.id));
+    const uses = edges.filter((e) => gadgetIds.has(e.target));
+    const dump = JSON.stringify(uses.map((e) => ({ ...e, from: byId(e.source), to: byId(e.target) })));
+    expect(uses.length, dump).toBe(1);
+    const [call] = uses;
+    expect(call.kind, dump).toBe('calls');
+    expect(byId(call.source)?.name, dump).toBe('makeGadget');
+    expect(byId(call.source)?.file_path, dump).toBe(B);
+    expect(call.target, dump).toBe(b!.id);
+    expect((JSON.parse(call.metadata ?? '{}') as { resolvedBy?: string }).resolvedBy, dump).toBe('exact-match');
+  });
+
+  it('GadgetA\'s enum is neither guessed nor orphaned: its group\'s one use is certain by that edge\'s own files', () => {
+    const a = nodeAt('Gadget', A)!;
+    expect(report.guessed.map((e) => e.id)).not.toContain(a.id);
+    expect(report.orphans.map((e) => e.id)).not.toContain(a.id);
   });
 });

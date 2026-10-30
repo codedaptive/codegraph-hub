@@ -12,9 +12,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { CodeGraph } from '../../../src';
+import { DatabaseConnection, getDatabasePath } from '../../../src/db';
 import {
+  candidateEdgeSql,
   findSuspects,
   formatSuspects,
+  isCandidateEdge,
   stdCollision,
   suspectsToJson,
   type Suspect,
@@ -480,5 +483,106 @@ describe('suspects: ranking, options, JSON and text', () => {
 
   it('formats an empty list', () => {
     expect(formatSuspects([])).toBe('No suspect call edges.');
+  });
+});
+
+interface CallEdgeRow {
+  kind: string;
+  metadata: string | null;
+  srcFile: string | null;
+  tgtFile: string | null;
+  candidate: number;
+}
+
+/**
+ * The one `calls` edge from the node named `caller` to the node named `target`, read from the
+ * index read-only, with `candidateEdgeSql('edges')` evaluated on that row.
+ */
+function callEdge(dir: string, caller: string, target: string): CallEdgeRow {
+  const conn = DatabaseConnection.open(getDatabasePath(dir), { readOnly: true });
+  try {
+    const rows = conn.getDb().prepare(
+      `SELECT edges.kind AS kind, edges.metadata AS metadata,
+              (SELECT file_path FROM nodes WHERE id = edges.source) AS srcFile,
+              (SELECT file_path FROM nodes WHERE id = edges.target) AS tgtFile,
+              ${candidateEdgeSql('edges')} AS candidate
+         FROM edges
+        WHERE edges.kind = 'calls'
+          AND edges.source IN (SELECT id FROM nodes WHERE name = ?)
+          AND edges.target IN (SELECT id FROM nodes WHERE name = ?)`,
+    ).all(caller, target) as CallEdgeRow[];
+    expect(rows, `calls edges ${caller} -> ${target}`).toHaveLength(1);
+    return rows[0]!;
+  } finally {
+    conn.close();
+  }
+}
+
+describe('suspects: a same-file exact-match call is certain, a cross-file one is a candidate', () => {
+  let dir: string;
+  beforeAll(async () => {
+    // a.ts: a() calls b(), defined in the same file: exact-match, same file, so certain.
+    // caller.ts: run() calls helper(), defined in helper.ts and NOT imported, so the resolver
+    // binds it by name alone (exact-match) across files: still a candidate.
+    dir = await buildProject({
+      'a.ts': 'export function a() { b() }\nfunction b() {}\n',
+      'caller.ts': 'export function run() {\n  helper();\n}\n',
+      'helper.ts': 'export function helper() {}\n',
+    });
+  });
+  afterAll(() => removeProject(dir));
+
+  it('does not list the same-file exact-match target', () => {
+    const edge = callEdge(dir, 'a', 'b');
+    const metadata = JSON.parse(edge.metadata ?? 'null') as Record<string, unknown> | null;
+    expect(metadata?.resolvedBy).toBe('exact-match');
+    expect(edge.srcFile).toBe('a.ts');
+    expect(edge.tgtFile).toBe('a.ts');
+    expect(findSuspects(dir).map((s) => s.targetName)).not.toContain('b');
+    expect(isCandidateEdge(edge.kind, metadata, edge.srcFile, edge.tgtFile)).toBe(false);
+    expect(edge.candidate).toBe(0);
+  });
+
+  it('lists the cross-file exact-match target', () => {
+    const edge = callEdge(dir, 'run', 'helper');
+    const metadata = JSON.parse(edge.metadata ?? 'null') as Record<string, unknown> | null;
+    expect(metadata?.resolvedBy).toBe('exact-match');
+    expect(edge.srcFile).toBe('caller.ts');
+    expect(edge.tgtFile).toBe('helper.ts');
+    expect(findSuspects(dir).map((s) => s.targetName)).toContain('helper');
+    expect(isCandidateEdge(edge.kind, metadata, edge.srcFile, edge.tgtFile)).toBe(true);
+    expect(edge.candidate).toBe(1);
+  });
+});
+
+describe('isCandidateEdge', () => {
+  it('flags a fuzzy edge even within one file', () => {
+    expect(isCandidateEdge('calls', { resolvedBy: 'fuzzy' }, 'a.ts', 'a.ts')).toBe(true);
+  });
+
+  it('flags an instance-method edge below 0.9 and not one at 0.95', () => {
+    expect(isCandidateEdge('calls', { resolvedBy: 'instance-method', confidence: 0.85 }, 'a.rs', 'b.rs')).toBe(true);
+    expect(isCandidateEdge('calls', { resolvedBy: 'instance-method', confidence: 0.95 }, 'a.rs', 'b.rs')).toBe(false);
+  });
+
+  it('reads a boolean confidence as 1 or 0 and a missing or string one as 1', () => {
+    expect(isCandidateEdge('calls', { resolvedBy: 'instance-method', confidence: false }, 'a.rs', 'b.rs')).toBe(true);
+    expect(isCandidateEdge('calls', { resolvedBy: 'instance-method', confidence: true }, 'a.rs', 'b.rs')).toBe(false);
+    expect(isCandidateEdge('calls', { resolvedBy: 'instance-method' }, 'a.rs', 'b.rs')).toBe(false);
+    expect(isCandidateEdge('calls', { resolvedBy: 'instance-method', confidence: '0.5' }, 'a.rs', 'b.rs')).toBe(false);
+  });
+
+  it('never flags a non-calls edge or an edge with no resolvedBy', () => {
+    expect(isCandidateEdge('references', { resolvedBy: 'fuzzy' }, 'a.ts', 'b.ts')).toBe(false);
+    expect(isCandidateEdge('calls', {}, 'a.ts', 'b.ts')).toBe(false);
+    expect(isCandidateEdge('calls', null, 'a.ts', 'b.ts')).toBe(false);
+    expect(isCandidateEdge('calls', { resolvedBy: 'import' }, 'a.ts', 'b.ts')).toBe(false);
+  });
+
+  it('flags an exact-match edge whose files are unknown, and not one within one file', () => {
+    expect(isCandidateEdge('calls', { resolvedBy: 'exact-match' }, null, null)).toBe(true);
+    expect(isCandidateEdge('calls', { resolvedBy: 'exact-match' }, 'a.ts', undefined)).toBe(true);
+    expect(isCandidateEdge('calls', { resolvedBy: 'exact-match' }, 'a.ts', 'b.ts')).toBe(true);
+    expect(isCandidateEdge('calls', { resolvedBy: 'exact-match' }, 'a.ts', 'a.ts')).toBe(false);
   });
 });

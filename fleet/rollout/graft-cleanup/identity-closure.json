@@ -1,0 +1,150 @@
+[
+  {
+    "team": "moot",
+    "manifest": "/Users/bob/devlop/codeteam/teams/moot.toml",
+    "manifest_sha256": "07efa2eb4da4cf01add6073fd528e5020b7bfa2e73d17471db1ae0b1d2115a48",
+    "configured_source": "/Users/bob/devlop/team-moot/design/mootx01-ee-develop_1.1.x/.claude",
+    "installed_home": "/Users/bob/devlop/team-moot/team/claude",
+    "identities": [
+      "integration-builder",
+      "repo-designer",
+      "repo-orchestrator",
+      "security-reviewer",
+      "spec-guard",
+      "zone-coordinator"
+    ],
+    "catalog_missing": [],
+    "installed_missing": [],
+    "source_missing": []
+  },
+  {
+    "team": "codegraph",
+    "manifest": "/Users/bob/devlop/codeteam/teams/codegraph.toml",
+    "manifest_sha256": "5fb4ed189526e493df2f714f0bba54a86db812c42dce391b37d698131d10d041",
+    "configured_source": "/Users/bob/devlop/team-codegraph/team/claude",
+    "installed_home": "/Users/bob/devlop/team-codegraph/team/claude",
+    "identities": [
+      "repo-designer",
+      "repo-orchestrator",
+      "spec-guard",
+      "zone-coordinator"
+    ],
+    "catalog_missing": [],
+    "installed_missing": [],
+    "source_missing": []
+  },
+  {
+    "team": "codeteam",
+    "manifest": "/Users/bob/devlop/codeteam/teams/codeteam.toml",
+    "manifest_sha256": "b4714fd2d14139ba7239645bfa53e9b40dfa5577dc4b20b8c1766bddb743ed5a",
+    "configured_source": "/Users/bob/devlop/team-codeteam/team/claude",
+    "installed_home": "/Users/bob/devlop/team-codeteam/team/claude",
+    "identities": [
+      "repo-designer",
+      "repo-orchestrator",
+      "spec-guard",
+      "zone-coordinator"
+    ],
+    "catalog_missing": [],
+    "installed_missing": [],
+    "source_missing": []
+  },
+  {
+    "team": "aimodel",
+    "manifest": "/Users/bob/devlop/codeteam/teams/aimodel.toml",
+    "manifest_sha256": "6680a8dd96b8dac129b261e5f68a1772ee0a00725a672b8692d311fffc1119d6",
+    "configured_source": "/Users/bob/devlop/team-moot/design/mootx01-ee-develop_1.1.x/.claude",
+    "installed_home": "/Users/bob/devlop/team-aimodel/team/claude",
+    "identities": [
+      "bilby-coordinate",
+      "bilby-lab",
+      "skippy-orchestrate"
+    ],
+    "catalog_missing": [
+      "bilby-coordinate",
+      "bilby-lab",
+      "skippy-orchestrate"
+    ],
+    "installed_missing": [],
+    "source_missing": [
+      "bilby-coordinate",
+      "bilby-lab",
+      "skippy-orchestrate"
+    ]
+  },
+  {
+    "team": "bench",
+    "manifest": "/Users/bob/devlop/codeteam/teams/bench.toml",
+    "manifest_sha256": "e70b054937fd4244b7ebc83b3d62208fef8e94f151ff3bba0199ee24f2c2d383",
+    "configured_source": "/Users/bob/devlop/team-moot/design/mootx01-ee-develop_1.1.x/.claude",
+    "installed_home": "/Users/bob/devlop/team-bench/team/claude",
+    "identities": [
+      "bilby-bench",
+      "bilby-coordinate",
+      "skippy-orchestrate"
+    ],
+    "catalog_missing": [
+      "bilby-bench",
+      "bilby-coordinate",
+      "skippy-orchestrate"
+    ],
+    "installed_missing": [],
+    "source_missing": [
+      "bilby-bench",
+      "bilby-coordinate",
+      "skippy-orchestrate"
+    ]
+  },
+  {
+    "team": "forge",
+    "manifest": "/Users/bob/devlop/codeteam/teams/forge.toml",
+    "manifest_sha256": "057f0e04c67c2e7f988c77148e81803573780e2a1d506add734f116f2d02c520",
+    "configured_source": "/Users/bob/devlop/forge/.claude",
+    "installed_home": "/Users/bob/devlop/team-forge/team/claude",
+    "identities": [
+      "integration-builder",
+      "repo-designer",
+      "repo-orchestrator",
+      "spec-guard",
+      "zone-coordinator"
+    ],
+    "catalog_missing": [],
+    "installed_missing": [],
+    "source_missing": [
+      "integration-builder",
+      "repo-designer",
+      "repo-orchestrator",
+      "spec-guard",
+      "zone-coordinator"
+    ]
+  },
+  {
+    "team": "fulcrum",
+    "manifest": "/Users/bob/devlop/codeteam/teams/fulcrum.toml",
+    "manifest_sha256": "cd9118171dbac18431978346cd7ab887e351425c1e5d31155c97f4272b2a095d",
+    "configured_source": "/Users/bob/devlop/team-moot/team/claude",
+    "installed_home": "/Users/bob/devlop/team-fulcrum/team/claude",
+    "identities": [
+      "bilby-coordinate",
+      "bilby-zone-sonnet-5-5-high",
+      "kong-opus-5-5-medium",
+      "nagatha-opus-5-5-medium",
+      "skippy-orchestrate"
+    ],
+    "catalog_missing": [
+      "bilby-coordinate",
+      "bilby-zone-sonnet-5-5-high",
+      "kong-opus-5-5-medium",
+      "nagatha-opus-5-5-medium",
+      "skippy-orchestrate"
+    ],
+    "installed_missing": [],
+    "source_missing": [
+      "bilby-coordinate",
+      "bilby-zone-sonnet-5-5-high",
+      "kong-opus-5-5-medium",
+      "nagatha-opus-5-5-medium",
+      "skippy-orchestrate"
+    ]
+  }
+]

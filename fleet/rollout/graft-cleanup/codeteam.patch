@@ -1,0 +1,142 @@
+--- a/teams/codegraph.toml
++++ b/teams/codegraph.toml
+@@ -70,7 +70,7 @@
+ name = "fleet"
+ path = "."
+ owns = ["fleet"]
+-job = "Fleet, outside the fork's code: packaging and the pinned version (1.6.2-sm.N, npm pack), saving graft's output as golden files before graft is removed, the one-day CorpusKit trial and its measurements, and the proposed changes to codeteam's zone.mk and mcp.json and to the agent catalog. Its work in the fork lives under fleet/. Changes to shared state (zone.mk, mcp.json, ~/.claude.json, the global install, the catalog) are written up and sent to Orc-Codegraph for Bob's go-ahead, never applied by the lane."
++job = "Fleet, outside the fork's code: packaging and the pinned version (1.6.2-sm.N, npm pack), maintaining fleet/README.md's upstream-file list, rollout and shared-state change proposals, and repository baselines and measurements. Its work in the fork lives under fleet/. Changes to shared state (zone.mk, mcp.json, ~/.claude.json, the global install, the catalog) are written up and sent to Orc-Codegraph for Bob's go-ahead, never applied by the lane."
+ 
+ # Bob, 2026-10-29: a designer, so Bob works in a quiet pane; every broadcast and lane report lands on Orc-Codegraph and
+ # scrolls its pane. Forge's and moot's layout: the design checkout, shared with Orc-Codegraph (the codegraph CLI runs
+--- a/v2/smoke/claude-fab/agents/kong-opus-5-5-medium.md
++++ b/v2/smoke/claude-fab/agents/kong-opus-5-5-medium.md
+@@ -5,7 +5,7 @@
+ tools: Read, Glob, Grep, Bash, mcp__plugin_mootx01_memory__moot_estate_ping, mcp__plugin_mootx01_memory__moot_memory_search, mcp__plugin_mootx01_memory__moot_memory_get, mcp__plugin_mootx01_memory__moot_fact_search, mcp__plugin_mootx01_memory__moot_recall_precise, mcp__plugin_mootx01_memory__moot_file_fact, mcp__plugin_mootx01_memory__moot_file_memory
+ model: claude-opus-5-5
+ effort: medium
+-skills: [spec-authorship, mission-scoping, graft]
++skills: ["spec-authorship", "mission-scoping"]
+ memory: project
+ status: active
+ created: 2026-04-27
+@@ -20,25 +20,29 @@
+ 
+ ## Search order, mandatory
+ 
+-The repo carries a `graft/` graph. Use it before any text search or file
+-read; it is the cheap path and the exhaustive one.
+-
+-- `graft ask "<question>" --source` to locate and understand.
+-- `graft callers <symbol> --depth all` for who depends on a symbol.
+-- `graft grep "<literal>"` for every occurrence, grouped by symbol; it is
+-  faster than `rg` and it is the blast-radius list.
+-- `graft skeleton <file>` for a file's surface instead of reading it.
+-- `Read` with a line range only for the span graft named. Never a whole
+-  file. Never `sed -n` one range per turn.
+-- `rg` only for prose, config, schema strings, YAML and docs, which the
+-  graph does not index.
+-
+-If the worktree has no `graft/` graph, stop and say so; a read-only gate
+-returns RED with that single blocker, a coder asks the coordinator to
+-build it. Do not fall back to text search. Batch: one shell call carries
+-several questions. Every turn re-reads your whole context, so the cost of
+-a pre-flight or a review is the number of turns, not the size of the
+-report.
++Use CodeGraph first for indexed code, with your absolute worktree on every
++call: CLI `-p <wt>`, MCP `projectPath: "<wt>"`. A subagent shares its
++parent's connection; its own worktree must be explicit.
++
++- `codegraph explore <SymA> <SymB> -p <wt>` returns source and call paths.
++- `codegraph callers SYMBOL -p <wt>` and `impact SYMBOL -p <wt>` map reach.
++- `codegraph grep <pattern> -p <wt>` groups text hits by enclosing symbol.
++- `codegraph node -f <file> --symbols-only -p <wt>` shows a file's API.
++- Returned source is already read. Read only an uncovered span or a file
++  flagged as changed on disk. Use `rg` for prose, config and string uses.
++
++There is no build step. If an index is building or copying, retry shortly.
++Never run `init`, `index`, `uninit`, `unlock`, `install`, `uninstall`,
++`upgrade` or `telemetry`; indexing a new repository is the user's decision.
++
++**Request gate:** `codegraph checkpoint --fresh <wt>`, then `codegraph blast
++-b <base-ref> -p <wt>` (or `impact SYMBOL -p <wt> --fresh` before editing).
++**Pre-push gate:** fresh checkpoint, then `codegraph orphans -b <base-ref>
++-p <wt>`, followed by `rg -nw SYMBOL` for dynamic/string uses of candidates.
++Record checkpoint HEAD, working-tree hash and pending files: the wait is
++bounded; pending files mean incomplete freshness, not a passing gate.
++MCP gates carry `projectPath`, `base` and `fresh: true`. CLI blast/orphans
++use the explicit checkpoint, not a `--fresh` flag.
+ 
+ ## Identity
+ 
+@@ -331,8 +335,8 @@
+ 
+ Claimed sites are a hypothesis. Count real ones.
+ 
+-1. For every symbol the work names, `graft callers <symbol>` and
+-   `graft grep "<symbol>"` (or `rg -nw` for prose and config).
++1. For every symbol the work names, `codegraph callers <symbol> -p <wt>`
++   and `codegraph impact <symbol> -p <wt>`, plus `rg -nw` for string/config uses.
+ 2. Count call sites, not matches: a definition and a comment are not
+    call sites.
+ 3. Check both ports. A symbol changed in one and not the other is a
+--- a/v2/smoke/claude-fab/agents/nagatha-opus-5-5-medium.md
++++ b/v2/smoke/claude-fab/agents/nagatha-opus-5-5-medium.md
+@@ -5,7 +5,7 @@
+ tools: Read, Glob, Grep, Bash, Write, Edit, mcp__plugin_mootx01_memory__moot_estate_ping, mcp__plugin_mootx01_memory__moot_memory_search, mcp__plugin_mootx01_memory__moot_memory_get, mcp__plugin_mootx01_memory__moot_fact_search, mcp__plugin_mootx01_memory__moot_recall_precise, mcp__plugin_mootx01_memory__moot_file_memory, mcp__plugin_mootx01_memory__moot_link_memories, mcp__plugin_mootx01_memory__moot_file_fact, mcp__plugin_mootx01_memory__moot_update_memory, mcp__plugin_mootx01_memory__moot_move_memory, mcp__plugin_mootx01_memory__moot_withdraw_memory
+ model: claude-opus-5-5
+ effort: medium
+-skills: [nagatha-ops, writing-voice, mission-template, nagatha-records, canonical-source-rule, commit-identity, graft]
++skills: ["nagatha-ops", "writing-voice", "mission-template", "nagatha-records", "canonical-source-rule", "commit-identity"]
+ memory: project
+ status: active
+ created: 2026-04-27
+@@ -33,25 +33,29 @@
+ 
+ ## Search order, mandatory
+ 
+-The repo carries a `graft/` graph. Use it before any text search or file
+-read; it is the cheap path and the exhaustive one.
+-
+-- `graft ask "<question>" --source` to locate and understand.
+-- `graft callers <symbol> --depth all` for who depends on a symbol.
+-- `graft grep "<literal>"` for every occurrence, grouped by symbol; it is
+-  faster than `rg` and it is the blast-radius list.
+-- `graft skeleton <file>` for a file's surface instead of reading it.
+-- `Read` with a line range only for the span graft named. Never a whole
+-  file. Never `sed -n` one range per turn.
+-- `rg` only for prose, config, schema strings, YAML and docs, which the
+-  graph does not index.
+-
+-If the worktree has no `graft/` graph, stop and say so; a read-only gate
+-returns RED with that single blocker, a coder asks the coordinator to
+-build it. Do not fall back to text search. Batch: one shell call carries
+-several questions. Every turn re-reads your whole context, so the cost of
+-a pre-flight or a review is the number of turns, not the size of the
+-report.
++Use CodeGraph first for indexed code, with your absolute worktree on every
++call: CLI `-p <wt>`, MCP `projectPath: "<wt>"`. A subagent shares its
++parent's connection; its own worktree must be explicit.
++
++- `codegraph explore <SymA> <SymB> -p <wt>` returns source and call paths.
++- `codegraph callers SYMBOL -p <wt>` and `impact SYMBOL -p <wt>` map reach.
++- `codegraph grep <pattern> -p <wt>` groups text hits by enclosing symbol.
++- `codegraph node -f <file> --symbols-only -p <wt>` shows a file's API.
++- Returned source is already read. Read only an uncovered span or a file
++  flagged as changed on disk. Use `rg` for prose, config and string uses.
++
++There is no build step. If an index is building or copying, retry shortly.
++Never run `init`, `index`, `uninit`, `unlock`, `install`, `uninstall`,
++`upgrade` or `telemetry`; indexing a new repository is the user's decision.
++
++**Request gate:** `codegraph checkpoint --fresh <wt>`, then `codegraph blast
++-b <base-ref> -p <wt>` (or `impact SYMBOL -p <wt> --fresh` before editing).
++**Pre-push gate:** fresh checkpoint, then `codegraph orphans -b <base-ref>
++-p <wt>`, followed by `rg -nw SYMBOL` for dynamic/string uses of candidates.
++Record checkpoint HEAD, working-tree hash and pending files: the wait is
++bounded; pending files mean incomplete freshness, not a passing gate.
++MCP gates carry `projectPath`, `base` and `fresh: true`. CLI blast/orphans
++use the explicit checkpoint, not a `--fresh` flag.
+ 
+ ## Identity
+ 
