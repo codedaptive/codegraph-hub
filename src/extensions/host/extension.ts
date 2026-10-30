@@ -1,14 +1,20 @@
 /**
- * The host zone's extension (./README.md): the `codegraph checkpoint [path] [--fresh] [-j, --json]` CLI
- * command, which reports the workspace state the index reflects (git HEAD, a hash of the uncommitted
- * changes, files the index has not caught up with) and exits 0 fresh, 3 not fresh, 1 on error.
+ * The host zone's extension (./README.md). Two CLI commands:
+ *
+ *   - `codegraph checkpoint [path] [--fresh] [-j, --json]` reports the workspace state the index
+ *     reflects (git HEAD, a hash of the uncommitted changes, files the index has not caught up with)
+ *     and exits 0 fresh, 3 not fresh, 1 on error;
+ *   - `codegraph project list|pin|unpin|remove` lists, pins, unpins or unregisters the projects in the
+ *     project registry (./worktree-lifecycle/project-registry.ts). A pinned project is never
+ *     idle-released or evicted from an MCP server's project cache; `remove` deletes no file.
  *
  * The host loads this module on the main thread of every CLI invocation that reaches `program.parse()`
  * (`serve --mcp` included; not the bare installer run or -v / -version), and a query-pool worker loads
  * it on its first call of a tool that is not built in, so loading it must not load the engine, the
- * database layer or the MCP tool handler. Its top level has type imports only; the command's work
- * (./fresh/cli, which loads the directory and glyph helpers and ./fresh/checkpoint, and loads the engine
- * with `await import` only when the command runs) is imported inside the action.
+ * database layer or the MCP tool handler. Its top level has type imports only; each command's work is
+ * imported inside its action: ./fresh/cli (which loads the directory and glyph helpers and
+ * ./fresh/checkpoint, and loads the engine with `await import` only when the command runs) and
+ * ./worktree-lifecycle/cli (the registry and its git helpers).
  * It must not value-import ./registry or src/mcp/tools.ts.
  */
 import type { Command } from 'commander';
@@ -26,10 +32,50 @@ function registerCheckpointCommand(program: Command): void {
     });
 }
 
+function registerProjectCommand(program: Command): void {
+  const project = program
+    .command('project')
+    .description('List, pin, unpin or unregister the projects CodeGraph manages');
+
+  project
+    .command('list')
+    .description('List registered projects')
+    .option('-j, --json', 'Output as JSON')
+    .action(async (options: { json?: boolean }) => {
+      const { runProjectList } = await import('./worktree-lifecycle/cli');
+      runProjectList(options);
+    });
+
+  project
+    .command('pin <path>')
+    .description('Keep a project open in CodeGraph MCP servers (never idle-released or evicted)')
+    .action(async (pathArg: string) => {
+      const { runProjectPin } = await import('./worktree-lifecycle/cli');
+      await runProjectPin(pathArg);
+    });
+
+  project
+    .command('unpin <path>')
+    .description('Let a pinned project be idle-released and evicted again')
+    .action(async (pathArg: string) => {
+      const { runProjectUnpin } = await import('./worktree-lifecycle/cli');
+      runProjectUnpin(pathArg);
+    });
+
+  project
+    .command('remove <path>')
+    .description('Unregister a project (deletes nothing)')
+    .action(async (pathArg: string) => {
+      const { runProjectRemove } = await import('./worktree-lifecycle/cli');
+      runProjectRemove(pathArg);
+    });
+}
+
 const extension: CodegraphExtension = {
   name: 'host',
   registerCommands(program) {
     registerCheckpointCommand(program);
+    registerProjectCommand(program);
   },
 };
 

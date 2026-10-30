@@ -23,6 +23,12 @@
  * When the pool shrinks after a burst it sends `retire` to an idle worker: the
  * worker closes every CodeGraph it opened, collects garbage (see
  * src/worker-teardown.ts), answers `retired` and exits 0.
+ *
+ * When a project goes away (the housekeeping sweep tears down a removed
+ * worktree, or a pass finds a held root's directory or database gone; see
+ * src/extensions/host/worktree-lifecycle/teardown.ts and housekeeping.ts) the
+ * pool sends `release` with its root: the worker closes its own connection to
+ * it and answers `released`, so the database's blocks are freed once deleted.
  */
 
 import { parentPort, workerData } from 'worker_threads';
@@ -39,7 +45,12 @@ interface WorkerInit {
  * flight; it is answered with `{ type: 'retired', closed }` and then exit code
  * 0. `closed` is the handler's cached projects when closeAll() resolves (none
  * of them if it rejects, even any it closed before rejecting), plus the
- * default project if its close succeeds.
+ * default project if its close succeeds. `release` closes one project in the
+ * handler's cache (ToolHandler.releaseProjectRoot: it waits for the
+ * worker's in-flight calls to finish; a later call opens it again) and is
+ * answered with `{ type: 'released', id, ok, error? }`; it is answered `ok` with nothing to
+ * do when the worker never opened the project, is retiring, or failed to
+ * start. The worker's default project is never released this way.
  */
 interface CallMessage {
   type: 'call';
@@ -52,7 +63,13 @@ interface RetireMessage {
   type: 'retire';
 }
 
-type PoolMessage = CallMessage | RetireMessage;
+interface ReleaseMessage {
+  type: 'release';
+  id: number;
+  root: string;
+}
+
+type PoolMessage = CallMessage | RetireMessage | ReleaseMessage;
 
 // Mirror the engine's lazy-require of the heavy CodeGraph + tools chain. This
 // module is only ever loaded as a Worker, so the require runs once on spawn.
@@ -93,6 +110,10 @@ if (parentPort) {
       void retire();
       return;
     }
+    if (msg.type === 'release') {
+      void release(msg);
+      return;
+    }
     if (msg.type !== 'call' || retiring) return;
     void serve(msg);
   });
@@ -121,6 +142,21 @@ if (parentPort) {
     collectBeforeExit();
     port.postMessage({ type: 'retired', closed });
     process.exit(0);
+  };
+
+  // Close one project this worker's handler holds, then ack. A retiring worker
+  // closes everything anyway, and one that failed to start holds nothing.
+  const release = async (msg: ReleaseMessage): Promise<void> => {
+    if (retiring || !handler) {
+      port.postMessage({ type: 'released', id: msg.id, ok: true });
+      return;
+    }
+    try {
+      await handler.releaseProjectRoot(msg.root);
+      port.postMessage({ type: 'released', id: msg.id, ok: true });
+    } catch (err) {
+      port.postMessage({ type: 'released', id: msg.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
   };
 
   const serve = async (msg: CallMessage): Promise<void> => {

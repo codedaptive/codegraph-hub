@@ -789,7 +789,8 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
 
   // Taken. On the link path the pidfile always holds a complete record, so
   // `existing` is null only for a corrupt leftover or a foreign record
-  // (another project's, copied in with its `.codegraph/`); on the O_EXCL
+  // (another project's, copied in with its `.codegraph/`, or one whose pid
+  // was reused by a process that started later); on the O_EXCL
   // fallback it can also be a holder mid-write. Either way `lockContents` keeps the exact
   // bytes so the caller can hand them to clearStaleDaemonLock as
   // `expectedLockContents`, which removes the lock only if it still holds them.
@@ -840,9 +841,11 @@ export function acquireLockViaExclusiveOpen(pidPath: string, info: DaemonLockInf
  * default a live pid is also preserved; `allowLivePid` is reserved for callers that have
  * already disproved daemon identity with the socket hello (#1553). Passing
  * `projectRoot` (the project `pidPath` belongs to) also clears a FOREIGN record
- * (see {@link isForeignLockRecord}; one copied in with a `.codegraph/`) even
- * though its pid is alive: that pid is the source project's daemon, not this
- * project's. A live record that is not foreign is kept. The `expectedLockContents` and
+ * (see {@link isForeignLockRecord}) even though its pid is alive: one copied
+ * in with a `.codegraph/`, whose pid is the source project's daemon, not this
+ * project's; or one whose pid the OS has given to a process that started at
+ * another time than the record's `pidStart` (a daemon killed, its pid since
+ * reused). A live record that is not foreign is kept. The `expectedLockContents` and
  * `expectedDeadPid` compares still apply first. Returns true when the stale
  * lock is gone (or was already gone).
  */

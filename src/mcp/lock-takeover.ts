@@ -49,14 +49,17 @@
  * another taker replaces the stale lock with a fresh one whose bytes match,
  * the compare passes and the fresh lock is removed. Identical bytes need the
  * new holder to have the dead holder's pid, so it needs pid reuse inside that
- * window. For `codegraph.lock` pid reuse is all it needs: the record is the
- * bare pid (FileLock without an owner), or the pid and the project's stamp,
- * which every holder at that root shares. A
- * `writer.pid`, `rebuild.pid` or `daemon.pid` record also carries its
+ * window. For a bare-pid `codegraph.lock` (FileLock without an owner) pid
+ * reuse is all it needs. Every stamped record (`writer.pid`, `rebuild.pid`,
+ * `daemon.pid`, and `codegraph.lock` with an owner) also carries its writer's
+ * OS start time, `pidStart`, where one can be read, so the new holder must
+ * also have started in the same second (macOS) or clock tick (Linux) as the
+ * dead one; and `writer.pid`, `rebuild.pid` and `daemon.pid` carry their
  * `startedAt` millisecond, which must match too. Off Windows the fresh file
- * must also land in the judged file's freed inode; on Windows the bytes are
- * all that is compared, so a pid-only `codegraph.lock` is where this residual
- * is widest.
+ * must also land in the judged file's freed inode; on Windows no start time
+ * is recorded and the bytes are all that is compared, so a `codegraph.lock`
+ * there (its stamp the same for any holder with that pid at that root) is
+ * where this residual is widest.
  *
  * Imports Node builtins only because `src/utils.ts` (FileLock) imports this
  * module: importing `directory` here would close the cycle
@@ -261,23 +264,72 @@ function tryCreateGuard(guard: string): boolean {
 }
 
 /**
- * Clear a guard whose pid is dead (its taker crashed inside it). An empty or
- * malformed guard is held, not cleared: it is usually a live taker in the
- * O_EXCL fallback's create-then-write window. A taker that crashes in that
- * window leaves it behind, and takeovers of that lock stay busy until it is
- * deleted by hand (only on filesystems without hard links).
+ * A guard whose file was last written longer ago than this is stale, whatever
+ * pid it names and whatever its body. A guard is held for one compare and one
+ * unlink or rename: microseconds, and at most about 375 ms for a Windows
+ * replace retrying ({@link REPLACE_RETRY_DELAYS_MS}). A guard left by a taker
+ * killed inside it, whose pid the OS has since given to another process,
+ * stops blocking takeovers of that lock after this long instead of forever.
+ *
+ * Why 50 s and not a few seconds: a holder can stall inside the guard far
+ * longer than its work takes when its process is descheduled on a heavily
+ * loaded machine, or while a process is still starting inside it, which can
+ * take tens of seconds under load. Clearing a live guard reopens the very race
+ * the guard closes, so the threshold sits well above any such stall. The cost
+ * of the margin is only that an orphaned guard blocks takeovers for under a
+ * minute.
+ */
+const STALE_GUARD_MS = 50_000;
+
+/**
+ * Read a guard once, through one fd: its snapshot and its mtime describe the
+ * same file. Null when it does not exist; undefined when it cannot be read.
+ */
+function readGuard(guard: string): { snap: LockSnapshot; mtimeMs: number } | null | undefined {
+  let fd: number;
+  try {
+    fd = fs.openSync(guard, 'r');
+  } catch (err) {
+    return errCode(err) === 'ENOENT' ? null : undefined;
+  }
+  try {
+    const raw = fs.readFileSync(fd, 'utf8');
+    const st = fs.fstatSync(fd, { bigint: true });
+    const mtimeMs = Number(st.mtimeMs);
+    if (process.platform === 'win32') return { snap: { raw, ino: null, dev: null }, mtimeMs };
+    return { snap: { raw, ino: st.ino, dev: st.dev }, mtimeMs };
+  } catch {
+    return undefined;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Clear a guard that no live taker is inside: one whose pid is dead (its
+ * taker crashed inside it), or one whose file is older than
+ * {@link STALE_GUARD_MS} whatever its pid or body (its taker was killed inside
+ * it and the pid has since been reused, or it died in the O_EXCL fallback's
+ * create-then-write window and left the guard empty). A younger empty or
+ * malformed guard is held, not cleared: it is usually a live taker in that
+ * window. Age is the guard file's mtime against this process's clock, so on a
+ * network mount whose server clock runs more than {@link STALE_GUARD_MS}
+ * behind this machine's a live guard can read as stale.
  *
  * Accepted residual: this clear is itself check-then-unlink. It can remove a
- * live guard only if a taker dies holding the guard and two other takers then
- * clear that dead guard at the same moment: the second removes the first's
- * fresh guard, so both run inside the guard.
+ * live guard only if a taker dies holding the guard (or its guard ages past
+ * the threshold) and two other takers then clear that guard at the same
+ * moment: the second removes the first's fresh guard, so both run inside the
+ * guard.
  */
 function clearDeadGuard(guard: string): boolean {
-  const snap = snapshotForCompare(guard);
-  if (snap === null) return true;
-  if (snap === undefined) return false;
+  const read = readGuard(guard);
+  if (read === null) return true;
+  if (read === undefined) return false;
+  const { snap, mtimeMs } = read;
+  const old = Date.now() - mtimeMs > STALE_GUARD_MS;
   const text = snap.raw.trim();
-  if (!/^\d+$/.test(text)) return false;
+  if (!old && !/^\d+$/.test(text)) return false;
   const pid = Number(text);
   // Our own pid in a guard we do not hold is treated as a leftover (an
   // earlier process with this pid, or a release of ours that failed). This
@@ -285,7 +337,8 @@ function clearDeadGuard(guard: string): boolean {
   // guard records a pid, not a thread. True today: the worker threads (query
   // and freshness workers, parse, resolve and store workers) never call a lock
   // acquire or takeover; those run on the main thread only.
-  if (pid !== process.pid && pid > 0 && isAlive(pid)) return false;
+  // A live pid holds the guard only while the guard is young.
+  if (!old && pid !== process.pid && pid > 0 && isAlive(pid)) return false;
   const cur = snapshotForCompare(guard);
   if (cur === null) return true;
   if (cur === undefined || !sameLock(cur, snap)) return false;
@@ -319,8 +372,11 @@ function releaseGuard(guard: string, mine: LockSnapshot | null): void {
  * from `fn` (which is rethrown), and only if it is still ours, unless it can no
  * longer be read back or Windows refuses the unlink. Such a leftover holds this
  * pid; this process's next takeover of the lock clears it, and another
- * process's does once this process has exited. A guard left by a dead process
- * is cleared and the create tried again.
+ * process's does once this process has exited, or once it is older than
+ * {@link STALE_GUARD_MS}. A guard left by a dead process, or older than that
+ * whatever its pid, is cleared and the create tried again. So `fn` must be
+ * brief (a compare and an unlink or rename, as every caller here makes):
+ * another taker clears a guard held longer than {@link STALE_GUARD_MS}.
  */
 export function withTakeoverGuard<T>(lockPath: string, fn: () => T): { kind: 'ran'; value: T } | { kind: 'busy' } {
   const guard = `${lockPath}.takeover`;
