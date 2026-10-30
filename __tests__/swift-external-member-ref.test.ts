@@ -19,9 +19,9 @@
  * the edge it should get); a local or parameter that shadows a project type's
  * name cannot be told from the type, since Swift locals/params are not indexed
  * (`it.fails`); a sync that makes the call resolve leaves the parked
- * `references` edge in place (`it.fails`); and a member the extraction drops
- * (a later comma-separated enum case, an extension ended early) reads as
- * external (`it.fails`).
+ * `references` edge in place (`it.fails`); and a member of an extension the
+ * extraction ends early reads as external (`it.fails`). Every case of a
+ * comma-separated enum case list is declared.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -464,9 +464,9 @@ struct LifeTool: ParsableCommand {}
   });
 });
 
-describe('Swift: members the index does not hold yet', () => {
+describe('Swift: comma-separated enum cases, and members the index does not hold yet', () => {
   const GAPS: Record<string, string> = {
-    // Every case after the first in a comma-separated list.
+    // A comma-separated case list: every case is declared.
     'Sources/Kit/CompleteJSON.swift': `enum CompleteJSON {
     indirect enum Value { case object([Int]), array([Value]), boolean(Bool), null }
     static func make() { _ = Value.boolean(true) }
@@ -491,22 +491,25 @@ describe('Swift: members the index does not hold yet', () => {
 `,
   };
 
-  // Known extraction gaps, pinned with it.fails so the extraction fix flips
-  // them; the first test keeps a broken fixture from passing as the expected
-  // failure. Resolution cannot see a declaration the index does not hold.
-  it('the fixture indexes the first case and the dropped extension as the gates expect', async () => {
+  // The first test pins the fixture: every enum case indexed, and the dropped
+  // extension indexed as the extension gap expects, so a broken fixture cannot
+  // pass as that gap's expected failure. The extension gap is pinned with
+  // it.fails; resolution cannot see a declaration the index does not hold.
+  it('the fixture indexes every enum case and the dropped extension as the gates expect', async () => {
     const root = makeProjectOf('cg-swift-ext-member-gaps-', GAPS);
     const cg = await CodeGraph.init(root, { index: true });
     try {
-      expect(cg.getNodesByName('object').map((n) => n.qualifiedName)).toEqual(['CompleteJSON::Value::object']);
+      for (const name of ['object', 'array', 'boolean', 'null']) {
+        expect(cg.getNodesByName(name).map((n) => `${n.kind} ${n.qualifiedName}`), name).toEqual([`enum_member CompleteJSON::Value::${name}`]);
+      }
       expect(edgesFromMethod(cg, 'CompleteJSON::first', 'Value', ['references'])).toEqual([]);
       expect(cg.getNodesByName('accessFloor').map((n) => `${n.kind} ${n.qualifiedName}`)).toEqual(['function accessFloor']);
     } finally {
       cg.close();
     }
   });
-  // Extraction gap: comma-separated enum cases — src/extraction/tree-sitter.ts:3032 (`extractEnumMembers` keeps only the first case name).
-  it.fails('a case after the first in a comma-separated list is declared (extraction: extractEnumMembers keeps the first `name`)', async () => {
+  // `extractEnumMembers` indexes every `name` of a comma-separated case list, so a later case is declared.
+  it('a case after the first in a comma-separated list is declared', async () => {
     const root = makeProjectOf('cg-swift-ext-member-gaps-', GAPS);
     const cg = await CodeGraph.init(root, { index: true });
     try {

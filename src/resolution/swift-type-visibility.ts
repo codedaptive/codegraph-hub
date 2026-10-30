@@ -607,9 +607,8 @@ function declaresMember(decl: Node, path: string, member: string, context: Resol
  * - when a later sync makes the call resolve (a new extension declares the
  *   member), the retry resolves the call but nothing takes back the parked
  *   `references` edge;
- * - a member the extraction does not index (a later case in a
- *   comma-separated enum case list, a member of an extension the parse ends
- *   early) reads as external, so the receiver gets the edge.
+ * - a member the extraction does not index (a member of an extension the
+ *   parse ends early) reads as external, so the receiver gets the edge.
  *
  * The edge carries no `refName`: an edge with one is turned back into a
  * pending ref when its target is deleted (resurrect-ref.ts), which would
