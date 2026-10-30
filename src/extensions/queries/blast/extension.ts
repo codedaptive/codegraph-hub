@@ -14,7 +14,6 @@
  */
 import * as path from 'path';
 import type { Command } from 'commander';
-import type { CodeGraph } from '../../../index';
 import type { ToolResult } from '../../../mcp/tools';
 import type { ExtensionTool } from '../../host/api';
 
@@ -26,43 +25,15 @@ interface BlastCommandOptions {
 }
 
 /**
- * Whether `start` lies in a different git repository nested below `indexRoot`
- * whose files that index does not hold (typically a gitignored checkout such
- * as `vendor/child`). The CLI's form of the MCP rule in
- * `ToolHandler.uncoveredNestedRepo` (#2110), built from the same two checks:
- * `nestedRepositoryBelow` compares the git toplevels (and lets a linked
- * worktree of the index's own repository through), then the index is asked
- * whether it holds any file under that repository. A submodule or embedded
- * clone the parent index does cover is answered from it, as over MCP.
- *
- * An index that cannot be opened is no evidence the repository is excluded,
- * so it answers false and `runBlast` reports on the index as it stands.
- */
-async function isUncoveredNestedRepo(start: string, indexRoot: string): Promise<boolean> {
-  const { nestedRepositoryBelow } = await import('../../../sync/worktree');
-  const nested = nestedRepositoryBelow(start, indexRoot);
-  if (!nested) return false;
-  const engine = await import('../../../index');
-  let cg: CodeGraph | null = null;
-  try {
-    cg = engine.CodeGraph.openSync(indexRoot, { readOnly: true });
-    return !cg.hasFilesUnder(nested.relPath);
-  } catch {
-    return false;
-  } finally {
-    cg?.close();
-  }
-}
-
-/**
  * Add `codegraph blast` to `program`. The project is the nearest CodeGraph
  * root at or above `--path` (default: the working directory). With none, or
  * when that root's index leaves out the nested git repository `--path` is in
- * (`isUncoveredNestedRepo`), the resolved path itself is passed, so `runBlast`
- * prints its own no-index message and exits 1. Depth and format defaults are
- * `runBlast`'s (depth 2, text). The action is async (its modules load on
- * first use); commander's `parse()` does not await it, but the process stays
- * up until it settles, and it sets `process.exitCode` rather than exiting.
+ * (`isUncoveredNestedRepo`, shared with `orphans` in `../shared/nested-repo.ts`),
+ * the resolved path itself is passed, so `runBlast` prints its own no-index
+ * message and exits 1. Depth and format defaults are `runBlast`'s (depth 2,
+ * text). The action is async (its modules load on first use); commander's
+ * `parse()` does not await it, but the process stays up until it settles, and
+ * it sets `process.exitCode` rather than exiting.
  */
 export function registerBlastCommand(program: Command): void {
   program
@@ -76,6 +47,7 @@ export function registerBlastCommand(program: Command): void {
       const start = path.resolve(opts.path ?? process.cwd());
       const { findNearestCodeGraphRoot } = await import('../../../directory');
       const { runBlast } = await import('./index');
+      const { isUncoveredNestedRepo } = await import('../shared/nested-repo');
       const found = findNearestCodeGraphRoot(start);
       const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
       const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format });
