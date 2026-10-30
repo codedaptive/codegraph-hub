@@ -6,6 +6,24 @@ This is product-owned working context, not a replacement for the root
 controls technical facts; `.claude/rules/product.md` controls this team's
 workflow. Read `.claude/rules/toolchain-typescript.md` for build/test meaning.
 
+## Fork rulings and current WP1 target
+
+Read the actual canonical ruling register at
+`/Users/bob/devlop/team-codegraph/design/codegraph-ours/docs/RULINGS.md`,
+**R-8 and R-9**. A request/exchange checkout's copy may lag that source.
+R-8 defines trusted-local query scope as database selection, not repository
+or edition authorization; correct requested-database answers and ordinary
+SQLite integrity/copy/writer coordination still matter. R-9 supersedes the
+older per-repository-host and pinned-open assumptions: the intended target
+is one system-wide MCP server, explicit database selection per query,
+initialization when absent, and database close after five query-idle minutes
+without a permanently pinned-open exception.
+
+This is the governing **intended target**, not a claim about the released
+binary or WP1 acceptance. R-9 neither waives acceptance/performance gates nor
+authorizes live install/MCP changes. Follow the current request order under
+these rulings; older MISSION topology descriptions do not override them.
+
 ## Product and implementation map
 
 CodeGraph is a local-first code-intelligence library, CLI and MCP server.

@@ -1,8 +1,9 @@
 # worker-context — genuine product context and owner provisioning
 
-Proposal for Orc-Codegraph #1164, 2026-10-30. Fleet prepared files only; no shared
-application, engine implementation, runtime investigation, policy change or new
-test run. S-43 / Orc #1170 confirms the product authority/source placement;
+Proposal for Orc-Codegraph #1164 with K-38/K-39 follow-up #1182, 2026-10-30.
+Scope includes files and the expressly authorized disposable provisioning checks,
+not shared application, engine implementation/investigation, policy changes or
+engine tests. S-43 / Orc #1170 confirms the product authority/source placement;
 Orc applies the approved context. An approved proposal is not available context.
 
 ## Exact files and authority
@@ -27,6 +28,9 @@ Source facts used:
   worktree discipline and generated-context ownership.
 - Fork `Makefile:1-9,20-34,36-55,60-69`: injected zone targets, record/filter
   restrictions, local typecheck/test mapping and slow-test command behavior.
+- Canonical `/Users/bob/devlop/team-codegraph/design/codegraph-ours/docs/RULINGS.md:47-85`,
+  R-8/R-9: trusted-local database selection and the intended system-wide-host /
+  five-minute database-idle-close target, not released-state or WP1 acceptance.
 - Catalog `templates/bilby.md:154-161`: both context reads are mandatory; absent
   PROJECT explicitly stops the worker. This proposal does not change that rule.
 - Owner evidence:
@@ -108,9 +112,15 @@ check_document "$SRC/rules/toolchain-typescript.md" "$HOME_CTX/rules/toolchain-t
 check_document "$SRC/PROJECT.md" "$PRIMARY/.claude/PROJECT.md"
 check_document "$SRC/PROJECT.md" "$WT/.claude/PROJECT.md"
 
-# cp -n will not clobber an entry created concurrently; final comparisons detect conflicts.
-cp -n "$SRC/PROJECT.md" "$HOME_CTX/PROJECT.md"
-cp -n "$SRC/rules/toolchain-typescript.md" "$HOME_CTX/rules/toolchain-typescript.md"
+# Equal entries already passed preflight: do not call cp for them. On macOS,
+# cp -n reports an existing-destination skip as nonzero under set -e.
+# An attempted copy still fails normally; no copy error is ignored.
+if ! test -e "$HOME_CTX/PROJECT.md" && ! test -L "$HOME_CTX/PROJECT.md"; then
+  cp -n "$SRC/PROJECT.md" "$HOME_CTX/PROJECT.md"
+fi
+if ! test -e "$HOME_CTX/rules/toolchain-typescript.md" && ! test -L "$HOME_CTX/rules/toolchain-typescript.md"; then
+  cp -n "$SRC/rules/toolchain-typescript.md" "$HOME_CTX/rules/toolchain-typescript.md"
+fi
 if ! test -e "$PRIMARY/.claude/PROJECT.md" && ! test -L "$PRIMARY/.claude/PROJECT.md"; then
   ln -s "$HOME_CTX/PROJECT.md" "$PRIMARY/.claude/PROJECT.md"
 fi
@@ -136,6 +146,12 @@ and contain the approved genuine context. Then the same lead and A/B coders read
 them before resuming their existing contracts. No new coder, waived stop, worker
 permission/model change, fresh implementation baseline or test run is implied.
 
-Fleet's evidence is source inspection and documentation review only. Fleet has
-not run this provisioning recipe, generated agents, rebuilt the engine, executed
-old R-9 gates, or claimed that the blocked workers have resumed.
+Orc #1182 additionally authorizes disposable-file validation of this exact recipe:
+fresh, all-equal and published-home/missing-links success states, plus the existing
+conflict/dangling/wrong-rules refusals. Orc #1202 (R-10) rules that this is a
+shell/doc proposal, so no recorded zone pass applies: run
+`python3 -I fleet/worker-context/validate-provisioning.py` directly. It extracts the
+shell block above and runs it only against temporary directories; `validation.md`
+records the command and output. It is not an engine test or permission to provision
+a real home/worktree. No shared application, agent generation, engine build, old
+R-9 gate rerun or claim that the blocked workers resumed follows from it.
