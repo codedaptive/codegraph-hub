@@ -18,3 +18,28 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Ruling: install 1.6.2-sm.3 globally, then run `fleet/rollout/go-live-runbook.md` end to end now.
 - Work implied: Orc-Codegraph runs both and reports when every team has a working code-graph tool; a failed step is
   rolled back per `fleet/rollout/rollback.md` and reported.
+
+## R-4. Deadline: a working, finished CodeGraph at 09:00 CDT 2026-10-30
+- Date: 2026-10-30 02:20 / Bob (going offline until morning)
+- Ruling: the team works MISSION.md and its specs overnight so that at 09:00 CDT CodeGraph is live on every team and
+  the mission's work packages are finished. Bob is unavailable until then: settle what the documents and rulings
+  settle; anything that truly needs Bob goes into team/questions.md for 09:00 and work continues around it.
+- Work implied: Orc-Codegraph plans to 09:00 (go-live under R-3 first, then the open work packages) and has a
+  status at 09:00 naming what is done, what is not, and why.
+
+## R-5. Q-8: fulcrum excludes .codegraph/ locally
+- Date: 2026-10-30 / Bob
+- Ruling: add `.codegraph/` to fulcrum's `.git/info/exclude` (local, uncommitted), as the other team repositories have.
+- Work implied: Orc-Codegraph adds the line and confirms with git check-ignore.
+- Done: 2026-10-30, Orc-Codegraph (#1029); git check-ignore on fulcrum exchange names the exclude line.
+
+## R-6. Q-9: install sm.4 and sm.5 when each passes its gate
+- Date: 2026-10-30 / Bob
+- Ruling: install 1.6.2-sm.4, and sm.5 when WP1 lands, globally once each passes the release gate and the tarball check, by the R-1/R-3 procedure (telemetry off confirmed; rollback to the previous sm.N on a failed check).
+- Work implied: Orc-Codegraph installs each and reports the version and checks.
+- sm.4 done: 2026-10-30, Orc-Codegraph (#1033); global install reports 1.6.2-sm.4 (ours cc50cfa9), telemetry off, all 10 tools list and all 7 teams answered their probe. sm.5 open, waits on WP1.
+
+## R-7. Q-10: clear the graft leftovers
+- Date: 2026-10-30 / Bob
+- Ruling: yes. (1)-(3) in the agent catalog with one regeneration: regenerate aimodel, bench, forge and fulcrum from the current catalog, rewrite the blast-radius and orchestrator skills on CodeGraph, drop the graft hook entries and `mcp__graft__|` from the teams' settings.json. (4) the one-line edit to fleet's job line in codeteam/teams/codegraph.toml and codeteam's two claude-fab smoke fixtures.
+- Work implied: Orc-Codegraph routes it (fleet zone) and reports when no team carries a graft reference.
