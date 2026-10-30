@@ -16,9 +16,8 @@ Fork-only (`codedaptive/codegraph`); never offered upstream. Maintained by the f
 Every upstream file a feature on `ours` changes, by feature, from each feature's DONE report (settled S-12). Our
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only. Checked against `git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream
-60b0d7a9 on exchange 2026-10-30: 48 files, the 45 in the table, `docs/RULINGS.md` (the fork's own rulings
-register, no feature), and `src/extraction/index.ts` and `__tests__/sync-mtime-refresh.test.ts` from
-`sync-mtime-refresh`, whose row is the next push.
+60b0d7a9 on exchange 2026-10-30: 48 files, the 47 in the table plus `docs/RULINGS.md`, the fork's own rulings
+register (no feature).
 
 | Feature | Upstream files |
 |---|---|
@@ -35,6 +34,7 @@ register, no feature), and `src/extraction/index.ts` and `__tests__/sync-mtime-r
 | `swift-method-range` (resolution) | `__tests__/swift-try-await-condition.test.ts` (new test, settled S-26; pins a tree-sitter-swift 0.7.3 behavior, S-29) |
 | `swift-enum-cases` (resolution) | `src/extraction/tree-sitter.ts`, `codegraph-kernel/src/swift.rs`, `docs/design/swift-kernel-port-checklist.md`, `src/resolution/swift-type-visibility.ts`, `__tests__/swift-enum-multi-case.test.ts` (new test, settled S-26), `__tests__/kernel-swift-parity.test.ts`, `__tests__/swift-external-member-ref.test.ts` |
 | `worktree-lifecycle` (host) | `src/mcp/daemon-paths.ts`, `src/mcp/daemon-registry.ts`, `src/mcp/daemon.ts`, `src/mcp/engine.ts`, `src/mcp/process-identity.ts`, `src/mcp/query-pool.ts`, `src/mcp/query-worker.ts`, `src/mcp/server-instructions.ts`, `src/mcp/session.ts`, `src/mcp/tools.ts`, `src/mcp/writer-lock.ts`, `src/utils.ts` and `src/index.ts` (comments, its second push); also `src/mcp/lock-takeover.ts` (lock-takeover-race's new file). Fork-only: `src/extensions/host/extension.ts` and the new `src/extensions/host/worktree-lifecycle/` (`cli`, `cold-build`, `git`, `housekeeping`, `project-registry`, `seed-check`, `seed`, `teardown`); tests in `__tests__/extensions/host/`: `copied-index-locks.unit` (edited), new `dead-lock-reclaim.gate`, `dead-lock-reclaim.unit`, `project-cli`, `project-registry`, `worktree-lifecycle-extension`, `worktree-lifecycle-followups.gate`, `worktree-lifecycle-ownership.gate`, `worktree-lifecycle-races.gate`, `worktree-seed.gate`, `worktree-seed`, `worktree-teardown.gate`, and fixtures `dead-lock-helpers`, `dead-lock-victim` |
+| `sync-mtime-refresh` (host) | `src/extraction/index.ts`, `__tests__/sync-mtime-refresh.test.ts` (new test, settled S-26) |
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of
 its own: never inside the product feature's squash, which must stay cherry-pickable upstream (settled S-12).
