@@ -3896,9 +3896,10 @@ export class ExtractionOrchestrator {
       // change that preserves both exactly is the blind spot every mtime-based
       // incremental tool accepts; `index --force` is the escape hatch. Git bumps
       // mtime on every file it writes during checkout/merge, so pulls are caught.)
+      let stat: fs.Stats | undefined;
       if (tracked && !neverParsed) {
         try {
-          const stat = fs.statSync(fullPath);
+          stat = fs.statSync(fullPath);
           if (stat.size === tracked.size && Math.floor(stat.mtimeMs) === Math.floor(tracked.modifiedAt)) {
             continue;
           }
@@ -3941,6 +3942,11 @@ export class ExtractionOrchestrator {
         filesToIndex.push(filePath);
         changedFilePaths.push(filePath);
         filesModified++;
+      } else if (stat) {
+        // Same bytes under a new size/mtime (a fresh checkout, a copied index,
+        // `touch`): record the stat the pre-filter compares, or every later
+        // sync reads and hashes this file again.
+        this.queries.upsertFile({ ...tracked, size: stat.size, modifiedAt: stat.mtimeMs });
       }
     }
 
