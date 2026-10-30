@@ -12,3 +12,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Date: 2026-10-29 22:20 / Bob
 - Ruling: turn CodeGraph telemetry off for the global install (`codegraph telemetry off`), in addition to `DO_NOT_TRACK=1`.
 - Work implied: Orc-Codegraph runs it after R-1 and confirms the setting.
+
+## R-3. Go-ahead: install sm.3 and run go-live now
+- Date: 2026-10-30 02:25 / Bob ("OMG GO!")
+- Ruling: install 1.6.2-sm.3 globally, then run `fleet/rollout/go-live-runbook.md` end to end now.
+- Work implied: Orc-Codegraph runs both and reports when every team has a working code-graph tool; a failed step is
+  rolled back per `fleet/rollout/rollback.md` and reported.
