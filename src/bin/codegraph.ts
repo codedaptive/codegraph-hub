@@ -13,7 +13,6 @@
  *   codegraph index [path]       Index all files in the project
  *   codegraph sync [path]        Sync changes since last index
  *   codegraph status [path]      Show index status
- *   codegraph checkpoint [path]  Show the workspace state the index reflects (exit 3 when not fresh)
  *   codegraph query <search>     Search for symbols
  *   codegraph files [options]    Show project file structure
  *   codegraph context <task>     Build context for a task
@@ -77,6 +76,9 @@ import { goPackageReaderFor } from '../graph/go-package';
 import type { Node, Edge } from '../types';
 import { isTestPath } from '../search/query-utils';
 import { registerExtensionCommands } from '../extensions/host/registry';
+// Static: .option() needs the --fresh / --checkpoint help text when the program is built.
+import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
+import type { FreshAnswer } from '../extensions/host/fresh/cli';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -393,165 +395,6 @@ async function openIndexToRead(projectPath: string): Promise<import('../index').
     console.error(`${chalk.yellow(getGlyphs().warn)} An index rebuild ("codegraph index") is running in another process — this answer comes from the part of the index it has rebuilt so far.`);
   }
   return cg;
-}
-
-/**
- * `--fresh` / `--checkpoint` on the commands that answer from the index (query, explore, node, callers,
- * callees, impact), and the `checkpoint` command. The checkpoint says which state of the workspace the
- * answer reflects; see ../mcp/answer-freshness.
- */
-interface FreshFlags { fresh?: boolean; checkpoint?: boolean }
-/**
- * Exit status for an answer from an index that is not fresh. Distinct from 1 (error / not initialized)
- * and commander's usage errors, so a script can tell "answered from a stale index" from "failed".
- */
-const EXIT_NOT_FRESH = 3;
-const FRESH_OPTION_HELP = 'Bring the index up to date with the working tree before answering (bounded by CODEGRAPH_FRESH_TIMEOUT_MS, default 30000); exit 3 if files are still pending or the count is unknown (a sync error with nothing pending is fresh, exit 0). A sync still running at the bound is waited for after the answer is printed, before exit (bounded by CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS, default 600000)';
-const CHECKPOINT_OPTION_HELP = 'Print the workspace state the answer reflects as one "codegraph-checkpoint <json>" line on stderr';
-
-/**
- * Run after the answer and its checkpoint are printed, and before any process.exit. Never rejects; a
- * second call returns the first call's promise. `exitCode` is the status to exit with if the settle cap
- * passes (default: process.exitCode, else 0).
- */
-type FreshFinish = (exitCode?: number) => Promise<void>;
-
-const NOTHING_TO_FINISH: FreshFinish = async () => {};
-
-/**
- * What the `--fresh` wait produced: its checkpoint, or why the writable index could not be opened; and
- * `finish`, which closes the writable index once the sync the wait started has settled.
- */
-type FreshWait = (
-  | { checkpoint: import('../mcp/answer-freshness').AnswerCheckpoint }
-  | { syncError: string }
-) & { finish: FreshFinish };
-
-/**
- * The `--fresh` wait, run BEFORE openIndexToRead. openIndexToRead's instance is read-only and cannot
- * sync, so the wait runs on its own writable CodeGraph; the answer itself is read exactly as without the
- * flag. waitForFreshTracked retries a held write lock (a daemon mid-sync) within its time bound.
- *
- * The bound counts for the answer, not for process exit. The writable instance stays open while the
- * answer is read and printed, and the returned `finish` waits for a sync still running at the bound to
- * settle before destroying it (finishFreshWait): closing it earlier would cut that sync and leave its
- * files pending for the next caller. Undefined without `--fresh`.
- */
-async function freshBeforeAnswer(projectPath: string, flags: FreshFlags): Promise<FreshWait | undefined> {
-  if (!flags.fresh) return undefined;
-  let writer: import('../index').CodeGraph;
-  try {
-    const { default: CodeGraph } = await loadCodeGraph();
-    writer = await CodeGraph.open(projectPath);
-  } catch (err) {
-    return { syncError: syncErrorText(err), finish: NOTHING_TO_FINISH };
-  }
-  try {
-    const { waitForFreshTracked } = await import('../mcp/answer-freshness');
-    const { checkpoint, settled } = await waitForFreshTracked(writer);
-    let finishing: Promise<void> | undefined;
-    const finish: FreshFinish = (exitCode) => (finishing ??= finishFreshWait(writer, settled, exitCode));
-    return { checkpoint, finish };
-  } catch (err) {
-    // waitForFreshTracked returns, rather than throws, for every expected condition. A throw is a
-    // malfunction with no sync outcome left to track, so the instance is closed here.
-    writer.destroy();
-    return { syncError: syncErrorText(err), finish: NOTHING_TO_FINISH };
-  }
-}
-
-/**
- * The syncError text for a failed `--fresh` wait: the error's message, or 'could not open the index to
- * sync' when it has none. The answer is still printed, with this text in its checkpoint.
- */
-function syncErrorText(err: unknown): string {
-  return (err instanceof Error ? err.message : String(err)) || 'could not open the index to sync';
-}
-
-/**
- * Wait for the `--fresh` wait's sync to settle, capped by CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS (see
- * resolveFreshSettleTimeoutMs for the default and the ceiling), then destroy the writable instance.
- * Already settled (the wait's sync finished, or it started none): destroyed at once.
- *
- * Cap passed with the sync still running: the instance is NOT closed, since that would cut the sync
- * mid-write. One stderr line says so, and the process exits with `exitCode` without closing the index,
- * leaving it as a crash would. A sync's transactions are never left half-applied: SQLite rolls back one
- * that is open at exit, including the synthesis publish, which stays open across yields. A file stored in
- * chunks has no files-table row until its last chunk, so it re-indexes. The next writer reclaims the lock
- * this dead pid leaves (FileLock). The files the sync did not reach stay pending for the next sync.
- *
- * The cap timer is cleared once the race is decided, so it never holds the process open after the sync
- * settles. `settled` never rejects and a destroy error is swallowed, so this never rejects either.
- */
-async function finishFreshWait(
-  writer: import('../index').CodeGraph, settled: Promise<void>, exitCode?: number,
-): Promise<void> {
-  const { resolveFreshSettleTimeoutMs } = await import('../mcp/answer-freshness');
-  const capMs = resolveFreshSettleTimeoutMs(process.env.CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const cap = new Promise<'cap'>(resolve => { timer = setTimeout(() => resolve('cap'), capMs); });
-  const result = await Promise.race([settled.then(() => 'settled' as const), cap]);
-  clearTimeout(timer);
-  if (result === 'settled') {
-    try {
-      writer.destroy();
-    } catch {
-      // The answer and its checkpoint are already out and the process is about to exit, which releases
-      // the connection and the lock regardless; a close error changes neither.
-    }
-    return;
-  }
-  process.stderr.write(
-    `The sync started by --fresh is still running after CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS (${capMs} ms); ` +
-    'exiting without closing the index, so the files it did not reach are left for the next sync.\n',
-  );
-  process.exit(exitCode ?? (typeof process.exitCode === 'number' ? process.exitCode : 0));
-}
-
-/**
- * The checkpoint to report for this answer, read before `cg` is destroyed: the `--fresh` wait's own,
- * else a no-wait read on the read-only instance (getChangedFiles only reads). Undefined when neither
- * flag was given.
- */
-async function answerCheckpoint(
-  cg: import('../index').CodeGraph, flags: FreshFlags, wait: FreshWait | undefined,
-): Promise<import('../mcp/answer-freshness').AnswerCheckpoint | undefined> {
-  if (wait && 'checkpoint' in wait) return wait.checkpoint;
-  if (!flags.fresh && !flags.checkpoint) return undefined;
-  const { readCheckpoint } = await import('../mcp/answer-freshness');
-  const cp = await readCheckpoint(cg);
-  if (wait) cp.syncError = wait.syncError;
-  return cp;
-}
-
-/**
- * After the answer: the checkpoint as ONE `codegraph-checkpoint <json>` line on stderr, so stdout (a
- * `--json` answer included) is unchanged. A `--fresh` that ended not fresh also gets the `Note:` line
- * (formatCheckpointText's second line, saying why) on stderr, and sets exit status 3; the commands' own
- * exit(1) paths for errors still win. Both lines are written before the caller's FreshWait.finish, so
- * they are out while any settle wait runs.
- */
-async function emitCheckpoint(
-  cp: import('../mcp/answer-freshness').AnswerCheckpoint | undefined, flags: FreshFlags,
-): Promise<void> {
-  if (!cp) return;
-  const { formatCheckpointJson } = await import('../mcp/answer-freshness');
-  // Fixed prefix: stderr also carries warnings, and the prefix lets a script pick this one line out.
-  process.stderr.write(`codegraph-checkpoint ${formatCheckpointJson(cp)}\n`);
-  if (flags.fresh && !cp.fresh) {
-    await writeNotFreshNote(cp);
-    process.exitCode = EXIT_NOT_FRESH;
-  }
-}
-
-/**
- * The `Note:` line saying why a `--fresh` checkpoint is not fresh (formatCheckpointText's second line),
- * on stderr. Shared by emitCheckpoint and `checkpoint --json`, so the wording lives in one place.
- */
-async function writeNotFreshNote(cp: import('../mcp/answer-freshness').AnswerCheckpoint): Promise<void> {
-  const { formatCheckpointText } = await import('../mcp/answer-freshness');
-  const note = formatCheckpointText(cp).split('\n')[1];
-  if (note !== undefined) process.stderr.write(`${note}\n`);
 }
 
 /** "not found" (+ optional did-you-mean) when no exact symbol matches. */
@@ -1516,58 +1359,6 @@ program
   });
 
 /**
- * codegraph checkpoint [path]
- *
- * Which state of the workspace the index reflects: git HEAD, a hash of the
- * uncommitted changes under the project, and how many source files the index
- * has not caught up with. Exit 3 when not fresh: files still pending or the
- * count unknown (a `--fresh` bound that passed leaves files pending). Exit 0
- * when fresh, including a `--fresh` sync error with nothing pending. Exit 1
- * on error or when the project is not initialized. A `--fresh` that ended
- * not fresh prints the `Note:` saying why: in the text output, or on stderr
- * with `--json`. All of it is printed before any wait for the sync to settle.
- */
-program
-  .command('checkpoint [path]')
-  .description('Show the workspace state the index reflects (git HEAD, uncommitted-change hash, files pending); exit 0 fresh, 3 not fresh')
-  .option('--fresh', 'Bring the index up to date with the working tree first (bounded by CODEGRAPH_FRESH_TIMEOUT_MS, default 30000); a sync still running at the bound is waited for after printing, before exit (bounded by CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS, default 600000)')
-  .option('-j, --json', 'Output as JSON')
-  .action(async (pathArg: string | undefined, options: { fresh?: boolean; json?: boolean }) => {
-    const projectPath = resolveProjectPath(pathArg);
-    let wait: FreshWait | undefined;
-
-    try {
-      if (!isInitialized(projectPath)) {
-        error(`CodeGraph not initialized in ${projectPath}`);
-        process.exit(1);
-      }
-
-      wait = await freshBeforeAnswer(projectPath, options);
-      let cp = wait && 'checkpoint' in wait ? wait.checkpoint : undefined;
-      if (!cp) {
-        // No wait, or the writable open failed: read it from the read-only index.
-        const cg = await openIndexToRead(projectPath);
-        try {
-          cp = await answerCheckpoint(cg, { ...options, checkpoint: true }, wait);
-        } finally {
-          cg.destroy();
-        }
-      }
-      const { formatCheckpointJson, formatCheckpointText } = await import('../mcp/answer-freshness');
-      // Text output carries the Note as its second line; JSON keeps stdout one object, so the Note goes to
-      // stderr. Either way it is out before finish, while a sync still running at the bound settles.
-      console.log(options.json ? formatCheckpointJson(cp!) : formatCheckpointText(cp!));
-      if (options.json && options.fresh && !cp!.fresh) await writeNotFreshNote(cp!);
-      process.exitCode = cp!.fresh ? 0 : EXIT_NOT_FRESH;
-      await wait?.finish();
-    } catch (err) {
-      error(`Checkpoint failed: ${err instanceof Error ? err.message : String(err)}`);
-      await wait?.finish(1);
-      process.exit(1);
-    }
-  });
-
-/**
  * codegraph query <search>
  */
 program
@@ -1581,7 +1372,7 @@ program
   .option('--checkpoint', CHECKPOINT_OPTION_HELP)
   .action(async (search: string, options: { path?: string; limit?: string; kind?: string; json?: boolean } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
-    let wait: FreshWait | undefined;
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1589,7 +1380,8 @@ program
         process.exit(1);
       }
 
-      wait = await freshBeforeAnswer(projectPath, options);
+      // Loaded per command so other commands never load it; loadCodeGraph is passed so a load failure under --fresh prints this file's banner and exits 1.
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
 
       const limit = parseInt(options.limit || '10', 10);
@@ -1645,13 +1437,10 @@ program
         }
       }
 
-      const cp = await answerCheckpoint(cg, options, wait);
-      cg.destroy();
-      await emitCheckpoint(cp, options);
-      await wait?.finish();
+      await fresh.end(cg);
     } catch (err) {
       error(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
-      await wait?.finish(1);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -1674,7 +1463,7 @@ program
   .option('--checkpoint', CHECKPOINT_OPTION_HELP)
   .action(async (queryParts: string[], options: { path?: string; maxFiles?: string } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
-    let wait: FreshWait | undefined;
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1682,26 +1471,21 @@ program
         process.exit(1);
       }
 
-      wait = await freshBeforeAnswer(projectPath, options);
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
 
-      // fresh/checkpoint stay out of args: the wait already ran, and the
-      // checkpoint goes to stderr rather than into the tool's text.
       const args: Record<string, unknown> = { query: queryParts.join(' ') };
       if (options.maxFiles) args.maxFiles = parseInt(options.maxFiles, 10);
       const result = await handler.execute('codegraph_explore', args);
 
       console.log(result.content[0]?.text ?? '');
-      const cp = await answerCheckpoint(cg, options, wait);
-      cg.destroy();
-      await emitCheckpoint(cp, options);
-      await wait?.finish(result.isError ? 1 : undefined);
+      await fresh.end(cg, result.isError ? 1 : undefined);
       if (result.isError) process.exit(1);
     } catch (err) {
       error(`Explore failed: ${err instanceof Error ? err.message : String(err)}`);
-      await wait?.finish(1);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -1976,7 +1760,7 @@ program
     }
 
     const projectPath = resolveProjectPath(options.path);
-    let wait: FreshWait | undefined;
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1984,7 +1768,7 @@ program
         process.exit(1);
       }
 
-      wait = await freshBeforeAnswer(projectPath, options);
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
@@ -2015,18 +1799,14 @@ program
       if (options.limit) args.limit = parseInt(options.limit, 10);
       if (options.symbolsOnly) args.symbolsOnly = true;
 
-      // As in explore, fresh/checkpoint are handled here, not passed to the tool.
       const result = await handler.execute('codegraph_node', args);
 
       console.log(result.content[0]?.text ?? '');
-      const cp = await answerCheckpoint(cg, options, wait);
-      cg.destroy();
-      await emitCheckpoint(cp, options);
-      await wait?.finish(result.isError ? 1 : undefined);
+      await fresh.end(cg, result.isError ? 1 : undefined);
       if (result.isError) process.exit(1);
     } catch (err) {
       error(`Node lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-      await wait?.finish(1);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -2628,7 +2408,7 @@ for (const direction of ['callers', 'callees'] as const) {
     .option('--checkpoint', CHECKPOINT_OPTION_HELP)
     .action(async (symbol: string, options: { path?: string; file?: string; limit?: string; json?: boolean } & FreshFlags) => {
       const projectPath = resolveProjectPath(options.path);
-      let wait: FreshWait | undefined;
+      let fresh: FreshAnswer | undefined;
 
       try {
         if (!isInitialized(projectPath)) {
@@ -2636,7 +2416,7 @@ for (const direction of ['callers', 'callees'] as const) {
           process.exit(1);
         }
 
-        wait = await freshBeforeAnswer(projectPath, options);
+        fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
         const cg = await openIndexToRead(projectPath);
         // Set only when the answer threw: then the outer catch prints the error first and finishes
         // with exit status 1, so the finally below must not finish ahead of it.
@@ -2740,14 +2520,11 @@ for (const direction of ['callers', 'callees'] as const) {
         } finally {
           // Here so a "not found" answer (the early return above) reports its checkpoint, and
           // finishes the --fresh wait, too.
-          const cp = await answerCheckpoint(cg, options, wait);
-          cg.destroy();
-          await emitCheckpoint(cp, options);
-          if (!failed) await wait?.finish();
+          await fresh.end(cg, failed ? false : undefined);
         }
       } catch (err) {
         error(`${direction} failed: ${err instanceof Error ? err.message : String(err)}`);
-        await wait?.finish(1);
+        await fresh?.fail();
         process.exit(1);
       }
     });
@@ -2767,7 +2544,7 @@ program
   .option('--checkpoint', CHECKPOINT_OPTION_HELP)
   .action(async (symbol: string, options: { path?: string; file?: string; depth?: string; json?: boolean } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
-    let wait: FreshWait | undefined;
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -2775,7 +2552,7 @@ program
         process.exit(1);
       }
 
-      wait = await freshBeforeAnswer(projectPath, options);
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       // Set only when the answer threw: then the outer catch prints the error first and finishes
       // with exit status 1, so the finally below must not finish ahead of it.
@@ -2866,14 +2643,11 @@ program
       } finally {
         // Here so a "not found" answer (the early return above) reports its checkpoint, and
         // finishes the --fresh wait, too.
-        const cp = await answerCheckpoint(cg, options, wait);
-        cg.destroy();
-        await emitCheckpoint(cp, options);
-        if (!failed) await wait?.finish();
+        await fresh.end(cg, failed ? false : undefined);
       }
     } catch (err) {
       error(`impact failed: ${err instanceof Error ? err.message : String(err)}`);
-      await wait?.finish(1);
+      await fresh?.fail();
       process.exit(1);
     }
   });

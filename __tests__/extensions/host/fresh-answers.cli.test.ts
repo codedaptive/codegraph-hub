@@ -5,7 +5,7 @@
  * vitest globalSetup) the way __tests__/cli-sync.test.ts drives `sync`.
  *
  * Expected head and dirtyHash are rebuilt from git output here (the formula
- * is computeUncommittedHash's in src/mcp/answer-freshness.ts), so the tests
+ * is computeUncommittedHash's in src/extensions/host/fresh/checkpoint.ts), so the tests
  * do not trust the code under test for
  * the values they compare against.
  */
@@ -24,7 +24,7 @@ function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-/** dirtyHash as computeUncommittedHash (src/mcp/answer-freshness.ts) defines it: sha256 over sorted `${path}\0${blob}\n` entries. */
+/** dirtyHash as computeUncommittedHash (src/extensions/host/fresh/checkpoint.ts) defines it: sha256 over sorted `${path}\0${blob}\n` entries. */
 function dirtyHashOf(entries: Array<[string, string]>): string {
   const sorted = [...entries].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const h = crypto.createHash('sha256');

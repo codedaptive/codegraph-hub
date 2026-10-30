@@ -1,5 +1,5 @@
 /**
- * Answer checkpoints: src/mcp/answer-freshness.ts.
+ * Answer checkpoints: src/extensions/host/fresh/checkpoint.ts.
  *
  * A checkpoint says which state of the workspace an answer reflects: the git
  * HEAD, a content hash of the uncommitted changes under the project root, and
@@ -28,12 +28,12 @@ import {
   resolveFreshTimeoutMs,
   waitForFresh,
   waitForFreshTracked,
-} from '../../../src/mcp/answer-freshness';
+} from '../../../src/extensions/host/fresh/checkpoint';
 import { LockUnavailableError } from '../../../src/sync/watcher';
 
 const DELETED_BLOB = '0'.repeat(40);
 
-/** sha256 hex over `${path}\0${blob}\n` for entries sorted by repo-relative path (the formula in computeUncommittedHash, src/mcp/answer-freshness.ts). */
+/** sha256 hex over `${path}\0${blob}\n` for entries sorted by repo-relative path (the formula in computeUncommittedHash, src/extensions/host/fresh/checkpoint.ts). */
 function expectedDirtyHash(entries: Array<[string, string]>): string {
   const sorted = [...entries].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const h = crypto.createHash('sha256');

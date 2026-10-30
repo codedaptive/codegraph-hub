@@ -65,10 +65,8 @@ import {
 } from '../graph/named-symbol-flow';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { measurePendingChanges } from './index-freshness';
-import {
-  formatCheckpointText, readCheckpoint, validateAnswerFiles, waitForFresh,
-  type AnswerCheckpoint, type AnswerFile,
-} from './answer-freshness';
+import { validateAnswerFiles, type AnswerFile } from './answer-freshness';
+import { appendCheckpointFooter, waitForFresh } from '../extensions/host/fresh/checkpoint';
 import { ExploreDiagnostics } from './explore-diagnostics';
 import {
   EXPLORE_EMISSION_KEY,
@@ -3046,7 +3044,7 @@ export class ToolHandler {
       // a worker (whose read connection has no watcher). It also skips the
       // auto-banner wrapper to avoid duplicating its own pending-files section.
       if (toolName === 'codegraph_status') {
-        return await this.withCheckpointFooter(await this.handleStatus(args), args, project, freshCp);
+        return await appendCheckpointFooter(await this.handleStatus(args), args, project, freshCp);
       }
 
       // Read tools: off-load the CPU-heavy dispatch to the worker pool when one
@@ -3107,8 +3105,7 @@ export class ToolHandler {
       // caller passed session state.
       const result = this.takeExploreEmission(raw, sessionState);
       const withWorktree = this.withWorktreeNotice(result, args.projectPath as string | undefined);
-      const withStaleness = this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
-      return await this.withCheckpointFooter(withStaleness, args, project, freshCp);
+      return await appendCheckpointFooter(this.withStalenessNotice(withWorktree, args.projectPath as string | undefined), args, project, freshCp);
     } catch (err) {
       // Expected condition, not a malfunction: answer as a SUCCESS so the
       // agent keeps trusting the toolset for projects that ARE indexed.
@@ -8899,23 +8896,6 @@ export class ToolHandler {
     }
 
     return lines.join('\n');
-  }
-
-  /**
-   * End a successful answer with a Checkpoint line (the last lines of content[0].text)
-   * when `fresh` or `checkpoint` was asked for: `freshCp` from execute's pre-dispatch wait, else
-   * read now without waiting. Pending comes from the project's getChangedFiles (the
-   * watcher's pending list lags a direct sync). Text only, no structuredContent
-   * (#2088). An isError result is returned unchanged.
-   */
-  private async withCheckpointFooter(
-    result: ToolResult, args: Record<string, unknown>, project: CodeGraph, freshCp?: AnswerCheckpoint,
-  ): Promise<ToolResult> {
-    if (result.isError || (freshCp === undefined && args.checkpoint !== true)) return result;
-    const [head, ...tail] = result.content;
-    if (!head || head.type !== 'text') return result;
-    const cp = freshCp ?? await readCheckpoint(project);
-    return { ...result, content: [{ ...head, text: `${head.text}\n\n${formatCheckpointText(cp)}` }, ...tail] };
   }
 
   private textResult(text: string): ToolResult {

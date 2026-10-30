@@ -95,6 +95,7 @@ describe('fresh-answers over MCP (M1-M3)', () => {
   const editA = () =>
     fs.appendFileSync(path.join(repo, 'a.ts'), 'export function freshlyAdded() {}\n');
 
+  // Over 5 s on a loaded machine (2.1 s alone): a temp git repo, an indexAll, and a sync of the pending edit.
   it('M1: fresh:true syncs the pending edit before answering and reports head and fresh=yes', async () => {
     editA();
 
