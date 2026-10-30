@@ -36,7 +36,7 @@ both; `17`, `""`, a folder, a nonexistent `~user` path, a missing file, `5`, `No
 with the warning; no shared file and no key gives none, so no `--mcp-config` flag at all, as today.
 The launch itself was not run.
 
-## Switching a team on (after the global install, `global-install.md`)
+## Switching a team on (after the global install and `go-live-runbook.md` steps 1 and 2)
 
 One line in that team's manifest, `codeteam/teams/<team>.toml`, at the top level (beside `claude_source`):
 
