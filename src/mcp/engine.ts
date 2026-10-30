@@ -1,7 +1,10 @@
 /**
  * MCP shared engine — the heavyweight, *shared* state for an MCP server:
  * the project's {@link CodeGraph} instance, file watcher, and the
- * {@link ToolHandler} cache for cross-project queries.
+ * {@link ToolHandler} cache for cross-project queries, and the housekeeping
+ * pass that tears down registered projects whose worktree is gone, lets go of
+ * explicit projects whose index another process removed, and retires the
+ * default project once its directory or index is gone.
  *
  * One engine, many sessions:
  * - direct mode (single stdio session) instantiates one engine + one session;
@@ -13,7 +16,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import type CodeGraph from '../index';
-import { resolveServerRoot } from '../directory';
+import { canonicalProjectRoot, isInitialized, resolveServerRoot } from '../directory';
 import { ToolHandler } from './tools';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
 import { DatabaseOpenError, isDatabaseOpenFailure } from '../db/open-error';
@@ -22,6 +25,7 @@ import { assertNoRebuild, releaseWriterLock, tryAcquireWriterLock, writerLockHel
 import { QueryPool, resolvePoolSize } from './query-pool';
 import { endFreshnessMeasurements } from './index-freshness';
 import { acquireProject, ProjectLease } from './project-lifecycle';
+import { EngineHousekeeping } from '../extensions/host/worktree-lifecycle/housekeeping';
 
 // Lazy-load the heavy CodeGraph chain (sqlite + query/graph/context layers) OFF
 // the MCP startup path. It's only needed once a tool actually opens a project —
@@ -86,6 +90,18 @@ export class MCPEngine {
   // (or null forever if no .codegraph/ ever turned up — that's a valid
   // state for the engine, since cross-project queries still work).
   private projectPath: string | null = null;
+  // canonicalProjectRoot of the open default project, taken when it opened:
+  // once its directory is gone, canonicalizing the path again no longer
+  // resolves symlinks (macOS /var vs /private/var), so it would not match the
+  // registry's or the handler's spelling. Null while no default is open.
+  private defaultRoot: string | null = null;
+  // The canonical default root this engine retired (its directory or index
+  // went away), until it is adopted again. While set, the only default the
+  // engine may open is this same root, once it has an index again: never a
+  // parent checkout's index found by walking up from it.
+  private retiredRoot: string | null = null;
+  // The retirement in progress, shared by every caller that asks for it.
+  private retirement: Promise<void> | null = null;
   // Set on first `ensureInitialized` so subsequent sessions don't redo work.
   private initPromise: Promise<void> | null = null;
   // Throttle for the retry path's sub-project down-scan (#1606) — the scan is
@@ -97,8 +113,13 @@ export class MCPEngine {
   private watcherStarted = false;
   /** Set when this engine holds writer.pid (#1740). */
   private writerLockRoot: string | null = null;
-  // Retained synchronization ownership for each cached explicit project.
-  private explicitProjects = new Map<CodeGraph, ProjectLease>();
+  // Retained synchronization ownership for each cached explicit project: one
+  // lease per lifecycle open. acquireProject hands every open of a root the
+  // same CodeGraph while it is held, so one graph can carry two leases: a
+  // call that reopens a root while the handler's releaseProjectRoot waits for
+  // in-flight calls takes a second one before the first is released. Each
+  // release returns exactly one, so neither is dropped or leaked.
+  private explicitProjects = new Map<CodeGraph, ProjectLease[]>();
   private defaultLease: ProjectLease | null = null;
   private opts: Required<Omit<MCPEngineOptions, 'writerLockRoot' | 'queryPoolDefaultMax'>> & Pick<MCPEngineOptions, 'queryPoolDefaultMax'>;
   private closed = false;
@@ -106,22 +127,34 @@ export class MCPEngine {
   // Off-loop read-tool pool. Workers each hold their own WAL read connections;
   // sessions without a default index open projects lazily via projectPath.
   private queryPool: QueryPool | null = null;
+  // The housekeeping timer and pass, and the roots query-pool workers may hold.
+  private housekeeping: EngineHousekeeping;
 
   constructor(opts: MCPEngineOptions = {}) {
     this.opts = { readOnly: opts.readOnly ?? false, watch: opts.watch ?? true, queryPool: opts.queryPool ?? false, queryPoolDefaultMax: opts.queryPoolDefaultMax };
+    this.housekeeping = new EngineHousekeeping({
+      releaseProjectRoot: (root) => this.releaseProjectRoot(root),
+      cachedProjectRoots: () => this.toolHandler.cachedProjectRoots(),
+      openDefaultRoot: () => (this.toolHandler.hasDefaultCodeGraph() ? this.defaultRoot : null),
+      readOnly: this.opts.readOnly,
+    });
     this.toolHandler = new ToolHandler(null);
     this.toolHandler.setProjectLifecycle({
       open: (root, open) => {
         // Explicit projects and read-only fallbacks also hold SQLite handles.
         // Fence them before opening, just like the default daemon project.
         assertNoRebuild(root);
+        if (this.opts.queryPool) this.housekeeping.notePoolOpenedRoot(root);
         if (this.opts.readOnly) return loadCodeGraph().openSync(root, { readOnly: true });
         if (!this.opts.watch) return open();
         const lease = acquireProject(root, open, this.watchOptions());
-        this.explicitProjects.set(lease.cg, lease);
+        const leases = this.explicitProjects.get(lease.cg);
+        if (leases) leases.push(lease);
+        else this.explicitProjects.set(lease.cg, [lease]);
         return lease.cg;
       },
-      activate: (cg) => this.explicitProjects.get(cg)?.ready() ?? Promise.resolve(),
+      // Every lease on one graph shares its project's catch-up gate.
+      activate: (cg) => this.explicitProjects.get(cg)?.[0]?.ready() ?? Promise.resolve(),
       release: (cg) => this.releaseExplicitProject(cg),
     });
     // A tool call found the default project's database replaced on disk (a
@@ -141,6 +174,52 @@ export class MCPEngine {
       }
       this.writerLockRoot = opts.writerLockRoot;
     }
+    // Housekeeping (src/extensions/host/worktree-lifecycle/housekeeping.ts):
+    // a timer, stopped in stop(); releasing the default project retires it
+    // (see releaseProjectRoot).
+    this.housekeeping.start();
+  }
+
+  /**
+   * One housekeeping pass, now, whatever CODEGRAPH_HOUSEKEEPING_INTERVAL_MS
+   * says (the timer runs the same pass): the registry sweep (skipped on a
+   * read-only engine), then the release, through {@link releaseProjectRoot},
+   * of every project this engine holds whose directory or
+   * `.codegraph/codegraph.db` is gone; for the default project that is its
+   * retirement. Never rejects. A no-op once the engine is stopped.
+   */
+  async runHousekeepingTick(): Promise<void> {
+    if (this.closed) return;
+    await this.housekeeping.runPass();
+  }
+
+  /** Whether canonical `root` is this engine's open default project. */
+  private isDefaultRoot(root: string): boolean {
+    return this.defaultRoot !== null && this.defaultRoot === root && this.toolHandler.hasDefaultCodeGraph();
+  }
+
+  /** Record `root` as the open default project (its canonical spelling, taken now). */
+  private noteDefaultOpened(root: string): void {
+    this.defaultRoot = canonicalProjectRoot(root);
+    this.retiredRoot = null;
+  }
+
+  /**
+   * Where a default-project search may start. Normally `searchFrom`. After a
+   * retirement, only the retired root itself, and only once it has an index
+   * again (null otherwise): a walk up from it would adopt the index of a
+   * checkout above it, and a scan below it a sub-project, neither of which is
+   * the project this server was serving.
+   */
+  private defaultSearchStart(searchFrom: string): string | null {
+    if (this.retirement) return null;
+    if (this.retiredRoot === null) return searchFrom;
+    return isInitialized(this.retiredRoot) ? this.retiredRoot : null;
+  }
+
+  /** Whether a resolved `root` may become the default: after a retirement, only the retired root. */
+  private mayAdoptDefault(root: string): boolean {
+    return this.retiredRoot === null || canonicalProjectRoot(root) === this.retiredRoot;
   }
 
   /**
@@ -233,27 +312,31 @@ export class MCPEngine {
   /**
    * Synchronous last-resort init used by the per-session retry loop when the
    * background `ensureInitialized` already finished (or failed) and we need
-   * to pick up a project that appeared *after* the engine started.
+   * to pick up a project that appeared *after* the engine started. After the
+   * default project was retired, it only re-adopts that same root, once it
+   * has an index again ({@link defaultSearchStart}).
    */
   retryInitializeSync(searchFrom: string): void {
     if (this.closed) return;
     if (this.toolHandler.hasDefaultCodeGraph()) return;
     this.toolHandler.setDefaultProjectHint(searchFrom);
+    const start = this.defaultSearchStart(searchFrom);
+    if (start === null) return;
     // Same resolution `doInitialize` used: up-walk, then the bounded workspace
     // down-scan (#1606) — this retry is exactly the path that picks up a
     // project (root or child) `codegraph init`'d after the server started. The
     // down-scan is throttled so the persistent no-default state doesn't pay a
     // directory walk on every tool call; the up-walk always runs.
     const scanDue = Date.now() - this.lastRetrySubScanAt >= RETRY_SUBSCAN_TTL_MS;
-    const res = resolveServerRoot(searchFrom, { subprojectScan: scanDue });
+    const res = resolveServerRoot(start, { subprojectScan: scanDue });
     if (scanDue) {
       this.lastRetrySubScanAt = Date.now();
-      if (!res.root) this.toolHandler.setKnownSubprojects(res.candidates, searchFrom);
+      if (!res.root) this.toolHandler.setKnownSubprojects(res.candidates, start);
     }
     // An up-walk alone can't clear a refusal the throttled down-scan found.
     if (scanDue || res.refusal) this.noteRootRefusal(res.refusal);
     const resolvedRoot = res.root;
-    if (!resolvedRoot) return;
+    if (!resolvedRoot || !this.mayAdoptDefault(resolvedRoot)) return;
     if (res.viaSubScan) this.logSubprojectAdoption(searchFrom, resolvedRoot);
     try {
       // Close any previously failed instance to avoid leaking resources.
@@ -266,6 +349,7 @@ export class MCPEngine {
       // (#1887); the catch-up and tool calls wait for them.
       this.cg = loadCodeGraph().openSync(resolvedRoot, { readOnly: this.opts.readOnly, deferIndexRecovery: true });
       this.projectPath = resolvedRoot;
+      this.noteDefaultOpened(resolvedRoot);
       this.toolHandler.setDefaultCodeGraph(this.cg);
       this.startWatching();
       this.catchUpSync();
@@ -286,12 +370,101 @@ export class MCPEngine {
   }
 
   /**
+   * Close every handle this engine holds on project `root`. For an
+   * explicitly opened project: the tool handler's cached connection (through
+   * the project lifecycle, so its watcher stops and its writer slot is
+   * released), then each query-pool worker's own connection (broadcast to
+   * every worker, so a worker still holding a root the handler's cache
+   * already dropped closes it too). For the engine's default project: its
+   * retirement ({@link retireDefaultProject}), after which the engine has no
+   * default project, and then the handler's cached handle on the same root,
+   * should it hold one. The housekeeping sweep calls this before it deletes a
+   * removed worktree's index, and each housekeeping pass calls it for a held
+   * project whose directory or database is gone.
+   */
+  async releaseProjectRoot(root: string): Promise<void> {
+    const canonical = canonicalProjectRoot(root);
+    if (this.isDefaultRoot(canonical) || (this.retirement !== null && this.retiredRoot === canonical)) {
+      await this.retireDefaultProject();
+      // The pool whose workers held the default was destroyed with it; the
+      // one started in its place has opened nothing yet.
+      await this.toolHandler.releaseProjectRoot(canonical);
+      return;
+    }
+    await this.toolHandler.releaseProjectRoot(canonical);
+    await this.queryPool?.releaseProject(canonical);
+  }
+
+  /**
+   * Retire the default project, whose directory or index is gone: the
+   * housekeeping pass found it so, or the registry sweep judged its worktree
+   * gone. The engine then serves as one that started where nothing is
+   * indexed: a call without `projectPath` gets the no-default-project
+   * guidance; explicit projects are unaffected.
+   *
+   * In order: the query pool and the handler's default are detached at once,
+   * so no call that starts from then on reaches either; once no call is in
+   * flight, the pool is destroyed (nothing is queued on it by then, so no
+   * call is answered "shutting down"); the default graph is let go (its
+   * lease, which stops the watcher and, once no other engine in this process
+   * holds the root, closes it and frees the writer slot; or unwatch and close
+   * without one); the writer slot a proxy fallback claimed for it is
+   * released; and, if a pool was in use, one with no default root is started
+   * in its place. A later default-project search adopts only this same root,
+   * once it has an index again ({@link defaultSearchStart}). Concurrent
+   * callers share one retirement. A no-op once the engine is stopping: stop()
+   * closes the default itself.
+   */
+  private retireDefaultProject(): Promise<void> {
+    if (this.retirement) return this.retirement;
+    if (this.closed) return Promise.resolve();
+    const root = this.defaultRoot;
+    // Set before the first await, so no default-project search during the
+    // retirement can adopt anything.
+    this.retiredRoot = root;
+    this.retirement = this.detachAndCloseDefault(root).finally(() => { this.retirement = null; });
+    return this.retirement;
+  }
+
+  private async detachAndCloseDefault(root: string | null): Promise<void> {
+    const pool = this.queryPool;
+    this.queryPool = null;
+    this.toolHandler.setQueryPool(null);
+    await this.toolHandler.detachDefaultProject();
+    if (pool) await pool.destroy();
+    const lease = this.defaultLease;
+    const cg = this.cg;
+    this.defaultLease = null;
+    this.cg = null;
+    this.watcherStarted = false;
+    this.defaultRoot = null;
+    if (lease) {
+      await lease.release();
+    } else if (cg) {
+      cg.unwatch();
+      while (cg.isIndexing()) await new Promise((resolve) => setTimeout(resolve, 25));
+      cg.close();
+    }
+    if (this.writerLockRoot) {
+      releaseWriterLock(this.writerLockRoot);
+      this.writerLockRoot = null;
+    }
+    process.stderr.write(
+      `[CodeGraph MCP] The default project ${root ?? '(unknown)'} is gone (its directory or index was removed); released it. ` +
+      'Tool calls without projectPath now have no default project.\n'
+    );
+    if (pool) this.maybeStartPool(null);
+  }
+
+  /**
    * Close everything. Used on graceful daemon shutdown (SIGTERM/idle timeout)
-   * and on direct-mode stop. Idempotent.
+   * and on direct-mode stop. Idempotent. Stops the housekeeping sweep first,
+   * so no teardown starts while the engine closes.
    */
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.closed = true;
+    this.housekeeping.stop();
     if (!this.cg && !this.initPromise && this.explicitProjects.size === 0 && this.writerLockRoot) {
       releaseWriterLock(this.writerLockRoot);
       this.writerLockRoot = null;
@@ -310,6 +483,8 @@ export class MCPEngine {
     const drained = this.toolHandler.closeAll();
     this.stopPromise = Promise.all([drained, poolDown, measurementsDown]).then(async () => {
       if (this.initPromise) await this.initPromise;
+      // A retirement in flight closes the default itself; wait for it to finish.
+      if (this.retirement) await this.retirement;
       if (this.defaultLease) {
         await this.defaultLease.release();
         this.defaultLease = null;
@@ -326,9 +501,16 @@ export class MCPEngine {
     return this.stopPromise;
   }
 
+  /**
+   * Return one lease on `cg` (the handler releases once per open); the graph
+   * closes when its last lease, from every engine in the process, is
+   * returned. A graph opened without a lease (read-only, or not watching) is
+   * this handler's alone and closes now.
+   */
   private releaseExplicitProject(cg: CodeGraph): void | Promise<void> {
-    const lease = this.explicitProjects.get(cg);
-    this.explicitProjects.delete(cg);
+    const leases = this.explicitProjects.get(cg);
+    const lease = leases?.pop();
+    if (leases && leases.length === 0) this.explicitProjects.delete(cg);
     if (lease) return lease.release();
     else cg.close();
   }
@@ -369,6 +551,10 @@ export class MCPEngine {
 
   private async doInitialize(searchFrom: string): Promise<void> {
     this.toolHandler.setDefaultProjectHint(searchFrom);
+    // A retired default comes back only as itself (defaultSearchStart); until
+    // it has an index again there is nothing to open and nothing new to say.
+    const start = this.defaultSearchStart(searchFrom);
+    if (start === null) return;
 
     // Up-walk first; when nothing is indexed at or above searchFrom, a bounded
     // down-scan may adopt a SINGLE indexed sub-project as the default (#1606 —
@@ -376,8 +562,8 @@ export class MCPEngine {
     // several candidates → no default project, but SAY so (#1607): the silent
     // variant of this state read as "CodeGraph is broken" and was diagnosable
     // only by knowing to look for a missing ~/.codegraph/daemons/ entry.
-    const res = resolveServerRoot(searchFrom);
-    const resolvedRoot = res.root;
+    const res = resolveServerRoot(start);
+    const resolvedRoot = res.root && this.mayAdoptDefault(res.root) ? res.root : null;
     this.noteRootRefusal(res.refusal);
     if (!resolvedRoot) {
       // Sessions may still discover a project later via roots/list, and the
@@ -407,6 +593,7 @@ export class MCPEngine {
       const opened = await loadCodeGraph().open(resolvedRoot, { readOnly: this.opts.readOnly });
       if (this.closed) { opened.close(); return; }
       this.cg = opened;
+      this.noteDefaultOpened(resolvedRoot);
       this.toolHandler.setDefaultCodeGraph(this.cg);
       this.startWatching();
       this.catchUpSync();

@@ -193,9 +193,11 @@ export function encodeLockInfo(info: DaemonLockInfo): string {
  * we treat such a lockfile as "process is unknown version, refuse to share."
  *
  * The stamp fields (`root`, `dirId`, `dbId`) are passed through when the
- * record carries them as strings. When `projectRoot` is given and the record
- * is FOREIGN (see {@link isForeignLockRecord}; in practice a pidfile copied
- * along with a `.codegraph/` from elsewhere), the record is not this project's
+ * record carries them as strings; `pid` and `pidStart` pass through
+ * unchecked. When `projectRoot` is given and the record is FOREIGN (see
+ * {@link isForeignLockRecord}: a pidfile copied along with a `.codegraph/`
+ * from elsewhere, or one whose pid was since given to a process that started
+ * at another time), the record is not this project's
  * daemon and decodes to null, exactly like a corrupt leftover: the caller sees
  * "no daemon here" and never probes or signals the source project's daemon
  * through it. Every other record is decoded in full and pid liveness decides.

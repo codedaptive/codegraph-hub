@@ -53,8 +53,23 @@ import { getRegistryDir, isProcessAlive, stopOlderDaemon } from '../../../src/mc
 import { MCPEngine } from '../../../src/mcp/engine';
 import { CodeGraphPackageVersion } from '../../../src/mcp/version';
 import { FileLock } from '../../../src/utils';
+import { processStartTime } from '../../../src/mcp/process-identity';
 
 const posix = process.platform !== 'win32';
+
+/** The writer fields lockStamp adds for this process: its pid, and its start time where one is read. */
+const ownWriter = { pid: process.pid, ...(posix ? { pidStart: expect.any(String) } : {}) };
+
+/**
+ * `root`'s lock stamp as process `pid` would write it: the stamp's writer
+ * fields (`pid`, `pidStart`) are that process's, so a record planted for a
+ * live `pid` is that holder's own, not one whose pid looks reused.
+ */
+function stampAs(pid: number, root: string): Record<string, unknown> {
+  const start = processStartTime(pid);
+  const { pidStart: _own, ...stamp } = lockStamp(root);
+  return { ...stamp, pid, ...(start !== null ? { pidStart: start } : {}) };
+}
 
 /** `dev:ino` of a path, read as bigints, as the lock stamp records it. */
 function inodeOf(p: string): string {
@@ -111,7 +126,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
 
   /** The record a live writer on `root` wrote: `pid` and `root`'s lock stamp as it is now. */
   function writerRecord(pid: number, root?: string): Record<string, unknown> {
-    return { pid, mode: 'daemon', startedAt: Date.now(), ready: true, ...(root !== undefined ? lockStamp(root) : {}) };
+    return { pid, mode: 'daemon', startedAt: Date.now(), ready: true, ...(root !== undefined ? stampAs(pid, root) : {}) };
   }
 
   /** Copy a project with its index, as cp -R does: new directory and database inodes. */
@@ -129,19 +144,20 @@ describe('copied-index-locks: lock records carry the identity of their index', (
       root: canonicalProjectRoot(a),
       dirId: inodeOf(path.join(a, '.codegraph')),
       dbId: inodeOf(path.join(a, '.codegraph', 'codegraph.db')),
+      ...ownWriter,
     });
   });
 
   it('lockStamp carries no identity when the database is missing', () => {
     const a = makeProject('a');
     fs.rmSync(path.join(a, '.codegraph', 'codegraph.db'));
-    expect(lockStamp(a)).toEqual({ root: canonicalProjectRoot(a) });
+    expect(lockStamp(a)).toEqual({ root: canonicalProjectRoot(a), ...ownWriter });
   });
 
   it.runIf(process.platform === 'win32')('on Windows lockStamp carries no identity, so no record is foreign', () => {
     const a = makeProject('a');
     const b = copyProject(a, 'b');
-    expect(lockStamp(a)).toEqual({ root: canonicalProjectRoot(a) });
+    expect(lockStamp(a)).toEqual({ root: canonicalProjectRoot(a), ...ownWriter });
     expect(isForeignLockRecord({ root: canonicalProjectRoot(a), dirId: '1:2', dbId: '1:3' }, b)).toBe(false);
   });
 
@@ -199,7 +215,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const a = makeProject('a');
     const b = copyProject(a, 'b');
     const raw = JSON.stringify(writerRecord(1234, a));
-    expect(decodeWriterLockInfo(raw)).toMatchObject(lockStamp(a));
+    expect(decodeWriterLockInfo(raw)).toMatchObject(stampAs(1234, a));
     expect(decodeWriterLockInfo(raw, b)).toBeNull();
     expect(decodeWriterLockInfo(raw, a)?.pid).toBe(1234);
   });
@@ -317,7 +333,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
       version: CodeGraphPackageVersion,
       socketPath: getDaemonSocketPath(root),
       startedAt: Date.now(),
-      ...(stampRoot !== undefined ? lockStamp(stampRoot) : {}),
+      ...(stampRoot !== undefined ? stampAs(pid, stampRoot) : {}),
     });
   }
 
@@ -329,7 +345,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const b = copyProject(a, 'b');
 
     expect(decodeLockInfo(raw, b)).toBeNull();
-    expect(decodeLockInfo(raw)).toMatchObject(lockStamp(a));
+    expect(decodeLockInfo(raw)).toMatchObject(stampAs(h, a));
     expect(decodeLockInfo(raw, a)?.pid).toBe(h);
   });
 
@@ -403,7 +419,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
 
   /** The body a live holder of `root`'s codegraph.lock wrote: its pid, then `root`'s stamp. */
   function fileLockBody(pid: number, root: string): string {
-    return `${pid}\n${JSON.stringify(lockStamp(root))}`;
+    return `${pid}\n${JSON.stringify(stampAs(pid, root))}`;
   }
 
   it.runIf(posix)('a copied codegraph.lock naming a live pid is taken over in the copy, and the body carries the copy\'s stamp', () => {
