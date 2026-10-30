@@ -25,7 +25,7 @@ import { isPythonSelfCall, matchJsStoreBindingCall, isUnresolvedJsMemberCall, ma
 import { isVisibleCppMacro, clearCppMacroVisibility } from './cpp-macro-visibility';
 import { isCppConstructorRef, matchCppConstructor } from './cpp-constructor';
 import { isCppSupertypeRef, matchCppSupertype, clearCppSupertypeMemos } from './cpp-supertypes';
-import { gateSwiftTypeTarget, clearSwiftTypeVisibility, swiftExtendedConformances } from './swift-type-visibility';
+import { gateSwiftTypeTarget, clearSwiftTypeVisibility, swiftExtendedConformances, swiftUnresolvedTypeMemberEdges } from './swift-type-visibility';
 import { clearDartLibraryMemos } from './dart-libraries';
 import { clearVbnetReceiverMemos, isVbMemberRead, isVbPathCall, matchVbMemberRead, matchVbPathCall } from './vbnet-receivers';
 import {
@@ -2153,7 +2153,7 @@ export class ReferenceResolver {
     }
 
     // Park unresolvable refs as status='failed' — parity with
-    // resolveAndPersistBatched. Deleting them was wrong (#1240): a ref whose
+    // resolveAndPersistBatched — not delete them (#1240): a ref whose
     // own file never changes is otherwise gone forever, so when a DIFFERENT
     // file later gains the export/symbol that would satisfy it, no sync can
     // recreate the edge — only a full re-index. Failed rows are excluded from
@@ -2161,10 +2161,16 @@ export class ReferenceResolver {
     // invariant in status form: after a COMPLETED pass nothing it processed
     // is still 'pending', so any pending row at rest belongs to an
     // interrupted run and the sweep can key off the pending count.
+    // A Swift `Type.member()` failure whose member is external still gets a
+    // `references` edge to the project type (swiftUnresolvedTypeMemberEdges);
+    // its row is parked failed all the same.
     if (result.unresolved.length > 0) {
-      const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(this.nonDeferredFailures(result.unresolved));
+      const failures = this.nonDeferredFailures(result.unresolved);
+      const { byRowId, legacyKeys } = ReferenceResolver.partitionFailedCleanup(failures);
       this.queries.markReferencesFailedByRowIds(byRowId);
       this.queries.markReferencesFailed(legacyKeys);
+      const typeMemberEdges = swiftUnresolvedTypeMemberEdges(failures, this.context);
+      if (typeMemberEdges.length > 0) this.queries.insertEdges(typeMemberEdges);
     }
 
     return result;
@@ -2175,8 +2181,10 @@ export class ReferenceResolver {
    * ref list — used by sync's failed-ref retry pass (#1240). Same persistence
    * semantics: resolved refs become edges and their rows are deleted;
    * still-unresolvable refs are (re-)marked failed (a no-op for rows already
-   * in that status). Yields per-ref because sync can run on the daemon's
-   * liveness-watchdog thread (#850/#1091) and a retry set is unbounded when
+   * in that status), and a Swift `Type.member()` failure whose member is
+   * external also gets a `references` edge to the project type
+   * (swiftUnresolvedTypeMemberEdges). Yields per-ref because sync can run on
+   * the daemon's liveness-watchdog thread (#850/#1091) and a retry set is unbounded when
    * a large edit lands many popular symbol names at once.
    */
   async resolveAndPersistListYielding(refs: UnresolvedReference[]): Promise<ResolutionResult> {
@@ -2210,13 +2218,21 @@ export class ReferenceResolver {
       await maybeYield();
     }
 
-    const failedCleanup = ReferenceResolver.partitionFailedCleanup(this.nonDeferredFailures(result.unresolved));
+    const failures = this.nonDeferredFailures(result.unresolved);
+    const failedCleanup = ReferenceResolver.partitionFailedCleanup(failures);
     for (let i = 0; i < failedCleanup.byRowId.length; i += PERSIST_CHUNK) {
       this.queries.markReferencesFailedByRowIds(failedCleanup.byRowId.slice(i, i + PERSIST_CHUNK));
       await maybeYield();
     }
     for (let i = 0; i < failedCleanup.legacyKeys.length; i += PERSIST_CHUNK) {
       this.queries.markReferencesFailed(failedCleanup.legacyKeys.slice(i, i + PERSIST_CHUNK));
+      await maybeYield();
+    }
+    // A Swift `Type.member()` failure whose member is external: a `references`
+    // edge to the project type, alongside its failed row.
+    const typeMemberEdges = swiftUnresolvedTypeMemberEdges(failures, this.context);
+    for (let i = 0; i < typeMemberEdges.length; i += PERSIST_CHUNK) {
+      this.queries.insertEdges(typeMemberEdges.slice(i, i + PERSIST_CHUNK));
       await maybeYield();
     }
 
@@ -2863,7 +2879,10 @@ export class ReferenceResolver {
       // Park unresolvable refs from this batch as status='failed' so they
       // leave the pending set (the batch reader and non-progress guard below
       // only see pending rows) but stay retryable when a later sync adds a
-      // symbol that could satisfy them (#1240).
+      // symbol that could satisfy them (#1240). A Swift `Type.member()`
+      // failure whose member is external also gets a `references` edge to the
+      // project type (swiftUnresolvedTypeMemberEdges); its row is parked all
+      // the same.
       tLp = Date.now();
       const failures = this.nonDeferredFailures(result.unresolved);
       const deferredCount = result.unresolved.length - failures.length;
@@ -2874,6 +2893,11 @@ export class ReferenceResolver {
       }
       for (let i = 0; i < failedCleanup.legacyKeys.length; i += PERSIST_CHUNK) {
         removedThisBatch += this.queries.markReferencesFailed(failedCleanup.legacyKeys.slice(i, i + PERSIST_CHUNK));
+        await maybeYield();
+      }
+      const typeMemberEdges = swiftUnresolvedTypeMemberEdges(failures, this.context);
+      for (let i = 0; i < typeMemberEdges.length; i += PERSIST_CHUNK) {
+        this.queries.insertEdges(typeMemberEdges.slice(i, i + PERSIST_CHUNK));
         await maybeYield();
       }
       lp('marks', tLp);
@@ -2894,13 +2918,13 @@ export class ReferenceResolver {
       // Yield so progress UI can render between batches
       await new Promise(resolve => setImmediate(resolve));
 
-      // NOTE: there used to be an extra early break here when a batch resolved
-      // nothing (`result.unresolved.length === batch.length`). That was wrong:
-      // an all-unresolvable batch still DELETES its rows (progress), yet the
-      // break abandoned every batch after it in the same run — on a repo whose
-      // first 5000 refs are all external/stdlib calls, resolution stopped at
-      // batch one and left the rest of the table as permanent orphans (#1187).
-      // The count-based guard below catches the true no-progress case.
+      // A batch that resolved nothing (`result.unresolved.length ===
+      // batch.length`) is no reason to stop: it parked its rows as failed,
+      // out of the pending set, so it made progress. Breaking on it would
+      // abandon every batch after it in the same run — on a repo whose first
+      // 5000 refs are all external/stdlib calls, resolution would stop at
+      // batch one and leave the rest of the table as permanent orphans
+      // (#1187). The count-based guard below catches the true no-progress case.
 
       // Non-progress guard (defense-in-depth). Ordinary attempts must leave
       // the pending set; a mismatched original reference can make legacy-key
