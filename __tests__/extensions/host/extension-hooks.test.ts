@@ -291,9 +291,26 @@ describe('extension hook: tools/list and in-process dispatch', () => {
 
     const listed = getStaticTools();
     expect(names(listed).filter(n => n === 'codegraph_node')).toHaveLength(1);
-    // Every field survives except `annotations`, which the registry replaces.
+    // Every field survives except `annotations`, which the registry replaces. The served schema
+    // also carries the `fresh` and `checkpoint` properties tools.ts adds to every tool (not
+    // exported there, so written out here); the later `extra` is still absent.
+    const original = fullDefinition('codegraph_mut');
     expect(listed.find(t => t.name === 'codegraph_mut')).toEqual({
-      ...fullDefinition('codegraph_mut'),
+      ...original,
+      inputSchema: {
+        ...original.inputSchema,
+        properties: {
+          ...original.inputSchema.properties,
+          fresh: {
+            type: 'boolean',
+            description: 'Wait (bounded) until the index matches the working tree, then answer; ends a successful answer with a Checkpoint line.',
+          },
+          checkpoint: {
+            type: 'boolean',
+            description: 'End the answer with a Checkpoint line (git HEAD, hash of uncommitted changes, files the index has not caught up with) without waiting.',
+          },
+        },
+      },
       annotations: builtinAnnotations(listed),
     });
     expect(findExtensionTool('codegraph_node')).toBeUndefined();

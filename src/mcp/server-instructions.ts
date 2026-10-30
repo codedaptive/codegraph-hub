@@ -72,7 +72,7 @@ calls; a grep/read exploration is dozens.
 ## Limitations
 
 - If a tool reports a project isn't indexed (no \`.codegraph/\`), stop calling codegraph tools for that project for the rest of the session and use your built-in tools there instead. Indexing is the user's decision — mention they can run \`codegraph init\` if it comes up, but don't run it yourself.
-- Index lags file writes by ~1 second.
+- Index lags file writes by ~1 second. Pass \`fresh: true\` to any tool to wait (bounded) until the index matches the working tree before it answers; \`fresh\` or \`checkpoint: true\` ends a successful answer with a \`Checkpoint:\` line (git HEAD, uncommitted-changes hash, pending file count). (\`fresh\` only syncs an index that already exists; it never creates one.)
 - Cross-file resolution is best-effort name matching; ambiguous calls may return multiple candidates.
 - No live correctness validation — that's still the TypeScript compiler / test suite / linter's job. Codegraph supplements those with structural context they don't have.
 `;
