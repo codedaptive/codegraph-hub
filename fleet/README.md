@@ -17,7 +17,8 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only. Checked against `git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream
 60b0d7a9 on exchange 2026-10-30: 54 files, the 53 in the table plus `docs/RULINGS.md`, the fork's own rulings
-register (no feature).
+register (no feature). The `machine-server` row was added later and is checked on its own, against that commit
+(`git diff-tree -r 1f967e06c2`); the 54 count was not redone for it or for later features.
 
 | Feature | Upstream files |
 |---|---|
@@ -39,6 +40,7 @@ register (no feature).
 | `swift-qualified-inheritance` (resolution) | `src/extraction/tree-sitter.ts`, `codegraph-kernel/src/swift.rs`, `docs/design/swift-kernel-port-checklist.md`, `src/resolution/swift-type-visibility.ts`, `src/resolution/index.ts` (its second push), `__tests__/fixtures/kernel-parity/torture.swift` (the parity corpus), `__tests__/swift-qualified-inheritance.test.ts` (new test, settled S-26), `__tests__/swift-static-calls.test.ts` (swift-static-calls' new test) |
 | `swift-enum-case-calls` (resolution) | `src/resolution/swift-type-visibility.ts`, `__tests__/swift-enum-case-calls.test.ts` (new test, settled S-26), `__tests__/swift-static-calls.test.ts` |
 | `questionable-marks` (queries) | none. Fork-only, over its two pushes: `src/extensions/queries/extension.ts`; in `src/extensions/queries/blast/`: `blast`, `extension`, `index`, `render`, `store`; in `src/extensions/queries/grep/`: `grep-command`, `grep-core`, `grep-definition`, `grep-format`, `grep-mcp`; in `src/extensions/queries/orphans/`: `orphans`, `store`; tests in `__tests__/extensions/queries/`: `grep-by-symbol`, `grep-extension`, `orphans`, `orphans-languages` (edited), new `questionable-blast`, `questionable-grep`. Its predicate is resolution's `candidateEdgeSql` (`src/extensions/resolution/suspects.ts`) |
+| `machine-server` (host) | modified (22): `src/bin/codegraph.ts`, `src/bin/command-supervision.ts`, `src/bin/fatal-handler.ts`, `src/mcp/daemon-paths.ts`, `src/mcp/daemon.ts`, `src/mcp/engine.ts`, `src/mcp/index-freshness-worker.ts`, `src/mcp/index.ts`, `src/mcp/liveness-watchdog.ts`, `src/mcp/lock-takeover.ts`, `src/mcp/process-identity.ts`, `src/mcp/project-lifecycle.ts`, `src/mcp/proxy.ts`, `src/mcp/query-pool.ts`, `src/mcp/query-worker.ts`, `src/mcp/server-instructions.ts`, `src/mcp/session.ts`, `src/mcp/startup-handshake.ts`, `src/mcp/tools.ts`, `src/mcp/transport.ts`, `src/mcp/version.ts`, `src/mcp/writer-lock.ts`; deleted (2): `src/mcp/daemon-manager.ts`, `src/mcp/daemon-registry.ts`; new in upstream's tree: `src/mcp/server-control.ts`. Its edits to upstream's flat `__tests__/` (33 edited, 8 deleted, 2 new: `fake-release-server.ts`, `helpers/admit-all.ts`) are not listed by name. Fork-only: `src/extensions/host/` (`README.md`, `extension.ts`, `fresh/checkpoint.ts`, new `server/`: `repo-anchor`, `state-dir`, `tool-call`; `worktree-lifecycle/`: `cli`, `housekeeping`, `project-registry`, `seed`, `teardown`) and its tests in `__tests__/extensions/host/` |
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of
 its own: never inside the product feature's squash, which must stay cherry-pickable upstream (settled S-12).
