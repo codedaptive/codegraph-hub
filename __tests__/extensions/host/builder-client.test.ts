@@ -177,11 +177,57 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     expect(readWriterLock(wt)?.pid).toBe(client.pid());
   });
 
-  it('answers none, never an error, for a path that is not in git and has no index', async () => {
-    const plain = path.join(workspace, 'plain');
-    fs.mkdirSync(plain);
+  it('answers none, never an error, for a path that does not exist', async () => {
     client = BuilderClient.start();
-    await expect(client.ensure(plain)).resolves.toEqual({ kind: 'none' });
+    await expect(client.ensure(path.join(workspace, 'missing'))).resolves.toEqual({ kind: 'none' });
+  });
+
+  it('cold-builds a directory that is not in git and has no index at the path itself when the call carries no anchor', async () => {
+    const plain = path.join(workspace, 'plain');
+    fs.mkdirSync(path.join(plain, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(plain, 'src', 'a.ts'), 'export function plainSymbol() { return 1; }\n');
+    client = BuilderClient.start();
+
+    expect(await client.ensure(plain)).toEqual({ kind: 'building', root: real(plain) });
+    expect(await waitUntil(() => isInitialized(plain) && readWriterLock(plain, 'rebuild.pid') === null, 60_000)).toBe(true);
+    expect(await client.ensure(plain)).toEqual({ kind: 'ready', root: real(plain) });
+  });
+
+  it('carries the session anchor over IPC: a call on a subdirectory builds the anchor, never an index in the subdirectory', async () => {
+    const anchor = path.join(workspace, 'plain');
+    const sub = path.join(anchor, 'src');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'a.ts'), 'export function plainSymbol() { return 1; }\n');
+    client = BuilderClient.start();
+
+    expect(await client.ensure(sub, anchor)).toEqual({ kind: 'building', root: real(anchor) });
+    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 60_000)).toBe(true);
+    expect(isInitialized(sub), 'the build root is the anchor, not the call\'s path').toBe(false);
+    expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
+  });
+
+  // The replacement builder is sent the anchor with the path: it rebuilds the anchor. Told only the path (an
+  // `ensure` that lost its anchor) it would build the subdirectory, which the last two assertions catch.
+  it('after SIGKILL the anchored plain-directory build is queued again at the anchor, not at the call\'s path', async () => {
+    const anchor = path.join(workspace, 'plain');
+    const sub = path.join(anchor, 'src');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'a.ts'), 'export function plainSymbol() { return 1; }\n');
+    vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '4000');
+    client = BuilderClient.start();
+
+    expect(await client.ensure(sub, anchor)).toEqual({ kind: 'building', root: real(anchor) });
+    const killed = client.pid()!;
+    expect(await waitUntil(() => readWriterLock(anchor, 'rebuild.pid')?.pid === killed, 15_000)).toBe(true);
+
+    process.kill(killed, 'SIGKILL');
+    expect(await waitUntil(() => !alive(killed), 5_000)).toBe(true);
+    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 20_000)).toBe(true);
+
+    // The killed build is built again with no further call, at the anchor.
+    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 90_000)).toBe(true);
+    expect(isInitialized(sub)).toBe(false);
+    expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
   });
 
   // About 10 s on an overloaded machine, by design: two builder processes (the killed one and its replacement)

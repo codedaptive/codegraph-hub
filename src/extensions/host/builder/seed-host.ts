@@ -6,10 +6,9 @@
  * Two kinds of job, two classes: a seed is a `seed` job (SYNC class: a copy, short), a cold build a
  * `cold-build` job (COLD class: it indexes a whole repository, so every queued SYNC job goes before it).
  */
-import * as fs from 'fs';
 import { canonicalProjectRoot } from '../../../directory';
 import { COLD_BUILD_EXIT_BUSY, COLD_BUILD_EXIT_FAILED, runColdBuild } from '../worktree-lifecycle/cold-build';
-import { isAtOrBelow, type SeedHost } from '../worktree-lifecycle/seed';
+import { admitColdBuild, isAtOrBelow, type ColdBuildApproval, type SeedHost } from '../worktree-lifecycle/seed';
 import type { JobQueue } from './queue';
 
 /** How long a call waits for its seed copy before it answers "building" and leaves the job queued. */
@@ -31,7 +30,7 @@ export class BuilderSeedHost implements SeedHost {
   private readonly cold = new Map<string, string>();
   /** Seed copies queued or running, likewise. */
   private readonly seeds = new Map<string, string>();
-  /** Roots whose cold build failed in this builder: not retried on every call. */
+  /** Roots whose cold build failed in this builder: never retried until this builder restarts. */
   private readonly failed = new Set<string>();
 
   constructor(
@@ -52,14 +51,18 @@ export class BuilderSeedHost implements SeedHost {
     return this.failed.has(canonicalProjectRoot(root));
   }
 
-  queueColdBuild(root: string): void {
+  queueColdBuild(root: string, approval: ColdBuildApproval): void {
     const key = canonicalProjectRoot(root);
     if (this.cold.has(key)) return;
     this.cold.set(key, root);
     this.queue
       .enqueue('cold-build', root, async () => {
-        // A worktree removed while its build waited must not be re-created by the lock's mkdir.
-        if (!fs.existsSync(root)) throw new Error(`${root} no longer exists`);
+        // The same admission as at queue time (seed.ts), on what the root names now: a worktree removed while its
+        // build waited must not be re-created by the lock's mkdir, and a root swapped for a link to another
+        // directory (or into a git repository, for a plain build) must not be built. A refusal fails the job
+        // (the job log carries the reason) and is not a failed build: nothing was tried, so a later call asks again.
+        const admission = admitColdBuild(root, approval.plain, approval);
+        if (!admission.ok) throw new Error(`the cold build was not started: ${admission.reason}`);
         const code = await runColdBuild(root);
         if (code === COLD_BUILD_EXIT_FAILED) {
           this.failed.add(key);

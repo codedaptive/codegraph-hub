@@ -1,5 +1,5 @@
 /**
- * Index-builder gates IB1-IB7.
+ * Index-builder gates IB1-IB8.
  *
  * Each gate drives the built CLI's `serve --mcp` over stdio, as an agent host does, against throwaway git
  * repositories, with CODEGRAPH_STATE_DIR set per test. The gates assert only what is observable from outside:
@@ -176,8 +176,8 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
   }
 
   /**
-   * A session started with CODEGRAPH_AUTO_INDEX absent from its environment, so no environment opt-in is what
-   * makes a cold build run. The spawn copies the environment synchronously, so the variable is restored at once.
+   * A session started with CODEGRAPH_AUTO_INDEX unset in its environment. The spawn copies the environment
+   * synchronously, so the variable is restored at once.
    */
   function startSession(opts: SessionOptions): McpSession {
     const saved = process.env.CODEGRAPH_AUTO_INDEX;
@@ -565,4 +565,58 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
 
     expect(problems, 'IB7 problems (empty when the edit shows through the server within the bounded wait)').toEqual([]);
   }, 180_000);
+
+  // IB8: a directory that is not a git worktree and has no index is its own build root. The first call answers the
+  // building note (success-shaped, never the "don't call codegraph" guidance), a call in one of its subdirectories
+  // starts no build there, and a later call answers from the directory's own index.
+  it('IB8: a directory that is not a git worktree, with no index, is answered building and then from its own index', async () => {
+    // Over 5 s by design: a cold build of a small plain directory on an overloaded machine, a serve --mcp cold start, and polling calls until it finishes.
+    // The directory is a whole mkdtemp root (under os.tmpdir(), not os.tmpdir() itself); its state dir sits in a second root, so the
+    // directory holds only the fixture and the .codegraph the build makes.
+    const dir = fx.tempRoot();
+    const stateDir = stateDirUnder(fx.tempRoot());
+    const sub = path.join(dir, 'src');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'a.ts'), 'export function ib8PlainSymbol(): string {\n  return "ib8-plain-body-marker";\n}\n');
+    // The cold build waits 5 s after it takes rebuild.pid, so the subdirectory call below lands while the build still runs.
+    const session = startSession({ cwd: dir, stateDir, env: { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '5000' } });
+    await session.initialize();
+
+    const problems: string[] = [];
+    const first = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir });
+    if (first.rpcError !== null || first.isError) {
+      problems.push(`(1) the first call must be success-shaped, not an error: ${excerpt(first)}`);
+    }
+    if (first.text.includes("don't call codegraph")) {
+      problems.push(`(1) the first call must not tell the agent to stop calling codegraph: ${excerpt(first)}`);
+    }
+    if (!first.text.includes('is building the index')) {
+      problems.push(`(1) the first call should answer the building note ("is building the index"): ${excerpt(first)}`);
+    } else {
+      if (!first.text.includes(dir)) {
+        problems.push(`(1) the building note should name the session's directory ${dir} as the build root: ${excerpt(first)}`);
+      }
+      // A call on the subdirectory while the build is held: it must not start a build of its own there.
+      await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: sub });
+      const deadline = Date.now() + 120_000;
+      let last: ToolAnswer = first;
+      let answered = false;
+      while (!answered && Date.now() < deadline) {
+        await sleep(500);
+        last = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir });
+        answered = answers(last, 'ib8PlainSymbol', 'ib8-plain-body-marker');
+      }
+      if (!answered) {
+        problems.push(`(2) no call on the directory answered from its index within 120 s (last answer ${excerpt(last)})`);
+      } else if (!fs.existsSync(path.join(dir, '.codegraph', 'codegraph.db'))) {
+        problems.push(`(2) the answer did not come from the directory's own index: ${path.join(dir, '.codegraph', 'codegraph.db')} is missing`);
+      }
+      // Checked after the build ends, so an index a subdirectory call started during it would be on disk by now.
+      if (fs.existsSync(path.join(sub, '.codegraph'))) {
+        problems.push(`(3) the subdirectory call created ${path.join(sub, '.codegraph')}: the build root is the session's directory, not the call's path`);
+      }
+    }
+
+    expect(problems, 'IB8 problems (empty when the first call is the building note and a later call answers from the directory index, with no subdirectory index)').toEqual([]);
+  }, 240_000);
 });

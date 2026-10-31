@@ -137,11 +137,21 @@ session names, so nothing is keyed on a project root.
   A git worktree with no index gets one seeded
   from an indexed sibling
   or, when there is none, cold-built from the queue, and the calls meanwhile answer the building note.
+  A directory outside git with no index is cold-built from the queue too, at the session's anchor root
+  (the launch directory when the session is outside git, which the server sends with the call); an anchor
+  that does not contain the path is refused and nothing is built. A call on a subdirectory builds the
+  launch directory once, never an index of its own. The builder checks the anchor it is sent (it must
+  contain the path and be a safe existing directory) before it creates anything. A directory it will not
+  build (your home directory, a filesystem root, a parent of home) or whose build failed answers a
+  not-indexed note that names the reason and points at the built-in tools and at a project inside it; no
+  tool answer tells the agent to stop calling codegraph.
   It never exits on idle; it ends when its server does (its IPC channel closes), and the server restarts
   it when it dies (`<state dir>/builder.pid`, `builder.log`). Which index answers a path is
   `server/index-root.ts` `selectIndexRoot`, for both: a sub-project index inside a worktree does not
-  shadow the worktree's own. The proxy's in-process fallback (the server unreachable) has no builder
-  and stays read-only: a worktree with no index gets the not-indexed guidance there.
+  shadow the worktree's own, and it is decided on the path's real location, so a symlink into a nested
+  checkout is answered from the index the builder builds for that checkout. The proxy's in-process
+  fallback (the server unreachable) has no builder and stays read-only: a worktree with no index gets the
+  not-indexed guidance there.
 
 ## Avoiding an import cycle
 

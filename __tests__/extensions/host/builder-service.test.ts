@@ -10,10 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawn, type ChildProcess } from 'child_process';
+import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import CodeGraph from '../../../src/index';
+import { unsafeIndexRootReason } from '../../../src/directory';
+import { validateProjectPath } from '../../../src/utils';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
+import { ensureWorktreeIndex, unbuiltDirectoryNote, type SeedHost } from '../../../src/extensions/host/worktree-lifecycle/seed';
 import type { BuilderFreshness } from '../../../src/extensions/host/builder/client';
 import type { BuilderToServer } from '../../../src/extensions/host/builder/protocol';
 
@@ -233,12 +236,129 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     expect(sent).toContainEqual({ op: 'released', root: real(root) });
   });
 
-  it('a path with no index, outside git, answers none; a stopping service refuses new jobs', async () => {
-    const plain = path.join(workspace, 'plain');
-    fs.mkdirSync(plain);
+  it('a path that does not exist answers none; a stopping service refuses new jobs', async () => {
+    const missing = path.join(workspace, 'missing');
     const svc = startService();
-    expect(await svc.ensure(plain)).toEqual({ kind: 'none' });
+    expect(await svc.ensure(missing)).toEqual({ kind: 'none' });
     await svc.stop(0);
-    await expect(svc.queue.enqueue('sync', plain, async () => undefined)).rejects.toThrow(/stopping/);
+    await expect(svc.queue.enqueue('sync', missing, async () => undefined)).rejects.toThrow(/stopping/);
+  });
+
+  // The anchor comes over IPC and is data: a root that does not contain the path is not what the call is about.
+  // Each anchor here is a real directory that would be built if the check were missing.
+  it('refuses an anchor that does not contain the path: nothing is built or created for a stranger, a sibling that shares a name prefix, or a subdirectory of the path', async () => {
+    const plain = path.join(workspace, 'plain');
+    const sub = path.join(plain, 'sub');
+    const stranger = path.join(workspace, 'stranger');
+    const prefixSibling = path.join(workspace, 'plain-evil');
+    const below = path.join(sub, 'deeper');
+    for (const dir of [below, stranger, prefixSibling]) fs.mkdirSync(dir, { recursive: true });
+    const svc = startService();
+
+    for (const anchor of [stranger, prefixSibling, below]) {
+      expect(await svc.ensure(sub, anchor), `anchor ${anchor}`).toEqual({ kind: 'none' });
+    }
+    for (const dir of [plain, sub, stranger, prefixSibling, below]) {
+      expect(fs.existsSync(path.join(dir, '.codegraph')), `${dir}/.codegraph`).toBe(false);
+    }
+    expect(jobLines, 'no job was queued').toEqual([]);
+  });
+
+  it('never builds an unsafe root: the home directory and the filesystem root answer unbuilt with what they look like', async () => {
+    const home = path.join(workspace, 'home');
+    const project = path.join(home, 'proj');
+    fs.mkdirSync(project, { recursive: true });
+    // os.homedir() reads HOME (USERPROFILE on Windows), so the unsafe-root check sees this directory as home.
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const fsRoot = path.parse(real(workspace)).root;
+    const svc = startService();
+
+    expect(await svc.ensure(project, home)).toEqual({ kind: 'none', unbuilt: { root: real(home), unsafe: 'your home directory' } });
+    expect(await svc.ensure(home)).toEqual({ kind: 'none', unbuilt: { root: real(home), unsafe: 'your home directory' } });
+    expect(await svc.ensure(project, fsRoot)).toEqual({ kind: 'none', unbuilt: { root: fsRoot, unsafe: 'the filesystem root' } });
+    for (const dir of [home, project, fsRoot]) {
+      expect(fs.existsSync(path.join(dir, '.codegraph')), `${dir}/.codegraph`).toBe(false);
+    }
+    expect(jobLines, 'no job was queued').toEqual([]);
+  });
+
+  it('queues the cold build of a plain directory at the anchor root (the path itself without one), and answers unbuilt, not building, once the host reports the build failed', async () => {
+    const anchor = path.join(workspace, 'plain');
+    const sub = path.join(anchor, 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    const queued: string[] = [];
+    let failed = false;
+    const host: SeedHost = {
+      buildingRootFor: () => null,
+      hasFailedBuild: () => failed,
+      queueColdBuild: (root) => { queued.push(root); },
+      runSeed: async () => ({ done: false as const }),
+    };
+
+    expect(await ensureWorktreeIndex(sub, host, anchor)).toEqual({ kind: 'building', root: real(anchor) });
+    expect(await ensureWorktreeIndex(sub, host)).toEqual({ kind: 'building', root: real(sub) });
+    expect(queued).toEqual([real(anchor), real(sub)]);
+
+    failed = true;
+    expect(await ensureWorktreeIndex(sub, host, anchor)).toEqual({ kind: 'none', unbuilt: { root: real(anchor) } });
+    expect(queued, 'a failed build is not queued again').toHaveLength(2);
+  });
+
+  it('the failed-build note says the build is not retried until the CodeGraph server restarts; a refused root names why', () => {
+    expect(unbuiltDirectoryNote('/p/sub', '/p')).toContain('will not retry it until the CodeGraph server restarts');
+    expect(unbuiltDirectoryNote('/p/sub', '/p', 'your home directory')).toContain('(your home directory)');
+  });
+
+  // A symlink spelling must not pick a different build root than the directory it names: /work/link ->
+  // /work/nested-repo/src has no .git on its lexical path, so the plain-directory rule would build the
+  // anchor /work, while the realpath spelling is inside the nested repository (nothing may be built at /work).
+  it('a symlink into a nested repository gets the answer of the real spelling: nothing is queued at the anchor', async () => {
+    const work = path.join(workspace, 'work');
+    const nested = path.join(work, 'nested-repo');
+    const src = path.join(nested, 'src');
+    fs.mkdirSync(src, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: nested, stdio: 'ignore' });
+    const link = path.join(work, 'link');
+    fs.symlinkSync(src, link);
+    const queued: string[] = [];
+    const host: SeedHost = {
+      buildingRootFor: () => null,
+      hasFailedBuild: () => false,
+      queueColdBuild: (root) => { queued.push(root); },
+      runSeed: async () => ({ done: false as const }),
+    };
+
+    const viaLink = await ensureWorktreeIndex(link, host, work);
+    const viaReal = await ensureWorktreeIndex(src, host, work);
+
+    expect(queued, 'nothing is built at the anchor').not.toContain(real(work));
+    expect(viaLink, 'both spellings get one answer').toEqual(viaReal);
+    expect(viaLink).toEqual({ kind: 'building', root: real(nested) });
+    expect(queued).toEqual([real(nested), real(nested)]);
+  });
+
+  // A session launched in a sensitive folder that codegraph would otherwise index (`/tmp` is not home, a
+  // filesystem root or a parent of home) is owed the reason, not the generic not-indexed text.
+  it.runIf(process.platform !== 'win32')('a sensitive but otherwise safe anchor answers unbuilt with the sensitive-folder reason, and builds nothing', async () => {
+    // A home that is not under /tmp (the suite's own home is, on Linux), so /tmp is not "a parent of home".
+    vi.stubEnv('HOME', '/cg-no-home/user');
+    vi.stubEnv('USERPROFILE', '/cg-no-home/user');
+    const base = fs.mkdtempSync('/tmp/cg-sensitive-anchor-');
+    try {
+      const sub = path.join(base, 'sub');
+      fs.mkdirSync(sub);
+      const anchor = fs.realpathSync('/tmp');
+      expect(unsafeIndexRootReason(anchor), 'premise: /tmp is not an unsafe index root').toBeNull();
+      const reason = validateProjectPath(anchor);
+      expect(reason, 'premise: /tmp is a sensitive folder').toMatch(/sensitive/);
+      const svc = startService();
+
+      expect(await svc.ensure(sub, '/tmp')).toEqual({ kind: 'none', unbuilt: { root: anchor, unsafe: reason } });
+      expect(jobLines, 'no job was queued').toEqual([]);
+      expect(fs.existsSync(path.join(anchor, '.codegraph'))).toBe(false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });

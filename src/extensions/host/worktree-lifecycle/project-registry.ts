@@ -4,9 +4,10 @@
  * else `~/.codegraph`; see server/state-dir.ts).
  *
  * A root lands here in two ways: an index CodeGraph gave a git worktree on its
- * own, seeded from a sibling worktree or cold-built (registered SEEDED, with
- * the repository's git common dir and the seed nonce written into that
- * index), and `codegraph project pin <path>` (registered PINNED). The
+ * own (seeded from a sibling worktree or cold-built), or a directory outside
+ * git on its own (cold-built). Each is registered SEEDED, with the repository's
+ * git common dir (null outside git) and the seed nonce written into that index.
+ * The other way is `codegraph project pin <path>` (registered PINNED). The
  * registry is what lets the housekeeping sweep (`teardown.ts`) find
  * a seeded worktree after it is removed and reclaim its index, and what keeps
  * a pinned root open in the MCP server's project cache.

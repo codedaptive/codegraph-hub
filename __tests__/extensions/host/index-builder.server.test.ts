@@ -2,10 +2,12 @@
  * The server side of the index builder: what the engine, the tool handler and the query workers do and do
  * not do, given that every index write belongs to the builder.
  *
- *  - N4: a path in a git worktree that has no index, asked through an engine that has a builder, is
- *    never told "isn't indexed ... don't call codegraph for it again". It gets the building note when
- *    the builder is building one, and the not-yet-seeded guidance when it is not. A directory outside
- *    git keeps the plain not-indexed text, and so does an engine with no builder (the fallback).
+ *  - N4: a path with no index, asked through an engine that has a builder, is never told "isn't indexed
+ *    ... don't call codegraph for it again" (no answer says that). In a git worktree it gets the building
+ *    note when the builder is building one, and the not-yet-seeded guidance when it is not. A directory
+ *    outside git is put to the builder too, with the session's anchor root, and gets the building note;
+ *    one the builder will not build (home) or failed to build gets a text that names the reason. The
+ *    plain not-indexed text answers an engine with no builder (the fallback).
  *  - A query worker's handler opens every project read-only: an index with an unfinished repair is not
  *    healed by a worker (a writable open rewrites the database; a read-only one leaves it).
  *  - The builder is asked to hold an index before the handler opens it, once per open: not on every call.
@@ -13,7 +15,8 @@
  *    from the server's own handles, which never watch.
  *
  * The builder here is a stub that records what it is asked: its real behavior has its own tests and the
- * gates (index-builder.gate.test.ts). Real git worktrees and real SQLite in a temp dir.
+ * gates (index-builder.gate.test.ts). The exception is the symlink-into-a-nested-repository case, which runs a
+ * real BuilderService and a real cold build. Real git worktrees and real SQLite in a temp dir.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -24,6 +27,7 @@ import * as path from 'path';
 import { Worker } from 'worker_threads';
 import CodeGraph from '../../../src/index';
 import type { BuilderClient, BuilderFreshness, EnsureOutcome } from '../../../src/extensions/host/builder/client';
+import { BuilderService } from '../../../src/extensions/host/builder/service';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
 import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
@@ -45,7 +49,11 @@ const textOf = (res: { content: Array<{ type: string; text?: string }> }): strin
 function stubBuilder(outcome: (projectPath: string) => EnsureOutcome, fresh: () => BuilderFreshness | null = () => null) {
   const calls: string[] = [];
   const builder = {
-    ensure: async (projectPath: string) => { calls.push(`ensure ${projectPath}`); return outcome(projectPath); },
+    // A call that carries a session anchor is recorded with it: `ensure <path> anchor <root>`.
+    ensure: async (projectPath: string, anchorRoot?: string) => {
+      calls.push(anchorRoot === undefined ? `ensure ${projectPath}` : `ensure ${projectPath} anchor ${anchorRoot}`);
+      return outcome(projectPath);
+    },
     caughtUp: async () => undefined,
     sync: async (root: string) => { calls.push(`sync ${root}`); return { filesChanged: 0 }; },
     release: async (root: string) => { calls.push(`release ${root}`); },
@@ -125,18 +133,61 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
     expect(textOf(res)).not.toContain(DONT_CALL_AGAIN);
   });
 
-  it('N4: a directory outside git keeps the plain not-indexed text, and the builder is not even asked about it', async () => {
+  it('N4: a directory outside git with no index is put to the builder, with the session anchor when the call has one, and answers the building note', async () => {
+    const plain = path.join(workspace, 'plain');
+    const sub = path.join(plain, 'src');
+    fs.mkdirSync(sub, { recursive: true });
+    // The stub names the build root it was given: the anchor when there is one, else the path.
+    let anchored: string | undefined;
+    const { builder, calls } = stubBuilder(() => ({ kind: 'building', root: anchored ?? sub }));
+    engine = new MCPEngine({ builder });
+    const handler = engine.getToolHandler();
+
+    // A session: the call on a subdirectory reaches the builder with the anchor root beside it.
+    anchored = plain;
+    const withAnchor = await handler.execute('codegraph_explore', { query: 'x', projectPath: sub }, undefined, { ...ADMIT_ALL, anchorRoot: plain });
+    expect(withAnchor.isError).toBeFalsy();
+    expect(textOf(withAnchor)).toContain(buildingNote(plain));
+    expect(textOf(withAnchor)).not.toContain(DONT_CALL_AGAIN);
+    // No session (a direct caller): the path is the build root, and no anchor is sent.
+    anchored = undefined;
+    const withoutAnchor = await handler.execute('codegraph_explore', { query: 'x', projectPath: sub }, undefined, ADMIT_ALL);
+    expect(textOf(withoutAnchor)).toContain(buildingNote(sub));
+    expect(calls).toEqual([`ensure ${sub} anchor ${plain}`, `ensure ${sub}`]);
+  });
+
+  it('N4: a plain directory the builder will not build (home) or failed to build answers its own success-shaped text: the reason, the built-in tools, a project inside it, never "don\'t call again" or the worktree text', async () => {
     const plain = path.join(workspace, 'plain');
     fs.mkdirSync(plain);
-    const { builder, calls } = stubBuilder(() => ({ kind: 'none' }));
+    let outcome: EnsureOutcome = { kind: 'none', unbuilt: { root: plain, unsafe: 'your home directory' } };
+    const { builder } = stubBuilder(() => outcome);
     engine = new MCPEngine({ builder });
+    const handler = engine.getToolHandler();
 
-    const res = await engine.getToolHandler().execute('codegraph_explore', { query: 'x', projectPath: plain }, undefined, ADMIT_ALL);
+    const unsafe = textOf(await handler.execute('codegraph_explore', { query: 'x', projectPath: plain }, undefined, ADMIT_ALL));
+    expect(unsafe).toContain(NOT_INDEXED);
+    expect(unsafe).toContain('(your home directory)');
+    expect(unsafe).toContain('built-in tools');
+    expect(unsafe).toContain('a git repository');
+    expect(unsafe).not.toContain(DONT_CALL_AGAIN);
+    expect(unsafe).not.toContain('is a git worktree');
+    expect(unsafe).not.toContain("don't call");
 
-    expect(res.isError).toBeFalsy();
-    expect(textOf(res)).toContain(NOT_INDEXED);
-    expect(textOf(res)).toContain(DONT_CALL_AGAIN);
-    expect(calls).toEqual([]);
+    outcome = { kind: 'none', unbuilt: { root: plain } };
+    const failed = textOf(await handler.execute('codegraph_explore', { query: 'x', projectPath: plain }, undefined, ADMIT_ALL));
+    expect(failed).toContain(NOT_INDEXED);
+    expect(failed).toContain('failed');
+    expect(failed).toContain('until the CodeGraph server restarts');
+    expect(failed).toContain('built-in tools');
+    expect(failed).not.toContain("don't call");
+    expect(failed).not.toContain('is a git worktree');
+
+    // A builder that gave no answer for it (down, kill switch) is the plain not-indexed text (no "don't call again").
+    outcome = { kind: 'none' };
+    const plainText = textOf(await handler.execute('codegraph_explore', { query: 'x', projectPath: plain }, undefined, ADMIT_ALL));
+    expect(plainText).toContain(NOT_INDEXED);
+    expect(plainText).toContain('codegraph init');
+    expect(plainText).not.toContain("don't call");
   });
 
   it('control: an engine with no builder (the fallback) answers a git worktree with no index the plain not-indexed text', async () => {
@@ -147,6 +198,7 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
 
     expect(res.isError).toBeFalsy();
     expect(textOf(res)).toContain(NOT_INDEXED);
+    expect(textOf(res), 'the fallback text does not tell the agent to stop calling codegraph').not.toContain("don't call");
     expect(fs.existsSync(path.join(wt, '.codegraph')), 'nothing was built or copied').toBe(false);
   });
 
@@ -223,6 +275,77 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
     state.value = { root, watching: true, degradedReason: null, recovering: false, pendingFiles: [] };
     const fine = await handler.execute('codegraph_search', { query: 'alphaSymbol', projectPath: root }, undefined, ADMIT_ALL);
     expect(textOf(fine)).not.toContain('⚠️');
+  });
+
+  // ---- a symlink into a nested repository ----
+
+  // The builder decides on the real path: for projectPath=/work/link (-> /work/nested-repo/src, under a
+  // session anchored at the non-git /work) it builds /work/nested-repo. The answer path must select by the
+  // same real path, or the alias gets the not-indexed text while the real spelling answers. Real
+  // BuilderService, real cold build, real handler; only the IPC between them is a function call.
+  it.runIf(process.platform !== 'win32')('a symlink into a nested repository is answered from the index the builder built for it, as the real spelling is', async () => {
+    const work = path.join(workspace, 'work');
+    const nested = path.join(work, 'nested-repo');
+    const src = path.join(nested, 'src');
+    fs.mkdirSync(src, { recursive: true });
+    git(nested, 'init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(src, 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
+    const link = path.join(work, 'link');
+    fs.symlinkSync(src, link);
+    const savedState = process.env.CODEGRAPH_STATE_DIR;
+    process.env.CODEGRAPH_STATE_DIR = path.join(workspace, 'state');
+    const jobLines: string[] = [];
+    const service = new BuilderService({
+      send: () => { /* the pushed freshness is not under test */ },
+      jobLog: (line) => { jobLines.push(line); },
+      log: () => { /* diagnostics are not under test */ },
+      watchOptions: () => ({ debounceMs: 100 }),
+      timing: { pollMs: 25, ownRetryMs: 50, recoverWaitMs: 1_000, seedWaitMs: 1_000 },
+      housekeeping: false,
+    });
+    try {
+      const builder = {
+        ensure: (projectPath: string, anchorRoot?: string) => service.ensure(projectPath, anchorRoot),
+        caughtUp: (root: string) => service.holders.caughtUp(root),
+        sync: (root: string) => service.holders.sync(root),
+        release: (root: string) => service.holders.release(root),
+        freshness: (root: string) => service.freshness(root),
+      } as unknown as BuilderClient;
+      engine = new MCPEngine({ builder });
+      const handler = engine.getToolHandler();
+      const session = { ...ADMIT_ALL, anchorRoot: work };
+
+      // First call through the alias: the builder queues the build at the nested repository, never at /work.
+      const first = await handler.execute('codegraph_explore', { query: 'alphaSymbol', projectPath: link }, undefined, session);
+      expect(first.isError).toBeFalsy();
+      expect(textOf(first)).toContain(buildingNote(fs.realpathSync(nested)));
+      const built = async (): Promise<boolean> => {
+        const deadline = Date.now() + 45_000;
+        while (Date.now() < deadline) {
+          if (jobLines.some((l) => / job end cold-build \S+ (ok|fail\S*)$/.test(l))) return true;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        return false;
+      };
+      expect(await built(), `the cold build ended (${jobLines.join(' | ')})`).toBe(true);
+      expect(jobLines.some((l) => / job end cold-build \S+ ok$/.test(l)), jobLines.join(' | ')).toBe(true);
+      expect(fs.existsSync(path.join(nested, '.codegraph')), 'built at the nested repository').toBe(true);
+      expect(fs.existsSync(path.join(work, '.codegraph')), 'nothing built at the anchor').toBe(false);
+
+      // Now the index exists: the alias is answered from it, the same as the real spelling.
+      const viaLink = await handler.execute('codegraph_explore', { query: 'alphaSymbol', projectPath: link }, undefined, session);
+      const viaReal = await handler.execute('codegraph_explore', { query: 'alphaSymbol', projectPath: src }, undefined, session);
+      expect(viaReal.isError).toBeFalsy();
+      expect(textOf(viaReal)).toContain('alphaSymbol');
+      expect(viaLink.isError).toBeFalsy();
+      expect(textOf(viaLink)).not.toContain(NOT_INDEXED);
+      expect(textOf(viaLink)).not.toContain(buildingNote(fs.realpathSync(nested)));
+      expect(textOf(viaLink)).toContain('alphaSymbol');
+    } finally {
+      await service.stop(0);
+      if (savedState === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+      else process.env.CODEGRAPH_STATE_DIR = savedState;
+    }
   });
 
   // ---- the query worker ----

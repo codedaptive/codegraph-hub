@@ -18,8 +18,9 @@
  *     otherwise its success-shaped guidance;
  *  4. `execute` with the guard's absolute `projectPath` substituted, the
  *     session's {@link indexRootAdmission}, which `execute` insists on for an MCP
- *     engine's handler, and the session's own tool allowlist, which decides
- *     whether the tool may be called at all.
+ *     engine's handler, the anchor's root, where the index builder cold-builds
+ *     a path outside git that has no index, and the session's own tool
+ *     allowlist, which decides whether the tool may be called at all.
  *
  * Two internal arguments carry the session's scope down to the handler
  * ({@link SESSION_FOCUS_ARG}, {@link SESSION_TOOLS_ARG}; see `./session-scope`).
@@ -114,7 +115,11 @@ export async function dispatchToolCall(call: ToolCallInput): Promise<ToolCallOut
     toolName,
     sessionArgs,
     call.exploreSession,
-    { admitIndexRoot: indexRootAdmission(call.anchor!), toolAllowlist: call.toolAllowlist },
+    {
+      admitIndexRoot: indexRootAdmission(call.anchor!),
+      anchorRoot: call.anchor!.root,
+      toolAllowlist: call.toolAllowlist,
+    },
   );
   return { toolName, result };
 }

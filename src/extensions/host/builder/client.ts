@@ -12,7 +12,7 @@
  * The builder exits once this process goes away (its IPC channel closes): a job already running gets the
  * exit grace to finish first, so the builder does not outlive its server for long.
  */
-import { fork, type ChildProcess } from 'child_process';
+import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { canonicalProjectRoot } from '../../../directory';
@@ -32,7 +32,11 @@ export type EnsureOutcome =
   | { kind: 'ready'; root: string }                                   // own complete index, the root to read; the hold's writable open (migrations) was waited for at most a bounded time, so it may still be queued, or the hold could not open it (another live writer, an open failure); the catch-up is queued once it opened
   | { kind: 'seeded'; root: string; source: string; method: 'clone' | 'copy' | 'backup' } // copied from nearest sibling; held as `ready` is (the writable open was waited for at most a bounded time, so it may still be queued); the catch-up is queued once it opened
   | { kind: 'building'; root: string }                                // cold build queued or running (here or by another process)
-  | { kind: 'none'; worktree?: string };                              // nothing to serve: not git / kill switch / unsafe root / failed build / seed failed (worktree set when a later call may succeed)
+  | {                                                                 // nothing to serve: nothing to build here / kill switch / unsafe root / failed build / seed failed
+      kind: 'none';
+      worktree?: string;                                              //   set when the path is in a git worktree a later call may still give an index
+      unbuilt?: { root: string; unsafe?: string };                    //   set when the path is a plain directory (no git) whose build root cannot be built: `unsafe` is what the root looks like ("your home directory"), absent when its build failed
+    };
 
 /** First wait before a restart, doubled per quick failure up to {@link RESTART_MAX_MS}. */
 const RESTART_MIN_MS = 200;
@@ -87,8 +91,12 @@ export class BuilderClient {
   private exitWaiters: Array<() => void> = [];
   /** Roots the builder holds for us, by canonical key, with the path to ask for again after a restart. */
   private readonly held = new Map<string, string>();
-  /** Roots the builder answered `building` for, by canonical key, with the path to ask again. Oldest first. */
-  private readonly building = new Map<string, string>();
+  /**
+   * Roots the builder answered `building` for, by canonical key, with the ask to send again: the call's path
+   * and the session anchor it carried (a plain directory is rebuilt at the anchor, not at the call's path).
+   * Oldest first.
+   */
+  private readonly building = new Map<string, { projectPath: string; anchorRoot?: string }>();
   private readonly fresh = new Map<string, BuilderFreshness>();
 
   private constructor(private readonly opts: { onLog?: (line: string) => void }) {}
@@ -103,11 +111,19 @@ export class BuilderClient {
   /** Resolve projectPath with selectIndexRoot; hold an indexed root, else seed or queue a cold build. Resolves once the builder opened
    *  (and migrated) the index, or after a bounded wait (CODEGRAPH_BUILDER_ENSURE_WAIT_MS, default 10 s) when that open is queued behind
    *  a running job, or when the hold could not open it (another live writer, an open failure); the server then opens read-only whatever
-   *  is on disk. Never rejects: a dead builder or IPC failure answers { kind: 'none' }. */
-  async ensure(projectPath: string): Promise<EnsureOutcome> {
+   *  is on disk. Never rejects: a dead builder or IPC failure answers { kind: 'none' }.
+   *
+   *  `anchorRoot` is the calling session's anchor root (src/extensions/host/server/repo-anchor.ts), passed only for
+   *  a call that has one. A projectPath outside git with no index is cold-built at that root rather than at the
+   *  path itself; with none (no session) the path is the build root. The builder checks the anchor against the
+   *  path before it builds anything. */
+  async ensure(projectPath: string, anchorRoot?: string): Promise<EnsureOutcome> {
     try {
-      const outcome = await this.rpc({ op: 'ensure', projectPath }, ENSURE_TIMEOUT_MS) as EnsureOutcome;
-      this.record(outcome, projectPath);
+      const outcome = await this.rpc(
+        anchorRoot === undefined ? { op: 'ensure', projectPath } : { op: 'ensure', projectPath, anchorRoot },
+        ENSURE_TIMEOUT_MS,
+      ) as EnsureOutcome;
+      this.record(outcome, projectPath, anchorRoot);
       return outcome;
     } catch (err) {
       this.log(`ensure of ${projectPath} failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -204,11 +220,16 @@ export class BuilderClient {
     try {
       // stdout is ignored: in direct mode this process's stdout is the MCP protocol. stderr is shared, so the
       // builder's diagnostics land where the server's own do.
-      child = fork(entry, [], {
+      // `fork` hands its options to `spawn`, which honors windowsHide; @types/node lists it only on SpawnOptions,
+      // so the type adds it. A server that has no console of its own (a detached one on Windows) must not give the
+      // builder a visible one.
+      const forkOptions: ForkOptions & Pick<SpawnOptions, 'windowsHide'> = {
         execArgv: [...WASM_RUNTIME_FLAGS, ...NODE_RUNTIME_FLAGS],
         env: process.env,
         stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
-      });
+        windowsHide: true,
+      };
+      child = fork(entry, [], forkOptions);
     } catch (err) {
       this.log(`could not start the index builder: ${err instanceof Error ? err.message : String(err)}`);
       this.scheduleRestart();
@@ -281,10 +302,13 @@ export class BuilderClient {
 
   /** A new builder is up: hold again every root the old one held, and queue again every build it was asked for. */
   private resendRoots(): void {
-    const paths = [...this.held.entries(), ...this.building.entries()];
-    for (const [key, projectPath] of paths) {
+    const asks: Array<{ key: string; projectPath: string; anchorRoot?: string }> = [
+      ...[...this.held.entries()].map(([key, projectPath]) => ({ key, projectPath })),
+      ...[...this.building.entries()].map(([key, ask]) => ({ key, ...ask })),
+    ];
+    for (const { key, projectPath, anchorRoot } of asks) {
       this.building.delete(key);
-      void this.ensure(projectPath);
+      void this.ensure(projectPath, anchorRoot);
     }
   }
 
@@ -344,7 +368,7 @@ export class BuilderClient {
   }
 
   /** Remember what an `ensure` answered, so a restarted builder is told the same. */
-  private record(outcome: EnsureOutcome, projectPath: string): void {
+  private record(outcome: EnsureOutcome, projectPath: string, anchorRoot: string | undefined): void {
     if (this.stopping) return;
     if (outcome.kind === 'ready' || outcome.kind === 'seeded') {
       const key = canonicalProjectRoot(outcome.root);
@@ -353,7 +377,7 @@ export class BuilderClient {
     } else if (outcome.kind === 'building') {
       const key = canonicalProjectRoot(outcome.root);
       this.building.delete(key); // re-inserted last: the oldest is the one dropped past the bound
-      this.building.set(key, projectPath);
+      this.building.set(key, anchorRoot === undefined ? { projectPath } : { projectPath, anchorRoot });
       if (this.building.size > MAX_BUILDING_ROOTS) {
         const oldest = this.building.keys().next().value;
         if (oldest !== undefined) this.building.delete(oldest);

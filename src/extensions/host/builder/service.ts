@@ -103,7 +103,8 @@ export class BuilderService {
 
   private dispatch(request: BuilderRequest): Promise<unknown> {
     switch (request.op) {
-      case 'ensure': return this.ensure(request.projectPath);
+      // The anchor is IPC data: anything but a string is no anchor.
+      case 'ensure': return this.ensure(request.projectPath, typeof request.anchorRoot === 'string' ? request.anchorRoot : undefined);
       case 'caughtUp': return this.holders.caughtUp(request.root);
       case 'sync': return this.holders.sync(request.root);
       case 'release': return this.holders.release(request.root);
@@ -118,17 +119,22 @@ export class BuilderService {
    * `CODEGRAPH_BUILDER_ENSURE_WAIT_MS`, default 10 s) when the open is queued behind a running job, or when
    * the hold could not open it (another live writer, an open failure). The server then opens read-only
    * whatever is on disk: the migrations are guaranteed only in the first case.
+   *
+   * A `projectPath` outside git with no index is cold-built at `anchorRoot` (the session's launch directory)
+   * when there is one, else at the path itself (seed.ts).
    */
-  async ensure(projectPath: string): Promise<EnsureOutcome> {
-    const decision = await ensureWorktreeIndex(projectPath, this.seedHost);
+  async ensure(projectPath: string, anchorRoot?: string): Promise<EnsureOutcome> {
+    const decision = await ensureWorktreeIndex(projectPath, this.seedHost, anchorRoot);
     if (decision.kind === 'building') return decision;
-    if (decision.kind === 'none' && decision.worktree !== undefined) return decision;
+    if (decision.kind === 'none' && (decision.worktree !== undefined || decision.unbuilt !== undefined)) return decision;
     if (decision.kind === 'seeded') {
       const held = await this.holdRoot(decision.root);
       return held.kind === 'building' ? held : { ...decision, root: held.root };
     }
     // Nothing to seed or build: the call is answered from the index selectIndexRoot names, if there is one.
-    // One a killed build left half-made is no index.
+    // A git worktree's index a killed build left half-made is no index (isAbandonedIndex, seed.ts). A plain
+    // directory's is never judged abandoned (it needs a `.git`): it is held below, recovered, and a full
+    // catch-up queued, and the call may be answered from it before the catch-up ends.
     const root = selectIndexRoot(projectPath);
     if (root === null || isAbandonedIndex(root)) return { kind: 'none' };
     return this.holdRoot(root);
