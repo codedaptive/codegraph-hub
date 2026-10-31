@@ -98,6 +98,34 @@ An extension module may import from `src/` (tools.ts included): it is required o
 registry call, after `registry.ts` itself has finished loading, so it never meets a half-loaded
 registry. Its value imports from `src/` still stay off its top level (see "Registering").
 
+## Worktree hook (Claude Code PreToolUse)
+
+A standalone Claude Code hook command, not an extension module: `registry.ts` and
+`CODEGRAPH_EXTENSION_MODULES` do not load it.
+
+`dist/extensions/host/worktree-hook/main.js` pins every codegraph MCP call to the git root of the
+agent's own cwd, so an agent in a linked worktree queries that worktree's own index, copied in from
+another checkout when it has none. Add it to Claude Code's `settings.json` (absolute path to the
+built file):
+
+```json
+{"hooks":{"PreToolUse":[{"matcher":"mcp__codegraph__.*","hooks":[{"type":"command","command":"node /abs/path/to/dist/extensions/host/worktree-hook/main.js"}]}]}}
+```
+
+- The matcher names the MCP server key `codegraph`. A plugin-scoped server is named
+  `mcp__plugin_<plugin>_codegraph__…` and needs its own matcher.
+- `codegraph install` does not add it.
+- Outside a git repo it does nothing, and it never fails a call: bad input, git missing or any error
+  inside the hook prints nothing and exits 0. A crash before the hook's code runs exits 1, which Claude
+  Code treats as non-blocking.
+- It overrides any `projectPath` with the git root, a sub-project path included. That assumes the index
+  sits at the git root: in a monorepo whose index lives only in a sub-project, calls go to the root and
+  find no index.
+- It answers `allow`, so a matched call skips the permission prompt (except the cases the hooks doc
+  lists, such as MCP tools marked `requiresUserInteraction`). Allow is granted on the tool-name prefix
+  alone, so any server keyed `codegraph` gets it. The codegraph tools do not edit source files, but they
+  can update the `.codegraph/` index. Deny and ask rules still apply.
+
 ## Testing
 
 In-process (vitest, `src/`): point `CODEGRAPH_EXTENSION_MODULES` at a fixture, or call
