@@ -52,7 +52,10 @@ export function formatGrepResult(r: GrepResult): string {
 /**
  * The loud zero-hit note (never a bare empty result). It also names files
  * that could not be read, so a zero-hit answer on a stale index does not read
- * as "no matches anywhere".
+ * as "no matches anywhere". It is never given a focused result: a focused search
+ * with no hit answers the nothing-in-focus sentence or, when nothing matches
+ * anywhere, this note on the unfocused re-count (grep-mcp.ts). The note's "All
+ * indexed code was searched" is true only when the search had no `in` prefix.
  */
 export function zeroHitNote(r: GrepResult): string {
   const base =

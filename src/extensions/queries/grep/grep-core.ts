@@ -1,6 +1,7 @@
 /**
  * grep-by-symbol core: a ripgrep search over exactly the files the index has
- * (those whose real location is inside the project; see searchablePaths), with
+ * (those whose real location is inside the project; see searchablePaths), cut
+ * to the session focus when the caller passes one (`GrepOptions.focus`), with
  * every hit attributed to its innermost enclosing symbol and the groups ranked
  * by in-degree (incoming calls/references/imports/implements/extends).
  * Questionable incoming calls (bound by name only: resolution's candidate edge,
@@ -25,6 +26,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
+import { inFocus } from '../../host/server/session-scope';
 import { candidateEdgeSql } from '../../resolution/suspects';
 
 /** graft's DEFAULT_MAX_HITS. */
@@ -103,6 +105,18 @@ export interface GrepOptions {
    * inDegree and also reported as questionableInDegree.
    */
   strict?: boolean;
+  /**
+   * The session focus as index-relative prefixes, as `focusPrefixesOfTool`
+   * (../shared/focus.ts) returns them: only indexed files that are one of the
+   * prefixes or sit under one (host's `inFocus`) are searched, and
+   * `filesSearched` counts those. `null` or absent filters nothing, and `[]`
+   * leaves nothing to search. It applies after the `in` scope check, so an `in`
+   * that names indexed files outside the focus is not a GrepScopeError: it
+   * finds nothing. The filter runs before ranking and before the `maxHits` cap,
+   * so a hit outside the focus never takes a cap slot. In-edge counts stay
+   * whole-index: they are a ranking signal, not part of what is searched.
+   */
+  focus?: readonly string[] | null;
 }
 
 export interface GrepSymbolRef {
@@ -334,9 +348,9 @@ function runRgBatch(
 }
 
 /**
- * Search the indexed files under `opts.in` for `pattern` and group the hits
- * by innermost enclosing symbol. The database is opened read-only and closed
- * on every path.
+ * Search the indexed files under `opts.in` (and inside `opts.focus`, when
+ * given) for `pattern` and group the hits by innermost enclosing symbol. The
+ * database is opened read-only and closed on every path.
  */
 export async function grepIndex(projectRoot: string, pattern: string, opts: GrepOptions = {}): Promise<GrepResult> {
   const maxHits = opts.maxHits ?? DEFAULT_MAX_HITS;
@@ -356,13 +370,16 @@ export async function grepIndex(projectRoot: string, pattern: string, opts: Grep
   try {
     const db = conn.getDb();
     const prefix = opts.in ? normalizeGrepPrefix(opts.in) : '';
-    const files: string[] = [];
+    const scoped: string[] = [];
     for (const row of db.prepare(ALL_FILES_SQL).iterate() as IterableIterator<{ path: string }>) {
-      if (pathUnderPrefix(row.path, prefix)) files.push(row.path);
+      if (pathUnderPrefix(row.path, prefix)) scoped.push(row.path);
     }
-    if (prefix !== '' && files.length === 0) {
+    if (prefix !== '' && scoped.length === 0) {
       throw new GrepScopeError(`nothing indexed under "${prefix}/" (or any path prefix)`);
     }
+    // After the scope check: an `in` that holds indexed files, all outside the focus, leaves nothing to search.
+    const focus = opts.focus ?? null;
+    const files = focus === null ? scoped : scoped.filter((f) => inFocus(f, focus));
 
     const ranks = rankPaths(files);
     const capped = new CappedHits(ranks, maxHits);

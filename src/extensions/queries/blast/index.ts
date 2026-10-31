@@ -14,6 +14,11 @@
  * certainty): it leaves out dependents reached only through questionable call
  * edges.
  *
+ * Under an MCP session started with `--focus`, `blastToolHandler` gives `runBlast`
+ * the focus (`BlastArgs.focus`), and the report lists the dependents outside it
+ * apart (`splitReportByFocus`, `./focus.ts`); the CLI has no session, never sets
+ * it, and prints the unsplit report.
+ *
  * Deliberately left out: `--format mermaid`, `--name`, owners and
  * `--pr-author`, `--export-viz`/`--title`, and graft's `--global-dir`.
  */
@@ -22,6 +27,8 @@ import * as path from 'path';
 import { getDatabasePath } from '../../../db';
 import { blastRadius } from './blast';
 import { changedFiles, refExists } from './diff';
+import { focusDirsText, focusPrefixesOfTool } from '../shared/focus';
+import { splitReportByFocus } from './focus';
 import { jsonReport, markdownReport, textReport } from './render';
 import { openBlastStore } from './store';
 
@@ -31,6 +38,15 @@ export interface BlastArgs {
   format?: string;
   /** Leave out dependents reached only through questionable (name-matched) call edges. */
   strict?: boolean;
+  /**
+   * The session's active focus, as `blastToolHandler` resolves it for this index
+   * (`focusPrefixesOfTool`, `focusDirsText`). Set only for an MCP call from a session
+   * that has a focus; the CLI and an unfocused session leave it absent, and their
+   * report carries no `outsideFocus`. `prefixes` is the membership rule: `null` when
+   * the focus holds the whole index (nothing is outside it, the report still carries an
+   * empty `outsideFocus`), otherwise the dependents outside the prefixes are listed apart.
+   */
+  focus?: { prefixes: readonly string[] | null; dirs: string };
   /**
    * Set by `parseBlastArgv` when a flag has no value or the `--strict` switch is
    * given one. `runBlast` fails with it before any other check, so a malformed
@@ -98,7 +114,8 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
 
   const store = openBlastStore(absRoot);
   try {
-    const report = blastRadius(store, diff.files, diff.basis, depth, { strict: args.strict === true });
+    const whole = blastRadius(store, diff.files, diff.basis, depth, { strict: args.strict === true });
+    const report = args.focus ? splitReportByFocus(whole, args.focus.prefixes, args.focus.dirs) : whole;
     // graft prints JSON with console.log, hence the trailing newline; text and
     // markdown already end in one.
     const output = format === 'json' ? `${jsonReport(report)}\n`
@@ -114,7 +131,10 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
  * MCP-shaped handler. Expected failures (no index, unknown ref, bad flag, not a
  * git repo) come back as ordinary text guidance and never set `isError`: an
  * agent that sees an error early stops calling the tool (AGENTS.md, "Errors
- * teach abandonment").
+ * teach abandonment"). `sessionFocus` is the calling session's focus directories
+ * (`ExtensionToolContext.focus`); absent or empty, the answer is the CLI's.
+ * Blast covers the whole repository whatever the focus: a focus only moves the
+ * dependents outside it under "Outside focus".
  */
 export function blastToolHandler(params: {
   projectPath: string;
@@ -122,9 +142,17 @@ export function blastToolHandler(params: {
   depth?: string | number;
   format?: string;
   strict?: boolean;
+  sessionFocus?: readonly string[];
 }): { content: [{ type: 'text'; text: string }] } {
+  const absRoot = path.resolve(params.projectPath);
+  const prefixes = focusPrefixesOfTool(absRoot, params.sessionFocus);
+  // A session with a focus keeps it active even when the focus holds the whole index
+  // (prefixes null): json then carries an empty `outsideFocus`. No session focus, no key.
+  const focus = (params.sessionFocus ?? []).length === 0
+    ? undefined
+    : { prefixes, dirs: focusDirsText(absRoot, params.sessionFocus, prefixes ?? []) };
   const r = runBlast(params.projectPath, {
-    base: params.base, depth: params.depth, format: params.format, strict: params.strict,
+    base: params.base, depth: params.depth, format: params.format, strict: params.strict, focus,
   });
   const text = r.exitCode === 0 ? r.output : (r.stderr ?? r.output);
   return { content: [{ type: 'text', text }] };

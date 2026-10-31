@@ -11,6 +11,9 @@
  * with `await import()` inside the command's action and the tool's handler, as
  * grep's are in `../extension.ts`; `await import()` of a `.ts` module works
  * under vitest, where a lazy `require` would not.
+ *
+ * The CLI command has no session, so it never sees a focus; the tool's handler
+ * passes the session's (`ctx.focus`) to `blastToolHandler`.
  */
 import * as path from 'path';
 import type { Command } from 'commander';
@@ -83,7 +86,9 @@ export const blastTool: ExtensionTool = {
       'dependent with its file:line span, relation and depth; text lists up to 25 per area, and dependents in ' +
       'test files are counted, not listed. json also lists every changed file and changed symbol. A dependent ' +
       'reached only through name-matched calls (the resolver matched the name, not a declared target) is marked ' +
-      'questionable; strict: true leaves those dependents out.',
+      'questionable; strict: true leaves those dependents out. In a session started with --focus it still ' +
+      'covers the whole repository and lists the dependents outside the focus under "Outside focus (N)" ' +
+      '(json: outsideFocus), after the ones inside it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -145,6 +150,8 @@ export const blastTool: ExtensionTool = {
     // When not on a query-pool worker this runs on the main thread, and git plus the
     // graph walk block it for as long as the diff takes.
     const { blastToolHandler } = await import('./index');
-    return blastToolHandler({ projectPath: root, base, depth, format, strict });
+    // The session focus (`serve --mcp --focus`) does not limit the walk: blast covers the
+    // whole repository, and the dependents outside the focus go under "Outside focus".
+    return blastToolHandler({ projectPath: root, base, depth, format, strict, sessionFocus: ctx.focus ?? [] });
   },
 };

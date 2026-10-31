@@ -4,6 +4,13 @@
  * `../extension.ts` registers both with the server through the extension hook
  * (src/extensions/host).
  *
+ * In a session started with `--focus`, the search stays inside the focus unless
+ * the call passes `scope: "repo"` (src/mcp/tools.ts does the same for search and
+ * explore). The focus is read only through ../shared/focus.ts, which calls
+ * host's helpers. A text answer for a focused search with no hit that finds hits
+ * outside the focus is the nothing-in-focus sentence, so it never reads as
+ * "absent from the repository"; with `json: true` the focused result is returned as is.
+ *
  * Every expected condition (zero hits, bad pattern, unknown --in prefix, a
  * project with no index, a `strict` that is neither a boolean nor null/absent)
  * answers success-shaped guidance: an isError early in a session teaches the
@@ -17,6 +24,7 @@ import { findNearestCodeGraphRoot } from '../../../directory';
 import { validateProjectPath } from '../../../utils';
 import { GrepIndexError, GrepPatternError, GrepScopeError, grepIndex } from './grep-core';
 import { formatGrepResult, zeroHitNote } from './grep-format';
+import { focusDirsText, focusPrefixesOfTool, nothingInFocusText } from '../shared/focus';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 const text = (t: string, isError = false): ToolResult =>
@@ -43,7 +51,20 @@ function resolveRoot(p: string): { root: string } | { refusal: string } {
   return refusal ? { refusal } : { root: found };
 }
 
-export async function handleGrepTool(args: Record<string, unknown>, defaultProjectRoot?: string): Promise<ToolResult> {
+/**
+ * Run the tool. `sessionFocus` is the calling session's focus directories
+ * (`ctx.focus`): with some that lie inside the project's index, only files in
+ * focus are searched unless `args.scope` is `"repo"`; absent or `[]` searches
+ * the whole index, exactly as the CLI does. A focused search with no hits
+ * re-counts without the focus: hits outside it answer the nothing-in-focus
+ * sentence, none anywhere answers the zero-hit note. With `json: true` the
+ * focused result is returned as is.
+ */
+export async function handleGrepTool(
+  args: Record<string, unknown>,
+  defaultProjectRoot?: string,
+  sessionFocus?: readonly string[],
+): Promise<ToolResult> {
   const pattern = args.pattern;
   if (typeof pattern !== 'string') return text('codegraph_grep needs a `pattern` string (a regex, or a literal with fixed: true).');
   const projectPath = typeof args.projectPath === 'string' && args.projectPath !== '' ? args.projectPath : defaultProjectRoot;
@@ -58,14 +79,23 @@ export async function handleGrepTool(args: Record<string, unknown>, defaultProje
   if ('refusal' in resolved) return text(resolved.refusal, true);
   const root = resolved.root;
   try {
-    const result = await grepIndex(root, pattern, {
+    // Any scope other than "repo" keeps the focus filter, as host's tools do.
+    const prefixes = focusPrefixesOfTool(root, sessionFocus, args.scope === 'repo');
+    const base = {
       in: typeof args.in === 'string' ? args.in : undefined,
       fixed: args.fixed === true,
       ignoreCase: args.ignore_case === true,
       strict: args.strict === true,
-    });
+    };
+    const result = await grepIndex(root, pattern, { ...base, focus: prefixes });
     if (args.json === true) return text(JSON.stringify(result, null, 2));
-    if (result.totalHits === 0) return text(zeroHitNote(result));
+    if (result.totalHits === 0) {
+      if (prefixes === null) return text(zeroHitNote(result));
+      // maxHits 0 keeps no hit and counts every one in truncated.hits: a count without the per-hit lookups.
+      const whole = await grepIndex(root, pattern, { ...base, maxHits: 0 });
+      if (whole.truncated.hits > 0) return text(nothingInFocusText(focusDirsText(root, sessionFocus, prefixes)));
+      return text(zeroHitNote(whole));
+    }
     return text(formatGrepResult(result));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
