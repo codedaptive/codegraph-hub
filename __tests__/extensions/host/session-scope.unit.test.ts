@@ -1,6 +1,7 @@
 /**
- * Session focus, unit level: the helpers in src/extensions/host/server/session-scope.ts, the repo anchor
- * they resolve against (real git and real temp directories), the session fields the proxy's client hello
+ * Session focus, unit level: the helpers in src/extensions/host/server/session-scope.ts, including the
+ * per-worktree resolution of the repo-relative focus (real git, a linked worktree and real temp directories),
+ * the session fields the proxy's client hello
  * carries (src/mcp/daemon.ts), and the wording of `scope` and `--focus` in the tool surface and the server
  * instructions.
  *
@@ -17,12 +18,15 @@ import {
   SESSION_FOCUS_ARG,
   SESSION_TOOLS_ARG,
   focusPrefixesFor,
+  focusPrefixesForIndex,
   inFocus,
   normaliseFocusArgs,
   parseToolAllowlist,
-  resolveSessionFocus,
+  resolveFocusForRoot,
+  sessionFocusEntries,
+  worktreeRootOf,
 } from '../../../src/extensions/host/server/session-scope';
-import { resolveRepoAnchor, type RepoAnchor } from '../../../src/extensions/host/server/repo-anchor';
+import { gitRootByStat } from '../../../src/extensions/host/server/index-root';
 import { parseClientHelloLine } from '../../../src/mcp/daemon';
 import { getStaticTools } from '../../../src/mcp/tools';
 import { SERVER_INSTRUCTIONS } from '../../../src/mcp/server-instructions';
@@ -99,89 +103,216 @@ describe('FocusArgError', () => {
   });
 });
 
-describe('resolveSessionFocus', () => {
+describe('sessionFocusEntries', () => {
+  it('is empty with no list, and with an empty list', () => {
+    expect(sessionFocusEntries(undefined)).toEqual([]);
+    expect(sessionFocusEntries([])).toEqual([]);
+  });
+
+  it('keeps the normalised repo-relative entries, in order, without duplicates', () => {
+    expect(sessionFocusEntries(['src/app', './src//lib/', 'src/app'])).toEqual(['src/app', 'src/lib']);
+  });
+
+  it('is empty for the whole repository: a "." entry (or "") means no focus', () => {
+    expect(sessionFocusEntries(['.'])).toEqual([]);
+    expect(sessionFocusEntries([''])).toEqual([]);
+  });
+
+  it('is empty when the whole repository is among the entries (it contains every focus dir)', () => {
+    expect(sessionFocusEntries(['src/app', '.'])).toEqual([]);
+  });
+
+  it('drops wire junk (absolute, escaping, non-string) and keeps the valid entries', () => {
+    const junk = ['/etc', 'C:/x', '../escape', 'src/app/../../../x', 42 as unknown as string];
+    expect(sessionFocusEntries([...junk, 'src/app'])).toEqual(['src/app']);
+  });
+
+  it('has no focus when every entry was junk', () => {
+    expect(sessionFocusEntries(['/etc', '../x'])).toEqual([]);
+  });
+
+  it('reads at most MAX_FOCUS_ENTRIES entries', () => {
+    const dirs = Array.from({ length: MAX_FOCUS_ENTRIES + 10 }, (_, i) => `d${i}`);
+    expect(sessionFocusEntries(dirs)).toHaveLength(MAX_FOCUS_ENTRIES);
+  });
+});
+
+/**
+ * One fixture shared by the per-worktree helpers: repository `repo` (a main checkout) with src/app, src/lib and a
+ * nested `sub/x`, a linked worktree `sibling` of it, a directory outside git, and symlinks made per test.
+ */
+describe('the focus resolved against a worktree root', () => {
   let tmp: string;
   let repo: string;
-  let anchor: RepoAnchor;
+  let sibling: string;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-session-focus-unit-')));
     repo = path.join(tmp, 'repo');
-    fs.mkdirSync(path.join(repo, 'src', 'app'), { recursive: true });
-    fs.mkdirSync(path.join(repo, 'src', 'lib'), { recursive: true });
+    for (const dir of ['src/app', 'src/lib', 'sub/x', 'other']) fs.mkdirSync(path.join(repo, dir), { recursive: true });
     git(repo, 'init', '-q');
     git(repo, 'config', 'user.email', 'test@example.com');
     git(repo, 'config', 'user.name', 'Test');
     git(repo, 'config', 'commit.gpgsign', 'false');
-    fs.writeFileSync(path.join(repo, 'src', 'app', 'app.ts'), 'export const app = 1;\n');
+    for (const dir of ['src/app', 'src/lib', 'sub/x', 'other']) fs.writeFileSync(path.join(repo, dir, 'f.ts'), 'export const f = 1;\n');
     git(repo, 'add', '.');
     git(repo, 'commit', '-q', '-m', 'init');
-    anchor = await resolveRepoAnchor(repo);
+    sibling = path.join(tmp, 'sibling');
+    git(repo, 'worktree', 'add', '-q', '-b', 'sib', sibling);
+    sibling = fs.realpathSync(sibling);
   });
 
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('is empty when the session has no anchor', () => {
-    expect(resolveSessionFocus(null, ['src/app'])).toEqual([]);
+  describe('worktreeRootOf', () => {
+    it('is the main checkout for the checkout itself and for a directory inside it', () => {
+      expect(worktreeRootOf(repo)).toBe(repo);
+      expect(worktreeRootOf(path.join(repo, 'src', 'app'))).toBe(repo);
+    });
+
+    it('is the linked worktree (a .git file) for a directory inside it, never the main checkout', () => {
+      expect(worktreeRootOf(sibling)).toBe(sibling);
+      expect(worktreeRootOf(path.join(sibling, 'sub', 'x'))).toBe(sibling);
+    });
+
+    // The fixture's tmp root holds `repo` and `sibling` but has no .git itself; the test only means "outside git"
+    // when no directory above it has one either (a TMPDIR inside a checkout would), so it skips then.
+    it.skipIf(gitRootByStat(os.tmpdir()) !== null)('is the directory itself, canonical, outside git', () => {
+      const plain = path.join(tmp, 'plain');
+      fs.mkdirSync(plain);
+      expect(worktreeRootOf(plain)).toBe(plain);
+    });
+
+    it('names the same root for a directory that does not exist yet', () => {
+      expect(worktreeRootOf(path.join(repo, 'src', 'not-yet'))).toBe(repo);
+    });
+
+    it.runIf(POSIX)('canonicalises a symlinked spelling before looking for .git', () => {
+      const alias = path.join(tmp, 'alias');
+      fs.symlinkSync(repo, alias, 'dir');
+      expect(worktreeRootOf(path.join(alias, 'src', 'app'))).toBe(repo);
+    });
   });
 
-  it('is empty when there are no focus dirs', () => {
-    expect(resolveSessionFocus(anchor, undefined)).toEqual([]);
-    expect(resolveSessionFocus(anchor, [])).toEqual([]);
+  describe('resolveFocusForRoot', () => {
+    it('is empty with no entries', () => {
+      expect(resolveFocusForRoot(repo, [])).toEqual([]);
+    });
+
+    it('resolves an existing entry to its absolute canonical path under the root', () => {
+      expect(resolveFocusForRoot(repo, ['src/app'])).toEqual([path.join(repo, 'src', 'app')]);
+    });
+
+    it('resolves the same entry against another root: the sibling worktree gets its own directory', () => {
+      expect(resolveFocusForRoot(sibling, ['src/app'])).toEqual([path.join(sibling, 'src', 'app')]);
+    });
+
+    it('resolves an entry that does not exist yet to its nearest existing ancestor realpath plus the missing tail', () => {
+      expect(resolveFocusForRoot(repo, ['src/not-yet'])).toEqual([path.join(repo, 'src', 'not-yet')]);
+    });
+
+    it.runIf(POSIX)('resolves a symlinked entry to its real target', () => {
+      fs.symlinkSync(path.join(repo, 'src', 'app'), path.join(repo, 'src', 'alias'), 'dir');
+      expect(resolveFocusForRoot(repo, ['src/alias'])).toEqual([path.join(repo, 'src', 'app')]);
+    });
+
+    it('is empty for a "." entry, and when "." is among the entries', () => {
+      expect(resolveFocusForRoot(repo, ['.'])).toEqual([]);
+      expect(resolveFocusForRoot(repo, ['src/app', '.'])).toEqual([]);
+    });
+
+    it('drops a junk entry and keeps the valid ones, without duplicates', () => {
+      const junk = ['/etc', '../escape', 42 as unknown as string];
+      expect(resolveFocusForRoot(repo, [...junk, 'src/app', 'src/app'])).toEqual([path.join(repo, 'src', 'app')]);
+    });
+
+    // An entry that spells a path inside the root but canonicalises outside it (a symlink to / or to a directory
+    // elsewhere) is dropped like wire junk. Kept, `/` would be an ancestor of every index root and focusPrefixesFor
+    // would read the whole session as unfiltered.
+    it.runIf(POSIX)('drops an entry whose symlink leaves the root, and keeps the entries that stay inside', () => {
+      const outside = path.join(tmp, 'outside');
+      fs.mkdirSync(outside);
+      fs.symlinkSync('/', path.join(repo, 'up'), 'dir');
+      fs.symlinkSync(outside, path.join(repo, 'out'), 'dir');
+      expect(resolveFocusForRoot(repo, ['up', 'src/app'])).toEqual([path.join(repo, 'src', 'app')]);
+      expect(resolveFocusForRoot(repo, ['out', 'src/app'])).toEqual([path.join(repo, 'src', 'app')]);
+    });
+
+    it.runIf(POSIX)('has no focus when every entry was dropped for leaving the root', () => {
+      const outside = path.join(tmp, 'outside');
+      fs.mkdirSync(outside);
+      fs.symlinkSync('/', path.join(repo, 'up'), 'dir');
+      fs.symlinkSync(outside, path.join(repo, 'out'), 'dir');
+      expect(resolveFocusForRoot(repo, ['out'])).toEqual([]);
+      expect(resolveFocusForRoot(repo, ['up', 'out'])).toEqual([]);
+    });
+
+    // The containment check is per root: `up` escapes in the main checkout only, so the sibling keeps its entry.
+    it.runIf(POSIX)('judges the symlink escape per root', () => {
+      fs.symlinkSync('/', path.join(repo, 'up'), 'dir');
+      fs.mkdirSync(path.join(sibling, 'up'));
+      expect(resolveFocusForRoot(repo, ['up'])).toEqual([]);
+      expect(resolveFocusForRoot(sibling, ['up'])).toEqual([path.join(sibling, 'up')]);
+    });
+
+    it.runIf(POSIX)('keeps a symlink that points to another directory inside the root', () => {
+      fs.symlinkSync(path.join(repo, 'src', 'lib'), path.join(repo, 'src', 'alias2'), 'dir');
+      expect(resolveFocusForRoot(repo, ['src/alias2'])).toEqual([path.join(repo, 'src', 'lib')]);
+    });
   });
 
-  it('resolves an existing focus dir to its absolute canonical path under the anchor root', () => {
-    expect(resolveSessionFocus(anchor, ['src/app'])).toEqual([fs.realpathSync(path.join(repo, 'src', 'app'))]);
-  });
+  describe.runIf(POSIX)('focusPrefixesForIndex', () => {
+    it('is null (no filtering) with no focus', () => {
+      expect(focusPrefixesForIndex(repo, [])).toBeNull();
+    });
 
-  it('resolves a focus dir that does not exist yet to its nearest existing ancestor realpath plus the missing tail', () => {
-    expect(resolveSessionFocus(anchor, ['src/not-yet'])).toEqual([path.join(anchor.root, 'src', 'not-yet')]);
-  });
+    it('maps an entry to the index-relative prefix when the index root is the worktree root', () => {
+      expect(focusPrefixesForIndex(repo, ['src/app'])).toEqual(['src/app']);
+    });
 
-  it.runIf(POSIX)('resolves a symlinked focus dir to its real target', () => {
-    fs.symlinkSync(path.join(repo, 'src', 'app'), path.join(repo, 'src', 'alias'), 'dir');
-    expect(resolveSessionFocus(anchor, ['src/alias'])).toEqual([fs.realpathSync(path.join(repo, 'src', 'app'))]);
-  });
+    it('a sibling worktree resolves the focus against its own root: the entry src gives the prefix src there', () => {
+      expect(focusPrefixesForIndex(sibling, ['src'])).toEqual(['src']);
+      expect(focusPrefixesForIndex(sibling, ['src/app', 'src/lib'])).toEqual(['src/app', 'src/lib']);
+    });
 
-  it('is empty for the whole repository: a "." entry means no focus', () => {
-    expect(resolveSessionFocus(anchor, ['.'])).toEqual([]);
-  });
+    it('is empty (nothing in focus) when no entry lies inside the index', () => {
+      fs.mkdirSync(path.join(sibling, 'sub', 'y'), { recursive: true });
+      expect(focusPrefixesForIndex(path.join(sibling, 'sub', 'y'), ['src/app'])).toEqual([]);
+    });
 
-  it('is empty when the whole repository is among the entries (it contains every focus dir)', () => {
-    expect(resolveSessionFocus(anchor, ['src/app', '.'])).toEqual([]);
-  });
+    it('a nested index root <worktree>/sub maps the entry sub/x to the prefix x', () => {
+      expect(focusPrefixesForIndex(path.join(repo, 'sub'), ['sub/x'])).toEqual(['x']);
+    });
 
-  // An entry that spells a path inside the root but canonicalises outside it (a symlink to / or to a directory
-  // elsewhere) is dropped like wire junk. Kept, `/` would be an ancestor of every index root and focusPrefixesFor
-  // would read the whole session as unfiltered.
-  it.runIf(POSIX)('drops an entry whose symlink leaves the repository, and keeps the entries that stay inside', () => {
-    const outside = path.join(tmp, 'outside');
-    fs.mkdirSync(outside);
-    fs.symlinkSync('/', path.join(repo, 'up'), 'dir');
-    fs.symlinkSync(outside, path.join(repo, 'out'), 'dir');
-    expect(resolveSessionFocus(anchor, ['up', 'src/app'])).toEqual([fs.realpathSync(path.join(repo, 'src', 'app'))]);
-    expect(resolveSessionFocus(anchor, ['out', 'src/app'])).toEqual([fs.realpathSync(path.join(repo, 'src', 'app'))]);
-  });
+    it('a nested index root <worktree>/sub finds nothing in focus for the entry other', () => {
+      expect(focusPrefixesForIndex(path.join(repo, 'sub'), ['other'])).toEqual([]);
+    });
 
-  it.runIf(POSIX)('has no focus when every entry was dropped for leaving the repository', () => {
-    const outside = path.join(tmp, 'outside');
-    fs.mkdirSync(outside);
-    fs.symlinkSync('/', path.join(repo, 'up'), 'dir');
-    fs.symlinkSync(outside, path.join(repo, 'out'), 'dir');
-    expect(resolveSessionFocus(anchor, ['out'])).toEqual([]);
-    expect(resolveSessionFocus(anchor, ['up', 'out'])).toEqual([]);
-  });
+    it('a nested index root inside the sibling worktree reads the entry against the sibling', () => {
+      expect(focusPrefixesForIndex(path.join(sibling, 'sub'), ['sub/x'])).toEqual(['x']);
+    });
 
-  it.runIf(POSIX)('keeps a symlink that points to another directory inside the repository', () => {
-    fs.symlinkSync(path.join(repo, 'src', 'lib'), path.join(repo, 'src', 'alias2'), 'dir');
-    expect(resolveSessionFocus(anchor, ['src/alias2'])).toEqual([fs.realpathSync(path.join(repo, 'src', 'lib'))]);
-  });
+    it('is null (no filtering) when an entry is the index root or contains it', () => {
+      expect(focusPrefixesForIndex(path.join(repo, 'sub'), ['sub'])).toBeNull();
+      expect(focusPrefixesForIndex(path.join(repo, 'sub', 'x'), ['sub'])).toBeNull();
+    });
 
-  it('drops wire junk (absolute, escaping, non-string) and keeps the valid entries', () => {
-    const junk = ['/etc', '../escape', 'src/app/../../../x', 42 as unknown as string];
-    expect(resolveSessionFocus(anchor, [...junk, 'src/app'])).toEqual([fs.realpathSync(path.join(repo, 'src', 'app'))]);
+    it('drops a symlink escape per root: an entry that leaves the worktree does not switch filtering off', () => {
+      fs.symlinkSync('/', path.join(repo, 'up'), 'dir');
+      expect(focusPrefixesForIndex(repo, ['up', 'src/app'])).toEqual(['src/app']);
+      // Every entry dropped: no focus, as with no --focus.
+      expect(focusPrefixesForIndex(repo, ['up'])).toBeNull();
+    });
+
+    it.skipIf(gitRootByStat(os.tmpdir()) !== null)('outside git, the index root is its own worktree root', () => {
+      const plain = path.join(tmp, 'plain');
+      fs.mkdirSync(path.join(plain, 'src', 'app'), { recursive: true });
+      expect(focusPrefixesForIndex(plain, ['src/app'])).toEqual(['src/app']);
+      // An entry is read against the index root itself, so a directory that does not exist yet still maps.
+      expect(focusPrefixesForIndex(plain, ['not-yet'])).toEqual(['not-yet']);
+    });
   });
 });
 

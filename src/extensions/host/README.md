@@ -84,9 +84,11 @@ extension's commands after it are skipped.
   only from `args` and `ctx`. `ctx.getCodeGraph(projectPath)` returns that project and throws the same errors the built-in handlers get (`NotIndexedError`,
   `PathRefusalError`, the WSL-shared-index and database-open failures); `executeReadTool` turns them
   into the usual responses.
-- **`ctx.focus` is the session's focus.** The absolute canonical directories the calling session's
-  `serve --mcp --focus <dir>` named (each `<dir>` is relative to the repository root), `[]` when it
-  has none. The server sets it for every call; a client's argument cannot (`dispatchToolCall` strips
+- **`ctx.focus` is the session's focus, for this call's worktree.** The absolute canonical directories
+  the calling session's `serve --mcp --focus <dir>` named (each `<dir>` is relative to the repository
+  root), resolved against the root of the git worktree the call is answered from: a call whose
+  `projectPath` is a sibling worktree of the session's repository gets that worktree's directories.
+  `[]` when the session has no focus or no worktree can be named for the call. The server sets it for every call; a client's argument cannot (`dispatchToolCall` strips
   the internal keys that carry it and the extension's `args` never contain them). A tool that narrows
   its answer compares an index with `focusPrefixesFor` and `inFocus` (`server/session-scope.ts`).
 - **A session's own env decides what it lists and may call; the server's decides what is loaded.**

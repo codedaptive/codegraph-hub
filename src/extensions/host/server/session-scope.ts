@@ -7,11 +7,14 @@
  * comes from the server's environment only for a legacy client whose hello carries no tool list. Each session
  * carries its own, from its launcher:
  *
- *  - focus: `serve --mcp --focus <dir>` (repeatable). Each `<dir>` is relative to the repository root (the
- *    session anchor's `root`), so one spelling means the same directories from any launch directory. The
- *    launcher sends the normalised dirs in its client hello; the session resolves them to absolute canonical
- *    directories ({@link resolveSessionFocus}), and search, explore, callers and impact compare an index's
- *    files against them ({@link focusPrefixesFor}, {@link inFocus}).
+ *  - focus: `serve --mcp --focus <dir>` (repeatable). Each `<dir>` is relative to the repository root, so one
+ *    spelling means the same directories from any launch directory AND in every git worktree of the repository:
+ *    a subagent working in a sibling worktree is held to the same `src/app` inside its own checkout. The
+ *    launcher sends the normalised dirs in its client hello and the session keeps them as repo-relative entries
+ *    ({@link sessionFocusEntries}); nothing absolute is stored, because the session has no one root. Each call
+ *    resolves the entries against the root of the worktree the call's index belongs to
+ *    ({@link worktreeRootOf}, {@link resolveFocusForRoot}), and search, explore, callers and impact compare
+ *    that index's files against the result ({@link focusPrefixesForIndex}, {@link inFocus}).
  *  - allowlist: the launcher's own `CODEGRAPH_MCP_TOOLS`, sent raw in the same hello and parsed here
  *    ({@link parseToolAllowlist}).
  *
@@ -26,12 +29,12 @@
  */
 import * as path from 'path';
 import { canonicalGitPath, nearestExistingDirectory } from '../worktree-lifecycle/git';
-import type { RepoAnchor } from './repo-anchor';
+import { gitRootByStat } from './index-root';
 
 /**
- * Internal tool-call argument key: the session's focus as absolute canonical directories
- * (`readonly string[]`, `[]` for no focus). Never accepted from the wire: `dispatchToolCall` strips it from
- * every call and sets it from the session.
+ * Internal tool-call argument key: the session's focus as normalised posix directories relative to the
+ * repository root (`readonly string[]`, `[]` for no focus). Never accepted from the wire: `dispatchToolCall`
+ * strips it from every call and sets it from the session.
  */
 export const SESSION_FOCUS_ARG = '__cgSessionFocus';
 
@@ -54,9 +57,8 @@ export class FocusArgError extends Error {}
 
 /**
  * The most `--focus` entries one session may carry. Every focused call canonicalises each entry again
- * ({@link focusPrefixesFor}, one realpath walk per entry), and the server resolves a hello's list on its main
- * thread, so the list is bounded: a hello under the 64 KiB line cap could otherwise hold thousands of entries and
- * cost over a second per session and a few hundred milliseconds per call. 64 is far above any real use of
+ * ({@link resolveFocusForRoot}, one realpath walk per entry), so the list is bounded: a hello under the 64 KiB
+ * line cap could otherwise hold thousands of entries and cost a few hundred milliseconds per call. 64 is far above any real use of
  * "a few directories". The CLI refuses a longer list ({@link normaliseFocusArgs}) and the hello parser drops one
  * (`parseClientHelloLine` in `src/mcp/daemon.ts`).
  */
@@ -84,7 +86,7 @@ function normaliseOne(raw: unknown): string {
 
 /**
  * Validate and normalise the `--focus` values (relative to the repository root). `.` and the empty string
- * stay `.`: the whole repository, which {@link resolveSessionFocus} reads as no focus. Throws
+ * stay `.`: the whole repository, which {@link sessionFocusEntries} reads as no focus. Throws
  * {@link FocusArgError} naming the bad value, for an absolute directory or one that escapes the root, and one
  * naming the cap for more than {@link MAX_FOCUS_ENTRIES} values.
  */
@@ -109,24 +111,21 @@ function canonicalWithMissingTail(p: string): string {
 }
 
 /**
- * The session's focus as absolute canonical directories under `anchor.root`: the realpath of each entry that
- * exists, and for one that does not exist yet the realpath of its nearest existing ancestor plus the missing
- * tail (the same as {@link canonicalWithMissingTail}). `[]` (no focus) for a session with no
- * anchor, no entries, or any `.` entry (the whole repository contains every other entry).
+ * The session's focus as it is kept: the normalised repo-relative entries of `dirs`, in order, without
+ * duplicates. `[]` (no focus) for no list, no entries, or any `.` entry (the whole repository contains every
+ * other entry). No anchor and no filesystem: the entries become directories only per call
+ * ({@link resolveFocusForRoot}).
  *
- * `dirs` can come off the wire (the client hello), so an entry that is not a string, is absolute or escapes
- * the root is dropped rather than trusted; the valid entries still apply. So is an entry that spells a path
- * inside the root but canonicalises outside it (a symlink in the repository to `/` or to another directory):
- * it is kept only when its canonical path is the canonical root or lies under it, segment by segment. Kept,
- * a symlink to `/` would be an ancestor of every index root and {@link focusPrefixesFor} would read the
- * session as unfiltered. A dropped entry is ignored, as wire junk is: a session whose every entry was dropped
- * has no focus (the same `[]` as no `--focus`), and the valid entries of a mixed list still filter.
+ * `dirs` can come off the wire (the client hello), so an entry that is not a string, is absolute or escapes the
+ * root is dropped rather than trusted; the valid entries still apply, and a session whose every entry was
+ * dropped has no focus (the same `[]` as no `--focus`). Only the first {@link MAX_FOCUS_ENTRIES} entries are
+ * read: the CLI refuses a longer list and the hello parser drops one, so the bound only holds this function to
+ * its own cost.
  */
-export function resolveSessionFocus(anchor: RepoAnchor | null, dirs: readonly string[] | undefined): string[] {
-  if (anchor === null || dirs === undefined) return [];
-  const root = canonicalWithMissingTail(anchor.root);
-  const resolved: string[] = [];
-  for (const raw of dirs) {
+export function sessionFocusEntries(dirs: readonly string[] | undefined): string[] {
+  if (dirs === undefined) return [];
+  const entries: string[] = [];
+  for (const raw of dirs.slice(0, MAX_FOCUS_ENTRIES)) {
     let normal: string;
     try {
       normal = normaliseOne(raw);
@@ -134,8 +133,52 @@ export function resolveSessionFocus(anchor: RepoAnchor | null, dirs: readonly st
       continue;
     }
     if (normal === '.') return [];
-    const abs = canonicalWithMissingTail(path.join(anchor.root, ...normal.split('/')));
-    if (!isSameOrBelow(root, abs)) continue;
+    if (!entries.includes(normal)) entries.push(normal);
+  }
+  return entries;
+}
+
+/**
+ * The canonical root of the git worktree that contains `dir`: the realpath of the nearest directory at or
+ * above it with a `.git` entry (a directory for a main checkout, a file for a linked worktree), found by stats
+ * alone ({@link gitRootByStat}); `dir`'s own canonical path when it is not inside a git working tree. `dir` is
+ * canonicalised first (a missing tail kept), so a symlinked spelling finds the same root as the real one. It is
+ * the directory a repo-relative focus entry is relative to for a call answered from an index at `dir`: each
+ * linked worktree of a repository is its own root, and an index nested below the root (`repo/sub/.codegraph`)
+ * still reads the focus against `repo`.
+ */
+export function worktreeRootOf(dir: string): string {
+  const canonical = canonicalWithMissingTail(dir);
+  return gitRootByStat(canonical) ?? canonical;
+}
+
+/**
+ * The focus `focus` (repo-relative entries, from {@link sessionFocusEntries}) as absolute canonical directories
+ * under `root`: the realpath of each entry that exists, and for one that does not exist yet the realpath of its
+ * nearest existing ancestor plus the missing tail (the same as {@link canonicalWithMissingTail}). `[]` (no
+ * focus) for no entries or any `.` entry.
+ *
+ * An entry that is not a valid repo-relative directory is dropped, as {@link sessionFocusEntries} drops it. So
+ * is an entry that spells a path inside `root` but canonicalises outside it (a symlink in the worktree to `/`
+ * or to another directory): it is kept only when its canonical path is the canonical root or lies under it,
+ * segment by segment. Kept, a symlink to `/` would be an ancestor of every index root and
+ * {@link focusPrefixesFor} would read the session as unfiltered. The check runs per root, so one entry can
+ * survive in a worktree and be dropped in a sibling whose entry is a symlink out. A session whose every entry
+ * was dropped has no focus here, as with no `--focus`.
+ */
+export function resolveFocusForRoot(root: string, focus: readonly string[]): string[] {
+  const canonicalRoot = canonicalWithMissingTail(root);
+  const resolved: string[] = [];
+  for (const raw of focus) {
+    let normal: string;
+    try {
+      normal = normaliseOne(raw);
+    } catch {
+      continue;
+    }
+    if (normal === '.') return [];
+    const abs = canonicalWithMissingTail(path.join(root, ...normal.split('/')));
+    if (!isSameOrBelow(canonicalRoot, abs)) continue;
     if (!resolved.includes(abs)) resolved.push(abs);
   }
   return resolved;
@@ -161,14 +204,15 @@ function isSameOrBelow(parent: string, child: string): boolean {
 }
 
 /**
- * How the session's focus applies to ONE index, whose root is `indexRoot` (`cg.getProjectRoot()`):
+ * How focus directories (absolute, from {@link resolveFocusForRoot}) apply to ONE index, whose root is
+ * `indexRoot` (`cg.getProjectRoot()`):
  *  - `null`: no filtering. The focus is empty, or some focus directory is the index root or contains it, so
  *    every file of the index is in focus.
  *  - `[]`: nothing in this index is in focus (no focus directory lies inside it).
  *  - `[p, ...]`: index-relative posix prefixes (no trailing slash) of the focus directories inside the index.
  *
  * Both sides are compared in canonical form, so a symlinked spelling of the index root matches the canonical
- * focus directories the session resolved.
+ * focus directories.
  */
 export function focusPrefixesFor(indexRoot: string, focus: readonly string[]): string[] | null {
   if (focus.length === 0) return null;
@@ -186,6 +230,18 @@ export function focusPrefixesFor(indexRoot: string, focus: readonly string[]): s
 }
 
 /**
+ * How the session's repo-relative `focus` applies to the index rooted at `indexRoot`, in {@link focusPrefixesFor}'s
+ * shape: the focus resolved against the root of the worktree that index sits in ({@link worktreeRootOf},
+ * {@link resolveFocusForRoot}), then compared with the index root. The one answer a handler uses, so a sibling
+ * worktree reads the focus against its own checkout and a nested index (`repo/sub/.codegraph`) still maps the
+ * entry `sub/x` to the prefix `x`. `null` with no focus, without touching the filesystem.
+ */
+export function focusPrefixesForIndex(indexRoot: string, focus: readonly string[]): string[] | null {
+  if (focus.length === 0) return null;
+  return focusPrefixesFor(indexRoot, resolveFocusForRoot(worktreeRootOf(indexRoot), focus));
+}
+
+/**
  * Whether an index-relative file path is in focus: `prefixes` is null (no filtering), or the path is one of
  * the prefixes or below it. Compares whole path segments, so `srcx/a.ts` is not in `src`.
  */
@@ -195,8 +251,9 @@ export function inFocus(filePath: string, prefixes: readonly string[] | null): b
 }
 
 /**
- * The session focus a call carries ({@link SESSION_FOCUS_ARG}): the strings of the array, `[]` when the key is
- * absent or malformed. A handler reads the focus only through this.
+ * The session focus a call carries ({@link SESSION_FOCUS_ARG}): the repo-relative entries, the strings of the
+ * array, `[]` when the key is absent or malformed. A handler reads the focus only through this, and turns it
+ * into directories per call with {@link focusPrefixesForIndex} or {@link resolveFocusForRoot}.
  */
 export function sessionFocusFromArgs(args: Record<string, unknown>): string[] {
   const raw = args[SESSION_FOCUS_ARG];

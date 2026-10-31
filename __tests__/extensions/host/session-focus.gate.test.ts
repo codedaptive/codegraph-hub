@@ -15,6 +15,8 @@
  * - G6: `serve --mcp` refuses an absolute or escaping --focus before it serves.
  * - G7: a --focus naming a symlink that leaves the repository is dropped, not trusted: the session still filters by
  *   its other --focus entries.
+ * - G8: --focus is relative to the repository root, not to the launch worktree: calls on a sibling linked worktree
+ *   are filtered by that worktree's own src/app, and its ctx.focus names it.
  *
  * The probe tool (`fixtures/focus-probe-extension.cjs`) reports the focus its context carries. The helpers are in
  * `machine-server.harness.ts`.
@@ -33,6 +35,7 @@ import {
   excerpt,
   gateEnv,
   serverPidOf,
+  sleep,
   stopIfCodegraph,
 } from './machine-server.harness';
 
@@ -373,8 +376,8 @@ describe('session focus gates (serve --mcp --focus over stdio, throwaway reposit
     expect(problems, 'G4c problems (empty when the unfocused search is unfiltered and the focused one is filtered)').toEqual([]);
   }, 150_000);
 
-  // G5: the extension tool's context carries the session focus: the absolute canonical focus dir for a focused
-  // session, [] for an unfocused one. --focus is relative to the repository root, so a session launched in src/lib
+  // G5: the extension tool's context carries the session focus resolved for the call's worktree: the absolute
+  // canonical focus dir for a focused session, [] for an unfocused one. --focus is relative to the repository root, so a session launched in src/lib
   // gets the same focus. Wire arguments cannot set it, and the extension never receives the internal keys.
   it('G5: an extension tool context carries the session focus, and a wire argument cannot set it', async () => {
     // Long by design: a CLI index run, three serve --mcp sessions on one server (a
@@ -420,6 +423,88 @@ describe('session focus gates (serve --mcp --focus over stdio, throwaway reposit
 
     expect(problems, 'G5 problems (empty when ctx.focus is the session focus and no wire argument sets it)').toEqual([]);
   }, 150_000);
+
+  // G8: --focus is relative to the repository root and applies to every worktree of the repository. The session
+  // is launched in repository A, and the calls name projectPath B, a sibling linked worktree with the same
+  // src/app and src/lib: they are held to B's own src/app, not to A's. The focus a launcher gives is one spelling
+  // for the whole repository, so a subagent working in its own worktree is filtered exactly as the lead is.
+  it('G8: --focus src/app launched in repository A filters calls on sibling worktree B to B/src/app', async () => {
+    // Long by design: a CLI index run of A, a serve --mcp cold start, a copied index and catch-up for B (its first
+    // call seeds it), and ten tool calls.
+    const root = fx.tempRoot();
+    const stateDir = path.join(root, 'state');
+    const repo = focusRepo(fx, root, stateDir);
+    const wt = fx.addWorktree(repo, 'g8-sibling', path.join(root, 'sibling'));
+    const env = { CODEGRAPH_EXTENSION_MODULES: FIXTURE, CODEGRAPH_MCP_TOOLS: `${TOOLS},${PROBE_SHORT}` };
+    const session = fx.session({ cwd: repo, stateDir, args: ['--focus', 'src/app'], env });
+    await session.initialize();
+
+    const problems: string[] = [];
+    // B has no index of its own: its first call seeds one from A's. Call (scope "repo", so no focus decides the
+    // result) until B answers from its own index, then judge the focused calls.
+    const deadline = Date.now() + 120_000;
+    let warm: ToolAnswer | undefined;
+    while (Date.now() < deadline) {
+      warm = await session.tool(SEARCH, { query: 'appFocusFn', scope: 'repo', projectPath: wt });
+      if (!warm.isError && warm.text.includes('src/app/app.ts')) break;
+      await sleep(500);
+    }
+    if (warm === undefined || warm.isError || !warm.text.includes('src/app/app.ts')) {
+      problems.push(`the sibling worktree never answered from its own index within 120 s: ${warm === undefined ? 'no answer' : excerpt(warm)}`);
+    }
+
+    const inApp = await session.tool(SEARCH, { query: 'appFocusFn', projectPath: wt });
+    if (inApp.isError || !inApp.text.includes('src/app/app.ts')) {
+      problems.push(`B: search for an in-focus symbol did not return src/app/app.ts: ${excerpt(inApp)}`);
+    }
+    const outSearch = await session.tool(SEARCH, { query: 'outsideCaller', projectPath: wt });
+    if (outSearch.isError || outSearch.rpcError !== null) {
+      problems.push(`B: search for an out-of-focus symbol was an error, not a success-shaped answer: ${excerpt(outSearch)}`);
+    }
+    if (outSearch.text.includes('src/lib/')) {
+      problems.push(`B: search in focus returned a src/lib result: ${excerpt(outSearch)}`);
+    }
+    const inExplore = await session.tool(EXPLORE, { query: 'appFocusFn', projectPath: wt });
+    if (!answers(inExplore, 'appFocusFn', APP_MARKER)) {
+      problems.push(`B: explore for an in-focus symbol did not return its source: ${excerpt(inExplore)}`);
+    }
+    if (inExplore.text.includes('src/lib/') || inExplore.text.includes(LIB_MARKER)) {
+      problems.push(`B: explore in focus showed a src/lib item: ${excerpt(inExplore)}`);
+    }
+    const outExplore = await session.tool(EXPLORE, { query: 'outsideCaller', projectPath: wt });
+    if (outExplore.isError || outExplore.rpcError !== null) {
+      problems.push(`B: explore for an out-of-focus symbol was an error, not a success-shaped answer: ${excerpt(outExplore)}`);
+    }
+    if (outExplore.text.includes(OUT_CALLER_MARKER) || outExplore.text.includes('src/lib/')) {
+      problems.push(`B: explore in focus returned src/lib for an out-of-focus symbol: ${excerpt(outExplore)}`);
+    }
+
+    for (const tool of [CALLERS, IMPACT]) {
+      const label = `B: ${tool.replace('codegraph_', '')}`;
+      const ans = await session.tool(tool, { symbol: 'focusTarget', projectPath: wt });
+      const at = ans.text.indexOf(OUTSIDE_HEADING);
+      if (ans.isError || at === -1) {
+        problems.push(`${label} has no "${OUTSIDE_HEADING}" heading: ${excerpt(ans)}`);
+        continue;
+      }
+      const inPart = ans.text.slice(0, at);
+      const outPart = ans.text.slice(at);
+      if (!inPart.includes('inFocusCaller')) problems.push(`${label} does not list inFocusCaller in the in-focus part: ${excerpt(ans)}`);
+      if (inPart.includes('outsideCaller')) problems.push(`${label} lists outsideCaller in the in-focus part`);
+      if (!outPart.includes('outsideCaller')) problems.push(`${label} does not list outsideCaller under the Outside focus heading`);
+    }
+
+    // The extension's context carries the focus resolved for B: B's own src/app.
+    const probe = probeOf(await session.tool(PROBE, { projectPath: wt }));
+    const expected = [path.join(wt, 'src', 'app')];
+    if (probe === null) {
+      problems.push('B: the probe was not served');
+    } else if (JSON.stringify(probe.focus) !== JSON.stringify(expected)) {
+      problems.push(`B: ctx.focus is ${JSON.stringify(probe.focus)}, expected ${JSON.stringify(expected)}`);
+    }
+
+    expect(problems, 'G8 problems (empty when a sibling worktree is held to its own src/app)').toEqual([]);
+  }, 300_000);
 });
 
 describe('a --focus symlink that leaves the repository', () => {

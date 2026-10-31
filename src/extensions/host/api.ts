@@ -21,8 +21,14 @@ export interface ExtensionToolContext {
    */
   getCodeGraph(projectPath?: string): CodeGraph;
   /**
-   * The calling session's focus: the absolute canonical directories its
-   * `--focus` named, `[]` when the session has none (the whole repository).
+   * The calling session's focus for THIS call: the absolute canonical
+   * directories its `--focus` named (each relative to the repository root),
+   * resolved against the root of the git worktree the call is answered from,
+   * so a call on a sibling worktree of the session's repository gets that
+   * worktree's own directories, not the launch worktree's. `[]` when the
+   * session has no focus (the whole repository), when no worktree can be
+   * named for the call (no `projectPath` and no default project), and when
+   * every entry was dropped (one that leaves the worktree through a symlink).
    * It is the session's own, set by the server for every call; an argument a
    * client sends cannot set it, and the tool's `args` never carry the internal
    * keys that transport it. A tool that narrows its results to the focus

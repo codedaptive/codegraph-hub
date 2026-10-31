@@ -71,8 +71,9 @@ export interface MCPSessionOptions {
    */
   anchor: RepoAnchor | null;
   /**
-   * The session's focus: absolute canonical directories (`resolveSessionFocus`)
-   * that search and explore results stay inside, `[]` or omitted for none. It
+   * The session's focus: directories relative to the repository root
+   * (`sessionFocusEntries`) that search and explore results stay inside, in
+   * every worktree of the repository; `[]` or omitted for none. It
    * reaches every tool call as an internal argument (see `dispatchToolCall`).
    */
   focus?: readonly string[];

@@ -63,7 +63,7 @@ import {
 import { ensureStateDir } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { BuilderClient } from '../extensions/host/builder/client';
-import { parseToolAllowlist, resolveSessionFocus } from '../extensions/host/server/session-scope';
+import { parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { getTelemetry } from '../telemetry';
 import { checkForUpdateInBackground } from '../upgrade/update-check';
 import { EARLY_PPID } from './early-ppid';
@@ -533,7 +533,7 @@ export class MCPServer {
     // the session's, exactly as the machine server takes them from a client hello.
     this.session = new MCPSession(transport, this.engine, {
       anchor,
-      focus: resolveSessionFocus(anchor, this.focus),
+      focus: sessionFocusEntries(this.focus),
       toolAllowlist: parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? ''),
     });
 

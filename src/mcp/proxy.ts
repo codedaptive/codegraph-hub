@@ -31,7 +31,7 @@ import { SERVER_INSTRUCTIONS } from './server-instructions';
 import { getStaticTools } from './tools';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { dispatchToolCall } from '../extensions/host/server/tool-call';
-import { parseToolAllowlist, resolveSessionFocus } from '../extensions/host/server/session-scope';
+import { parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { ErrorCodes } from './transport';
 import { ExploreSessionState } from './explore-session-state';
 import { getTelemetry, ClientInfo } from '../telemetry';
@@ -190,7 +190,7 @@ export interface LocalHandshakeDeps {
    *  resolved from it, so in-process calls answer for exactly the repository
    *  the server would have answered for. */
   launchDir: string;
-  /** The session's `--focus` directories, normalised and relative to the repository root (`normaliseFocusArgs`); none when omitted. The fallback resolves them against its anchor, as the server does for a hello. */
+  /** The session's `--focus` directories, normalised and relative to the repository root (`normaliseFocusArgs`); none when omitted. The fallback keeps them as the server does for a hello (`sessionFocusEntries`). */
   focus?: readonly string[];
 }
 
@@ -350,9 +350,9 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
           anchor,
           exploreSession,
           // This process's own scope, which the server would have had from the
-          // client hello: the focus resolved against the anchor, and this
-          // client's CODEGRAPH_MCP_TOOLS.
-          focus: resolveSessionFocus(anchor, deps.focus),
+          // client hello: its repo-relative focus entries, and this client's
+          // CODEGRAPH_MCP_TOOLS.
+          focus: sessionFocusEntries(deps.focus),
           toolAllowlist: parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? ''),
           params: msg.params,
         });

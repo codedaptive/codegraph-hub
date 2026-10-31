@@ -61,8 +61,8 @@ export interface ToolCallInput {
   /** The calling session's explore history (CG-17); omitted when the caller keeps none. */
   exploreSession?: ExploreSessionState;
   /**
-   * The session's focus: absolute canonical directories (`resolveSessionFocus`),
-   * `[]` or omitted for a session with none.
+   * The session's focus: normalised directories relative to the repository root
+   * (`sessionFocusEntries`), `[]` or omitted for a session with none.
    */
   focus?: readonly string[];
   /**

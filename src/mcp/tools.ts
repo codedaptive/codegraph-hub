@@ -148,16 +148,18 @@ function wslSharedIndexGuidance(err: WslSharedIndexError): string {
 export { PathRefusalError } from '../errors';
 import { PathRefusalError } from '../errors';
 import { indexedHashInput } from '../file-limits';
-import { relative as relativePath, resolve as resolvePath } from 'path';
+import { resolve as resolvePath } from 'path';
 import { MISSING_PROJECT_PATH_TEXT } from '../extensions/host/server/repo-anchor';
 import { extensionTools, findExtensionTool, isExtensionTool, setBuiltins } from '../extensions/host/registry';
 import {
-  focusPrefixesFor,
+  focusPrefixesForIndex,
   inFocus,
   parseToolAllowlist,
+  resolveFocusForRoot,
   sessionFocusFromArgs,
   sessionToolsFromArgs,
   withoutSessionArgs,
+  worktreeRootOf,
   type SessionToolList,
 } from '../extensions/host/server/session-scope';
 
@@ -1682,9 +1684,10 @@ const scopeProperty: PropertySchema = {
 };
 
 /**
- * How the session's focus applies to this call, in the index the call resolved to (`focusPrefixesFor`):
- * `null` filters nothing, `[]` means no file of this index is in focus, otherwise the index-relative
- * directories a file must sit under.
+ * How the session's focus applies to this call, in the index the call resolved to (`focusPrefixesForIndex`:
+ * the session's repo-relative entries read against the root of the worktree that index sits in, so a call on a
+ * sibling worktree is held to that worktree's own directories): `null` filters nothing, `[]` means no file of
+ * this index is in focus, otherwise the index-relative directories a file must sit under.
  *
  * The focus comes from the internal `SESSION_FOCUS_ARG` the one dispatch sets (never from the wire). `scopable`
  * is true for the tools that take `scope` (search, explore): `scope: "repo"` lifts the filter for that call and
@@ -1693,28 +1696,25 @@ const scopeProperty: PropertySchema = {
  */
 function focusPrefixesOfCall(cg: CodeGraph, args: Record<string, unknown>, scopable: boolean): string[] | null {
   if (scopable && args.scope === 'repo') return null;
-  return focusPrefixesFor(cg.getProjectRoot(), sessionFocusFromArgs(args));
+  return focusPrefixesForIndex(cg.getProjectRoot(), sessionFocusFromArgs(args));
 }
 
 /**
  * The answer for a search or explore whose focus left nothing: a success-shaped sentence (never an error, so
  * the agent keeps using the tool) that names the focus and how to widen the call. `prefixes` is non-null.
  * The directories are index-relative (the repository root for the usual one-index repository); when no
- * focus directory lies inside this index they are the session's focus directories relative to its root.
+ * focus directory lies inside this index they are the session's focus entries, relative to the repository root.
  */
-function nothingInFocusText(cg: CodeGraph, args: Record<string, unknown>, prefixes: readonly string[]): string {
-  return `No results inside this session's focus (${focusDirsText(cg, args, prefixes)}). Pass scope: "repo" to search the whole repository.`;
+function nothingInFocusText(args: Record<string, unknown>, prefixes: readonly string[]): string {
+  return `No results inside this session's focus (${focusDirsText(args, prefixes)}). Pass scope: "repo" to search the whole repository.`;
 }
 
 /**
  * The focus directories as the agent reads them in a sentence: the index-relative `prefixes`, or, when no focus
- * directory lies inside this index, the session's focus directories relative to the index root.
+ * directory lies inside this index, the session's own focus entries (already relative to the repository root).
  */
-function focusDirsText(cg: CodeGraph, args: Record<string, unknown>, prefixes: readonly string[]): string {
-  const dirs = prefixes.length > 0
-    ? [...prefixes]
-    : sessionFocusFromArgs(args).map((d) => relativePath(cg.getProjectRoot(), d).split('\\').join('/') || '.');
-  return dirs.join(', ');
+function focusDirsText(args: Record<string, unknown>, prefixes: readonly string[]): string {
+  return (prefixes.length > 0 ? [...prefixes] : sessionFocusFromArgs(args)).join(', ');
 }
 
 /**
@@ -3627,17 +3627,33 @@ export class ToolHandler {
       default: {
         const ext = findExtensionTool(toolName);
         if (ext) {
-          // The extension gets the session's focus in its context and never the
-          // internal keys: a tool that echoed or forwarded its args could not
-          // leak or replay them.
+          // The extension gets the session's focus, resolved for this call's
+          // worktree, in its context and never the internal keys: a tool that
+          // echoed or forwarded its args could not leak or replay them.
           return await ext.handle(withoutSessionArgs(args), {
             getCodeGraph: (p?: string) => this.getCodeGraph(p),
-            focus: sessionFocusFromArgs(args),
+            focus: this.focusDirsForCall(args),
           });
         }
         return this.errorResult(`Unknown tool: ${toolName}`);
       }
     }
+  }
+
+  /**
+   * The session's focus as `ctx.focus` carries it for this call: absolute canonical directories, the session's
+   * repo-relative entries read against the root of the worktree the call is answered from. That worktree is
+   * the one holding the index {@link selectIndexRoot} picks for the call's `projectPath` (nothing is opened),
+   * else the one containing `projectPath`; a call with no `projectPath` uses the default project's, and `[]`
+   * when there is none. `[]` too for a session with no focus. The built-in handlers apply the same rule per
+   * index through `focusPrefixesForIndex`.
+   */
+  private focusDirsForCall(args: Record<string, unknown>): string[] {
+    const entries = sessionFocusFromArgs(args);
+    if (entries.length === 0) return [];
+    const projectPath = typeof args.projectPath === 'string' && args.projectPath !== '' ? args.projectPath : null;
+    const base = projectPath === null ? this.cg?.getProjectRoot() : (selectIndexRoot(projectPath) ?? projectPath);
+    return base ? resolveFocusForRoot(worktreeRootOf(base), entries) : [];
   }
 
   /**
@@ -3675,7 +3691,7 @@ export class ToolHandler {
       // Hits that all sat outside the focus are a different answer from no hits at all: say which, and how to widen.
       return this.textResult(
         prefixes !== null && found.length > 0
-          ? nothingInFocusText(cg, args, prefixes)
+          ? nothingInFocusText(args, prefixes)
           : `No results found for "${query}"`,
       );
     }
@@ -5378,7 +5394,7 @@ export class ToolHandler {
     // the agent to stop calling), and it never points at a file the focus excludes.
     if (prefixes !== null && subgraph.nodes.size === 0) {
       diag?.finishEmpty('nothing inside the session focus');
-      const outsideFocus = nothingInFocusText(cg, args, prefixes);
+      const outsideFocus = nothingInFocusText(args, prefixes);
       return { ...this.textResult(outsideFocus), [EXPLORE_EMISSION_KEY]: {
         projectRoot, query, files: [], sourceBytes: 0, responseBytes: outsideFocus.length,
       } };
@@ -6148,7 +6164,7 @@ export class ToolHandler {
     // What the summary says when the focus left something out, reserved like the rest of it. Names the focus
     // directories and the way to widen the call, and carries no count and no path of what was left out.
     const focusNote = focusDropped && prefixes !== null
-      ? ` Results outside this session's focus (${focusDirsText(cg, args, prefixes)}) are left out; pass scope: "repo" to include them.`
+      ? ` Results outside this session's focus (${focusDirsText(args, prefixes)}) are left out; pass scope: "repo" to include them.`
       : '';
     const summaryReserve = `Found ${plural(subgraph.nodes.size, 'symbol')} across ${plural(fileGroups.size, 'file')}.`.length
       + focusNote.length

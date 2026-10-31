@@ -70,7 +70,7 @@ import { isProcessAlive } from './server-control';
 import { removeLockIfUnchanged, snapshotLock, writeExclusiveTemp } from './lock-takeover';
 import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
-import { MAX_FOCUS_ENTRIES, parseToolAllowlist, resolveSessionFocus } from '../extensions/host/server/session-scope';
+import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { BuilderClient } from '../extensions/host/builder/client';
 
 /**
@@ -199,7 +199,9 @@ export interface DaemonClientHello {
   /**
    * The session's `--focus` directories, normalised and relative to the
    * repository root (`normaliseFocusArgs`); `[]` for a session with none. The
-   * server resolves them against the anchor, so a bad entry is dropped there.
+   * server keeps them as repo-relative entries (`sessionFocusEntries`, which
+   * drops a bad one) and resolves them per call against the worktree the call
+   * lands in.
    */
   focus?: string[];
   /**
@@ -462,12 +464,13 @@ export class Daemon {
         if (this.stopping || socket.destroyed) { socket.destroy(); return; }
       }
       const transport = new SocketTransport(socket);
-      // The session's own scope, from its hello: a focus the anchor resolves, and
+      // The session's own scope, from its hello: its repo-relative focus entries
+      // (resolved per call, so they hold in every worktree of the repository), and
       // the client's allowlist (undefined when the hello carried none: a legacy
       // client, which falls back to this process's CODEGRAPH_MCP_TOOLS).
       const session = new MCPSession(transport, this.engine, {
         anchor,
-        focus: resolveSessionFocus(anchor, peers.focus),
+        focus: sessionFocusEntries(peers.focus),
         toolAllowlist: peers.tools === undefined ? undefined : parseToolAllowlist(peers.tools),
       });
       transport.onClose(() => this.dropClient(session));
