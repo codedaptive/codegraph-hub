@@ -1689,14 +1689,18 @@ const scopeProperty: PropertySchema = {
  * sibling worktree is held to that worktree's own directories): `null` filters nothing, `[]` means no file of
  * this index is in focus, otherwise the index-relative directories a file must sit under.
  *
- * The focus comes from the internal `SESSION_FOCUS_ARG` the one dispatch sets (never from the wire). `scopable`
- * is true for the tools that take `scope` (search, explore): `scope: "repo"` lifts the filter for that call and
- * any other value keeps it. Callers and impact pass false: they cover the whole repository, and for them the
- * focus decides which results are counted and listed first and which go under `## Outside focus`.
+ * The focus comes from the internal `SESSION_FOCUS_ARG` the one dispatch sets (never from the wire). A call
+ * whose session has no focus returns `null` without touching `cg`, so the focus step never reads the index's
+ * `getProjectRoot`. `scopable` is true for the tools that take `scope` (search, explore): `scope: "repo"` lifts
+ * the filter for that call and any other value keeps it. Callers and impact pass false: they cover the whole
+ * repository, and for them the focus decides which results are counted and listed first and which go under
+ * `## Outside focus`.
  */
-function focusPrefixesOfCall(cg: CodeGraph, args: Record<string, unknown>, scopable: boolean): string[] | null {
+export function focusPrefixesOfCall(cg: Pick<CodeGraph, 'getProjectRoot'>, args: Record<string, unknown>, scopable: boolean): string[] | null {
   if (scopable && args.scope === 'repo') return null;
-  return focusPrefixesForIndex(cg.getProjectRoot(), sessionFocusFromArgs(args));
+  const focus = sessionFocusFromArgs(args);
+  if (focus.length === 0) return null;
+  return focusPrefixesForIndex(cg.getProjectRoot(), focus);
 }
 
 /**

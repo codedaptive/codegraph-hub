@@ -32,8 +32,12 @@ let tempDir: string;
 beforeEach(() => {
   savedStateDir = process.env.CODEGRAPH_STATE_DIR;
   delete process.env.CODEGRAPH_STATE_DIR;
-  // Realpath'd: the state dir is canonical, and os.tmpdir() is a symlink on some systems (macOS /var).
-  tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-state-dir-')));
+  // Realpath'd: the state dir is canonical, and /tmp is a symlink on macOS (to /private/tmp).
+  // Not os.tmpdir(): the in-state socket candidate (`<state dir>/server.sock`) is dropped past 100
+  // characters, so a long TMPDIR would change what these tests see. Windows has no /tmp, so it keeps
+  // os.tmpdir().
+  const base = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+  tempDir = fs.realpathSync(fs.mkdtempSync(path.join(base, 'cg-state-dir-')));
 });
 
 afterEach(() => {
