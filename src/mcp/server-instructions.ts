@@ -12,7 +12,8 @@
  * call guard enforces (src/extensions/host/server/repo-anchor.ts): `projectPath`
  * is required on every call (the exact missing-argument answer is
  * MISSING_PROJECT_PATH_TEXT there), and a session answers only for the
- * repository it was launched in and that repository's worktrees.
+ * repository it was launched in and that repository's worktrees, or, launched
+ * outside git, only the launch directory and what is below it.
  *
  * Goals when editing this:
  *   - Lead the agent to codegraph_explore for any structural/flow question
@@ -24,6 +25,13 @@
  * DEFAULT_MCP_TOOLS in tools.ts) — reference only that tool here. The other
  * tools (node/search/callers/…) stay defined and are re-enablable via
  * CODEGRAPH_MCP_TOOLS, but they are NOT listed to agents, so don't name them.
+ * The one exception is the focus paragraph: every session is shown it, whatever
+ * its tool list, and it names `codegraph_search`, `codegraph_explore`,
+ * `codegraph_callers` and `codegraph_impact`, the tools a focus narrows or
+ * orders. Callers and impact are named because their out-of-focus section is the
+ * one place a focused session sees what the focus held back. The text is the same
+ * for every session (the proxy sends it too), so it states what a focus does, not
+ * whether this session has one.
  */
 export const SERVER_INSTRUCTIONS = `# Codegraph — code intelligence over an indexed knowledge graph
 
@@ -61,7 +69,11 @@ calls; a grep/read exploration is dozens.
 
 This server has no default project. Pass \`projectPath\` — the root path of the code you want to query — on every \`codegraph_explore\` call. A call without it is answered exactly \`missing argument: root path to the code you wish to query\`; add the argument and call again.
 
-The session answers only for the repository it was launched in and that repository's git worktrees (siblings of this checkout included: pass a sibling worktree's path to query it). A \`projectPath\` outside them is answered with guidance naming the repository this session covers, not with results and not with an error: use your built-in tools (Read/Grep/Glob) for code elsewhere.
+The session answers only for the repository it was launched in and that repository's git worktrees (siblings of this checkout included: pass a sibling worktree's path to query it), or, launched outside git, only the launch directory and what is below it. A \`projectPath\` outside them is answered with guidance naming the repository this session covers, not with results and not with an error: use your built-in tools (Read/Grep/Glob) for code elsewhere.
+
+## Focus
+
+A session may be started with \`--focus <dir>\` (repeatable; directories relative to the repository root). With a focus, \`codegraph_search\` and \`codegraph_explore\` return only code inside those directories; pass \`scope: "repo"\` to search the whole repository instead (\`scope\` has no effect when the session has no focus). \`codegraph_callers\` and \`codegraph_impact\` always cover the whole repository: the in-focus results come first, and those outside the focus are listed after them under \`## Outside focus (N)\`. An answer that says nothing is inside the focus is not an error: for \`codegraph_search\` and \`codegraph_explore\`, repeat the call with \`scope: "repo"\`. \`codegraph_callers\` and \`codegraph_impact\` take no \`scope\`; their headline counts (\`N found\`, \`affects N symbols\`) count the in-focus results only, and the rest are listed under \`## Outside focus (N)\`.
 
 ## How to query
 
@@ -85,8 +97,8 @@ The session answers only for the repository it was launched in and that reposito
 
 ## Limitations
 
-- If a tool reports a project isn't indexed (no \`.codegraph/\`), stop calling codegraph tools for that project for the rest of the session and use your built-in tools there instead — unless the answer says the index is being built or will be copied in from another git worktree, in which case retry later. Indexing is the user's decision — mention they can run \`codegraph init\` if it comes up, but don't run it yourself.
-- A git worktree with no index of its own gets one automatically on its first call when another worktree of the same repository is indexed: just pass the worktree as \`projectPath\`.
+- If a tool answers that a project isn't indexed (no \`.codegraph/\`), use your built-in tools (Read/Grep/Glob) for that code for now. When the answer says the index is being built, retry the same \`projectPath\` later. Indexing is the user's decision — if it comes up, mention they can run \`codegraph init\` in that project; don't run it yourself.
+- A git worktree with no index of its own gets one on its first call: copied from another indexed worktree of the same repository or, when there is none, built in the background. A plain directory (not in git) with no index is built in the background at the directory this session was launched in, whichever path inside it you pass. While a copy or build runs, the call answers that it is building: retry later, since a large repository takes minutes. If an answer says codegraph does not build an index for a directory (such as your home directory) or that a build failed, use your built-in tools there. Pass the worktree or directory itself as \`projectPath\`.
 - Index lags file writes by ~1 second. Pass \`fresh: true\` to any tool to wait (bounded) until the index matches the working tree before it answers; \`fresh\` or \`checkpoint: true\` ends a successful answer with a \`Checkpoint:\` line (git HEAD, uncommitted-changes hash, pending file count). (\`fresh\` itself never creates an index.)
 - Cross-file resolution is best-effort name matching; ambiguous calls may return multiple candidates.
 - No live correctness validation — that's still the TypeScript compiler / test suite / linter's job. Codegraph supplements those with structural context they don't have.

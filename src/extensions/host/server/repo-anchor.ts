@@ -180,7 +180,7 @@ export async function sessionCallGuard(
     return {
       answer: textResult(
         `This codegraph session answers only for the repository it was launched in, ${anchor.root}, and its ` +
-          `git worktrees. "${given}" is outside it. Pass a projectPath inside ${anchor.root} (or one of ` +
+          `git worktrees, or, launched outside git, only the launch directory and what is below it. "${given}" is outside it. Pass a projectPath inside ${anchor.root} (or one of ` +
           'its worktrees), and use your built-in tools (Read/Grep/Glob) for code elsewhere.',
       ),
     };
@@ -204,7 +204,7 @@ export function indexRootAdmission(anchor: RepoAnchor): IndexRootAdmission {
     if (await isInsideAnchor(anchor, indexRoot)) return null;
     return (
       `This codegraph session answers only for the repository it was launched in, ${anchor.root}, and its ` +
-      `git worktrees. The index that covers the path you gave is at ${indexRoot}, outside that repository, so ` +
+      `git worktrees, or, launched outside git, only the launch directory and what is below it. The index that covers the path you gave is at ${indexRoot}, outside that repository, so ` +
       'codegraph does not answer from it. Use your built-in tools (Read/Grep/Glob) for this code.'
     );
   };

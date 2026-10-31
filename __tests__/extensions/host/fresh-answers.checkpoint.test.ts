@@ -24,6 +24,7 @@ import {
   computeUncommittedHash,
   readCheckpoint,
   readGitHead,
+  READ_ONLY_SYNC_ERROR,
   resolveFreshSettleTimeoutMs,
   resolveFreshTimeoutMs,
   waitForFresh,
@@ -70,7 +71,7 @@ const A_EDIT = 'export function a() { return 1; }\nexport function freshlyAdded(
 
 // Over 5 s possible: each test indexes a fresh repo, and V5 then syncs with a 20 s wait bound; on a
 // loaded machine that passes vitest's 5 s default. 30 s covers the setup plus V5's bound.
-describe('answer checkpoint (Unit A)', { timeout: 30_000 }, () => {
+describe('answer checkpoint', { timeout: 30_000 }, () => {
   const dirs: string[] = [];
   const graphs: CodeGraph[] = [];
 
@@ -153,7 +154,7 @@ describe('answer checkpoint (Unit A)', { timeout: 30_000 }, () => {
     const { cg, git, write } = await setup();
     write('a.ts', A_EDIT);
     const dirtyBefore = (await readCheckpoint(cg)).dirtyHash;
-    const cp5 = await waitForFresh(cg, { timeoutMs: 20_000 });
+    const cp5 = await waitForFresh(cg, { timeoutMs: 20_000, sync: () => cg.sync() });
     expect(cp5.fresh).toBe(true);
     expect(cp5.pending).toBe(0);
     expect(cp5.timedOut).toBe(false);
@@ -166,7 +167,7 @@ describe('answer checkpoint (Unit A)', { timeout: 30_000 }, () => {
   it('V6: timeoutMs 0 with a pending edit returns not fresh and timed out, without throwing', async () => {
     const { cg, write } = await setup();
     write('a.ts', A_EDIT);
-    const cp6 = await waitForFresh(cg, { timeoutMs: 0 });
+    const cp6 = await waitForFresh(cg, { timeoutMs: 0, sync: () => cg.sync() });
     expect(cp6.fresh).toBe(false);
     expect(cp6.timedOut).toBe(true);
     expect(cp6.pending).toBe(1);
@@ -179,10 +180,26 @@ describe('answer checkpoint (Unit A)', { timeout: 30_000 }, () => {
     const ro = await CodeGraph.open(root, { readOnly: true });
     graphs.push(ro);
     write('a.ts', A_EDIT);
-    const cp7 = await waitForFresh(ro, { timeoutMs: 5_000 });
+    // Its caller's sync is its own write, so even one handed in fails on the read-only database.
+    const cp7 = await waitForFresh(ro, { timeoutMs: 5_000, sync: () => ro.sync() });
     expect(cp7.fresh).toBe(false);
     expect(typeof cp7.syncError).toBe('string');
     expect(cp7.syncError!.length).toBeGreaterThan(0);
+  });
+
+  it('V7b: with no sync to run the wait only measures and says the session holds the index read-only', async () => {
+    const { cg, root, write } = await setup();
+    cg.close();
+    const ro = await CodeGraph.open(root, { readOnly: true });
+    graphs.push(ro);
+    write('a.ts', A_EDIT);
+    const cp = await waitForFresh(ro, { timeoutMs: 5_000 });
+    expect(cp.fresh).toBe(false);
+    expect(cp.pending).toBe(1);
+    expect(cp.timedOut).toBe(false);
+    expect(cp.syncError).toBe(READ_ONLY_SYNC_ERROR);
+    // Measuring only, not waiting out the 5 s bound (the measure itself takes a git status's time under load).
+    expect(cp.waitedMs).toBeLessThan(5_000);
   });
 
   it('V8: in a subdir project an edit outside the project does not change the dirty hash', async () => {
@@ -328,8 +345,8 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
 
   const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-  /** A source whose pending count is `state.pending` and whose sync is `sync`. */
-  function stubSource(sync: () => Promise<unknown>, state = { pending: 1 }): CheckpointSource {
+  /** A source whose pending count is `state.pending`, with the `sync` the wait is handed. */
+  function stubSource(sync: () => Promise<unknown>, state = { pending: 1 }): CheckpointSource & { sync: () => Promise<unknown> } {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-fresh-stub-')));
     dirs.push(root);
     return {
@@ -344,7 +361,7 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
   it('a sync still running when the bound passes ends the wait timed out, not fresh', async () => {
     let calls = 0;
     const src = stubSource(() => { calls++; return new Promise<never>(() => { /* never settles */ }); });
-    const out = await waitForFresh(src, { timeoutMs: BOUND_MS });
+    const out = await waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
     expect(out.timedOut).toBe(true);
     expect(out.fresh).toBe(false);
     expect(out.pending).toBe(1);
@@ -364,7 +381,7 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
         rejected = true;
         throw new Error('late failure');
       });
-      const out = await waitForFresh(src, { timeoutMs: BOUND_MS });
+      const out = await waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
       expect(out.timedOut).toBe(true);
       expect(out.syncError).toBeUndefined();
       expect(rejected).toBe(false);
@@ -392,7 +409,7 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
       if (calls === 2) throw new LockUnavailableError();
       state.pending = 0;
     }, state);
-    const out = await waitForFresh(src, { timeoutMs: GENEROUS_MS, pollMs: POLL_MS });
+    const out = await waitForFresh(src, { timeoutMs: GENEROUS_MS, pollMs: POLL_MS, sync: src.sync });
     expect(calls).toBe(3);
     expect(out.fresh).toBe(true);
     expect(out.pending).toBe(0);
@@ -403,7 +420,7 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
   it('a sync failure other than lock contention stops the wait at once with its message', async () => {
     let calls = 0;
     const src = stubSource(async () => { calls++; throw new Error('disk I/O error'); });
-    const out = await waitForFresh(src, { timeoutMs: GENEROUS_MS, pollMs: POLL_MS });
+    const out = await waitForFresh(src, { timeoutMs: GENEROUS_MS, pollMs: POLL_MS, sync: src.sync });
     expect(calls).toBe(1);
     expect(out.syncError).toBe('disk I/O error');
     expect(out.fresh).toBe(false);
@@ -429,7 +446,7 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
 
   const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-  function stubSource(sync: () => Promise<unknown>): CheckpointSource {
+  function stubSource(sync: () => Promise<unknown>): CheckpointSource & { sync: () => Promise<unknown> } {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-fresh-tracked-')));
     dirs.push(root);
     return {
@@ -447,10 +464,10 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
     return done;
   }
 
-  it('U1 settled is pending when the wait times out and resolves once the late sync resolves', async () => {
+  it('settled is pending when the wait times out and resolves once the late sync resolves', async () => {
     let syncDone = false;
     const src = stubSource(async () => { await sleep(SYNC_SETTLES_AFTER_MS); syncDone = true; });
-    const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS });
+    const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
     expect(checkpoint.timedOut).toBe(true);
     expect(checkpoint.fresh).toBe(false);
     expect(syncDone).toBe(false);
@@ -459,7 +476,7 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
     expect(syncDone).toBe(true);
   });
 
-  it('U1 settled still resolves, with no unhandled rejection, when the late sync rejects', async () => {
+  it('settled still resolves, with no unhandled rejection, when the late sync rejects', async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
     process.on('unhandledRejection', onUnhandled);
@@ -470,7 +487,7 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
         rejected = true;
         throw new Error('late failure');
       });
-      const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS });
+      const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
       expect(checkpoint.timedOut).toBe(true);
       expect(checkpoint.syncError).toBeUndefined();
       expect(await isResolved(settled)).toBe(false);

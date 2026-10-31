@@ -1,5 +1,5 @@
 /**
- * Worktree seeding, unit level (request worktree-lifecycle, unit U1).
+ * Worktree seeding, unit level.
  *
  * A fresh git worktree of a repository that already has an index in one of
  * its other worktrees gets its own index by copying that sibling's database
@@ -26,6 +26,8 @@ import CodeGraph from '../../../src/index';
 import { listGitWorktrees, commitDistance } from '../../../src/extensions/host/worktree-lifecycle/git';
 import { pickSeedSource, seedFromSibling, ensureWorktreeIndex } from '../../../src/extensions/host/worktree-lifecycle/seed';
 import { readSeedNonce } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
+import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
+import { JobQueue } from '../../../src/extensions/host/builder/queue';
 
 // vite's resolver strips the `node:` prefix from an import of node:sqlite,
 // so it is loaded with require (as the upstream suites do).
@@ -207,8 +209,10 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
     addWorktree(main, wt1, 'one');
     addWorktree(main, wt2, 'two');
 
-    const first = await ensureWorktreeIndex(wt1);
-    const second = await ensureWorktreeIndex(wt2);
+    // The builder's host: the copies run as jobs on a queue, as they do in the builder process.
+    const host = new BuilderSeedHost(new JobQueue());
+    const first = await ensureWorktreeIndex(wt1, host);
+    const second = await ensureWorktreeIndex(wt2, host);
     expect(first).toMatchObject({ kind: 'seeded', root: real(wt1), source: real(main) });
     expect(second).toMatchObject({ kind: 'seeded', root: real(wt2), source: real(main) });
 

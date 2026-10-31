@@ -1,15 +1,16 @@
 /**
  * Project writer lock (#1740).
  *
- * At most one long-lived *writer* (a process whose engine owns the project's
- * FileWatcher and sync) may serve a given project. The machine server
- * multiplexes every client onto one engine, so within one state directory a
- * project has one writer; this lock closes the gap between processes: two
- * servers on different state dirs (a development build beside the live one),
- * or a server and a `CODEGRAPH_NO_DAEMON=1` session, would each start a
- * watcher, contend on `codegraph.lock`, and degrade auto-sync. The project
- * lifecycle (`project-lifecycle.ts`) takes it per project, with mode
- * `fallback`; the index builders take `rebuild.pid` with their own modes.
+ * At most one long-lived *writer* (a process that owns the project's
+ * FileWatcher and sync) may serve a given project. The writer is the index
+ * builder (`src/extensions/host/builder/`): every server of a state directory
+ * has one builder, and the server itself never writes an index, so within one
+ * state directory a project has one writer; this lock closes the gap between
+ * processes: the builders of two state dirs (a development build beside the
+ * live one), or of a server and a `CODEGRAPH_NO_DAEMON=1` session, would each
+ * start a watcher, contend on `codegraph.lock`, and degrade auto-sync. The builder
+ * takes it per held project, with mode `builder`; the cold build and the seed
+ * take `rebuild.pid` with their own modes.
  *
  * Deliberately separate from `server.pid`: the server lock says which process
  * is the machine server of a state dir, and is proven by a socket hello; a
@@ -265,7 +266,7 @@ export function getWriterPidPath(projectRoot: string, lockName: 'writer.pid' | '
  */
 export interface WriterLockInfo extends Partial<LockStamp> {
   pid: number;
-  /** Who took the slot (`fallback`: the project lifecycle; `cold-build`, `seed`: the index builders; `rebuild`: `codegraph index`) — for actionable error text only. */
+  /** Who took the slot (`builder`: the index builder's hold on a project; `cold-build`, `seed`: the builder's index jobs; `rebuild`: `codegraph index`) — for actionable error text only. */
   mode: string;
   startedAt: number;
   /** False until the MCP owner has finished its initial catch-up. */

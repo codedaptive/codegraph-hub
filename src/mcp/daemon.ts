@@ -10,6 +10,12 @@
  * every tool call names its own `projectPath` (the session's repo anchor decides
  * which repositories that session may ask about).
  *
+ * The server only reads. Every index write (cold builds, seeding a worktree's
+ * index, syncs, the file watchers) is done by the index builder, one child
+ * process of the server (src/extensions/host/builder/): the server starts it with
+ * itself, restarts it when it dies, never idles it out, and stops it when it
+ * stops. A builder that loses its server exits with the connection to it.
+ *
  * Lifecycle (see also `./index.ts` and `./proxy.ts`):
  *   - The server is spawned **detached** (its own session/process group, stdio
  *     decoupled, cwd = the state directory) by the first launcher that finds no
@@ -64,6 +70,8 @@ import { isProcessAlive } from './server-control';
 import { removeLockIfUnchanged, snapshotLock, writeExclusiveTemp } from './lock-takeover';
 import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
+import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
+import { BuilderClient } from '../extensions/host/builder/client';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -115,7 +123,7 @@ const DEFAULT_INSTALL_CHECK_MS = 30_000;
  * while it still does. An upgrade replaces or deletes the package directory
  * under a running daemon (npm reinstalling the package, the launcher pruning
  * an old bundle), and everything the daemon loads lazily from there afterwards
- * fails — grammars among them, so every file its watcher re-indexed came out
+ * fails — grammars among them, so every file its builder's watcher re-indexed came out
  * empty (#2335). Such a daemon should make way for one started from the
  * current install. Any other read failure, or a package.json caught mid-write,
  * answers null: the next check looks again. Exported for testing.
@@ -145,8 +153,9 @@ const CLIENT_HELLO_TIMEOUT_MS = 3_000;
 /**
  * Bytes/parse-window for an oversized hello line — bounded against a malicious
  * peer. Sized for a client hello that carries a launch directory (a path can be
- * a few KiB on a deep tree, and JSON escaping can multiply it), and also bounds
- * the proxy's read of the server hello.
+ * a few KiB on a deep tree, and JSON escaping can multiply it), the session's
+ * focus directories and its tool allowlist, and also bounds the proxy's read of
+ * the server hello.
  */
 const MAX_HELLO_LINE_BYTES = 65536;
 
@@ -168,14 +177,18 @@ export interface DaemonHello {
  * server hello. It carries the proxy's own pids, so the server can reap the
  * client if its process dies WITHOUT the socket ever signalling close (the
  * Windows named-pipe hazard behind #692), and the directory the session was
- * launched in, which fixes the session's repo anchor. Entirely optional and
- * fail-safe: a legacy client that never sends it falls back to the socket-close
- * lifecycle. The one-shot release request of `requestProjectRelease` sends a
- * client hello without a `launchDir`, so it has no anchor; a session without a
- * `launchDir` answers a call without a projectPath with the missing-argument
- * text, as every session does, and a call that names a path with guidance to
- * restart it. The `codegraph_client` marker is what
- * tells it apart from the client's first JSON-RPC message.
+ * launched in, which fixes the session's repo anchor, and the session's own
+ * focus and tool allowlist (the server's flags and environment belong to
+ * whichever client started it, so neither can stand in for a later client's).
+ * Entirely optional and fail-safe: a legacy client that never sends it falls
+ * back to the socket-close lifecycle, and one that sends no `tools` gets the
+ * server process's own CODEGRAPH_MCP_TOOLS. The one-shot release request of
+ * `requestProjectRelease` sends a client hello without a `launchDir`, `focus`
+ * or `tools`, so it has no anchor; a session without a `launchDir` answers a
+ * call without a projectPath with the missing-argument text, as every session
+ * does, and a call that names a path with guidance to restart it. The
+ * `codegraph_client` marker is what tells it apart from the client's first
+ * JSON-RPC message.
  */
 export interface DaemonClientHello {
   codegraph_client: 1;
@@ -183,13 +196,34 @@ export interface DaemonClientHello {
   hostPid: number | null;  // the MCP host pid (past any launcher shim), if known
   /** Absolute directory the session was launched in (`-p` or the cwd); fixes the session's repo anchor. */
   launchDir?: string;
+  /**
+   * The session's `--focus` directories, normalised and relative to the
+   * repository root (`normaliseFocusArgs`); `[]` for a session with none. The
+   * server keeps them as repo-relative entries (`sessionFocusEntries`, which
+   * drops a bad one) and resolves them per call against the worktree the call
+   * lands in.
+   */
+  focus?: string[];
+  /**
+   * The client process's raw CODEGRAPH_MCP_TOOLS, `''` when unset. Always sent
+   * by a proxy's session hello, even when empty, so a client with no allowlist
+   * never inherits the server process's.
+   */
+  tools?: string;
 }
 
-/** What the server learns about one client from its client hello; all null without one. */
+/**
+ * What the server learns about one client from its client hello; the pids and
+ * launch directory are null without one. `focus` and `tools` are ABSENT (not
+ * null) when the hello did not carry them, which is how the server tells a
+ * session that was told "no allowlist" (`tools: ''`) from one never told.
+ */
 export interface ClientPeers {
   pid: number | null;
   hostPid: number | null;
   launchDir: string | null;
+  focus?: string[];
+  tools?: string;
 }
 
 const NO_PEERS: ClientPeers = { pid: null, hostPid: null, launchDir: null };
@@ -222,6 +256,11 @@ export class Daemon {
   private clientSweepTimer: NodeJS.Timeout | null = null;
   private installCheckTimer: NodeJS.Timeout | null = null;
   private engine: MCPEngine;
+  // The index builder: a child of this process that does every index write
+  // (cold builds, seeds, syncs, the watchers) for the engine's read-only
+  // projects. It lives as long as the server does and has no idle exit of its
+  // own; this process restarts it if it dies and stops it after the engine.
+  private builder: BuilderClient;
   private stopping = false;
   private socketPath: string;
   private pidPath: string;
@@ -229,12 +268,15 @@ export class Daemon {
   constructor() {
     this.socketPath = getServerSocketPath();
     this.pidPath = getServerPidPath();
+    this.builder = BuilderClient.start({
+      onLog: (line) => process.stderr.write(`[CodeGraph daemon] ${line}\n`),
+    });
     // The server serves many concurrent clients on one event loop, so off-load
     // read-tool dispatch to a worker pool — otherwise concurrent explores
     // serialize and starve the MCP transport (clients time out). Read tools run
     // on a worker pool; `CODEGRAPH_QUERY_POOL_SIZE=0` disables it. The engine is
     // rootless: no project is opened until a tool call names one.
-    this.engine = new MCPEngine({ queryPool: true });
+    this.engine = new MCPEngine({ queryPool: true, builder: this.builder });
   }
 
   /**
@@ -372,13 +414,17 @@ export class Daemon {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
       this.server = null;
     }
+    // The engine first (it tells the builder to let go of each project it
+    // holds), then the builder itself.
     await this.engine.stop();
+    await this.builder.stop();
     this.cleanupLockfile();
     if (process.platform !== 'win32') {
       try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
     }
-    // POSIX exits here; Windows drains first (engine.stop() above began closing
-    // the file watchers, and exiting mid-teardown aborts the process). See
+    // POSIX exits here; Windows drains first (builder.stop() above waited for
+    // the builder's file watchers to close with its exit, and exiting
+    // mid-teardown aborts the process). See
     // finalizeDaemonExit / DAEMON_SHUTDOWN_BACKSTOP_MS.
     finalizeDaemonExit(process.platform, (code) => process.exit(code));
   }
@@ -418,7 +464,15 @@ export class Daemon {
         if (this.stopping || socket.destroyed) { socket.destroy(); return; }
       }
       const transport = new SocketTransport(socket);
-      const session = new MCPSession(transport, this.engine, { anchor });
+      // The session's own scope, from its hello: its repo-relative focus entries
+      // (resolved per call, so they hold in every worktree of the repository), and
+      // the client's allowlist (undefined when the hello carried none: a legacy
+      // client, which falls back to this process's CODEGRAPH_MCP_TOOLS).
+      const session = new MCPSession(transport, this.engine, {
+        anchor,
+        focus: sessionFocusEntries(peers.focus),
+        toolAllowlist: peers.tools === undefined ? undefined : parseToolAllowlist(peers.tools),
+      });
       transport.onClose(() => this.dropClient(session));
       this.clients.add(session);
       this.clientPeers.set(session, peers);
@@ -815,11 +869,15 @@ function resolveInstallCheckMs(): number {
 }
 
 /**
- * Parse one client-hello line. Returns the peer pids and launch directory if
- * `line` is a well-formed client-hello (carries the `codegraph_client` marker),
- * or null otherwise — in which case the caller treats the bytes as ordinary
- * JSON-RPC. A `launchDir` that is not an absolute path reads as absent: the
- * session then has no anchor rather than one anchored on a relative path.
+ * Parse one client-hello line. Returns the peer pids, launch directory and
+ * session scope if `line` is a well-formed client-hello (carries the
+ * `codegraph_client` marker), or null otherwise — in which case the caller
+ * treats the bytes as ordinary JSON-RPC. A `launchDir` that is not an absolute
+ * path reads as absent: the session then has no anchor rather than one anchored
+ * on a relative path. `focus` is kept only as an array of at most
+ * `MAX_FOCUS_ENTRIES` strings and `tools` only as a string; any other shape
+ * (including a longer focus list, which the CLI never sends) leaves the property
+ * absent, as if the hello had not sent it.
  */
 export function parseClientHelloLine(line: string): ClientPeers | null {
   let parsed: unknown;
@@ -827,11 +885,16 @@ export function parseClientHelloLine(line: string): ClientPeers | null {
   if (!parsed || typeof parsed !== 'object') return null;
   const o = parsed as Record<string, unknown>;
   if (o.codegraph_client !== 1 || typeof o.pid !== 'number') return null;
-  return {
+  const peers: ClientPeers = {
     pid: o.pid,
     hostPid: typeof o.hostPid === 'number' ? o.hostPid : null,
     launchDir: typeof o.launchDir === 'string' && path.isAbsolute(o.launchDir) ? o.launchDir : null,
   };
+  if (Array.isArray(o.focus) && o.focus.length <= MAX_FOCUS_ENTRIES && o.focus.every((d) => typeof d === 'string')) {
+    peers.focus = o.focus as string[];
+  }
+  if (typeof o.tools === 'string') peers.tools = o.tools;
+  return peers;
 }
 
 /**
@@ -852,7 +915,7 @@ export function peerIsDead(
 /**
  * Read the optional client-hello line a proxy sends after the server hello.
  * Always resolves (never rejects) — fail-safe by design, since every connection
- * funnels through here. Resolves with the peer pids and launch directory when
+ * funnels through here. Resolves with the peer pids, launch directory and session scope when
  * the first line is a client-hello; otherwise resolves with null peers and unshifts the already-read
  * bytes so the transport parses them as the client's first JSON-RPC message(s).
  * Accumulates as Buffers and splits on the newline byte so a UTF-8 sequence

@@ -1,11 +1,10 @@
 /**
- * Ownership and lifetime gates of request worktree-lifecycle (Adams post-flight,
- * level-2 rework). Each case drives the shipped entry point and asserts what is
+ * Ownership and lifetime gates. Each case drives the shipped entry point and asserts what is
  * left on disk or which handles are still held, not names or return values.
  *
- * O1 cold build (`runColdBuild`, the detached child's entry): a failed build
+ * O1 cold build (`runColdBuild`, the builder's cold-build job): a failed build
  *    deletes only a database this process created. An index another
- *    initializer made between the child's own check and `CodeGraph.init`'s
+ *    initializer made between the build's own check and `CodeGraph.init`'s
  *    (init awaits the grammar load before it checks again, so the window is
  *    real) survives with its rows, whether init then throws "already
  *    initialized" or fails before it creates anything.
@@ -15,10 +14,10 @@
  *    wrote a nonce into the index it installed and the registry recorded it;
  *    the user's index carries none, so the sweep unregisters the root and
  *    leaves that index, rows and all.
- * O3 engine explicit leases (`MCPEngine.releaseProjectRoot`): a call that
- *    reopens a root while its release waits for in-flight calls takes a
- *    second lease on the same CodeGraph; both leases are released, so the
- *    writer slot is freed once the root is released again.
+ * O3 engine release (`MCPEngine.releaseProjectRoot`, with an index builder): a
+ *    call that reopens a root while its release waits for in-flight calls
+ *    holds it again; once the root is released again the builder's writer
+ *    slot is freed and the engine's database handle is closed.
  * O4 query pool (`QueryPool.releaseProject`): the release does not resolve
  *    while a retiring worker, which may still hold the root, has not exited.
  *
@@ -44,6 +43,9 @@ import {
   unregisterProject,
 } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
 import { ensureWorktreeIndex } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
+import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
+import { JobQueue } from '../../../src/extensions/host/builder/queue';
 import { sweepWorktrees } from '../../../src/extensions/host/worktree-lifecycle/teardown';
 
 // vite's resolver strips the `node:` prefix from an import of node:sqlite,
@@ -138,7 +140,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
   });
 
   /**
-   * Hold CodeGraph.init (the child's own call) until another initializer has
+   * Hold CodeGraph.init (the build's own call) until another initializer has
    * built a complete index of the root, then let `after` decide what init
    * does: the real init, which now finds the index and throws, or a failure
    * of its own before it creates anything (a grammar load that fails).
@@ -163,7 +165,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     expect(fs.existsSync(dbFile(root))).toBe(true);
     expect(user.rows().nodes).toContain('appSymbol');
     expect(indexRows(root)).toEqual(user.rows());
-    // The child released its fence and registered nothing: the index is not its.
+    // The build released its fence and registered nothing: the index is not its.
     expect(fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid'))).toBe(false);
     expect(getRegisteredProject(root)).toBeNull();
   });
@@ -177,7 +179,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     expect(getRegisteredProject(root)).toBeNull();
   });
 
-  it('an index the child created and failed to fill is still removed', async () => {
+  it('an index the build created and failed to fill is still removed', async () => {
     vi.spyOn(CodeGraph.prototype, 'indexAll').mockResolvedValue({ success: false } as Awaited<ReturnType<CodeGraph['indexAll']>>);
     const code = await runColdBuild(root);
     expect(code).not.toBe(0);
@@ -209,7 +211,7 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
     // dir and the nonce the installed index carries. Without a recorded
     // nonce teardown would spare any index, so the cases below would prove
     // nothing: assert it is there and matches.
-    const outcome = await ensureWorktreeIndex(wt);
+    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue()));
     expect(outcome.kind).toBe('seeded');
     const rec = getRegisteredProject(wt);
     expect(rec?.seedNonce).toMatch(/^[0-9a-f]{32}$/);
@@ -268,19 +270,22 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
 });
 
 // ---------------------------------------------------------------------------
-// O3: engine leases
+// O3: engine release of a reopened root
 // ---------------------------------------------------------------------------
 
-describe('O3: a root reopened during its release keeps one lease per open', { timeout: 60_000 }, () => {
+describe('O3: a root reopened during its release is held until it is released again', { timeout: 60_000 }, () => {
   let workspace: string;
   let root: string;
   let engine: MCPEngine | undefined;
+  let builder: BuilderClient | undefined;
 
   beforeEach(async () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-own-lease-')));
+    // The builder's own state dir: its pid and job files stay out of the sandbox home.
+    vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     root = path.join(workspace, 'repo');
     makeRepo(root);
     await indexDir(root);
@@ -290,6 +295,8 @@ describe('O3: a root reopened during its release keeps one lease per open', { ti
   afterEach(async () => {
     await engine?.stop();
     engine = undefined;
+    await builder?.stop();
+    builder = undefined;
     __setLoadCodeGraphForTests(null);
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -300,12 +307,15 @@ describe('O3: a root reopened during its release keeps one lease per open', { ti
     return handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' }, undefined, ADMIT_ALL);
   }
 
-  it('both leases are released: the writer slot and the database are freed on the second release', async () => {
-    engine = new MCPEngine({ watch: true });
+  it('the builder frees the writer slot and the engine closes its database on the second release', async () => {
+    builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
     const handler = engine.getToolHandler();
     const first = await search(handler);
     expect(first.isError).toBeFalsy();
-    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(process.pid), { timeout: 5000 });
+    // The writer is the builder, never this (server) process.
+    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 5000 });
+    expect(builder.pid()).not.toBe(process.pid);
 
     // Hold the next call in flight before it resolves its project, so the
     // release below waits for it (the handler counts calls, not calls per
@@ -331,13 +341,14 @@ describe('O3: a root reopened during its release keeps one lease per open', { ti
     expect(reopened.isError).toBeFalsy();
     expect(reopened.content[0].text).toContain('appSymbol');
     await firstRelease;
-    // The call that reopened it still holds it.
+    // The call that reopened it still holds it in the engine.
     expect(cachedRoots(handler)).toContain(root);
     vi.mocked(seedHook.seedWorktreeIndex).mockRestore();
 
     await engine.releaseProjectRoot(root);
     expect(cachedRoots(handler)).not.toContain(root);
-    expect(readWriterLock(root)?.pid).not.toBe(process.pid);
+    // The release resolves after the builder let go: no writer holds the slot.
+    expect(readWriterLock(root)).toBeNull();
     if (HAS_LSOF) expect(openFdCount([dbFile(root), `${dbFile(root)}-wal`])).toBe(0);
 
     // A later call opens a live graph, not the one the release closed.

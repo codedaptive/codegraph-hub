@@ -2300,12 +2300,30 @@ program
   .description('Start CodeGraph as an MCP server for AI assistants')
   .option('-p, --path <path>', "The session's launch directory, which fixes the repository it answers for (default: the current directory)")
   .option('--mcp', 'Run as MCP server (stdio transport)')
+  .option(
+    '--focus <dir>',
+    "A directory, relative to the repository root, that this session's search and explore results stay inside (repeatable; callers and impact list the rest after the in-focus results)",
+    (dir: string, previous: string[]) => [...previous, dir],
+    [] as string[],
+  )
   .option('--no-watch', 'Disable the file watcher (no auto-sync; useful on slow filesystems like WSL2 /mnt drives)')
-  .action(async (options: { path?: string; mcp?: boolean; watch?: boolean }) => {
+  .action(async (options: { path?: string; mcp?: boolean; watch?: boolean; focus: string[] }) => {
     // The launch directory (repo anchor), taken as given: not walked up to an
     // initialized parent as `resolveProjectPath` does for the other commands,
     // since the server answers for the whole repository the directory is in.
     const projectPath = options.path ? path.resolve(options.path) : undefined;
+
+    // The session's focus, checked before anything starts: an absolute directory
+    // or one that leaves the repository root is refused here with the bad value
+    // named, so no server is spawned for a session that could not use it.
+    let focus: string[];
+    try {
+      const { normaliseFocusArgs } = await import('../extensions/host/server/session-scope');
+      focus = normaliseFocusArgs(options.focus);
+    } catch (err) {
+      error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
 
     // Commander sets watch=false when --no-watch is passed. Route it through
     // the same env-var chokepoint the watcher and MCP server already honor.
@@ -2334,7 +2352,7 @@ program
         // Start MCP server: the launcher proxies to the machine server (starting
         // it when none runs), sending the launch directory as the session's anchor.
         const { MCPServer } = await import('../mcp/index');
-        const server = new MCPServer(projectPath);
+        const server = new MCPServer(projectPath, focus);
         await server.start();
         // Server will run until terminated
       } else {

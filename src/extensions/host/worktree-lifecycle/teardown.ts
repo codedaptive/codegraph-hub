@@ -51,11 +51,14 @@
  * registered, so the next sweep tries again. Pinned roots are torn down too: a
  * pin keeps a live project open, it does not keep a removed one.
  *
- * The machine server is never signalled or stopped from here. It runs this
- * housekeeping itself and releases a torn-down project within one interval;
- * no per-project daemon, socket or pid file exists to clean up. Stopping the
- * server would make its clients' proxies fall back to a read-only in-process
- * engine until a new server starts.
+ * The sweep runs in the index builder (src/extensions/host/builder/), the one
+ * process that holds the roots it writes and the only one that deletes an
+ * index. The machine server is never signalled or stopped from here. It runs
+ * the same pass release-only (housekeeping.ts) and lets go of its read-only
+ * handle on a torn-down project within one interval; no per-project daemon,
+ * socket or pid file exists to clean up. Stopping the server would make its
+ * clients' proxies fall back to a read-only in-process engine until a new
+ * server starts.
  *
  * The first process to sweep a gone root unregisters it, so no other process
  * holding that root ever finds it in the registry. Each housekeeping pass
@@ -68,9 +71,9 @@
  * injected config), from the filesystem root, with the repository named by
  * `--git-dir`, so neither the environment nor the working directory chooses
  * the repository. The sweep's first judgement of each root runs git through
- * async execFile with a timeout: the sweep runs on the MCP server's main loop,
- * where a blocked loop trips the liveness watchdog
- * (src/mcp/liveness-watchdog.ts). The judgement again under the record lock
+ * async execFile with a timeout: the sweep runs on the main loop of the index
+ * builder, where a blocked loop stalls the IPC requests the server waits on.
+ * (The server's release-only pass runs no git.) The judgement again under the record lock
  * (only for a root the first one found gone) runs it synchronously, since the
  * registry's lock is held only within one synchronous call, bounded at
  * {@link GIT_SYNC_TIMEOUT_MS}.

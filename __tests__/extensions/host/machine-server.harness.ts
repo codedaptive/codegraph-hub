@@ -228,6 +228,8 @@ export interface SessionOptions {
   stateDir: string;
   /** Extra environment for this session only. */
   env?: Record<string, string>;
+  /** Arguments appended after `serve --mcp`, e.g. `['--focus', 'src/app']`. Omitted: none. */
+  args?: string[];
 }
 
 /**
@@ -251,7 +253,7 @@ export class McpSession {
     this.cwd = opts.cwd;
     this.stateDir = opts.stateDir;
     this.spawnLog = path.join(path.dirname(opts.stateDir), 'spawns.log');
-    this.child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, '--require', SPAWN_RECORDER, BIN, 'serve', '--mcp'], {
+    this.child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, '--require', SPAWN_RECORDER, BIN, 'serve', '--mcp', ...(opts.args ?? [])], {
       cwd: opts.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: gateEnv(opts.stateDir, { CODEGRAPH_MCP_LOG_ATTACH: '1', CG_TEST_SPAWN_LOG: this.spawnLog, ...opts.env }),
@@ -346,6 +348,14 @@ export class McpSession {
     const result = (res.result ?? {}) as { content?: Array<{ text?: unknown }>; isError?: unknown };
     const first = result.content?.[0]?.text;
     return { text: typeof first === 'string' ? first : '', isError: result.isError === true, rpcError: null };
+  }
+
+  /** The names in this session's tools/list answer, in the order the server gave them. */
+  async listTools(): Promise<string[]> {
+    const res = await this.request('tools/list', {}, 60_000);
+    if (res.error !== undefined) throw new Error(`tools/list failed: ${JSON.stringify(res.error)}`);
+    const result = (res.result ?? {}) as { tools?: Array<{ name?: unknown }> };
+    return (result.tools ?? []).map((tool) => String(tool.name));
   }
 
   /** Every server pid named in this session's attach log lines, in order. */
@@ -477,4 +487,66 @@ export class Fixtures {
     this.sessions.length = 0;
     this.roots.length = 0;
   }
+}
+
+/**
+ * The builder's pid from `<state>/builder.pid` (JSON `{pid, serverPid, startedAt}`), or null while the
+ * file is absent (no builder has started in this state dir) or unreadable.
+ */
+export function builderPidOf(stateDir: string): number | null {
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(stateDir, 'builder.pid'), 'utf8')) as { pid?: unknown };
+    return typeof record.pid === 'number' ? record.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The lines of `<state>/builder.log` in file order: one `job start` and one `job end` line per job. Blank
+ * lines are dropped, so a line's index here is the same on every read. Empty while the log is absent.
+ */
+export function builderLogLines(stateDir: string): string[] {
+  try {
+    return fs.readFileSync(path.join(stateDir, 'builder.log'), 'utf8').split('\n').filter((line) => line.trim() !== '');
+  } catch {
+    return [];
+  }
+}
+
+/** The lock files a project writer can hold under `<root>/.codegraph`. */
+export type LockFileName = 'writer.pid' | 'rebuild.pid' | 'codegraph.lock';
+
+/**
+ * The holder pids the lock files under `<root>/.codegraph` name. `writer.pid` and `rebuild.pid` are JSON
+ * records with a numeric `pid`; `codegraph.lock` is the bare pid on its first line, then a JSON stamp. A
+ * file that is absent, empty or unparseable names no holder.
+ */
+export function lockFileHolders(projectRoot: string): Array<{ file: LockFileName; pid: number }> {
+  const holders: Array<{ file: LockFileName; pid: number }> = [];
+  for (const file of ['writer.pid', 'rebuild.pid'] as const) {
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(projectRoot, '.codegraph', file), 'utf8')) as { pid?: unknown };
+      if (typeof record.pid === 'number') holders.push({ file, pid: record.pid });
+    } catch {
+      /* absent, or not a whole record yet */
+    }
+  }
+  try {
+    const first = (fs.readFileSync(path.join(projectRoot, '.codegraph', 'codegraph.lock'), 'utf8').split('\n')[0] ?? '').trim();
+    const pid = Number.parseInt(first, 10);
+    if (Number.isSafeInteger(pid) && pid > 0) holders.push({ file: 'codegraph.lock', pid });
+  } catch {
+    /* absent */
+  }
+  return holders;
+}
+
+/**
+ * Stops `pid` (SIGTERM, then SIGKILL) when it is still a codegraph process. Used for a builder whose
+ * server teardown did not stop: a stale pid read from a state dir could name an unrelated process.
+ */
+export async function stopIfCodegraph(pid: number): Promise<void> {
+  if (!isCodegraphProcess(pid)) return;
+  await stopProcess(pid);
 }

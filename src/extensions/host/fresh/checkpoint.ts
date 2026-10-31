@@ -27,18 +27,21 @@ export interface AnswerCheckpoint {
   /** A fresh wait was asked for and the bound passed before the index caught up. */
   timedOut: boolean;
   /**
-   * Why the index could not be synced: a sync failure other than lock contention (e.g. a read-only
-   * index), the CLI failing to open the index for writing, or a read-only session that never syncs
+   * Why the index could not be synced: a sync failure other than lock contention (e.g. the builder's
+   * sync job failing), the CLI failing to open the index for writing, or a caller with no sync to run
    * (READ_ONLY_SYNC_ERROR).
    */
   syncError?: string;
 }
 
-/** The part of CodeGraph the checkpoint needs (CodeGraph satisfies it). */
+/**
+ * The part of CodeGraph the checkpoint needs to measure (CodeGraph satisfies it). Syncing is not part
+ * of it: the caller passes the sync to run (FreshWaitOptions.sync), since the index is written by a
+ * different party in each caller (the builder for the MCP server, the CLI's own instance).
+ */
 export interface CheckpointSource {
   getProjectRoot(): string;
   getChangedFiles(): { added: string[]; modified: string[]; removed: string[] };
-  sync(): Promise<unknown>;
 }
 
 /** 30 s: below common MCP client call timeouts, long enough for an incremental sync. */
@@ -272,7 +275,7 @@ function isLockContention(err: unknown): boolean {
   return err instanceof Error && err.name === 'LockUnavailableError';
 }
 
-/** The syncError of a checkpoint taken with `readOnly`: the files are pending and this caller may not write the index. */
+/** The syncError of a checkpoint taken without a `sync`: the files are pending and this caller has no way to write the index. */
 export const READ_ONLY_SYNC_ERROR = 'this session holds the index read-only';
 
 /** Options of {@link waitForFresh} and {@link waitForFreshTracked}. */
@@ -280,8 +283,12 @@ export interface FreshWaitOptions {
   timeoutMs?: number;
   pollMs?: number;
   measurePending?: () => Promise<number | null>;
-  /** The index is held read-only: measure pending, never sync (see waitForFresh). */
-  readOnly?: boolean;
+  /**
+   * The sync to run while files are pending: the MCP server's is a sync job on the index builder, the
+   * CLI's `--fresh` runs its own writable instance's. Absent when the caller holds the index read-only
+   * with no one to sync it for it: the wait then measures pending and never syncs (see waitForFresh).
+   */
+  sync?: () => Promise<unknown>;
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -290,24 +297,24 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
  * Bounded wait until the index matches the working tree. Always returns a checkpoint; never throws for an
  * expected condition (lock contention, the bound passing, a read-only index).
  *
- * Each round measures pending and, while it is above zero, runs cg.sync() raced against the time left:
+ * Each round measures pending and, while it is above zero, runs `opts.sync()` raced against the time left:
  *   - LockUnavailableError: another writer holds the lock (a watcher sync, a daemon, `codegraph index`);
  *     that is transient, so sleep pollMs and try again.
  *   - any other sync error (e.g. `attempt to write a readonly database`) will not clear by retrying;
  *     stop and report it as syncError.
  * timeoutMs 0 makes no sync attempt: fresh only if nothing is already pending, else timedOut.
- * `readOnly` makes no sync attempt either, and says why: the caller holds the index read-only (a read-only
- * engine), where a sync would take the index's write lock and write to it. Fresh only if nothing is already
- * pending, else the checkpoint carries {@link READ_ONLY_SYNC_ERROR} as its syncError (so its Note reads
- * "the index could not be synced (...)"), without waiting and without timedOut.
+ * No `opts.sync` makes no sync attempt either, and says why: the caller holds the index read-only with
+ * no one to write it for it (an engine with no builder). Fresh only if nothing is already pending, else
+ * the checkpoint carries {@link READ_ONLY_SYNC_ERROR} as its syncError (so its Note reads "the index
+ * could not be synced (...)"), without waiting and without timedOut.
  *
  * The bound is soft. A sync runs long synchronous stretches (parsing, SQLite writes) during which no
  * timer can fire, so the race is decided only at the sync's next yield and the wait can overrun the
  * bound by one such stretch. A sync that loses the race keeps running (it cannot be cancelled); its
  * outcome is already settled into a value, so its rejection is never left unhandled. Nothing here waits
  * for it: a caller that must not close the index under it uses waitForFreshTracked and awaits `settled`
- * (the CLI does). The MCP server does not wait: its cached instance usually outlives the sync, but an
- * idle release or close can still close it mid-sync.
+ * (the CLI does). The MCP server does not wait: its sync is a job on the builder, which runs it to the
+ * end whatever the server does meanwhile.
  */
 export async function waitForFresh(
   cg: CheckpointSource,
@@ -335,7 +342,8 @@ export async function waitForFreshTracked(
     ({ checkpoint: checkpointOf(cg, pending, Date.now() - start, timedOut, syncError), settled });
 
   let pending = await measure();
-  if (opts.readOnly) return done(pending, false, pending === 0 ? undefined : READ_ONLY_SYNC_ERROR);
+  const sync = opts.sync;
+  if (!sync) return done(pending, false, pending === 0 ? undefined : READ_ONLY_SYNC_ERROR);
   if (timeoutMs === 0) return done(pending, pending !== 0);
 
   for (;;) {
@@ -346,7 +354,7 @@ export async function waitForFreshTracked(
     // Settle the sync into a value up front, so one that loses the race
     // cannot surface later as an unhandled rejection.
     const outcome = Promise.resolve()
-      .then(() => cg.sync())
+      .then(() => sync())
       .then(() => ({ ok: true as const }), (err: unknown) => ({ ok: false as const, err }));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), remaining); });

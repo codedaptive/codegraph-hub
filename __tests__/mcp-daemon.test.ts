@@ -283,10 +283,12 @@ describe('The machine server', () => {
     //     server starts its first worker right after attach, so a SIGTERM sent
     //     then waits out the rest of that start. CODEGRAPH_QUERY_POOL_SIZE=0
     //     runs no pool.
-    //   - the startup catch-up sync: releasing the project waits for it
-    //     (retire in src/mcp/project-lifecycle.ts). A tool call waits on that
-    //     same sync before it answers, and CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS=0
-    //     makes that wait unbounded, so its reply means the sync is done.
+    //   - the startup catch-up sync, which is the index builder's: releasing
+    //     the project waits for the engine's gate on it (ToolHandler's
+    //     releaseProjectRoot), and stopping the server waits for the builder
+    //     to finish and exit. A tool call waits on that same sync before it
+    //     answers, and CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS=0 makes that wait
+    //     unbounded, so its reply means the sync is done.
     // Measured on a machine at load 35-41 with both waits in the window: 7 of
     // 10 stops took longer than 1.5 s (up to 2.6 s), while closing the server
     // took 1-3 ms (#1963).

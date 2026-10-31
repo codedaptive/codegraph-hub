@@ -1,14 +1,16 @@
 /**
  * MCP per-connection session — speaks the JSON-RPC protocol (initialize,
  * tools/list, tools/call) over a single {@link JsonRpcTransport}. It owns
- * per-client state only (the client's clientInfo and the repo anchor of its
- * launch directory); the heavyweight resources
- * (CodeGraph, watcher, ToolHandler) live in the shared {@link MCPEngine} so the
- * machine server collapses N inotify sets / DB handles to one.
+ * per-client state only (the client's clientInfo, the repo anchor of its
+ * launch directory, and its focus and tool allowlist, which are the client's
+ * own; a legacy client whose hello carries no tool list falls back to the server
+ * process's CODEGRAPH_MCP_TOOLS); the heavyweight resources (CodeGraph handles, ToolHandler)
+ * live in the shared {@link MCPEngine}, and the watchers live in the index
+ * builder, so the machine server holds one set of handles for all its sessions.
  *
  * A session has no default project: every tool call names its `projectPath`
  * and goes through {@link dispatchToolCall} (tool-name checks, required
- * projectPath, repo anchor, index admission) before the engine's handler runs it. The engine is never initialized by the handshake.
+ * projectPath, repo anchor, index admission, the session's tool allowlist) before the engine's handler runs it. The engine is never initialized by the handshake.
  *
  * Speaks JSON-RPC for one MCP client; `__tests__/mcp-initialize.test.ts` drives
  * it end to end through `serve --mcp`.
@@ -20,6 +22,7 @@ import { SERVER_INSTRUCTIONS } from './server-instructions';
 import { CodeGraphPackageVersion } from './version';
 import type { RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { dispatchToolCall } from '../extensions/host/server/tool-call';
+import type { SessionToolList } from '../extensions/host/server/session-scope';
 import { getTelemetry, ClientInfo } from '../telemetry';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { ExploreSessionState } from './explore-session-state';
@@ -67,6 +70,21 @@ export interface MCPSessionOptions {
    * restart the session, never with a guess from the server's own cwd.
    */
   anchor: RepoAnchor | null;
+  /**
+   * The session's focus: directories relative to the repository root
+   * (`sessionFocusEntries`) that search and explore results stay inside, in
+   * every worktree of the repository; `[]` or omitted for none. It
+   * reaches every tool call as an internal argument (see `dispatchToolCall`).
+   */
+  focus?: readonly string[];
+  /**
+   * The session's tool allowlist, which decides what `tools/list` shows and
+   * what a call may run ({@link SessionToolList}): an array of short names,
+   * null when the session was told it has none, undefined when it was never
+   * told (a legacy client's hello), which falls back to the server process's
+   * own CODEGRAPH_MCP_TOOLS.
+   */
+  toolAllowlist?: SessionToolList;
 }
 
 /**
@@ -77,6 +95,8 @@ export class MCPSession {
   /** From the initialize handshake — attributes usage rollups to the agent host. */
   private clientInfo: ClientInfo | undefined;
   private readonly anchor: RepoAnchor | null;
+  private readonly focus: readonly string[];
+  private readonly toolAllowlist: SessionToolList;
   /**
    * What `codegraph_explore` has already returned to THIS client, per project
    * (CG-17). Owned by the session, not the engine: the machine server shares one engine
@@ -93,6 +113,8 @@ export class MCPSession {
     opts: MCPSessionOptions,
   ) {
     this.anchor = opts.anchor;
+    this.focus = opts.focus ?? [];
+    this.toolAllowlist = opts.toolAllowlist;
   }
 
   /**
@@ -187,7 +209,9 @@ export class MCPSession {
 
     // The handshake resolves no root and opens nothing (#172 respond-fast): a
     // session has no default project, so the one instructions text applies to
-    // every client and the engine initializes nothing here. rootUri,
+    // every client (its focus and tool list included: the text describes the
+    // focus argument and section for every session, whether or not it has one)
+    // and the engine initializes nothing here. rootUri,
     // workspaceFolders and roots/list are deliberately ignored; the launch
     // directory fixed the anchor when the session was created.
     this.transport.sendResult(request.id, {
@@ -202,9 +226,11 @@ export class MCPSession {
     // Always expose the tools: whether a project is indexed is not the list's
     // business. A call against an un-indexed path returns SUCCESS-shaped guidance, never
     // `isError`, so it can't teach the agent to abandon codegraph. `getTools()`
-    // marks `projectPath` required on every tool.
+    // marks `projectPath` required on every tool. The list is THIS session's:
+    // its own allowlist. Only a legacy client that was never told one gets the
+    // server process's CODEGRAPH_MCP_TOOLS.
     this.transport.sendResult(request.id, {
-      tools: this.engine.getToolHandler().getTools(),
+      tools: this.engine.getToolHandler().getTools({ allowlist: this.toolAllowlist }),
     });
   }
 
@@ -219,6 +245,8 @@ export class MCPSession {
       handler: this.engine.getToolHandler(),
       anchor: this.anchor,
       exploreSession: this.exploreSession,
+      focus: this.focus,
+      toolAllowlist: this.toolAllowlist,
       params: request.params,
     });
     if (debug) process.stderr.write(`[mcp-debug] toolsCall id=${String(request.id)} done\n`);
@@ -234,7 +262,9 @@ export class MCPSession {
 
   /**
    * `codegraph/releaseProject {root}`: close the server's handle on one project
-   * so a CLI that wants to take its writer lock can. The root names a project
+   * and have the builder drop its hold (its watcher and writer lock), so a CLI
+   * that wants to take its writer lock can. 'released' is answered only after
+   * the builder has let go (`releaseProjectRoot` awaits it). The root names a project
    * the server may hold for any session, so it is not checked against this
    * session's anchor.
    */

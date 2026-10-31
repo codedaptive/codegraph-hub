@@ -31,6 +31,7 @@ import { SERVER_INSTRUCTIONS } from './server-instructions';
 import { getStaticTools } from './tools';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { dispatchToolCall } from '../extensions/host/server/tool-call';
+import { parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { ErrorCodes } from './transport';
 import { ExploreSessionState } from './explore-session-state';
 import { getTelemetry, ClientInfo } from '../telemetry';
@@ -96,13 +97,16 @@ export function logAttachedDaemon(socketPath: string, hello: DaemonHello): void 
  * proxy's background connect. `helloTimeoutMs` bounds the wait for the hello,
  * so a caller with a deadline can spend no more than it has. `launchDir` is the
  * directory this session was launched in; it travels in the client hello and
- * fixes the session's repo anchor on the server.
+ * fixes the session's repo anchor on the server. `focus` is the session's
+ * `--focus` directories (normalised, relative to the repository root; none
+ * when omitted), which travel in the same hello.
  */
 export async function connectWithHello(
   socketPath: string,
   expectedVersion: string = CodeGraphPackageVersion,
   helloTimeoutMs: number = DAEMON_HELLO_TIMEOUT_MS,
   launchDir?: string,
+  focus?: readonly string[],
 ): Promise<net.Socket | 'older-version' | 'version-mismatch' | null> {
   if (process.platform !== 'win32' && !fs.existsSync(socketPath)) return null;
   const socket = net.createConnection(socketPath);
@@ -135,27 +139,32 @@ export async function connectWithHello(
     return 'version-mismatch';
   }
   logAttachedDaemon(socketPath, hello);
-  sendClientHello(socket, launchDir);
+  sendClientHello(socket, launchDir, focus);
   return socket;
 }
 
 /**
- * Tell the server our pids and launch directory right after we verify its
- * hello. The pids let its liveness sweep reap this client if our process dies
- * without the socket ever signalling close (the Windows named-pipe hazard
- * behind #692); the launch directory fixes the session's repo anchor, so
- * without it every call on this session is answered with guidance to restart
- * it. Sent before any piped bytes so it's always the server's first line from
+ * Tell the server our pids, launch directory and session scope right after we
+ * verify its hello. The pids let its liveness sweep reap this client if our
+ * process dies without the socket ever signalling close (the Windows
+ * named-pipe hazard); the launch directory fixes the session's
+ * repo anchor, so without it every call on this session is answered with
+ * guidance to restart it. The scope is this client's own: its `--focus`
+ * directories, and its raw CODEGRAPH_MCP_TOOLS, which is sent even when empty
+ * so the server never answers this client from the environment of whichever
+ * client started it. Sent before any piped bytes so it's always the server's first line from
  * us; a write failure here is harmless (the server just falls back to the
  * socket-close lifecycle). `hostPid` mirrors the PPID watchdog: the threaded
  * host pid if set, else our own parent (the host, on a no-relaunch bundle).
  */
-function sendClientHello(socket: net.Socket, launchDir?: string): void {
+function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[]): void {
   const clientHello: DaemonClientHello = {
     codegraph_client: 1,
     pid: process.pid,
     hostPid: parseHostPpid(process.env[HOST_PPID_ENV]) ?? EARLY_PPID,
     ...(launchDir !== undefined ? { launchDir } : {}),
+    focus: [...(focus ?? [])],
+    tools: process.env.CODEGRAPH_MCP_TOOLS ?? '',
   };
   try { socket.write(JSON.stringify(clientHello) + '\n'); } catch { /* best-effort */ }
 }
@@ -171,7 +180,7 @@ export interface LocalHandshakeDeps {
   getDaemonSocket(): Promise<net.Socket | null>;
   /** Lazily create an in-process engine — used only while the server is
    *  unreachable, preserving the "a broken server never wedges a session"
-   *  guarantee. It is rootless and read-only (`new MCPEngine({ readOnly: true })`):
+   *  guarantee. It is rootless, with no index builder, so read-only (`new MCPEngine()`):
    *  it never writes an index (no seed of a worktree's index, no cold build, no
    *  registry entry, no `codegraph.lock` or writer slot), so it holds no lock the
    *  server needs. Called again
@@ -181,13 +190,16 @@ export interface LocalHandshakeDeps {
    *  resolved from it, so in-process calls answer for exactly the repository
    *  the server would have answered for. */
   launchDir: string;
+  /** The session's `--focus` directories, normalised and relative to the repository root (`normaliseFocusArgs`); none when omitted. The fallback keeps them as the server does for a hello (`sessionFocusEntries`). */
+  focus?: readonly string[];
 }
 
 /**
  * Local-handshake proxy (the cold-start fix).
  *
  * Answers `initialize` + `tools/list` from STATIC constants the instant the
- * client asks — tools register in ~process-startup time instead of waiting
+ * client asks (the list is filtered by THIS client's CODEGRAPH_MCP_TOOLS, which
+ * the hello also carries so the server's call gate agrees with it) — tools register in ~process-startup time instead of waiting
  * ~600ms for the daemon to spawn+bind, which is what produced the "No such tool
  * available" race that made headless agents flail into grep/Read. Tool CALLS are
  * forwarded to the shared daemon (connected in the background); the daemon's
@@ -203,8 +215,9 @@ export interface LocalHandshakeDeps {
  * server with backoff, stops the fallback engine once one answers, and proxies
  * again. In-process calls go through the same dispatch the server's sessions
  * use ({@link dispatchToolCall}: tool-name checks, repo-anchor guard, index
- * admission), so a degraded session answers for the same repository and asks
- * for the same `projectPath`.
+ * admission), with this process's own focus and tool allowlist, so a degraded
+ * session answers for the same repository, the same focus and the same tools,
+ * and asks for the same `projectPath`.
  */
 export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<void> {
   // The proxy is long-lived and can serve fallback tool calls in-process. Match
@@ -328,10 +341,19 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
         // The same dispatch the server's sessions run (MCPSession.handleToolsCall):
         // tool-name checks, the required-projectPath and repo-anchor guard, then
         // the handler. Only the reply and telemetry are the proxy's own.
+        // The engine is resolved before the anchor is awaited: a call in flight
+        // while the engine is retired finishes on the engine it started on.
+        const handler = ensureEngine().getToolHandler();
+        const anchor = await getAnchor();
         const outcome = await dispatchToolCall({
-          handler: ensureEngine().getToolHandler(),
-          anchor: await getAnchor(),
+          handler,
+          anchor,
           exploreSession,
+          // This process's own scope, which the server would have had from the
+          // client hello: its repo-relative focus entries, and this client's
+          // CODEGRAPH_MCP_TOOLS.
+          focus: sessionFocusEntries(deps.focus),
+          toolAllowlist: parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? ''),
           params: msg.params,
         });
         if ('error' in outcome) {

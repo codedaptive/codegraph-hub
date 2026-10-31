@@ -1,21 +1,42 @@
 /**
- * Worktree seeding: give a fresh git worktree its own index on the first
- * MCP tool call that names it, by copying the index of its nearest indexed
- * sibling worktree, instead of telling the agent the project is not indexed
- * (or silently serving the parent checkout's index, #155).
+ * Worktree seeding and cold builds: give a git worktree its own index on the
+ * first MCP tool call that names it, instead of telling the agent the project
+ * is not indexed (or silently serving the parent checkout's index, #155). A
+ * directory outside git with no index gets a cold build too (see "Plain
+ * directory" below).
+ * This runs in the index builder (src/extensions/host/builder/), the process
+ * that writes the indexes the server serves; the server only asks it (`BuilderClient.ensure`).
  *
- * The server calls {@link ensureWorktreeIndex} on the async path of a tool
- * call (`ToolHandler.awaitProjectGate`, src/mcp/tools.ts), and only when it owns a project
- * lifecycle (the machine server's engine). The CLI and the query-pool workers
- * never seed. Nothing here touches the agent's code: the only writes are a new
+ * The builder calls {@link ensureWorktreeIndex} for its `ensure` request, with
+ * a {@link SeedHost} that runs the copy and the cold build as jobs on its
+ * queue. Nothing here touches the agent's code: the only writes are a new
  * `.codegraph/` in the worktree and a record in the project registry.
  *
- * When it runs: `projectPath` is inside git worktree W and the nearest
- * `.codegraph/` is not W's own, i.e. there is none, or it is another worktree
- * of the SAME repository (the borrowed-index case). An index at or below W
- * changes nothing: a stat walk from `projectPath` up to the index finds no
- * `.git` below it, so no git runs at all; past that walk, the toplevel lookup
- * is one memoized `git rev-parse --show-toplevel`.
+ * When it runs: `projectPath` is inside git worktree W and the index it
+ * resolves to (`selectIndexRoot`, ../server/index-root.ts) is not W's own, i.e.
+ * there is none, or it is another worktree of the SAME repository (the
+ * borrowed-index case). An index of W's own changes nothing: a stat walk from
+ * `projectPath` up to the index finds no `.git` below it, so no git runs at
+ * all; past that walk, the toplevel lookup is one memoized
+ * `git rev-parse --show-toplevel`. A sub-project's index nested inside W is not
+ * W's own: `selectIndexRoot` resolves past it.
+ *
+ * Plain directory: `projectPath` has no `.git` entry at or above it and no
+ * index at or above it either ({@link ensurePlainDirectoryIndex}). Its build
+ * root is the calling session's anchor root (`anchorRoot`: the launch directory,
+ * or its git worktree root) when the call carries one, else `projectPath`
+ * itself, so a call on a subdirectory builds the launch directory once and
+ * never an index of its own. There is nothing to seed from (no sibling
+ * worktrees), so it is always a cold build, registered with no git common dir.
+ * The anchor arrives over IPC and is data: it is built only when it contains
+ * `projectPath`, is an existing directory that is not a sensitive folder, and
+ * passes the same unsafe-root refusal `codegraph init` applies (home, a
+ * filesystem root, a parent of home). A root refused for that reason or as a
+ * sensitive folder (a session launched in `/tmp`), or one whose build failed,
+ * answers {@link unbuiltDirectoryNote}, never the worktree text. Every
+ * decision is made on `projectPath`'s realpath, and a queued cold build, plain
+ * or worktree, is admitted again when its job starts ({@link admitColdBuild}):
+ * it builds only while its root still names the directory it was approved on.
  *
  * What it does:
  *   - seed: the sibling worktree with a complete index whose HEAD
@@ -26,50 +47,55 @@
  *     fenced. W gets `codegraph.db`, an empty WAL and `.gitignore`, nothing
  *     else. The copy carries a fresh seed nonce, and W is registered SEEDED
  *     with that nonce, so teardown can reclaim this index and only this one
- *     (project-registry.ts). The caller's
- *     catch-up sync then re-indexes only the files that differ (rows store
- *     project-relative paths, so the copied rows are valid in W).
+ *     (project-registry.ts). The builder's catch-up sync then re-indexes only
+ *     the files that differ (rows store project-relative paths, so the copied
+ *     rows are valid in W).
  *     A seed that fails while a sibling qualifies (W's index locked by
  *     another process past the retries, the copy failing) never falls back to
  *     a cold build: the call answers the not-indexed guidance, and the next
  *     call tries the seed again.
- *   - cold build: no sibling to copy, and the user opted in
- *     (`CODEGRAPH_AUTO_INDEX=1`, or the registry already holds a project of
- *     this repository). A detached child (`cold-build.ts`) holds `rebuild.pid`
- *     for the whole init + index, and calls for W answer {@link buildingNote}
- *     meanwhile. It registers W SEEDED, with the nonce it wrote into the built
- *     index, once built. A child killed by a signal
- *     is not a failed build: the next call may start another.
- *   - otherwise nothing: the existing not-indexed guidance stands, because
- *     indexing a repository nobody indexed is the user's decision.
+ *   - cold build: no sibling to copy (or no git at all, for a plain
+ *     directory). The build is queued on the builder
+ *     ({@link SeedHost.queueColdBuild}; ./cold-build.ts runs it), with no
+ *     opt-in and no earlier registration: a worktree nobody has indexed gets
+ *     an index of its own the first time a call names it. The build holds
+ *     `rebuild.pid` for the whole init + index, and calls for W answer
+ *     {@link buildingNote} meanwhile. It registers W SEEDED, with the nonce it
+ *     wrote into the built index, once built, so teardown can reclaim it. A
+ *     build the builder's death killed is not a failed build: the next call
+ *     queues another.
  *
- * An index of W's own that a killed build left behind (`index_state` read and
- * found other than 'complete', a `rebuild.pid` whose holder is dead, no live
- * writer) counts as no index: when a seed or a cold build can replace it, its
- * `.codegraph/` contents are discarded first, under W's `rebuild.pid` and
- * `codegraph.lock`. One whose state cannot be read is kept as it is.
+ * An index of a git worktree W's own that a killed build left behind
+ * (`index_state` read and found other than 'complete', a `rebuild.pid` whose
+ * holder is dead, no live writer) counts as no index: when a seed or a cold
+ * build can replace it, its `.codegraph/` contents are discarded first, under
+ * W's `rebuild.pid` and `codegraph.lock`. One whose state cannot be read is
+ * kept as it is. A plain directory's killed build is not judged abandoned (a
+ * `.git` entry is required, {@link isAbandonedIndex}): its database is
+ * reopened and reconciled by the builder's catch-up, and reads may be
+ * answered from it before that ends.
  * A seeder killed mid-copy leaves `codegraph.db.seed-<pid>-<hex>.tmp`; the
  * next seed of W removes each one whose pid is dead.
  *
- * `CODEGRAPH_NO_AUTO_SEED=1` turns all of it off.
+ * `CODEGRAPH_NO_AUTO_SEED=1` turns all of it off, seed and cold build.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as os from 'os';
-import { execFile, spawn } from 'child_process';
+import { execFile } from 'child_process';
 import {
   canonicalProjectRoot,
   createDirectory,
-  findNearestCodeGraphRoot,
   getCodeGraphDir,
   isInitialized,
   unsafeIndexRootReason,
 } from '../../../directory';
 import { FileLock, validateProjectPath } from '../../../utils';
 import { loadNodeSqlite, type NodeSqliteModule } from '../../../db/node-sqlite';
-import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm-runtime-flags';
+import { gitRootByStat, realLocation, selectIndexRoot } from '../server/index-root';
 import {
+  canonicalGitPath,
   commitDistance,
   gitCommonDirAsync,
   gitWorktreeRootAsync,
@@ -86,7 +112,7 @@ import {
   tryAcquireWriterLock,
 } from '../../../mcp/writer-lock';
 import { isProcessAlive } from '../../../mcp/server-control';
-import { hasRegisteredRepository, registerProject, stampSeedNonce } from './project-registry';
+import { registerProject, stampSeedNonce } from './project-registry';
 
 export type SeedMethod = 'clone' | 'copy' | 'backup';
 
@@ -103,19 +129,18 @@ export type SeedOutcome =
   // `worktree` is set when projectPath is in a git worktree this module
   // considered (no index of its own) but could neither seed nor build: the
   // caller's not-indexed answer can then say a seed may still follow, rather
-  // than "never call again".
-  | { kind: 'none'; worktree?: string };
+  // than the plain not-indexed answer, which says nothing about a later call.
+  // `unbuilt` is set instead when projectPath is a
+  // plain directory (no git) whose build root this module refused or could
+  // not build: `unsafe` is what the root looks like (`unsafeIndexRootReason`),
+  // absent when its build failed; the answer is {@link unbuiltDirectoryNote}.
+  | { kind: 'none'; worktree?: string; unbuilt?: { root: string; unsafe?: string } };
 
 const NONE: SeedOutcome = { kind: 'none' };
 
 /** The kill switch. Read per call, so a test or an operator can flip it live. */
 function seedingDisabled(): boolean {
   return process.env.CODEGRAPH_NO_AUTO_SEED === '1';
-}
-
-/** The user's explicit opt-in to a cold build of an un-indexed worktree. */
-function autoIndexOptedIn(): boolean {
-  return process.env.CODEGRAPH_AUTO_INDEX === '1';
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +174,7 @@ function worktreeRootOf(projectPath: string): Promise<string | null> {
 }
 
 /** `child` is `parent` or below it (both canonical). */
-function isAtOrBelow(child: string, parent: string): boolean {
+export function isAtOrBelow(child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
 }
@@ -232,7 +257,7 @@ function isUnfinishedIndex(dbFile: string): boolean {
  * `root` must be a checkout root (a `.git` entry there): an index of a plain
  * directory is never replaced.
  */
-function isAbandonedIndex(root: string): boolean {
+export function isAbandonedIndex(root: string): boolean {
   const dir = getCodeGraphDir(root);
   if (!fs.existsSync(path.join(dir, 'rebuild.pid'))) return false;
   if (!fs.existsSync(path.join(root, '.git'))) return false;
@@ -699,103 +724,143 @@ export async function seedFromSibling(targetRoot: string, sourceRoot: string): P
 // Cold build
 // ---------------------------------------------------------------------------
 
-/** Cold builds this process started, by canonical root, while the child runs. */
-const builds = new Map<string, string>();
-/**
- * Roots whose cold build failed in this process (the child exited non-zero):
- * not retried on every call. A child ended by a signal is not recorded: it was
- * killed, not failed, and the next call builds again.
- */
-const failedBuilds = new Set<string>();
+/** What a cold build was approved on; the host keeps it and gives it back to {@link admitColdBuild} when the job starts. */
+export interface ColdBuildApproval {
+  /** The root's realpath ({@link canonicalGitPath}) at approval: the job builds only while the root still resolves to it. */
+  realRoot: string;
+  /** A plain directory (no git at or above the root at approval): the job also requires that there still is none. */
+  plain: boolean;
+}
 
-/** Whether this process is cold-building the index of `root` right now. */
-export function isBuilding(root: string): boolean {
-  return builds.has(canonicalProjectRoot(root));
+export type ColdBuildAdmission =
+  | { ok: true; approval: ColdBuildApproval }
+  // `git`: a plain directory's root has git at or above it now (the worktree rule's to build, never this one's).
+  // `folder`: the root is a folder codegraph never builds (`reason` says which: unsafe index root, sensitive
+  // folder, not an existing directory). `moved`: the root resolves to another directory than the approved one.
+  | { ok: false; why: 'git' | 'folder' | 'moved'; reason: string };
+
+/**
+ * The one admission for a cold build, run when it is queued (`approved` absent) and again when its job
+ * starts (`approved` is what the first run returned). A build writes `.codegraph/` into whatever its root
+ * path names at that moment, and the root arrives from the IPC (a plain directory's anchor) or from git, so
+ * the job must not trust what was true when it was queued: a path swapped for a link to another directory
+ * while the job waited would otherwise be built there. The same checks both times, in this order: the root
+ * still resolves to the approved realpath; for a plain directory, still no git at or above it; not an unsafe
+ * index root (`unsafeIndexRootReason`: home, a filesystem root, a parent of home); not a sensitive folder,
+ * and an existing directory (`validateProjectPath`). The last two read the root as spelled and as it resolves.
+ *
+ * The job runs this synchronously right before its build starts, but `CodeGraph.init` opens the root a moment
+ * later (it awaits the grammar load first): a swap inside that window is not caught. It takes a writer on the
+ * root's parent acting within that window of a job that waited minutes; closing it needs init to work on an
+ * opened directory handle, which the engine does not offer.
+ */
+export function admitColdBuild(root: string, plain: boolean, approved?: ColdBuildApproval): ColdBuildAdmission {
+  const realRoot = canonicalGitPath(root);
+  if (approved && realRoot !== approved.realRoot) {
+    return { ok: false, why: 'moved', reason: `${root} now resolves to ${realRoot}, not ${approved.realRoot} as when the build was approved` };
+  }
+  if (plain && gitRootByStat(realRoot) !== null) {
+    return { ok: false, why: 'git', reason: `${root} is now inside a git repository` };
+  }
+  // Before the sensitive-folder check: a filesystem root is on that list too, and a session launched there
+  // is owed the reason it is too broad, not the sensitive-folder text.
+  const unsafe = unsafeIndexRootReason(root);
+  if (unsafe) return { ok: false, why: 'folder', reason: unsafe };
+  const refused = validateProjectPath(root);
+  if (refused) return { ok: false, why: 'folder', reason: refused };
+  return { ok: true, approval: { realRoot, plain } };
 }
 
 /**
- * The answer a tool call for a worktree gets while its index is built. A
+ * What {@link ensureWorktreeIndex} needs from the process that owns the index
+ * writes (the builder, src/extensions/host/builder/seed-host.ts): where its
+ * queued work stands, and a way to queue more. The decision here stays
+ * separate from the queue so the queue's priorities and its job log live in
+ * one place.
+ */
+export interface SeedHost {
+  /**
+   * The root that is being built or seeded here (a cold build queued or
+   * running, a seed queued or running) and that `projectPath` is at or below;
+   * null when none. Calls for that root answer {@link buildingNote}.
+   */
+  buildingRootFor(projectPath: string): string | null;
+  /**
+   * Whether the cold build of `root` failed in this process: not retried on
+   * every call. A build killed with the builder is not recorded: it was
+   * killed, not failed, and the next call builds again.
+   */
+  hasFailedBuild(root: string): boolean;
+  /**
+   * Queue the cold build of `root` (./cold-build.ts), unless one is already queued or running. `approval` is
+   * what {@link admitColdBuild} approved: the job runs that admission again when it starts (the queue may
+   * hold it for minutes, and `root` is a path, not a directory) and builds nothing unless it still holds.
+   */
+  queueColdBuild(root: string, approval: ColdBuildApproval): void;
+  /**
+   * Run `copy` (the seed of `root`) as a job on the queue. `done: false` when
+   * it did not finish within the host's wait, because a long job was ahead of
+   * it: the job stays queued, and {@link buildingRootFor} names `root` until
+   * it ends. Rejects with the copy's error when it ran and failed.
+   */
+  runSeed<T>(root: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }>;
+}
+
+/**
+ * The answer a tool call for a root gets while its index is built. A
  * success-shaped note: never "not indexed" (it soon will be) and never an
  * empty result (nothing has been searched).
  */
 export function buildingNote(root: string): string {
   return (
-    `CodeGraph is building the index for ${root} (a git worktree with no index ` +
-    'of its own and no indexed worktree to copy one from). It is not ready yet; ' +
+    `CodeGraph is building the index for ${root}. It is not ready yet; ` +
     'use your built-in tools (Read/Grep/Glob) for this codebase meanwhile, and ' +
-    'retry codegraph here in a minute.'
+    'retry codegraph here later; a large repository takes minutes to build.'
   );
 }
 
 /**
  * The not-indexed guidance for `projectPath`, inside git worktree `worktree`,
- * when {@link ensureWorktreeIndex} could neither seed it nor build it. A later
- * call tries again (it copies a sibling's index once one is complete, and
- * retries a copy that failed), so the plain "not indexed" guidance, which
- * tells the agent never to call again, would be wrong there.
+ * when {@link ensureWorktreeIndex} could neither seed it nor build it: the
+ * copy from a sibling failed, the build failed, or automatic seeding is off.
+ * A later call tries again where it can (it retries a failed copy), so the
+ * plain "not indexed" guidance, which does not say a later call can succeed,
+ * would be wrong there.
  */
 export function unseededWorktreeNote(projectPath: string, worktree: string): string {
   return (
     `The project at ${projectPath} isn't indexed with codegraph yet: it is a git worktree (${worktree}) ` +
-    'with no index of its own, and codegraph could not copy one in from another worktree of its ' +
-    'repository (none has a complete index yet, or the copy failed), so codegraph cannot query it ' +
+    'with no index of its own, and codegraph could not give it one (the copy from another worktree of its ' +
+    'repository failed, the build failed, or automatic indexing is off), so codegraph cannot query it ' +
     'now. Use your built-in tools (Read/Grep/Glob) for that codebase ' +
-    'meanwhile. The next codegraph call here tries the copy again: it succeeds once another ' +
-    'worktree of this repository has a complete index, or once whatever held up this copy is done. ' +
-    "Indexing is the user's decision — they can run 'codegraph init' in a " +
-    'worktree of this repository to enable it.'
+    'meanwhile. The next codegraph call here tries again where it can: a failed copy is retried, and it ' +
+    'succeeds once whatever held it up is done. ' +
+    "If it keeps failing, the user can run 'codegraph init' in a " +
+    'worktree of this repository to index it by hand.'
   );
 }
 
-/** The building root `projectPath` is in, as passed to `startColdBuild`; null when none. */
-function buildingRootFor(projectPath: string): string | null {
-  if (builds.size === 0) return null;
-  const p = canonicalProjectRoot(projectPath);
-  for (const [key, root] of builds) if (isAtOrBelow(p, key)) return root;
-  return null;
-}
-
 /**
- * The compiled child entry. Beside this file in a build; when the server runs
- * from src/ (the test suite), the copy `npm run build` put in dist/.
+ * The answer for a plain directory (no git) whose build root `root` codegraph
+ * will not build or could not build: `unsafe` is why codegraph refuses the root
+ * ({@link admitColdBuild}: what it looks like, "your home directory", or the
+ * sensitive-folder refusal), absent when its build failed (a failed build is
+ * not retried until the CodeGraph server restarts: the memo lives in the
+ * builder process). Success-shaped, like every expected condition, and it never tells
+ * the agent to stop calling codegraph: a project inside the directory (a git
+ * repository, or a directory the user ran `codegraph init` in) is served
+ * when named, so the agent is pointed at one.
  */
-function coldBuildEntry(): string | null {
-  const sibling = path.join(__dirname, 'cold-build.js');
-  if (fs.existsSync(sibling)) return sibling;
-  const built = path.resolve(__dirname, '../../../../dist/extensions/host/worktree-lifecycle/cold-build.js');
-  return fs.existsSync(built) ? built : null;
-}
-
-/**
- * Start the detached cold build of `root`, the pattern of the daemon's own
- * spawn (`spawnDetachedDaemon`): its own process group, no stdio, unref'd, so
- * it finishes even if this server exits first. False when it cannot start.
- */
-function startColdBuild(root: string): boolean {
-  const entry = coldBuildEntry();
-  if (!entry) return false;
-  const key = canonicalProjectRoot(root);
-  try {
-    const child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, ...NODE_RUNTIME_FLAGS, entry, root], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    builds.set(key, root);
-    const settle = (failed: boolean) => {
-      if (builds.get(key) !== root) return;
-      builds.delete(key);
-      if (failed) failedBuilds.add(key);
-    };
-    // `code` is null when a signal ended the child: killed, not failed.
-    child.on('exit', (code) => settle(code !== null && code !== 0));
-    child.on('error', () => settle(true)); // no executable: an async 'error', never a crash
-    child.unref();
-    return true;
-  } catch {
-    builds.delete(key);
-    return false;
-  }
+export function unbuiltDirectoryNote(projectPath: string, root: string, unsafe?: string): string {
+  const why = unsafe
+    ? `codegraph does not build an index for ${root} (${unsafe}), which is too broad or too sensitive to index`
+    : `the build of the index for ${root} failed, and codegraph will not retry it until the CodeGraph server restarts`;
+  return (
+    `The directory at ${projectPath} isn't indexed with codegraph, and ${why}. ` +
+    'Use your built-in tools (Read/Grep/Glob) for code in it. ' +
+    `A project inside ${root} is indexed when you name it: pass a projectPath that is a git repository ` +
+    'inside it, or a directory the user has set up with \'codegraph init\'.'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -808,30 +873,50 @@ const inflight = new Map<string, Promise<SeedOutcome>>();
 /**
  * Make sure the git worktree `projectPath` is in has an index of its own when
  * it should get one (see "When it runs" in the file comment): seed it from a
- * sibling, start a cold build, or leave it alone. Deduped per worktree root. Never
- * throws; a failure is logged to stderr and answers `none`, which leaves the
- * caller's existing guidance in place.
+ * sibling, queue a cold build, or leave it alone. `none` without a worktree
+ * says nothing needed doing: the caller serves the index `selectIndexRoot`
+ * names, if any. Deduped per worktree root. Never throws; a failure is logged
+ * to stderr and answers `none`.
+ *
+ * A `projectPath` with no `.git` entry at or above it and no index at or
+ * above it is a plain directory: it is cold-built at `anchorRoot` when the
+ * caller has one (the session's launch directory; refused, with nothing built,
+ * when it does not contain `projectPath`), else at `projectPath`
+ * ({@link ensurePlainDirectoryIndex}). `anchorRoot` is never used for a path
+ * in a git worktree, which keeps the worktree rules above.
  */
-export async function ensureWorktreeIndex(projectPath: string): Promise<SeedOutcome> {
+export async function ensureWorktreeIndex(projectPath: string, host: SeedHost, anchorRoot?: string): Promise<SeedOutcome> {
   if (seedingDisabled()) return NONE;
-  const building = buildingRootFor(projectPath);
+  const building = host.buildingRootFor(projectPath);
   if (building) return { kind: 'building', root: building };
   try {
+    // The path as it really is: git's answer for a symlinked spelling is the real directory's (its repository,
+    // not the lexical parents'), so every decision below, the plain-directory one and the build root included,
+    // is made on that spelling, and two spellings of one directory get one answer. A symlink into a nested
+    // repository from a plain anchor would otherwise read as plain and build the anchor.
+    const target = canonicalGitPath(projectPath);
     // Everything up to the git lookup is synchronous stats, so the common
     // cases (an index of the tree's own, no git repository) cost no spawn.
-    let nearest = findNearestCodeGraphRoot(projectPath);
+    let nearest = selectIndexRoot(target);
     // A killed build's index of the tree's own counts as none: resolve past
     // it, and let the seed or build below replace it.
     let abandoned: string | null = null;
     if (nearest && isAbandonedIndex(nearest)) {
       abandoned = nearest;
       const up = path.dirname(nearest);
-      nearest = up === nearest ? null : findNearestCodeGraphRoot(up);
+      nearest = up === nearest ? null : selectIndexRoot(up);
     }
-    if (!gitWorktreeRootMayBeBelow(projectPath, nearest)) return NONE;
+    // No index to serve and no git repository around the path: a plain directory (a killed
+    // build's abandoned index needs a `.git` at its root, so none is left unresolved here).
+    if (nearest === null && gitRootByStat(target) === null) {
+      return ensurePlainDirectoryIndex(target, anchorRoot, host);
+    }
+    // `target` keeps its lexical spelling where it does not exist yet, while `nearest` is spelled by the real
+    // location: walk from the real one so the walk can reach `nearest`.
+    if (!gitWorktreeRootMayBeBelow(realLocation(target), nearest)) return NONE;
     // A sensitive path is refused by the caller's own validation; never seed it.
-    if (fs.existsSync(projectPath) && validateProjectPath(projectPath)) return NONE;
-    const worktree = await worktreeRootOf(projectPath);
+    if (fs.existsSync(target) && validateProjectPath(target)) return NONE;
+    const worktree = await worktreeRootOf(target);
     if (!worktree) return NONE;
     // The abandoned index must be W's own; any other is left as it is.
     if (abandoned && !sameRoot(abandoned, worktree)) return NONE;
@@ -840,7 +925,7 @@ export async function ensureWorktreeIndex(projectPath: string): Promise<SeedOutc
     const key = canonicalProjectRoot(worktree);
     let pending = inflight.get(key);
     if (!pending) {
-      pending = seedOrBuild(worktree, nearest, abandoned !== null).finally(() => inflight.delete(key));
+      pending = seedOrBuild(worktree, nearest, abandoned !== null, host).finally(() => inflight.delete(key));
       inflight.set(key, pending);
     }
     return await pending;
@@ -853,12 +938,53 @@ export async function ensureWorktreeIndex(projectPath: string): Promise<SeedOutc
 }
 
 /**
- * Seed W, or start its cold build, or neither. `replaceAbandoned`: W holds an
+ * Queue the cold build of a plain directory's build root: `anchorRoot` when the
+ * call has one, else `projectPath`. Both arguments are IPC data from the
+ * server, so nothing is created before they pass: `projectPath` exists as a
+ * directory and is not a sensitive folder; the anchor, when given, contains
+ * `projectPath` (a root that does not contain the path asked about is not
+ * what the call is about) and has no git repository at or above it; the root
+ * is an existing directory that is not sensitive and not an unsafe index
+ * root (`unsafeIndexRootReason`: home, a filesystem root, a parent of home),
+ * both ({@link admitColdBuild}) answering `unbuilt` with why, so the caller
+ * says why instead of the generic not-indexed text. A root whose build failed
+ * in this builder answers `unbuilt` without a reason and is not rebuilt on
+ * every call. A refused anchor answers `none` and builds nothing. `projectPath`
+ * is the caller's realpath ({@link ensureWorktreeIndex}).
+ */
+function ensurePlainDirectoryIndex(projectPath: string, anchorRoot: string | undefined, host: SeedHost): SeedOutcome {
+  // A sensitive folder is refused by the caller's own validation; never build for it. Also: the path must exist.
+  if (validateProjectPath(projectPath)) return NONE;
+  if (anchorRoot !== undefined && !isAtOrBelow(canonicalProjectRoot(projectPath), canonicalProjectRoot(anchorRoot))) return NONE;
+  const root = canonicalGitPath(anchorRoot ?? projectPath);
+  // The anchor contains the path and the path has no git around it, so no git at or above the root holds for an
+  // honest anchor; the admission checks it anyway because a root inside a git repository is the worktree
+  // rule's to build, never this one's.
+  const admission = admitColdBuild(root, true);
+  if (!admission.ok) {
+    return admission.why === 'git' ? NONE : { kind: 'none', unbuilt: { root, unsafe: admission.reason } };
+  }
+  if (host.hasFailedBuild(root)) return { kind: 'none', unbuilt: { root } };
+  // Another process (a `codegraph init`, an earlier builder) gave it an index meanwhile.
+  if (isInitialized(root)) return NONE;
+  // Someone else (`codegraph index`, another server's build) is already at it.
+  if (isRebuildInProgress(root)) return { kind: 'building', root };
+  host.queueColdBuild(root, admission.approval);
+  return { kind: 'building', root };
+}
+
+/**
+ * Seed W, or queue its cold build, or neither. `replaceAbandoned`: W holds an
  * index a killed build left behind ({@link isAbandonedIndex}); it is
  * discarded only right before a seed or a build replaces it, so a worktree
  * that gets neither keeps what it had.
  */
-async function seedOrBuild(worktree: string, nearest: string | null, replaceAbandoned: boolean): Promise<SeedOutcome> {
+async function seedOrBuild(
+  worktree: string,
+  nearest: string | null,
+  replaceAbandoned: boolean,
+  host: SeedHost,
+): Promise<SeedOutcome> {
   if (validateProjectPath(worktree)) return NONE;
   const entries = await listGitWorktrees(worktree);
   if (!entries) return NONE;
@@ -877,10 +1003,16 @@ async function seedOrBuild(worktree: string, nearest: string | null, replaceAban
     // A live process took W's locks meanwhile: its index is not abandoned.
     if (replaceAbandoned && !discardAbandonedIndex(worktree)) return NONE;
     try {
-      const { method, nonce } = await seedFromSibling(worktree, source);
-      registerProject(worktree, { seeded: true, commonDir, seedNonce: nonce });
-      process.stderr.write(`[CodeGraph MCP] Seeded the index of ${worktree} from ${source} (${method}).\n`);
-      return { kind: 'seeded', root: worktree, source, method };
+      // The copy is a job on the builder's queue; one that waits behind a long
+      // job past the host's bound keeps its place, and the call answers 'building'.
+      const run = await host.runSeed(worktree, async () => {
+        const { method, nonce } = await seedFromSibling(worktree, source);
+        registerProject(worktree, { seeded: true, commonDir, seedNonce: nonce });
+        process.stderr.write(`[CodeGraph MCP] Seeded the index of ${worktree} from ${source} (${method}).\n`);
+        return method;
+      });
+      if (!run.done) return { kind: 'building', root: worktree };
+      return { kind: 'seeded', root: worktree, source, method: run.value };
     } catch (err) {
       if (err instanceof SeedTargetTakenError || isInitialized(worktree)) return NONE;
       process.stderr.write(
@@ -895,17 +1027,16 @@ async function seedOrBuild(worktree: string, nearest: string | null, replaceAban
     }
   }
 
-  const key = canonicalProjectRoot(worktree);
-  if (failedBuilds.has(key)) return considered;
-  let registered = false;
-  try {
-    registered = commonDir !== null && hasRegisteredRepository(commonDir);
-  } catch { /* an unreadable registry is no opt-in */ }
-  if (!autoIndexOptedIn() && !registered) return considered;
-  // The same refusal `codegraph init` applies (home directory, filesystem root).
-  if (unsafeIndexRootReason(worktree)) return considered;
+  // No sibling to copy: build W's index. There is no opt-in and no earlier
+  // registration to ask for; a build that failed here is never retried until this builder restarts.
+  if (host.hasFailedBuild(worktree)) return considered;
+  // The same refusal `codegraph init` applies (home directory, filesystem root), and the admission the
+  // build's job runs again when it starts.
+  const admission = admitColdBuild(worktree, false);
+  if (!admission.ok) return considered;
   // Someone else (`codegraph index`, another server's build) is already at it.
   if (isRebuildInProgress(worktree)) return { kind: 'building', root: worktree };
   if (replaceAbandoned && !discardAbandonedIndex(worktree)) return NONE;
-  return startColdBuild(worktree) ? { kind: 'building', root: worktree } : considered;
+  host.queueColdBuild(worktree, admission.approval);
+  return { kind: 'building', root: worktree };
 }

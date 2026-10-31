@@ -289,12 +289,12 @@ describe.runIf(process.platform !== 'win32')('a real SQLite I/O error on open', 
     };
 
     it('answers an explicit projectPath with the fix', async () => {
-      engine = new BuiltMCPEngine({ watch: false });
+      engine = new BuiltMCPEngine();
       expectGuidance(await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }, undefined, ADMIT_ALL));
     });
 
     it('serves normally once the index opens again', async () => {
-      engine = new BuiltMCPEngine({ watch: false });
+      engine = new BuiltMCPEngine();
       expectGuidance(await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }, undefined, ADMIT_ALL));
       fs.rmSync(`${dbPath}-shm`, { force: true });
       const result = await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }, undefined, ADMIT_ALL);

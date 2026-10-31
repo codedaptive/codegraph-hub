@@ -3,11 +3,11 @@
  * shipped entry point and asserts what is left on disk, in the registry, or
  * still pending, not names or return values.
  *
- * - Seed (`ensureWorktreeIndex` through the engine's tool handler): a seed
- *   that fails while a sibling qualifies (the target's `codegraph.lock` held
- *   past the retries) never starts a cold build, even for a registered
- *   repository: the call answers the success-shaped not-indexed guidance, and
- *   the next call tries the seed again.
+ * - Seed (`ensureWorktreeIndex` through the engine's tool handler and the
+ *   index builder): a seed that fails while a sibling qualifies (the target's
+ *   `codegraph.lock` held past the retries) never queues a cold build, though
+ *   cold builds need no opt-in: the call answers the success-shaped
+ *   not-indexed guidance, and the next call tries the seed again.
  * - Teardown (`sweepWorktrees`): a root re-registered (new nonce, pinned)
  *   while the sweep awaited its release keeps that record and its index.
  * - Query pool (`QueryPool.releaseProject`): a release pending when the pool
@@ -65,7 +65,10 @@ import {
   registerProject,
   unregisterProject,
 } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
-import { ensureWorktreeIndex, isBuilding, seedFromSibling } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { ensureWorktreeIndex, seedFromSibling } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
+import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
+import { JobQueue } from '../../../src/extensions/host/builder/queue';
 import { sweepWorktrees } from '../../../src/extensions/host/worktree-lifecycle/teardown';
 import { runProjectPin } from '../../../src/extensions/host/worktree-lifecycle/cli';
 
@@ -90,6 +93,11 @@ function real(p: string): string {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The builder's seed host over a fresh queue: seeds and cold builds run as queued jobs, as in the builder process. */
+function seedHost(): BuilderSeedHost {
+  return new BuilderSeedHost(new JobQueue());
+}
 
 /** A one-commit repository holding `app.ts`. */
 function makeRepo(dir: string): void {
@@ -135,36 +143,39 @@ async function repoWithWorktree(workspace: string): Promise<{ main: string; wt: 
 // Seed: a failed seed with a qualifying sibling never cold-builds
 // ---------------------------------------------------------------------------
 
-// Builds an index and serves two calls through a real engine; the bound only
-// catches a hang on a loaded machine.
-describe('a seed that fails while a sibling qualifies never starts a cold build', { timeout: 60_000 }, () => {
+// Builds an index and serves two calls through a real engine and a real index
+// builder process; the bound only catches a hang on a loaded machine.
+describe('a seed that fails while a sibling qualifies never queues a cold build', { timeout: 60_000 }, () => {
   let workspace: string;
-  let main: string;
   let wt: string;
+  let stateDir: string;
   let engine: MCPEngine | undefined;
+  let builder: BuilderClient | undefined;
 
   beforeEach(async () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '');
-    vi.stubEnv('CODEGRAPH_AUTO_INDEX', '');
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_WATCH_DEBOUNCE_MS', '100');
     vi.stubEnv('CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS', '0');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f1-')));
-    ({ main, wt } = await repoWithWorktree(workspace));
-    // A registered repository: without the qualifying sibling, a cold build
-    // would be allowed here.
-    registerProject(main, { commonDir: real(path.join(main, '.git')) });
+    // The builder's own state dir, so its job log (builder.log) is this case's alone.
+    stateDir = path.join(workspace, 'state');
+    vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
+    ({ wt } = await repoWithWorktree(workspace));
     // The target's codegraph.lock, held by a live process (this one) for the
     // whole first call: every attempt of the seed to install fails.
     fs.mkdirSync(path.join(wt, '.codegraph'));
     fs.writeFileSync(path.join(wt, '.codegraph', 'codegraph.lock'), String(process.pid));
     __setLoadCodeGraphForTests(CodeGraph);
-    engine = new MCPEngine({ watch: true });
+    builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
   }, 60_000);
 
   afterEach(async () => {
     await engine?.stop();
     engine = undefined;
+    await builder?.stop();
+    builder = undefined;
     __setLoadCodeGraphForTests(null);
     vi.unstubAllEnvs();
     clearRegistry();
@@ -181,9 +192,12 @@ describe('a seed that fails while a sibling qualifies never starts a cold build'
     expect(first.isError).toBe(false);
     expect(first.text).not.toContain('is building the index');
     expect(first.text).toContain("isn't indexed with codegraph yet");
-    expect(isBuilding(wt)).toBe(false);
-    // A cold-build child takes rebuild.pid first thing; none may appear.
+    // A cold build takes rebuild.pid first thing; none may appear, and the
+    // builder's job log shows the seed attempt and no cold-build job.
     await sleep(1000);
+    const jobLog = fs.readFileSync(path.join(stateDir, 'builder.log'), 'utf8');
+    expect(jobLog).toMatch(/job end seed \S+ failed/);
+    expect(jobLog).not.toContain('cold-build');
     expect(fs.existsSync(path.join(wt, '.codegraph', 'rebuild.pid'))).toBe(false);
     expect(fs.existsSync(dbFile(wt))).toBe(false);
     // The holder's lock is untouched.
@@ -213,7 +227,7 @@ describe('the sweep keeps a root re-registered while it awaited the release', { 
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f2-')));
     let main: string;
     ({ main, wt } = await repoWithWorktree(workspace));
-    expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
+    expect((await ensureWorktreeIndex(wt, seedHost())).kind).toBe('seeded');
     // The worktree leaves its repository while its directory stays: a sweep
     // would delete its seeded index and unregister it.
     fs.rmSync(path.join(wt, '.git'), { force: true });
@@ -354,7 +368,7 @@ describe('a sweep keeps a live seeded worktree when git cannot answer', { timeou
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f4-')));
     ({ wt } = await repoWithWorktree(workspace));
-    expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
+    expect((await ensureWorktreeIndex(wt, seedHost())).kind).toBe('seeded');
     // A valid registration: the record's nonce is the one in the index, so
     // only the gone judgement stands between the index and its deletion.
     const rec = getRegisteredProject(wt);
@@ -641,7 +655,7 @@ async function seededWorktree(workspace: string, nested = false): Promise<{ main
   await indexDir(main);
   const wt = nested ? path.join(main, '.worktrees', 'nested') : path.join(workspace, 'feature');
   git(main, 'worktree', 'add', '-q', '-b', 'feature', wt);
-  expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
+  expect((await ensureWorktreeIndex(wt, seedHost())).kind).toBe('seeded');
   const rec = getRegisteredProject(wt);
   expect(rec?.seedNonce).toMatch(/^[0-9a-f]{32}$/);
   expect(readSeedNonce(wt)).toBe(rec!.seedNonce);
@@ -780,7 +794,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
     vi.stubEnv('GIT_CONFIG', path.join(workspace, 'elsewhere-config'));
     const userGlobal = process.env.GIT_CONFIG_GLOBAL;
 
-    expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
+    expect((await ensureWorktreeIndex(wt, seedHost())).kind).toBe('seeded');
     expect(await sweepWorktrees({ release: async () => { /* nothing open here */ } })).toEqual([]);
 
     const calls = fs.readFileSync(log, 'utf8').split('---\n').slice(0, -1).map((block) => block.split('\n').filter(Boolean));
@@ -829,7 +843,6 @@ describe('an index whose state cannot be read is never discarded as abandoned', 
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '');
-    vi.stubEnv('CODEGRAPH_AUTO_INDEX', '');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-unreadable-')));
   });
 
@@ -861,7 +874,7 @@ describe('an index whose state cannot be read is never discarded as abandoned', 
     // The state cannot be read: no read proves the build unfinished.
     fs.chmodSync(db, 0o000);
     try {
-      const outcome = await ensureWorktreeIndex(wt);
+      const outcome = await ensureWorktreeIndex(wt, seedHost());
       expect(outcome.kind).toBe('none');
       expect(fs.statSync(db).ino).toBe(ino);
     } finally {
