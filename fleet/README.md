@@ -17,7 +17,7 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 100 upstream files** (88 modified, 12 deleted) at exchange `b9d7e144e5`, 2026-10-31. An upstream file is one
+**Total: 100 upstream files** (88 modified, 12 deleted) at exchange `5e2d04a594`, 2026-10-31. An upstream file is one
 that exists at the fork's merge-base with upstream (`60b0d7a9`; upstream `main` has since moved to `2008e2f33f`, which
 the fork has not taken) and that exchange modifies or deletes. Recount with
 `git diff --name-status 60b0d7a9 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
@@ -27,7 +27,7 @@ files the fork added (20: 16 new files in upstream's folders, such as `src/mcp/l
 flat upstream tests that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
 of those two commits). Each row from `machine-server` on was checked on its own against its commit
 (`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
-`-r 1929a06514`, `-r b9d7e144e5`) and against upstream.
+`-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`) and against upstream.
 
 | Feature | Upstream files |
 |---|---|
@@ -61,6 +61,7 @@ of those two commits). Each row from `machine-server` on was checked on its own 
 
 | `focus-recall` (queries) | `src/types.ts`, `src/index.ts` (also named in other rows), `src/context/index.ts`, `src/db/queries.ts` (`findRelevantContext` takes an optional index-relative `pathPrefixes` list; every recall lookup and top-N limit counts in-focus hits only; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-recall.test.ts` |
 | `cli-builder-route` (host) | modified (7): `src/bin/codegraph.ts`, `src/mcp/daemon.ts`, `src/mcp/engine.ts`, `src/mcp/liveness-watchdog.ts`, `src/mcp/proxy.ts`, `src/mcp/session.ts`, `src/mcp/writer-lock.ts`; one upstream test, `__tests__/daemon-client-liveness.test.ts` (edited; the commit's only edit to upstream's flat `__tests__/`; also in `machine-server`'s count). Also edits `src/mcp/server-control.ts` (ours, from machine-server; absent from upstream, so not counted). No deletions, no new files in upstream's tree. Fork-only: `src/extensions/host/` (`README.md`; new `builder/`: `cli-jobs`, `cli-relay`, `cli-route`, `cli-wire`, `fences`; edited `builder/`: `client`, `holder`, `main`, `protocol`, `queue`, `seed-host`, `service`; `fresh/`: `checkpoint`, `cli`; `worktree-lifecycle/seed`) and its tests in `__tests__/extensions/host/` (new `cli-builder-route.gate`, `cli-builder-route.unit`, `daemon-socket-mode.unit`; edited `server-control.unit`, `session-scope.unit`) |
+| `focus-note` (host) | `src/mcp/tools.ts` (also named in other rows; a focused explore ends with one line per query name defined only outside the focus). The only file in the commit outside fork-only trees; no deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new tests `__tests__/extensions/host/focus-note.gate.test.ts` and `focus-note.unit.test.ts` |
 | docs (Designer, no feature; `52f0392a`) | `docs/AGENTS.md` (the per-root-daemon text, one line), `AGENTS.md` (the same line; also named in `node-25-support`). Fork-only in the same commit: `docs/SPEC.md` |
 
 
