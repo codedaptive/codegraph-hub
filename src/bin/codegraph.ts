@@ -79,6 +79,7 @@ import { registerExtensionCommands } from '../extensions/host/registry';
 // Static: .option() needs the --fresh / --checkpoint help text when the program is built.
 import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
 import type { FreshAnswer } from '../extensions/host/fresh/cli';
+import type { IndexWriter, SyncWriter } from '../extensions/host/builder/cli-route';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -743,7 +744,9 @@ async function runInit(
       clack.log.warn(`Found a codegraph.db without the codegraph schema in ${getCodeGraphDir(projectPath)} (left by an interrupted init?) — rebuilding it.`);
     }
     const { default: CodeGraph, getDatabasePath } = await loadCodeGraph();
-    const cg = await CodeGraph.init(projectPath, { index: false });
+    // With a machine server whose index builder is up, that builder does the write; otherwise this process does.
+    const cg: IndexWriter = await (await import('../extensions/host/builder/cli-route')).startRoutedInit(projectPath, !!options.force, !!options.verbose)
+      ?? await CodeGraph.init(projectPath, { index: false });
     clack.log.success(`Initialized in ${projectPath}`);
     // A fresh index on a Windows drive under WSL gets its own directory (#995).
     // It isn't the documented name, so say where it went and why.
@@ -881,6 +884,67 @@ program
   });
 
 /**
+ * The supervised, progress-rendered index of `codegraph index`, on `cg`: the freshly recreated CodeGraph of
+ * this process, or the writer of an index the machine server's builder is rebuilding. Destroys `cg` and
+ * answers whether the index succeeded; the caller exits 1 when it did not. `dbPath` is the database the
+ * liveness watchdog watches for progress.
+ */
+async function runIndexOn(
+  cg: IndexWriter,
+  dbPath: string,
+  projectPath: string,
+  options: { quiet?: boolean; verbose?: boolean },
+): Promise<boolean> {
+  // Supervise the indexer: self-terminate if orphaned (parent shim killed) or if the main thread wedges (#999).
+  // The DB + WAL paths let the liveness watchdog tell a slow store on
+  // degraded storage from a true wedge (#1231).
+  const supervision = installCommandSupervision('index', { progressPaths: [dbPath, `${dbPath}-wal`] });
+  try {
+    if (options.quiet) {
+      // Quiet mode: no UI, just run against the freshly-recreated index.
+      const result = await cg.indexAll();
+      return result.success;
+    }
+
+    const clack = await importESM('@clack/prompts');
+    clack.intro('Indexing project');
+
+    // A closure so a re-index (after opting gitignored child repos in, #1156)
+    // renders identically. Supervision already wraps the whole command.
+    const renderIndex = async (): Promise<IndexResult> => {
+      if (options.verbose) {
+        return await cg.indexAll({ onProgress: createVerboseProgress(), verbose: true });
+      }
+      process.stdout.write(`${colors.dim}${getGlyphs().rail}${colors.reset}\n`);
+      const progress = createShimmerProgress();
+      const r = await cg.indexAll({ onProgress: progress.onProgress });
+      await progress.stop();
+      return r;
+    };
+
+    const result = await renderIndex();
+
+    printIndexResult(clack, result, projectPath);
+    await recordIndexTelemetry(cg, result);
+
+    // Empty graph at a git super-repo → likely `.gitignore`d child repos;
+    // name them and offer to opt in instead of a silent 0-node result (#1156).
+    let finalResult = result;
+    if (result.nodesCreated === 0) {
+      finalResult = (await offerIndexIgnoredRepos(clack, projectPath, renderIndex, { interactive: true })) ?? result;
+    }
+
+    if (!finalResult.success) return false;
+
+    clack.outro('Done');
+    return true;
+  } finally {
+    supervision.stop();
+    cg.destroy();
+  }
+}
+
+/**
  * codegraph index [path]
  */
 program
@@ -916,6 +980,21 @@ program
           info('Run "codegraph init" first');
         }
         process.exit(1);
+      }
+
+      // With a machine server whose index builder is up, the builder rebuilds the index under a lease it holds
+      // for this command, and this process takes no lock. Otherwise this process rebuilds, below.
+      const routed = await (await import('../extensions/host/builder/cli-route')).startRoutedIndex(projectPath, !!options.force, !!options.verbose && !options.quiet);
+      if (routed) {
+        let indexed: boolean;
+        try {
+          const { getDatabasePath } = await loadCodeGraph();
+          indexed = await runIndexOn(routed, getDatabasePath(projectPath), projectPath, options);
+        } finally {
+          await routed.end();
+        }
+        if (!indexed) process.exit(1);
+        return;
       }
 
       const { tryAcquireWriterLock, releaseWriterLock, writerLockHeldMessage } = await import('../mcp/writer-lock');
@@ -955,57 +1034,8 @@ program
           // fast incremental updates use `sync`.
           const cg = await CodeGraph.recreate(projectPath);
 
-          // Supervise the indexer: self-terminate if orphaned (parent shim killed)
-          // or if the main thread wedges — neither was guarded on this path (#999).
-          // The DB + WAL paths let the liveness watchdog tell a slow store on
-          // degraded storage from a true wedge (#1231).
           const dbPath = getDatabasePath(projectPath);
-          const supervision = installCommandSupervision('index', { progressPaths: [dbPath, `${dbPath}-wal`] });
-          try {
-            if (options.quiet) {
-              // Quiet mode: no UI, just run against the freshly-recreated graph.
-              const result = await cg.indexAll();
-              if (!result.success) process.exit(1);
-              return;
-            }
-
-            const clack = await importESM('@clack/prompts');
-            clack.intro('Indexing project');
-
-            // A closure so a re-index (after opting gitignored child repos in, #1156)
-            // renders identically. Supervision already wraps the whole command.
-            const renderIndex = async (): Promise<IndexResult> => {
-              if (options.verbose) {
-                return await cg.indexAll({ onProgress: createVerboseProgress(), verbose: true });
-              }
-              process.stdout.write(`${colors.dim}${getGlyphs().rail}${colors.reset}\n`);
-              const progress = createShimmerProgress();
-              const r = await cg.indexAll({ onProgress: progress.onProgress });
-              await progress.stop();
-              return r;
-            };
-
-            const result = await renderIndex();
-
-            printIndexResult(clack, result, projectPath);
-            await recordIndexTelemetry(cg, result);
-
-            // Empty graph at a git super-repo → likely `.gitignore`d child repos;
-            // name them and offer to opt in instead of a silent 0-node result (#1156).
-            let finalResult = result;
-            if (result.nodesCreated === 0) {
-              finalResult = (await offerIndexIgnoredRepos(clack, projectPath, renderIndex, { interactive: true })) ?? result;
-            }
-
-            if (!finalResult.success) {
-              process.exit(1);
-            }
-
-            clack.outro('Done');
-          } finally {
-            supervision.stop();
-            cg.destroy();
-          }
+          if (!(await runIndexOn(cg, dbPath, projectPath, options))) process.exit(1);
         } finally {
           releaseWriterLock(projectPath);
         }
@@ -1037,7 +1067,9 @@ program
       }
 
       const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      // With a machine server whose index builder is up, that builder does the sync; otherwise this process does.
+      const cg: SyncWriter = await (await import('../extensions/host/builder/cli-route')).openRoutedSync(projectPath)
+        ?? await CodeGraph.open(projectPath);
 
       try {
         if (options.quiet) {

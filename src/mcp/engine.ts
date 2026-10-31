@@ -175,17 +175,28 @@ export class MCPEngine {
   }
 
   /**
+   * The index builder this engine was given, or null (the proxy's in-process fallback). A session relays
+   * the codegraph CLI's index writes (`codegraph/indexWrite`) to it; the engine itself writes nothing.
+   */
+  getBuilder(): BuilderClient | null {
+    return this.builder;
+  }
+
+  /**
    * Let go of project `root`: close the tool handler's cached connection,
    * then each query-pool worker's own connection (broadcast to every worker,
    * so a worker still holding a root the handler's cache already dropped
    * closes it too), then have the builder drop its hold (watcher, writer
    * slot) and wait until it has. A later call that names the root opens it
    * again and the builder holds it again. The builder's hold is dropped even
-   * for a root the handler no longer caches: a session's
-   * `codegraph/releaseProject` request (the `codegraph index` cascade) calls
-   * this so the CLI can take the project's writer slot, and answers
-   * 'released' only after it resolves. Each housekeeping pass calls it for a
-   * held project whose directory or database is gone.
+   * for a root the handler no longer caches. Two requests call it so the CLI's
+   * index rebuild can take the project's writer slot: a session's
+   * `codegraph/releaseProject` (the in-process `codegraph index`, which takes
+   * the slot itself), answered 'released' only after it resolves, and the
+   * relay of `codegraph/indexWrite` (the routed `codegraph index`, whose
+   * rebuild the builder runs), after the builder has fenced the root. Each
+   * housekeeping pass calls it for a held project whose directory or
+   * database is gone.
    */
   async releaseProjectRoot(root: string): Promise<void> {
     const canonical = canonicalProjectRoot(root);

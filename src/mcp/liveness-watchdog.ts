@@ -31,17 +31,18 @@
  * **Won't fire on real work.** Heavy parsing runs in the parse worker
  * (off-thread) and the daemon's indexing shells out to a child process, so the
  * daemon's main thread mostly does fast, bounded work. The server's main thread
- * does reads only: its syncs run in the index builder, a separate process. The
- * exception, a long synchronous store into SQLite (the CLI's `index` and `init`
- * run it on this thread), is what the disk-progress deferral below is for. The
- * default timeout, 60 s, is ~300× shorter than the 5 h #850 wedge, yet far longer
- * than any legitimate main-thread block. Opt out with `CODEGRAPH_NO_WATCHDOG=1`; tune
- * with `CODEGRAPH_WATCHDOG_TIMEOUT_MS`.
+ * does reads only: its syncs run in the index builder, a separate process.
+ * The exception, a long synchronous store into SQLite (the CLI's `index` and
+ * `init` run it on this thread when no machine server routes them to its
+ * builder), is what the disk-progress deferral below is for. The default
+ * timeout, 60 s, is ~300× shorter than the 5 h #850 wedge, yet far longer than
+ * any legitimate main-thread block. Opt out with `CODEGRAPH_NO_WATCHDOG=1`;
+ * tune with `CODEGRAPH_WATCHDOG_TIMEOUT_MS`.
  *
- * **Disk-progress deferral (`progressPaths`).** The CLI `index`/`init` path is
- * different: it runs the SQLite store on this thread, and one long synchronous
- * statement on severely degraded storage can block the loop past the timeout
- * with the process perfectly healthy (#1231: killed a valid index on a
+ * **Disk-progress deferral (`progressPaths`).** The CLI `index`/`init` path
+ * without a server's builder is different: it runs the SQLite store on this
+ * thread, and one long synchronous statement on severely degraded storage can
+ * block the loop past the timeout with the process perfectly healthy (#1231: killed a valid index on a
  * 150-IOPS disk). Heartbeat silence alone cannot tell that apart from a wedge —
  * but the disk can: a wedged CPU loop makes no forward progress on the DB
  * files, while a slow store advances them. When the caller supplies

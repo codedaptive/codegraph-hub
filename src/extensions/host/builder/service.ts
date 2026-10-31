@@ -1,11 +1,12 @@
 /**
  * The index builder's logic, apart from its process (./main.ts) so a test can run it in-process: the queue,
- * the held roots, the cold-build and seed host, the housekeeping sweep, and the request handler the IPC
- * channel feeds.
+ * the held roots, the cold-build and seed host, the rebuild fences, the codegraph CLI's jobs, the
+ * housekeeping sweep, and the request handler the IPC channel feeds.
  *
  * The index writes the builder makes as jobs happen here, one job at a time on
  * {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
- * a hold, every sync (a caller's or a watcher's), and index recovery. The one write a job does not await is the
+ * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, and the CLI's `init` and `index`
+ * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts). The one write a job does not await is the
  * oversized-WAL checkpoint a writable open starts (see holder.ts openWritable). The housekeeping sweep runs on its own timer with its own hold set,
  * outside the queue, and tears down the indexes whose worktree is gone.
  */
@@ -14,7 +15,9 @@ import type { WatchOptions } from '../../../sync/watcher';
 import { EngineHousekeeping } from '../worktree-lifecycle/housekeeping';
 import { ensureWorktreeIndex, isAbandonedIndex } from '../worktree-lifecycle/seed';
 import { selectOwnIndexRoot } from '../server/index-root';
+import { CliJobs, requireAbsoluteRoot } from './cli-jobs';
 import type { BuilderFreshness, EnsureOutcome } from './client';
+import { RebuildFences } from './fences';
 import { HolderSet } from './holder';
 import type { BuilderRequest, BuilderToServer } from './protocol';
 import { JobQueue, formatJobLine } from './queue';
@@ -38,14 +41,19 @@ export interface BuilderServiceOptions {
 export class BuilderService {
   readonly queue: JobQueue;
   readonly holders: HolderSet;
+  /** This service's rebuild fences: shared by the holders, the seed host and the CLI's jobs, never a module-wide registry. */
+  private readonly fences: RebuildFences;
+  private readonly cliJobs: CliJobs;
   private readonly seedHost: BuilderSeedHost;
   private readonly housekeeping: EngineHousekeeping | null;
 
   constructor(private readonly opts: BuilderServiceOptions) {
     this.queue = new JobQueue({ onEvent: (event) => opts.jobLog(formatJobLine(event)) });
+    this.fences = new RebuildFences(this.queue, (line) => opts.log(line));
     this.seedHost = new BuilderSeedHost(this.queue, {
       seedWaitMs: opts.timing?.seedWaitMs ?? resolveSeedWaitMs(),
       log: (line) => opts.log(line),
+      fences: this.fences,
     });
     // The holders' timings. openWaitMs, the seed wait (CODEGRAPH_BUILDER_ENSURE_WAIT_MS, 10 s): how long an
     // `ensure` waits for its root's `open` job, which queues behind a running cold build, before it answers
@@ -55,6 +63,7 @@ export class BuilderService {
     // pollMs, 250 ms: how often watcher state is read for the freshness pushes to the server.
     this.holders = new HolderSet({
       queue: this.queue,
+      fences: this.fences,
       onFreshness: (state) => opts.send({ op: 'freshness', state }),
       log: (line) => opts.log(line),
       watchOptions: () => opts.watchOptions(),
@@ -63,6 +72,7 @@ export class BuilderService {
       ownRetryMs: opts.timing?.ownRetryMs ?? 1_000,
       pollMs: opts.timing?.pollMs ?? 250,
     });
+    this.cliJobs = new CliJobs({ queue: this.queue, holders: this.holders, fences: this.fences, send: (message) => opts.send(message) });
     // The sweep tears down registered projects whose worktree is gone and releases every held root whose index
     // vanished. It runs here, not in the server: the builder is the process that holds the roots and the one
     // allowed to delete an index. The server's own housekeeping only lets go of its read-only handles.
@@ -108,6 +118,14 @@ export class BuilderService {
       case 'caughtUp': return this.holders.caughtUp(request.root);
       case 'sync': return this.holders.sync(request.root);
       case 'release': return this.holders.release(request.root);
+      // The CLI's requests. Their roots are IPC data: CliJobs refuses one that is not an absolute path, and the
+      // fence calls are given the same check here.
+      case 'fence': return runNow(() => this.fences.fence(requireAbsoluteRoot(request.root)));
+      case 'unfence': return runNow(() => this.fences.unfence(requireAbsoluteRoot(request.root)));
+      // Not an async wrapper: the promise handed back is the job's own, so a lease's `unfence` (which waits for
+      // the jobs it tracks) answers after the job's reply.
+      case 'cliIndex': return this.cliJobs.cliIndex(request.id, request.root, request.mode, request.verbose === true);
+      case 'cliSync': return this.cliJobs.cliSync(request.id, request.root);
       default: return Promise.reject(new Error(`unknown builder request: ${String((request as { op?: unknown }).op)}`));
     }
   }
@@ -139,7 +157,7 @@ export class BuilderService {
     // held below, recovered, and a full catch-up queued, and the call may be answered from it before the
     // catch-up ends.
     const root = selectOwnIndexRoot(projectPath);
-    if (root === null || isAbandonedIndex(root)) return { kind: 'none' };
+    if (root === null || isAbandonedIndex(root, (r) => this.fences.rebuildHeld(r))) return { kind: 'none' };
     return this.holdRoot(root);
   }
 
@@ -171,11 +189,26 @@ export class BuilderService {
    * Stop. The jobs still queued are dropped and the one running gets `graceMs` to finish, so a cold build the
    * server's exit interrupted is not thrown away at once; then every hold is released (bounded: a job still
    * running past the grace leaves its root's lock for the next builder to reclaim, its pid being dead).
+   * Last, whatever the earlier steps did, every rebuild fence is released (`rebuild.pid`, and `writer.pid` where
+   * a lease took it), so a bounded stop never leaves a root fenced.
    */
   async stop(graceMs: number): Promise<void> {
-    this.housekeeping?.stop();
-    await Promise.race([this.queue.close(), new Promise<void>((resolve) => setTimeout(resolve, graceMs).unref())]);
-    // 2 s bounds the hold teardown so a stopping builder exits promptly even when a hold will not close.
-    await Promise.race([this.holders.closeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref())]);
+    try {
+      this.housekeeping?.stop();
+      await Promise.race([this.queue.close(), new Promise<void>((resolve) => setTimeout(resolve, graceMs).unref())]);
+      // 2 s bounds the hold teardown so a stopping builder exits promptly even when a hold will not close.
+      await Promise.race([this.holders.closeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref())]);
+    } finally {
+      this.fences.releaseAll();
+    }
+  }
+}
+
+/** Run `fn` now and answer with its value as a promise; what it throws is a rejection. */
+function runNow<T>(fn: () => T | Promise<T>): Promise<T> {
+  try {
+    return Promise.resolve(fn());
+  } catch (err) {
+    return Promise.reject(err);
   }
 }

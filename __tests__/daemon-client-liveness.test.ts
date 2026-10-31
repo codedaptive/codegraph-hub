@@ -18,26 +18,35 @@ import { Daemon, parseClientHelloLine, peerIsDead } from '../src/mcp/daemon';
 describe('parseClientHelloLine', () => {
   it('parses a well-formed client-hello', () => {
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":1234,"hostPid":56}'))
-      .toEqual({ pid: 1234, hostPid: 56, launchDir: null });
+      .toEqual({ pid: 1234, hostPid: 56, launchDir: null, hasLaunchDir: false, control: false });
   });
 
   it('accepts a null host pid and a missing host pid', () => {
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":1234,"hostPid":null}'))
-      .toEqual({ pid: 1234, hostPid: null, launchDir: null });
+      .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":1234}'))
-      .toEqual({ pid: 1234, hostPid: null, launchDir: null });
+      .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
   });
 
   it('keeps an absolute launch directory', () => {
     const launchDir = path.resolve(os.tmpdir(), 'some project');
     expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 1234, hostPid: 56, launchDir })))
-      .toEqual({ pid: 1234, hostPid: 56, launchDir });
+      .toEqual({ pid: 1234, hostPid: 56, launchDir, hasLaunchDir: true, control: false });
+  });
+
+  it('reads the control marker only as the number 1', () => {
+    expect(parseClientHelloLine('{"codegraph_client":1,"control":1,"pid":1234,"hostPid":null}'))
+      .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: false, control: true });
+    for (const control of [true, '1', 2, 0, null]) {
+      expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, control, pid: 1234, hostPid: null }))?.control)
+        .toBe(false);
+    }
   });
 
   it('reads a relative, empty or non-string launch directory as absent', () => {
     for (const launchDir of ['relative/dir', './here', '', 42, null]) {
       expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 1234, hostPid: null, launchDir })))
-        .toEqual({ pid: 1234, hostPid: null, launchDir: null });
+        .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: true, control: false }); // the key is present, whatever it holds
     }
   });
 
@@ -116,14 +125,14 @@ describe('Daemon.reapDeadClients', () => {
     made.push(d);
     return d;
   };
-  const fakeSession = () => ({ stopped: false, stop() { this.stopped = true; } });
+  const fakeSession = () => ({ stopped: false, stop() { this.stopped = true; }, releaseLeases() { /* no leases */ } });
 
   it('drops clients with a dead peer and leaves live ones attached', () => {
     const d = makeDaemon();
     const dead = fakeSession();
     const live = fakeSession();
-    d.clients.add(dead); d.clientPeers.set(dead, { pid: 111, hostPid: null, launchDir: null });
-    d.clients.add(live); d.clientPeers.set(live, { pid: 222, hostPid: null, launchDir: null });
+    d.clients.add(dead); d.clientPeers.set(dead, { pid: 111, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
+    d.clients.add(live); d.clientPeers.set(live, { pid: 222, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
 
     const reaped = d.reapDeadClients((pid: number) => pid !== 111); // 111 dead, 222 alive
 
@@ -138,7 +147,7 @@ describe('Daemon.reapDeadClients', () => {
   it('never reaps a client with an unknown pid (no client-hello)', () => {
     const d = makeDaemon();
     const s = fakeSession();
-    d.clients.add(s); d.clientPeers.set(s, { pid: null, hostPid: null, launchDir: null });
+    d.clients.add(s); d.clientPeers.set(s, { pid: null, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
 
     expect(d.reapDeadClients(() => false)).toBe(0); // everything "dead", but pid unknown
     expect(d.clients.has(s)).toBe(true);

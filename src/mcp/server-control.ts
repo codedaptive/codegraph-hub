@@ -209,7 +209,7 @@ const RELEASE_TIMEOUT_MS = 20_000;
  * call, when the builder holds it again.
  *
  * Protocol (src/mcp/daemon.ts): connect, read the server's hello line, send a
- * client-hello `{codegraph_client:1, pid, hostPid: null}` carrying no `launchDir` (this is not a
+ * client-hello `{codegraph_client:1, control:1, pid, hostPid: null}` carrying no `launchDir` (this is not a
  * session), then one JSON-RPC request
  * `{"jsonrpc":"2.0","id":"release","method":"codegraph/releaseProject","params":{"root":<root>}}`
  * and wait for the reply with that id.
@@ -231,6 +231,26 @@ export async function requestProjectRelease(
     if (result !== 'no-server') return result;
   }
   return 'no-server';
+}
+
+/**
+ * Is `message` (the first line a server socket sends) a CodeGraph server's hello? Protocol 1 and a
+ * `codegraph` version string. The one check behind {@link requestProjectRelease} and the CLI's builder
+ * route (src/extensions/host/builder/cli-route.ts); a caller that must know WHICH server also compares
+ * `pid` and `codegraph` with the lock it proved.
+ */
+export function isServerHello(message: Record<string, unknown>): boolean {
+  return message.protocol === 1 && typeof message.codegraph === 'string';
+}
+
+/**
+ * The client hello of a control client, as one line: `{codegraph_client:1, control:1, pid, hostPid:null}`
+ * with no `launchDir`. The server treats a hello with the `control` marker and no `launchDir` as a control
+ * client (src/mcp/daemon.ts), not an agent session, and accepts the CLI's index writes from it; the
+ * release request of {@link requestProjectRelease} is sent on the same hello.
+ */
+export function controlClientHelloLine(): string {
+  return JSON.stringify({ codegraph_client: 1, control: 1, pid: process.pid, hostPid: null }) + '\n';
 }
 
 /** One {@link requestProjectRelease} attempt on one socket path. */
@@ -267,9 +287,9 @@ function releaseOverSocket(
         try { message = JSON.parse(line) as Record<string, unknown>; } catch { return finish('failed'); }
         if (!sentRequest) {
           // The first line is the server's hello; anything else is not our server.
-          if (message.protocol !== 1 || typeof message.codegraph !== 'string') return finish('failed');
+          if (!isServerHello(message)) return finish('failed');
           sentRequest = true;
-          socket.write(JSON.stringify({ codegraph_client: 1, pid: process.pid, hostPid: null }) + '\n');
+          socket.write(controlClientHelloLine());
           socket.write(JSON.stringify({
             jsonrpc: '2.0', id: 'release', method: 'codegraph/releaseProject', params: { root },
           }) + '\n');

@@ -4,7 +4,8 @@
  *   node --liftoff-only main.js        (forked by BuilderClient, ./client.ts, with an IPC channel)
  *
  * The server (the machine server, or a direct-mode session) forks one builder and keeps it running. Every
- * cold build, seed copy, sync and watcher sync of every index happens here, one job at a time on a queue in
+ * cold build, seed copy, sync and watcher sync of every index happens here, and so does every `init`, `index`
+ * and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts), one job at a time on a queue in
  * which a short sync goes ahead of cold builds (./queue.ts); the server opens the databases read-only and
  * asks for the rest over IPC (./protocol.ts). The builder has no idle timer of any kind: it lives until its
  * IPC channel closes (the server is gone) or it is signalled.
@@ -14,15 +15,17 @@
  *   builder.log   one line per job edge, appended:
  *                   <ISO8601> job start <kind> <root>
  *                   <ISO8601> job end <kind> <root> ok|failed[: msg]
- *                 kind is sync, catch-up, watch-sync, seed, cold-build, recover or open. Past 4 MiB the file is moved to
+ *                 kind is sync (a caller's sync, the server's or the CLI's), catch-up, watch-sync, seed, cold-build,
+ *                 init or index (the CLI's, ./cli-jobs.ts), recover or open. Past 4 MiB the file is moved to
  *                 builder.log.1 (replacing an older one) and a new one starts.
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
  * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the one running gets
  * CODEGRAPH_BUILDER_EXIT_GRACE_MS (default 30 s) to finish before the holds are released and the process
  * exits. SIGTERM and SIGINT drop the running job's grace and exit after at most 2 s of hold teardown. A
- * killed builder leaves locks that name a dead pid; the next builder reclaims them (writer-lock.ts) and the
- * server's client restarts it.
+ * killed builder leaves locks that name a dead pid (a CLI index's rebuild lease among them); the next builder
+ * reclaims them (writer-lock.ts) and the server's client restarts it. A clean exit releases every rebuild
+ * lease (./fences.ts) after the holds.
  *
  * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
  * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.

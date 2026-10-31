@@ -2,21 +2,26 @@
  * The index builder's job queue: one job runs at a time, in two priority classes.
  *
  * SYNC jobs (`sync`, `catch-up`, `watch-sync`, `seed`, `recover`, `open`) are short: a changed file or two, a
- * copy of an index, the writable open of one (its migrations and repairs). COLD jobs (`cold-build`) index a whole repository and run for minutes. A SYNC job always starts
- * before any queued COLD job, so an agent's edit becomes visible without waiting behind the cold builds
- * queued ahead of it. Within a class the order is first in, first out. A running job is never preempted:
- * nothing here can interrupt an index run halfway, so a SYNC job that arrives while a cold build runs waits
- * for that one build to end, and then goes before the next.
+ * copy of an index, the writable open of one (its migrations and repairs). COLD jobs (`cold-build`, `init`,
+ * `index`) index a whole repository and run for minutes: a cold build of a root nobody asked for, and the
+ * codegraph CLI's `init` and `index` (./cli-jobs.ts). A SYNC job always starts before any queued COLD job, so
+ * an agent's edit becomes visible without waiting behind the cold builds queued ahead of it.
+ * Within a class the order is first in, first out. A running job is never preempted: nothing here can
+ * interrupt an index run halfway, so a SYNC job that arrives while a cold build runs waits for that one build
+ * to end, and then goes before the next.
  *
  * Every job is logged as it starts and ends, through `onEvent`; the builder writes those as the lines of
  * `<state dir>/builder.log`.
  */
 
-/** What a job does, and so which class it is in. */
-export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build' | 'recover' | 'open';
+/**
+ * What a job does, and so which class it is in. `sync` is a caller's sync (the server's, or the CLI's
+ * `sync`); `init` and `index` are the CLI's whole-repository index writes (./cli-jobs.ts).
+ */
+export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build' | 'init' | 'index' | 'recover' | 'open';
 
 /** The kinds that wait behind every queued SYNC job. */
-const COLD_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['cold-build']);
+const COLD_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['cold-build', 'init', 'index']);
 
 /** One job's start or end, for the log. `error` is set on a failed end, one line. */
 export type JobEvent =
