@@ -1,5 +1,5 @@
 /**
- * The server's half of the CLI's index writes: relays `codegraph/indexWrite` and `codegraph/indexWriteEnd`
+ * The server's half of the CLI's index writes and index deletion: relays `codegraph/indexWrite` and `codegraph/indexWriteEnd`
  * (wire: ./cli-wire.ts) from one control connection to the index builder, which runs the write as a job on
  * its queue (./cli-jobs.ts). The CLI's side is ./cli-route.ts.
  *
@@ -11,6 +11,18 @@
  *  - for `index`, the order that lets the builder take the root: the builder fences the root (rebuild.pid, so
  *    no hold, seed or cold build of its own touches it), then the engine lets go of its read handles and the
  *    builder's hold (`releaseProjectRoot`), then the builder rebuilds;
+ *  - for `release` (`codegraph uninit`), a `release` fence (the builder starts no job that opens the root while it
+ *    stands: ./fences.ts), the engine's and the builder's holds let go, and then the builder's `drain`: the answer
+ *    goes out once no job of the root runs or waits. The lease is left on the root, and the CLI deletes `.codegraph`
+ *    and ends the lease after the delete. What this guarantees: no builder job holds or can open the root's database
+ *    when the answer goes, and none starts until the lease ends. What it does not: a connection that code outside the
+ *    builder's jobs opened on its own and teardown does not track, i.e. a hold's deferred index recovery that
+ *    outlasted `recoverWaitMs` (holder.ts), and the oversized-WAL checkpoint a writable open starts (src/db/index.ts).
+ *    Both are in upstream code this zone does not edit. Seeds are covered: a seed that reads the root counts as
+ *    a job of the root, so the drain waits for it, and one not yet started refuses (./seed-host.ts). The drain is
+ *    best-effort in one way: `BuilderClient.drain` treats any failure as the builder having exited, and a builder
+ *    that restarts after the fence was taken does not have the `release` fence again (its fences died with it);
+ *    the CLI's `uninit` then deletes under a builder that holds nothing and starts no job unasked;
  *  - the lease of that fence, which belongs to the connection: it ends on `codegraph/indexWriteEnd` or when
  *    the connection goes ({@link CliRelay.releaseLeases}, called by the daemon when it drops a client: on
  *    the peer's close, or when its reaper stops a dead peer), so a CLI that dies mid-index never leaves a root fenced;
@@ -42,8 +54,13 @@ import {
 export interface CliBuilder {
   /** The builder process is running and has said ready; no waiting. */
   isUp(): boolean;
-  /** Take the root's rebuild fence; rejects with the refusal (e.g. 'Another index rebuild is already in progress.'). */
-  fence(root: string): Promise<void>;
+  /**
+   * Take the root's rebuild fence; rejects with the refusal (e.g. 'Another index rebuild is already in progress.').
+   * `kind` 'release' (an `uninit`'s) also keeps every builder job that would open the root from starting.
+   */
+  fence(root: string, kind?: 'index' | 'release'): Promise<void>;
+  /** Resolves once no job of the root runs or waits on the builder's queue; other roots' jobs are not waited for. Never rejects. */
+  drain(root: string): Promise<void>;
   /** Release the root's fence once its jobs have settled. Never rejects. */
   unfence(root: string): Promise<void>;
   /** Run one `init`, `rebuild` (the CLI's `index`), `reindex` or `reindex-leased` job, reporting its events in order; rejects with the job's error (name preserved). */
@@ -60,7 +77,7 @@ export interface CliRelayEngine {
   releaseProjectRoot(root: string): Promise<void>;
 }
 
-const OPS: readonly IndexWriteOp[] = ['init', 'index', 'reindex', 'sync'];
+const OPS: readonly IndexWriteOp[] = ['init', 'index', 'reindex', 'sync', 'release'];
 
 /** A request the relay answers with a JSON-RPC error: its code, text and the thrown error's class name. */
 class RelayError extends Error {
@@ -153,27 +170,43 @@ export class CliRelay {
         // Under this connection's lease when it holds one for the root (the interactive re-run of `index`),
         // else on the index as it stands (the re-run of `init`).
         return { routed: true, result: await builder.cliIndex(root, this.leases.has(root) ? 'reindex-leased' : 'reindex', onEvent, verbose) };
-      case 'index': {
-        // (1) fence: the builder refuses when another rebuild runs. Jobs already queued on the root may still run
-        // before the release in (2), which waits for any running one. A refusal here took no lease, so there is
-        // nothing to release.
-        await builder.fence(root);
-        if (this.ended) {
-          await builder.unfence(root);
-          throw new RelayError('the connection closed before the index write started', ErrorCodes.InternalError);
-        }
-        this.leases.add(root);
-        // (2) the engine's handles and the builder's hold on the root go, so the rebuild can take the writer lock.
-        try {
-          await this.engine.releaseProjectRoot(root);
-        } catch (err) {
-          this.leases.delete(root);
-          await builder.unfence(root);
-          throw err;
-        }
+      case 'index':
+        // (1) and (2): the fence, then the engine's and the builder's hold on the root go.
+        await this.takeLease(builder, root, 'index');
         // (3) rebuild. The lease stays after it (also after a failure) until indexWriteEnd or the connection's end.
         return { routed: true, result: await builder.cliIndex(root, 'rebuild', onEvent, verbose) };
-      }
+      case 'release':
+        // The same two steps under a `release` fence, then the drain, and no rebuild: the CLI deletes `.codegraph`
+        // while the lease holds the root, then ends the lease with indexWriteEnd (or the connection's end does).
+        await this.takeLease(builder, root, 'release');
+        return { routed: true, result: { released: true } };
+    }
+  }
+
+  /**
+   * The start of `index` and `release`, in the order that lets the root be taken: (1) the builder fences the root
+   * with `kind` (it refuses when another rebuild runs; a refusal took no lease, so there is nothing to release),
+   * then (2) the engine's handles and the builder's hold on the root go (`releaseProjectRoot` waits for a job
+   * that runs on the hold, not for the root's other jobs), so a writer can take the root's locks. For `release`
+   * (3) the builder drains the root: the answer waits until no job of the root runs or waits, and the `release`
+   * fence refused every job that would open the root from the moment it was taken. A job of an `index` lease is
+   * not drained: the rebuild that follows is queued behind it. Resolves once the lease is recorded in `leases`;
+   * a failure after the fence records none and unfences.
+   */
+  private async takeLease(builder: CliBuilder, root: string, kind: 'index' | 'release'): Promise<void> {
+    await builder.fence(root, kind);
+    if (this.ended) {
+      await builder.unfence(root);
+      throw new RelayError('the connection closed before the index write started', ErrorCodes.InternalError);
+    }
+    this.leases.add(root);
+    try {
+      await this.engine.releaseProjectRoot(root);
+      if (kind === 'release') await builder.drain(root);
+    } catch (err) {
+      this.leases.delete(root);
+      await builder.unfence(root);
+      throw err;
     }
   }
 
@@ -217,7 +250,8 @@ function resolveRoot(root: string): string {
 /**
  * The CLI's own refusals (src/bin/codegraph.ts: runInit and the `index`, `sync` commands), no more:
  * `init` and `index` refuse an unsafe root unless forced (a root that does not exist yet passes: init
- * creates it); `init` refuses an initialized root, the others an uninitialized one.
+ * creates it); `init` refuses an initialized root, the others an uninitialized one; `release` has no CLI refusal
+ * (`uninit` warns and exits 0 first), so its check is the server's own, worded as uninit's warning.
  */
 function refuse(op: IndexWriteOp, root: string, force: boolean): void {
   if ((op === 'init' || op === 'index') && !force) {
@@ -234,6 +268,9 @@ function refuse(op: IndexWriteOp, root: string, force: boolean): void {
   const initialized = isInitialized(root);
   if (op === 'init' && initialized) {
     throw new RelayError(`Already initialized in ${root}`, ErrorCodes.InvalidParams);
+  }
+  if (op === 'release' && !initialized) {
+    throw new RelayError(`CodeGraph is not initialized in ${root}`, ErrorCodes.InvalidParams);
   }
   if (op !== 'init' && !initialized) {
     throw new RelayError(`CodeGraph not initialized in ${root}`, ErrorCodes.InvalidParams);

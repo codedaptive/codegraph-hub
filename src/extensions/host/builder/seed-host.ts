@@ -93,10 +93,19 @@ export class BuilderSeedHost implements SeedHost {
       .finally(() => this.cold.delete(key));
   }
 
-  async runSeed<T>(root: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }> {
+  async runSeed<T>(root: string, source: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }> {
     const key = canonicalProjectRoot(root);
     this.seeds.set(key, root);
-    const settled = this.queue.enqueue('seed', root, copy).finally(() => this.seeds.delete(key));
+    // The job is queued under the worktree but reads `source`'s database, so it is also a job of `source`: the
+    // drain of a root being removed (queue.ts whenRootIdle) waits for it. `source` was chosen when the seed was
+    // asked for, and the job may wait for minutes: when it starts it asks again, and a source or a target that
+    // is being removed (a `release` fence of `codegraph uninit`) fails the seed before anything is opened.
+    const checked = async (): Promise<T> => {
+      this.opts.fences?.refuseIfRemoving(source);
+      this.opts.fences?.refuseIfRemoving(root);
+      return copy();
+    };
+    const settled = this.queue.enqueue('seed', root, checked, { alsoRoots: [source] }).finally(() => this.seeds.delete(key));
     let timer: NodeJS.Timeout | undefined;
     const waitMs = this.opts.seedWaitMs ?? resolveSeedWaitMs();
     const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), waitMs); });

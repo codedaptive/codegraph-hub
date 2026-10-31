@@ -122,12 +122,12 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   beside the live one: two state dirs never share a socket, a lock or a registry record, and stopping
   one leaves the other.
 - **Control** (`src/mcp/server-control.ts`): `probeServer`, `stopServer` (identity verified by the
-  server's socket hello before any signal), `requestProjectRelease` (what `codegraph index` calls
-  before it rebuilds a project's index in its own process, when no server routes the write to its
+  server's socket hello before any signal), `requestProjectRelease` (what `codegraph index` and `codegraph uninit` call
+  before they rebuild or delete a project's index in their own process, when no server routes the write to its
   builder: the server closes its handle and the builder drops its hold, and 'released' is answered
   after both). Paths and the lock record are in `src/mcp/daemon-paths.ts`.
 - **CLI writes** (`builder/cli-route.ts`, wire in `builder/cli-wire.ts`). `codegraph init`, `index`
-  and `sync`, and the `--fresh` wait of the commands that answer from the index, ask a running
+  and `sync`, and the `--fresh` wait of the commands that answer from the index, and `uninit`'s release (see below), ask a running
   server whose index builder is up to have that builder do the write. `builderRoute()` is the one decision: `probeServer()` proved
   a server (a live `server.pid` whose socket hello names its pid and version), and the CLI holds one
   connection to its socket, with a client hello that carries `control: 1` and no `launchDir` (a control
@@ -135,12 +135,21 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   returns the engine's console lines as `log` events). `builder.pid` is not consulted:
   a direct-mode builder writes the same file for its own state dir, so it proves nothing about a
   server. No server, or a server whose builder is not up, and the command writes in its own process; the route creates no file or directory and starts nothing. The requests are
-  `codegraph/indexWrite` (`init`, `index`, `reindex`, `sync`) and `codegraph/indexWriteEnd`; the
+  `codegraph/indexWrite` (`init`, `index`, `reindex`, `sync`, `release`) and `codegraph/indexWriteEnd`; the
   server's `codegraph/indexWriteEvent` notifications (relayed from the builder's progress events) carry an
   init's `initialized` event and the indexing progress, which the CLI renders with the same code as in-process. An `index` request leaves
   a lease on the connection (the root's `rebuild.pid` and `writer.pid`, held by the builder) so the
   interactive re-run (`reindex`) runs under it; the CLI ends it with `indexWriteEnd`, and the server
-  releases it when the connection goes. A request sent and not answered (the connection dropped) fails
+  releases it when the connection goes. `release` is `codegraph uninit`'s request: a fence of kind `release`
+  (while it stands the builder starts no job that opens the root: `sync`, `init`, `index` and their re-runs
+  refuse with "the index of <root> is being removed", as do a hold's open and its retry), the server and the builder let go of the
+  root, the builder's `drain` (the answer waits until no job of that root runs or waits; other roots' jobs are
+  not waited for), and no rebuild; the CLI then deletes `.codegraph` (opened read-only) and ends the lease. So
+  when `release` answers, no job of the builder holds or can open the database. Two connections of upstream code
+  that teardown does not track can outlive it: a hold's deferred index recovery that outlasted its wait, and the
+  oversized-WAL checkpoint a writable open starts. With no
+  builder to route to, `uninit` takes `rebuild.pid` and calls `requestProjectRelease` as `index` does
+  (a server that does not confirm refuses it), and starts nothing and writes no `server.pid` or `builder.pid` (`uninit.ts`). A request sent and not answered (the connection dropped) fails
   the command: the write may have run, so it is never redone in-process. The `--fresh` wait then holds
   the index read-only and sends each sync as a `sync` request.
 - **The index builder** (`builder/`, started by the server with itself, in direct mode by the direct

@@ -1,6 +1,8 @@
 /**
  * The CLI side of an index write that runs in the machine server's index builder instead of in the CLI's own
- * process: `codegraph init`, `index` and `sync`, and the `--fresh` wait of the answering commands. The wire is
+ * process: `codegraph init`, `index` and `sync`, and the `--fresh` wait of the answering commands; and of the
+ * release `codegraph uninit` needs before it deletes an index (the server and the builder let go of the root,
+ * and the CLI deletes it under the lease). The wire is
  * ./cli-wire.ts; the server's relay is ./cli-relay.ts and the builder's jobs are ./cli-jobs.ts.
  *
  * One decision point, {@link builderRoute}: a running machine server (src/mcp/server-control.ts probeServer)
@@ -33,6 +35,7 @@ import {
   type IndexWriteEvent,
   type IndexWriteParams,
   type IndexWriteResult,
+  type ReleaseResult,
 } from './cli-wire';
 
 /** What a request answers: the builder's result, or that nothing was taken or queued (the CLI writes itself). */
@@ -66,7 +69,14 @@ export interface BuilderRoute {
   /** `sync`: one sync of `root`, a sync job on the builder. The events are the sync's progress, if the server sends any. */
   sync(root: string, onEvent?: RouteEventHandler): Promise<RouteAnswer<SyncResult>>;
   /**
-   * Ends the lease `index` took and answers once the server and builder have released it, so the root's lock
+   * `release`: the uninit's request. Fences `root` with a `release` fence (`rebuild.pid` only; the builder starts no job that
+   * opens it while the lease stands), has the server and the builder let go of its index, and answers once no builder job
+   * of the root runs or waits; nothing is rebuilt. The lease stays until {@link end} or the
+   * connection goes, so the caller deletes `.codegraph` and then ends it.
+   */
+  release(root: string): Promise<RouteAnswer<ReleaseResult>>;
+  /**
+   * Ends the lease `index` or `release` took and answers once the server and builder have released it, so the root's lock
    * files are gone when the command exits. Never rejects: a connection already gone has already lost the lease.
    * The request queues behind one in flight, so a caller that is failing while its `index` request still runs
    * uses {@link close} instead (see RoutedWriter.end).
@@ -153,6 +163,10 @@ class RouteConnection implements BuilderRoute {
     return this.indexWrite({ op: 'sync', root }, onEvent) as Promise<RouteAnswer<SyncResult>>;
   }
 
+  release(root: string): Promise<RouteAnswer<ReleaseResult>> {
+    return this.indexWrite({ op: 'release', root }) as Promise<RouteAnswer<ReleaseResult>>;
+  }
+
   async end(root: string): Promise<void> {
     try {
       await this.rpc(INDEX_WRITE_END_METHOD, { root });
@@ -167,8 +181,8 @@ class RouteConnection implements BuilderRoute {
 
   private async indexWrite(
     params: IndexWriteParams,
-    onEvent: RouteEventHandler | undefined,
-  ): Promise<RouteAnswer<IndexResult | SyncResult>> {
+    onEvent?: RouteEventHandler,
+  ): Promise<RouteAnswer<IndexResult | SyncResult | ReleaseResult>> {
     const outcome = await this.rpc(INDEX_WRITE_METHOD, params, onEvent);
     if (!outcome.sent) return { routed: false, reason: 'the connection to the CodeGraph server is closed' };
     const reply = outcome.result as Partial<IndexWriteResult> | null;
