@@ -49,9 +49,11 @@ off, delete the line. `share/mcp-codegraph.json` carries the fleet settings (`CO
 `DO_NOT_TRACK=1`, and `CODEGRAPH_QUERY_POOL_SIZE=0` after `mcp-json.md`).
 
 A team that needs settings of its own gets its own file, `share/mcp-codegraph-<team>.json`, a copy of the shared
-one with its env changed, and names that file instead. That is where each repository's allowlist goes once WP1's
-host lands. The server key stays `codegraph` in every file, so the tool names agents see
-(`mcp__codegraph__codegraph_explore`, ...) are the same on every team.
+one with its env changed, and names that file instead. These settings do not impose a repository/edition
+allowlist: under R-8 (`docs/RULINGS.md`), this trusted-local MCP may query any checked-out repository, and
+agent-supplied `projectPath` selects the requested database rather than granting access. The server key stays
+`codegraph` in every file, so the tool names agents see (`mcp__codegraph__codegraph_explore`, ...) are the same
+on every team.
 
 Team-codegraph switches on the same way. Its file runs `/opt/homebrew/bin/codegraph`, the fleet's released build
 (the global install), never a build from this fork's worktrees (MISSION "Scope").
