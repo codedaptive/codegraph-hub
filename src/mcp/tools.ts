@@ -4882,16 +4882,24 @@ export class ToolHandler {
     const projectRoot = cg.getProjectRoot();
 
     // Session focus. `prefixes` null means nothing below filters and the answer is what an unfocused session gets.
-    // Otherwise only files under a prefix contribute anything the answer prints (source, file lists, counts,
-    // pins, the Flow strip, the blast-radius callers): the candidate gather is cut to in-focus nodes once, right
-    // after it is complete (see "Session focus cut" below), and every stage that reaches the index on its own
-    // (named-symbol seeding, the change-surface rescue, the copybook list, the blast radius, the Flow) asks
-    // `inFocus` itself. Two kinds of read still take the whole index, and the focus does not cut them: the
-    // candidate names behind the empty-result explanation (`getExploreMissDiagnostics`), and the ranking probes,
-    // which are the overload tier counts (every definition of a name, `getNodesByName` / `findAllSymbols`), the
-    // weak-kind isolation probe (`getIncomingEdges`, full graph) and the interface-owned-method check (also
-    // `getIncomingEdges`). `focusDropped` records that something outside the focus was left out, which decides
-    // between the "nothing inside the focus" answer and the one-sentence note that closes the summary.
+    // Otherwise only files under a prefix contribute what the answer prints (source, file lists, counts, pins,
+    // the Flow strip, the blast-radius callers), apart from the reads listed below. The recall itself is
+    // focus-aware: it gets the focus as `pathPrefixes` (and is not asked at all when `prefixes` is `[]`, a focus
+    // with no directory in this index). Its traversal can still return out-of-focus nodes, so the candidate gather
+    // is cut to in-focus nodes once, right after it is complete (see "Session focus cut" below). Every stage that
+    // reaches the index on its own (named-symbol seeding, the change-surface rescue, the blast radius, the Flow)
+    // asks `inFocus` itself, and the copybook list is cut to it right after its lookup. Some reads still take the
+    // whole index, and the focus does not cut them: the candidate names behind the empty-result explanation
+    // (`getExploreMissDiagnostics`) and the unseen-name check (`getUnseenNames`); every definition of a name
+    // (`getNodesByName` / `findAllSymbols`), which decides whether a name is reported as not in the index (the
+    // seeds still come only from in-focus definitions); the caller counts that rank overloads (`getCallers`); the
+    // weak-kind isolation probe (`getIncomingEdges` and `getOutgoingEdges`, full graph); the
+    // interface-owned-method check (`getIncomingEdges`); and the one unfocused probe recall (see below).
+    // `focusDropped` records that something outside the focus was left out of the answer: a pinned path or a
+    // copybook entry outside it, nodes the focus cut removed, or, when the focused recall left nothing in focus, a
+    // hit of the unfocused probe outside it. It decides between the "nothing inside the focus" answer and the
+    // one-sentence note that closes the summary, and it keeps "No relevant code found" from answering for code
+    // that is only out of focus.
     const prefixes = focusPrefixesOfCall(cg, args, true);
     const inScope = (filePath: string): boolean => inFocus(filePath, prefixes);
     let focusDropped = false;
@@ -5049,16 +5057,38 @@ export class ToolHandler {
     };
 
     // Step 1: Find relevant context with generous parameters.
-    // Use a large maxNodes budget — explore has its own 35k char output limit
-    // that prevents context bloat, so more nodes just means better coverage
+    // Use a large maxNodes budget — explore's own output budget (`getExploreOutputBudget`,
+    // capped at 25k chars per call) prevents context bloat, so more nodes just means better coverage
     // across entry points (especially for large files like Svelte components).
     // Matching runs on the path-stripped query; `query` stays for display.
-    const subgraph = await cg.findRelevantContext(matchQuery, {
+    //
+    // The session focus goes to the recall as `pathPrefixes`, so its search, exact-match and seed limits count
+    // in-focus code only. The exceptions are listed on `FindRelevantContextOptions.pathPrefixes`. Three cases, by
+    // `prefixes`:
+    //  - `[]` (a focus with no directory inside this index): nothing here can be in focus, and an empty
+    //    `pathPrefixes` means "no filter" to the recall, so it is never asked. The answer is the one
+    //    nothing-in-focus sentence, shaped as the one after the seeding stages below.
+    //  - null (nothing filters: no focus, or a focus that holds the whole index): the options carry no
+    //    `pathPrefixes` key at all, so the recall answers as it always did.
+    //  - non-empty: the recall gets the prefixes. Its traversal can still reach nodes outside the focus; the
+    //    focus cut below removes them.
+    if (prefixes !== null && prefixes.length === 0) {
+      diag?.finishEmpty('nothing inside the session focus');
+      const outsideFocus = nothingInFocusText(args, prefixes);
+      return { ...this.textResult(outsideFocus), [EXPLORE_EMISSION_KEY]: {
+        projectRoot, query, files: [], sourceBytes: 0, responseBytes: outsideFocus.length,
+      } };
+    }
+    const recallOptions = {
       searchLimit: 8,
       traversalDepth: 3,
       maxNodes: 200,
       minScore: 0.2,
-    });
+    };
+    const subgraph = await cg.findRelevantContext(
+      matchQuery,
+      prefixes === null ? recallOptions : { ...recallOptions, pathPrefixes: prefixes },
+    );
 
     // Pinned files' symbols enter the gather unconditionally — the agent named
     // the file itself, so its contents ARE the answer regardless of what the
@@ -5110,14 +5140,16 @@ export class ToolHandler {
       anchorSpans.set(anchor.file, spans);
     }
 
-    // Session focus cut: the gather is complete here (search hits and their traversal, the pinned files'
-    // symbols, the anchored callables), so this is the one place that leaves out-of-focus nodes out of it. Their
-    // roots and every edge touching them go too, so no later ranking stage (the entry set, the usage degree,
-    // the random walk) is steered by code the answer will not show. The stages that add nodes after this one
-    // add only in-focus ones, see `inScope` below. The entry set and the usage degree come from in-focus code
-    // only; the weak-kind isolation probe, the overload tier counts and the interface-owned-method check still
-    // read the whole index (see `inScope` and the stages themselves). Seeding and glue still run on an emptied
-    // gather: an in-focus symbol the query names exactly is found by the seeding, not by the search that came back empty here.
+    // Session focus cut: the gather is complete here: the focused search's hits and their traversal, the pinned
+    // files' symbols and the anchored callables. The search is focused, but its traversal can still bring in nodes
+    // from outside the focus. Pinned and anchored nodes need no cut, since their files were cut to the focus when
+    // they were picked (see `pinnedFiles` and `lineAnchors` above). So this is the one place that takes
+    // out-of-focus nodes out of the gather. Their roots and every edge touching them go too, so the entry set and
+    // the usage degree are not built from code the answer will not show. The stages that add nodes after this one
+    // add only in-focus ones, see `inScope` below. The weak-kind isolation probe, the caller counts that rank
+    // overloads and the interface-owned-method check still read the whole graph (see `inScope` and the stages
+    // themselves). Seeding and glue still run after the cut, so an in-focus symbol the query names exactly is
+    // found by the seeding even when the cut emptied the gather.
     if (prefixes !== null) {
       const outside = new Set<string>();
       for (const [id, n] of subgraph.nodes) if (!inScope(n.filePath)) outside.add(id);
@@ -5126,6 +5158,20 @@ export class ToolHandler {
         for (const id of outside) subgraph.nodes.delete(id);
         subgraph.roots = subgraph.roots.filter((id) => !outside.has(id));
         subgraph.edges = subgraph.edges.filter((e) => !outside.has(e.source) && !outside.has(e.target));
+      }
+    }
+
+    // A focused recall that left nothing in focus does not say whether the query matches nothing at all or only
+    // matches code outside the focus, and the two get different answers ("No relevant code found" below, or the
+    // nothing-in-focus sentence further down). One unfocused recall, with the options the focused one had and no
+    // `pathPrefixes`, tells them apart: a hit outside the focus sets `focusDropped`, so the flow continues as
+    // when the focus cut removed something (the seeding may still find in-focus named symbols; if none, the
+    // sentence answers). The probe's nodes are never added to the gather; only whether it hit outside the focus
+    // is used. It runs only on this path, so a focused call with in-focus hits makes the one recall.
+    if (prefixes !== null && subgraph.nodes.size === 0 && !focusDropped) {
+      const probe = await cg.findRelevantContext(matchQuery, recallOptions);
+      for (const n of probe.nodes.values()) {
+        if (!inScope(n.filePath)) { focusDropped = true; break; }
       }
     }
 
