@@ -57,7 +57,8 @@ calls meanwhile get success-shaped "building" guidance. No opt-in: the registrat
 on `ours` (S-33) goes (R-12).
 
 A directory outside git with no index is cold-built at the session's launch directory, and calls meanwhile get the
-building guidance. The builder refuses the home directory, `/`, any ancestor of home and sensitive paths, and checks
+building guidance. The builder refuses what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860)
+refuses (the home directory, a filesystem root, any parent of home) and sensitive paths, and checks
 the real path again when the queued job starts. Known cost: the build and its watch cover the whole launch
 directory, and the build waits its turn on the builder's serial queue. (index-builder, c8a25bb5.)
 
