@@ -43,3 +43,93 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Date: 2026-10-30 / Bob
 - Ruling: yes. (1)-(3) in the agent catalog with one regeneration: regenerate aimodel, bench, forge and fulcrum from the current catalog, rewrite the blast-radius and orchestrator skills on CodeGraph, drop the graft hook entries and `mcp__graft__|` from the teams' settings.json. (4) the one-line edit to fleet's job line in codeteam/teams/codegraph.toml and codeteam's two claude-fab smoke fixtures.
 - Work implied: Orc-Codegraph routes it (fleet zone) and reports when no team carries a graft reference.
+
+## R-8. Trusted-local MCP: query scope selects a database, not an access boundary
+- Date: 2026-10-30 / Bob, direct ruling relayed by Orc-Codegraph (#1103; host instruction #1102, settled S-40).
+- Ruling: this MCP serves a trusted private developer box. Agent-supplied query scope selects the code-graph
+  database to answer from; any checked-out repository may be queried. MCP needs no repository/edition
+  access-control or security machinery for this use.
+- Supersedes: MISSION.md WP1's per-session repository allowlist and CE/EE read barrier, the corresponding
+  requirements and cross-repository refusal acceptance in Orc-Codegraph's `host-wp1-wp2.md`, and S-38's live-open
+  file-swap security gate and safe-open/native-API blocker. The pending WP1 security design review is cancelled;
+  no hostile-filesystem gate, native-binding redesign or additional security investigation is required for WP1.
+- Work implied: continue the existing `multi-project-host` feature for correct requested-database answers,
+  lifecycle/freshness and measured performance; remove the superseded repository-authorization requirements and
+  machinery rather than retaining a parallel path. Scope supplied by agents remains database selection, not
+  authorization; a normal query must not accidentally answer from a cached/default sibling. Ordinary SQLite/data
+  integrity, copy safety, writer coordination and unrelated path/argument validation remain intact.
+- Acceptance retained: per-repository hosts, off-main-thread sync/indexing, development/fleet separation, bounded
+  orderly stop and the existing performance measurements remain required. The 40-worktree/10-client query p95
+  must be under 500 ms; the required 5 GB foreign cold-build interference check is not waived; memory is reported
+  against the baseline, with under 8 GB a stretch only. R-6's sm.5 release and tarball gates remain unchanged.
+
+## R-9. Intended MCP design: one system-wide server and five-minute database idle close
+- Date: 2026-10-30 / Bob, direct design clarification while asking how it compares with the work in progress.
+- Clarified design: one system-wide CodeGraph MCP server serves queries for every repository/worktree. Each
+  query supplies the repository/worktree path identifying its local database. If no database exists there, the
+  server creates and initializes it; otherwise it opens the existing database and answers the query. After no
+  queries for that worktree/database for five minutes, the server closes that database, leaving it on disk for
+  the next query. No permanently open pinned-database exception was included in this design.
+- Confirmation and rationale: Bob explicitly rejected the per-repository/database server topology: multiple
+  persistent servers are what this design was intended to avoid, because CodeGraph queries are infrequent and
+  do not justify that overhead. One MCP configuration entry backed by several repository servers does not meet
+  the design.
+- Supersedes: MISSION.md WP1's one-host-per-repository topology, WP2's pinned-open exception, and R-8's retained
+  per-repository-host clause. The inspected WP1 branch's ten-minute idle default/pinned exemptions and its
+  registration/opt-in gate on no-sibling initialization must be aligned to the clarified lifecycle above.
+  R-8's trusted-local query-scope ruling remains applicable.
+- Work implied: Orc-Codegraph stops advancing the per-repository topology, aligns the governing requirements
+  and revises the existing WP1 work order to the single system-wide host and five-minute database lifecycle,
+  preserving reusable implementation work. Handed to Orc-Codegraph as REQUEST #1134. This is not WP1
+  acceptance, a performance-gate waiver or authorization to change the live install/shared MCP wiring before
+  acceptance.
+
+## R-10. Private tool, one server per computer, no ceremony
+- Date: 2026-10-30 / Bob, direct.
+- Ruling: (a) this is a standalone improvement of CodeGraph for Bob's private use: not public, never distributed. It has nothing to do with CE/EE editions or with moot; any requirement derived from them is void. (b) One MCP server per COMPUTER; it serves the CodeGraph interface for any directory on the machine, the query path selecting that directory's database (R-9 lifecycle: create if absent, open on demand, close after five query-idle minutes). (c) The work is writing the code and delivering it. Agents do not stop for missing scaffolding files: they create what is missing and continue. Waiting is allowed only while a compile or test is running.
+- Deadline: WP1 delivered by about 18:15 CDT 2026-10-30.
+- Supersedes: every CE/EE/edition/moot reference in WP1's requirements.
+
+## R-11. The CodeGraph server spec (Bob's new mission)
+- Date: 2026-10-30 / Bob, written decision: `/Users/bob/devlop/team-codegraph/SPEC-codegraph-server-2026-10-30.md`
+  (#1222). Expanded into `docs/SPEC.md`.
+- Ruling: one server per computer; databases opened on demand and closed after 10 idle minutes, no open limit; an
+  index covers its worktree's whole repo; the session's launch directory anchors its repo and a call outside it is
+  rejected; `--focus <dir>` narrows finding tools by default, impact tools stay whole-repo and list out-of-focus
+  results separately; every call needs `projectPath` ("missing argument: root path to the code you wish to query");
+  an optional shipped PreToolUse hook sets `projectPath` to the git root of the agent's cwd and always wins when
+  deployed; no access control beyond the anchor; one long-lived builder process with a queue does every index
+  write, small syncs ahead of cold builds; a worktree with no index copies one from the nearest-commit indexed
+  sibling (the lifecycle on `ours`, cleanup and pins included); standing worktrees are pinned, always open and
+  current; nothing codeteam-specific (codeteam supplies `--focus` from `CODETEAM_ZONE` and deploys the hook).
+- Supersedes: R-9's five-minute close and its no-pin rule (pinned standing worktrees stay open); R-8's "any
+  checked-out repository may be queried" (now only the anchor repo); MISSION.md WP1's `CODEGRAPH_MAX_PROJECTS`
+  and in-server worker processes (replaced by the builder process); S-42 where it conflicts. R-8's no-security
+  stance and R-10 (private, one server per computer, no ceremony) stand.
+- Work implied: Orc-Codegraph re-plans WP1 on `lane/host` against `docs/SPEC.md`.
+
+## R-12. Bob's answers to SPEC draft 2 and the legacy questions
+- Date: 2026-10-30 / Bob (#1227)
+- Ruling: the server spec (R-11) replaces MISSION.md; nothing only in MISSION.md applies. Q-11: graft has nothing
+  to do with building the tool; stop working on it. Q-12: write the two missing worker-context files
+  (`PROJECT.md`, `rules/toolchain-typescript.md`) and continue. Performance targets are out of the spec.
+  Development builds are built in an isolated directory and run on their own test socket/port, never the live
+  server. The upstream process (daily merge, squashes, nightly check, upstream issue) waits until the tool is
+  finished. SPEC readings: 1 = the first client starts the server, the server starts the builder, neither exits
+  when idle; 3 = no sibling means a full build from the queue, no opt-in; 2, 4-8 approved as written.
+- Supersedes: R-7 (graft leftovers) as work for this team; S-33's opt-in gate; S-43's publication hold; the
+  performance acceptance carried from MISSION.md/R-8.
+- Work implied: Orc-Codegraph writes the two Q-12 files and plans against docs/SPEC.md draft 3.
+
+## R-13. The harness is not ours
+- Date: 2026-10-30 / Bob (#1243), standing rule.
+- Ruling: the team's work is the CodeGraph code in the fork, to the server spec (R-11, docs/SPEC.md). codeteam, the
+  agent catalog, role files and templates, other teams and graft are the harness: do not change them, propose
+  changes or ask about them. A wrong or missing harness file is one line in a status, and work continues; only a
+  true blocker of product work goes to Orc-Codegraph in one line, and Bob fixes it. Bob updated the codegraph
+  product guide himself (points at the spec, no Node ceiling); bilby.md stays as it is.
+- Supersedes: any harness work implied by earlier rulings (R-7, S-43 publication, the catalog half of R-12's Q-12).
+- Work implied: Orc-Codegraph passes the rule to every lane.
+- Restated 2026-10-30 (#1252) for the whole team, wider: the harness also includes the team's `.claude` settings,
+  rules and hooks, and Claude Code's and herdr's settings. A hook now refuses writes to it. The product-guide and
+  bilby.md questions are closed.
