@@ -6,6 +6,9 @@
  *     `requestEvent` pushes for the events of an init;
  *   - `cliSync`: one sync of a root as a job, answering the full SyncResult;
  *   - `builderRoute()`: whether a machine server with its builder up is running for a state dir.
+ *   - `fence {kind}` / `drain`: a release fence (`uninit`'s) refuses the root's new CLI sync and reindex jobs at
+ *     their start (a request that arrives after the fence is refused when it is made, one queued before it when it starts),
+ *     and `drain` answers once no job of its root runs or waits, a seed that reads the root included (U9).
  *
  * Run in-process, as builder-service.test.ts drives BuilderService: a recording `send`, the job log through the
  * `jobLog` seam, housekeeping off, real SQLite and real files in mkdtemp dirs. The requests are the IPC shapes
@@ -17,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawn, type ChildProcess } from 'child_process';
+import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import CodeGraph from '../../../src/index';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
 
@@ -79,6 +82,35 @@ async function indexedProject(dir: string, files = 1): Promise<void> {
   for (let i = 0; i < files; i++) {
     fs.writeFileSync(path.join(dir, 'src', `f${i}.ts`), `export function f${i}() { return ${i}; }\n`);
   }
+  const cg = await CodeGraph.init(dir);
+  try { await cg.indexAll(); } finally { cg.close(); }
+}
+
+/**
+ * Adds `count` source files to `root` after its index was built, so a sync of the root has `count` files to read and
+ * runs for a while. They are new rather than changed: the sync reads either kind, and indexing 150 files up front would
+ * cost each case that uses this several seconds more.
+ */
+function addFiles(root: string, count: number): void {
+  for (let i = 0; i < count; i++) {
+    fs.writeFileSync(path.join(root, 'src', `added${i}.ts`), `export function added${i}() { return ${i}; }\n`);
+  }
+}
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+}
+
+/** A git repository at `dir` with three small files and one commit, then indexed: a seed source. */
+async function indexedRepo(dir: string): Promise<void> {
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', 'user.email', 'test@example.com');
+  git(dir, 'config', 'user.name', 'Test');
+  git(dir, 'config', 'commit.gpgsign', 'false');
+  for (let i = 0; i < 3; i++) fs.writeFileSync(path.join(dir, 'src', `s${i}.ts`), `export function s${i}() { return ${i}; }\n`);
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'init');
   const cg = await CodeGraph.init(dir);
   try { await cg.indexAll(); } finally { cg.close(); }
 }
@@ -474,5 +506,205 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
       await expect(builderRoute()).resolves.toBeNull();
       expect(fs.readdirSync(stateDir).sort()).toEqual(before);
     });
+  });
+
+  // ---- U9: the release fence, and drain ----
+  // A `fence` carries `kind`: 'index' (the default, the lease of `codegraph index`) or 'release' (the lease of `uninit`).
+  // On a release-fenced root, the CLI's sync and reindex jobs refuse when they start. `drain` answers once no job of its
+  // root runs or waits. Each case here is a fence or a drain arriving while a job runs, which is the window the
+  // refusal and the wait exist for.
+
+  // U9a: a release fence does not stop the sync already running, and the drain of that root answers after the sync.
+  it('U9a drain of a root whose sync is running answers after that sync, and a release fence leaves the running sync to finish', async () => {
+    // 150 files added after the index: the sync this case waits on is still running when the fence arrives.
+    const root = path.join(workspace, 'big');
+    await indexedProject(root);
+    addFiles(root, 150);
+    const r = real(root);
+    const svc = startService();
+    expect(svc.holders.has(r), 'premise: nothing is held').toBe(false);
+
+    const syncing = ask(svc, { id: 1, op: 'cliSync', root: r });
+    expect(await waitUntil(() => jobStarted('sync', r), 20_000, 5), 'premise: the sync job started').toBe(true);
+    expect(jobOk('sync', r), 'premise: the sync is still running when the fence arrives').toBe(false);
+
+    await ask(svc, { id: 2, op: 'fence', root: r, kind: 'release' });
+    expect(replyTo(2), 'a release fence is taken while the sync runs').toMatchObject({ id: 2, ok: true });
+    const draining = ask(svc, { id: 3, op: 'drain', root: r });
+    await Promise.all([syncing, draining]);
+
+    expect(replyTo(1), 'the running sync answered its SyncResult').toMatchObject({ id: 1, ok: true, result: { filesAdded: 150 } });
+    expect(replyTo(3)?.error ?? null, 'drain answered without an error').toBeNull();
+    expect(replyTo(3), 'drain answered ok').toMatchObject({ id: 3, ok: true });
+    expect(replyIndex(3), 'drain answered after the sync reply').toBeGreaterThan(replyIndex(1));
+  }, 180_000);
+
+  // U9b: a release fence refuses a sync and a reindex that are asked for after it. The refusal is made when the request
+  // arrives (the fence stands already), and the work is not done. A job queued before the fence refuses when it starts: U9f.
+  it('U9b a release fence refuses a cliSync and a cliIndex reindex asked for after it, with "being removed"', async () => {
+    const root = path.join(workspace, 'p');
+    await indexedProject(root);
+    const r = real(root);
+    const svc = startService();
+
+    await ask(svc, { id: 1, op: 'fence', root: r, kind: 'release' });
+    expect(replyTo(1)).toMatchObject({ id: 1, ok: true });
+
+    await ask(svc, { id: 2, op: 'cliSync', root: r });
+    await ask(svc, { id: 3, op: 'cliIndex', root: r, mode: 'reindex' });
+
+    expect(replyTo(2), 'cliSync on a release-fenced root').toMatchObject({
+      id: 2,
+      ok: false,
+      error: expect.stringMatching(/being removed/),
+    });
+    expect(replyTo(3), 'cliIndex reindex on a release-fenced root').toMatchObject({
+      id: 3,
+      ok: false,
+      error: expect.stringMatching(/being removed/),
+    });
+  });
+
+  // U9c: an index fence is the lease of `codegraph index`, which a sync does not need to be refused by. The sync runs.
+  it('U9c an index fence does not refuse a cliSync: the sync runs and answers its SyncResult', async () => {
+    const root = path.join(workspace, 'p');
+    await indexedProject(root);
+    fs.writeFileSync(path.join(root, 'src', 'added.ts'), 'export function added() { return 3; }\n');
+    const r = real(root);
+    const svc = startService();
+
+    await ask(svc, { id: 1, op: 'fence', root: r, kind: 'index' });
+    expect(replyTo(1)).toMatchObject({ id: 1, ok: true });
+
+    await ask(svc, { id: 2, op: 'cliSync', root: r });
+    expect(replyTo(2), 'cliSync under an index fence').toMatchObject({ id: 2, ok: true, result: { filesAdded: 1 } });
+  });
+
+  // U9d: drain of a root with no job answers without waiting for anything.
+  it('U9d drain of an idle root answers at once', async () => {
+    const root = path.join(workspace, 'p');
+    await indexedProject(root);
+    const r = real(root);
+    const svc = startService();
+
+    const began = Date.now();
+    await ask(svc, { id: 1, op: 'drain', root: r });
+    const took = Date.now() - began;
+
+    expect(replyTo(1)?.error ?? null, 'drain answered without an error').toBeNull();
+    expect(replyTo(1), 'drain answered ok').toMatchObject({ id: 1, ok: true });
+    expect(took, 'drain answered within 2 s, with nothing to wait for').toBeLessThan(2_000);
+  });
+
+  // U9e: drain waits only for its own root. A sync of another root is still running when the drain of this one answers.
+  it('U9e drain of an idle root answers while a sync of another root still runs', async () => {
+    // 150 files added to one root: its sync is still running when the other root's drain answers.
+    const busy = path.join(workspace, 'busy');
+    await indexedProject(busy);
+    addFiles(busy, 150);
+    const rb = real(busy);
+    const idle = path.join(workspace, 'idle');
+    await indexedProject(idle);
+    const ri = real(idle);
+    const svc = startService();
+
+    const syncing = ask(svc, { id: 1, op: 'cliSync', root: rb });
+    expect(await waitUntil(() => jobStarted('sync', rb), 20_000, 5), 'premise: the sync of the busy root started').toBe(true);
+    expect(jobOk('sync', rb), 'premise: the busy root\'s sync is still running').toBe(false);
+
+    await ask(svc, { id: 2, op: 'drain', root: ri });
+    expect(replyTo(2)?.error ?? null, 'drain of the idle root answered without an error').toBeNull();
+    expect(replyTo(2), 'drain of the idle root answered ok').toMatchObject({ id: 2, ok: true });
+    expect(replyTo(1), 'the busy root\'s sync was still running when the idle root\'s drain answered').toBeUndefined();
+
+    await syncing;
+    expect(replyTo(1), 'the busy root\'s sync answered ok').toMatchObject({ id: 1, ok: true });
+  }, 180_000);
+
+  // U9f: a sync queued before the release fence starts after it, and refuses when it starts. The sync that was already
+  // running is not touched by the fence.
+  it('U9f a cliSync queued before a release fence refuses when it starts; the sync running when the fence came finishes', async () => {
+    // 150 files added and read by the first sync; the queued sync starts only after it.
+    const root = path.join(workspace, 'big');
+    await indexedProject(root);
+    addFiles(root, 150);
+    const r = real(root);
+    const svc = startService();
+
+    const first = ask(svc, { id: 1, op: 'cliSync', root: r });
+    expect(await waitUntil(() => jobStarted('sync', r), 20_000, 5), 'premise: the first sync started').toBe(true);
+    expect(jobOk('sync', r), 'premise: the first sync is still running').toBe(false);
+    const second = ask(svc, { id: 2, op: 'cliSync', root: r });
+    expect(svc.queue.waiting().sync, 'premise: the second sync waits behind the first').toBe(1);
+
+    await ask(svc, { id: 3, op: 'fence', root: r, kind: 'release' });
+    expect(replyTo(3), 'the release fence is taken').toMatchObject({ id: 3, ok: true });
+    await Promise.all([first, second]);
+
+    expect(replyTo(1), 'the sync that was running finished').toMatchObject({ id: 1, ok: true, result: { filesAdded: 150 } });
+    expect(replyTo(2), 'the queued sync refused when it started').toMatchObject({
+      id: 2,
+      ok: false,
+      error: expect.stringMatching(/being removed/),
+    });
+  }, 180_000);
+
+  // U9g: a seed of worktree W reads its source S. The job is queued under W, so the drain of S must still wait for it,
+  // and a seed that has not started must not open S once S is release-fenced.
+  describe('U9g a seed that reads a release-fenced root', () => {
+    /** S: an indexed repository; W: a linked worktree of it with no index, which `ensure` seeds from S. */
+    async function repoWithWorktree(): Promise<{ s: string; w: string }> {
+      const s = path.join(workspace, 'main');
+      await indexedRepo(s);
+      const w = path.join(workspace, 'wt');
+      git(s, 'worktree', 'add', '-q', '-b', 'feature', w, 'HEAD');
+      return { s: real(s), w: real(w) };
+    }
+
+    it('U9g a seed of W queued behind another root\'s job: drain of S answers after the seed settles, and the seed fails "being removed" without opening S', async () => {
+      const { s, w } = await repoWithWorktree();
+      // T's sync holds the queue (300 files added after its index), so W's seed waits in it.
+      const t = path.join(workspace, 'third');
+      await indexedProject(t);
+      addFiles(t, 300);
+      const rt = real(t);
+      const svc = startService();
+
+      const syncing = ask(svc, { id: 1, op: 'cliSync', root: rt });
+      expect(await waitUntil(() => jobStarted('sync', rt), 20_000, 5), 'premise: the third root\'s sync started').toBe(true);
+      const ensuring = svc.ensure(w);
+      expect(await waitUntil(() => svc.queue.waiting().sync === 1, 20_000, 5), 'premise: the seed of W waits behind the sync').toBe(true);
+      expect(jobOk('sync', rt), 'premise: the sync is still running').toBe(false);
+      expect(jobStarted('seed', w), 'premise: the seed has not started').toBe(false);
+
+      await ask(svc, { id: 2, op: 'fence', root: s, kind: 'release' });
+      expect(replyTo(2), 'the release fence on S is taken').toMatchObject({ id: 2, ok: true });
+      await ask(svc, { id: 3, op: 'drain', root: s });
+      const seedSettled = jobLines.some((l) => l.includes(` job end seed ${w} `));
+      const seedFailure = jobLines.find((l) => l.includes(` job end seed ${w} failed`)) ?? '';
+      await Promise.all([syncing, ensuring]);
+
+      expect(replyTo(3), 'drain answered ok').toMatchObject({ id: 3, ok: true });
+      expect(seedSettled, 'the seed of W had ended when the drain of S answered').toBe(true);
+      expect(seedFailure, 'the seed failed because S is being removed').toMatch(/being removed/);
+      expect(fs.existsSync(path.join(w, '.codegraph', 'codegraph.db')), 'W got no index: the seed never opened S').toBe(false);
+    }, 180_000);
+
+    it('U9g a seed of W already running when S is fenced: drain of S answers after the seed ended', async () => {
+      const { s, w } = await repoWithWorktree();
+      const svc = startService();
+
+      const ensuring = svc.ensure(w);
+      expect(await waitUntil(() => jobStarted('seed', w), 20_000, 2), 'premise: the seed of W started').toBe(true);
+
+      await ask(svc, { id: 1, op: 'fence', root: s, kind: 'release' });
+      expect(replyTo(1), 'the release fence on S is taken').toMatchObject({ id: 1, ok: true });
+      await ask(svc, { id: 2, op: 'drain', root: s });
+      const seedSettled = jobLines.some((l) => l.includes(` job end seed ${w} `));
+      await ensuring;
+
+      expect(replyTo(2), 'drain answered ok').toMatchObject({ id: 2, ok: true });
+      expect(seedSettled, 'the seed of W had ended when the drain of S answered').toBe(true);
+    }, 180_000);
   });
 });

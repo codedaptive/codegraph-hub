@@ -189,12 +189,13 @@ export class MCPEngine {
    * closes it too), then have the builder drop its hold (watcher, writer
    * slot) and wait until it has. A later call that names the root opens it
    * again and the builder holds it again. The builder's hold is dropped even
-   * for a root the handler no longer caches. Two requests call it so the CLI's
-   * index rebuild can take the project's writer slot: a session's
+   * for a root the handler no longer caches. Two requests call it so the CLI can
+   * rebuild or delete the project's index: a session's
    * `codegraph/releaseProject` (the in-process `codegraph index`, which takes
-   * the slot itself), answered 'released' only after it resolves, and the
+   * the slot itself, and the in-process `codegraph uninit`), answered 'released' only after it resolves, and the
    * relay of `codegraph/indexWrite` (the routed `codegraph index`, whose
-   * rebuild the builder runs), after the builder has fenced the root. Each
+   * rebuild the builder runs, and the routed `codegraph uninit`, whose `release` op
+   * stops after the fence and the release, and leaves the delete to the CLI), after the builder has fenced the root. Each
    * housekeeping pass calls it for a held project whose directory or
    * database is gone.
    */

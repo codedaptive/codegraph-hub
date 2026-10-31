@@ -1,6 +1,18 @@
 /**
- * The rebuild lease the builder gives a `codegraph index` that runs through the server (./cli-wire.ts): a
- * fence on one root, held from the `fence` request until the `unfence` request (or the builder's stop).
+ * The rebuild lease the builder gives a `codegraph index` or a `codegraph uninit` that runs through the server
+ * (./cli-wire.ts): a fence on one root, held from the `fence` request until the `unfence` request (or the
+ * builder's stop). The fence has a {@link FenceKind}. An `index` fence is a rebuild's: its own jobs run under it
+ * (below), and a `sync` job of the root still runs, as an in-process `codegraph sync` runs during another
+ * process's rebuild. A `release` fence is an `uninit`'s: the server and the builder let go of the root, the CLI
+ * deletes `.codegraph`, and from the fence until its `unfence` the builder starts no job that opens the root:
+ * the CLI's `sync`, `init`, `index` and every re-run refuse ({@link RebuildFences.refuseIfRemoving}), a hold's
+ * open and its retry refuse ({@link RebuildFences.rebuildHeld}), a seed refuses when its source or its target is the
+ * root (./seed-host.ts, checked when the seed job starts; a seed never picks a fenced source), and a cold build
+ * refuses a fenced root. A job already running when the fence arrives is not stopped; the `drain` request waits for
+ * every job that names the root, as its own or as the source it reads (./queue.ts `whenRootIdle`). Not covered:
+ * connections the engine opens on its own and that teardown does not track (a deferred index recovery that outlasted
+ * its wait, the oversized-WAL checkpoint of a writable open: upstream src/index.ts and src/db). The `unfence` of a
+ * removal finds `rebuild.pid` already gone with the directory, which {@link RebuildFences.unfence} tolerates.
  *
  * While a root is fenced the builder keeps `rebuild.pid` for it, so every reader, seeder and holder of every
  * process refuses to open the index as they do while the in-process `codegraph index` runs. `rebuild.pid`
@@ -24,6 +36,19 @@ import type { JobQueue } from './queue';
 /** The CLI's own refusal text for a root whose rebuild lock is taken, so a routed `index` says what an in-process one does. */
 export const REBUILD_IN_PROGRESS_MESSAGE = 'Another index rebuild is already in progress.';
 
+/**
+ * What a fence is for. `index`: a `codegraph index` that rebuilds the root under it (its jobs need the lease).
+ * `release`: a `codegraph uninit` that deletes the root's index under it; no job may open the root meanwhile.
+ */
+export type FenceKind = 'index' | 'release';
+
+/** Parse the kind a `fence` request carries (IPC data): absent is `index`; anything but the two kinds is refused. */
+export function parseFenceKind(raw: unknown): FenceKind {
+  if (raw === undefined || raw === 'index') return 'index';
+  if (raw === 'release') return 'release';
+  throw new Error(`unknown fence kind: ${String(raw)}`);
+}
+
 /** One root's lease. */
 export class RebuildLease {
   /** `unfence` was called (or the builder is stopping): a job that has not started refuses to run. */
@@ -35,7 +60,7 @@ export class RebuildLease {
   /** The lease's jobs, queued or running, as promises that never reject. */
   private readonly jobs = new Set<Promise<void>>();
 
-  constructor(readonly key: string, readonly root: string) {}
+  constructor(readonly key: string, readonly root: string, readonly kind: FenceKind) {}
 
   /** Throws unless the lease is still live. Run when a lease job starts, and when one is asked for. */
   assertLive(): void {
@@ -84,12 +109,29 @@ export class RebuildFences {
   }
 
   /**
-   * Fence `root`: take its `rebuild.pid`. Refused ({@link REBUILD_IN_PROGRESS_MESSAGE}) when the root is
+   * Whether `root` is fenced for a removal (kind `release`) and the fence has not ended: no job of the builder
+   * may open it. An `index` fence, or none, is false.
+   */
+  isRemoving(root: string): boolean {
+    const lease = this.leases.get(canonicalProjectRoot(root));
+    return lease !== undefined && lease.kind === 'release' && !lease.released;
+  }
+
+  /**
+   * Throws the removal refusal ("the index of <root> is being removed") when {@link isRemoving}. Run when a job
+   * that would open `root` is asked for and again when it starts, so a job queued before the fence refuses too.
+   */
+  refuseIfRemoving(root: string): void {
+    if (this.isRemoving(root)) throw new Error(`the index of ${root} is being removed`);
+  }
+
+  /**
+   * Fence `root` for `kind`: take its `rebuild.pid`. Refused ({@link REBUILD_IN_PROGRESS_MESSAGE}) when the root is
    * fenced already, when another live process holds `rebuild.pid`, when this pid holds it for a cold build
    * that is running now, or when the lock cannot be taken. A `rebuild.pid` that names this pid with no running
    * holder is a leftover of an earlier lease or cold build and is adopted. Answers at once: nothing is queued.
    */
-  fence(root: string): void {
+  fence(root: string, kind: FenceKind = 'index'): void {
     const key = canonicalProjectRoot(root);
     if (this.leases.has(key)) throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
     if (isRebuildInProgress(root)) throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
@@ -99,7 +141,7 @@ export class RebuildFences {
       throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
     }
     if (tryAcquireWriterLock(root, 'rebuild', 'rebuild.pid').kind === 'taken') throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
-    this.leases.set(key, new RebuildLease(key, root));
+    this.leases.set(key, new RebuildLease(key, root, kind));
   }
 
   /** The live lease of `root`, for a job that needs one. Throws when there is none or it is ending. */

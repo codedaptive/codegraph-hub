@@ -17,11 +17,14 @@
  *   reindex         `indexAll` on an existing index with no lease (the re-run of `init`): the writable open the
  *                   CLI would do. An `index` job.
  * The locks of a lease stay until it ends (`unfence`), through every job the CLI sends under it.
+ * Every mode refuses at job start while the root is fenced for its removal (a `release` fence, `codegraph uninit`:
+ * ./fences.ts `refuseIfRemoving`), so no job of these opens a database that is being deleted.
  *
  * `cliSync` is one `sync` job (SYNC class): through the hold's own graph when the builder holds the root and
  * owns its `writer.pid`, otherwise a writable open of the root for the one sync. It answers the whole SyncResult.
- * The fallback open checks no fence, as an in-process `codegraph sync` during another process's rebuild checks
- * neither `writer.pid` nor `rebuild.pid`; the queue is serial, so the sync runs between a lease's jobs, never inside one.
+ * Under an `index` fence the fallback open checks nothing, as an in-process `codegraph sync` during another
+ * process's rebuild checks neither `writer.pid` nor `rebuild.pid`; the queue is serial, so the sync runs between
+ * a lease's jobs, never inside one. Under a `release` fence both branches refuse.
  *
  * Progress callbacks and abort signals never cross the IPC: a job (an index's or a sync's) turns the engine's
  * progress callback into `requestEvent` pushes (in order, one per callback, none dropped). A `verbose` index job
@@ -53,15 +56,22 @@ export class CliJobs {
    * Run one `cliIndex` of `mode` on `root`. Resolves with the IndexResult once the job ended; rejects with its
    * error. `requestId` names the request the events are pushed for. A mode that needs the lease and finds none
    * (never taken, or ended) rejects before anything is queued; a lease job that waits in the queue past the end
-   * of its lease refuses to run.
+   * of its lease refuses to run. A root fenced for its removal rejects every mode, when asked and again when the
+   * job starts ("the index of <root> is being removed").
    */
   cliIndex(requestId: number, root: string, mode: CliIndexMode, verbose = false): Promise<IndexResult> {
     try {
       requireAbsoluteRoot(root);
+      this.deps.fences.refuseIfRemoving(root);
       const emit = (event: IndexWriteEvent): void => this.deps.send({ op: 'requestEvent', requestId, event });
       const onProgress = (progress: IndexProgress): void => emit({ kind: 'progress', progress });
       // A verbose job runs with the builder's console.log turned into `log` events (see capturingLog).
-      const run = <T>(job: () => Promise<T>): (() => Promise<T>) => (verbose ? () => capturingLog(emit, job) : job);
+      // Every job first asks again whether the root is being removed: the fence may have come while it waited.
+      const checked = <T>(job: () => Promise<T>): (() => Promise<T>) => () => {
+        this.deps.fences.refuseIfRemoving(root);
+        return job();
+      };
+      const run = <T>(job: () => Promise<T>): (() => Promise<T>) => (verbose ? () => capturingLog(emit, checked(job)) : checked(job));
       const engine = { onProgress, verbose };
       switch (mode) {
         case 'init':
@@ -86,19 +96,23 @@ export class CliJobs {
   /**
    * One sync of `root` as a `sync` job; the whole SyncResult. The sync's progress goes out as `requestEvent`
    * pushes for `requestId`, as an index's does, so the CLI renders the same phase lines as an in-process sync.
+   * Rejects, when asked and again when the job starts, for a root fenced for its removal.
    */
   cliSync(requestId: number, root: string): Promise<SyncResult> {
     try {
       requireAbsoluteRoot(root);
+      this.deps.fences.refuseIfRemoving(root);
     } catch (err) {
       return Promise.reject(err);
     }
     const onProgress = (progress: IndexProgress): void => this.deps.send({ op: 'requestEvent', requestId, event: { kind: 'progress', progress } });
     return this.deps.queue.enqueue('sync', root, async () => {
+      // A removal fenced the root while the job waited: neither the hold nor a fresh open may be used.
+      this.deps.fences.refuseIfRemoving(root);
       // Asked when the job runs: a hold the builder let go of while the job waited is not used.
       const held = this.deps.holders.ownedGraph(root);
       if (held) return held.sync({ onProgress });
-      // No fence check here: this matches an in-process `codegraph sync` while another process rebuilds (sync
+      // No other fence check here: this matches an in-process `codegraph sync` while another process rebuilds (sync
       // looks at neither writer.pid nor rebuild.pid), and the serial queue keeps it out of a lease's jobs.
       const cg = await CodeGraph.open(root);
       try {

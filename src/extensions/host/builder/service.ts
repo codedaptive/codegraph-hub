@@ -17,7 +17,7 @@ import { ensureWorktreeIndex, isAbandonedIndex } from '../worktree-lifecycle/see
 import { selectOwnIndexRoot } from '../server/index-root';
 import { CliJobs, requireAbsoluteRoot } from './cli-jobs';
 import type { BuilderFreshness, EnsureOutcome } from './client';
-import { RebuildFences } from './fences';
+import { RebuildFences, parseFenceKind } from './fences';
 import { HolderSet } from './holder';
 import type { BuilderRequest, BuilderToServer } from './protocol';
 import { JobQueue, formatJobLine } from './queue';
@@ -120,8 +120,10 @@ export class BuilderService {
       case 'release': return this.holders.release(request.root);
       // The CLI's requests. Their roots are IPC data: CliJobs refuses one that is not an absolute path, and the
       // fence calls are given the same check here.
-      case 'fence': return runNow(() => this.fences.fence(requireAbsoluteRoot(request.root)));
+      case 'fence': return runNow(() => this.fences.fence(requireAbsoluteRoot(request.root), parseFenceKind(request.kind)));
       case 'unfence': return runNow(() => this.fences.unfence(requireAbsoluteRoot(request.root)));
+      // Waits for the root's own jobs only; the promise is the queue's, so a job's reply goes out before the drain's.
+      case 'drain': return runNow(() => this.queue.whenRootIdle(requireAbsoluteRoot(request.root)));
       // Not an async wrapper: the promise handed back is the job's own, so a lease's `unfence` (which waits for
       // the jobs it tracks) answers after the job's reply.
       case 'cliIndex': return this.cliJobs.cliIndex(request.id, request.root, request.mode, request.verbose === true);
