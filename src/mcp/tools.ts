@@ -4883,7 +4883,8 @@ export class ToolHandler {
 
     // Session focus. `prefixes` null means nothing below filters and the answer is what an unfocused session gets.
     // Otherwise only files under a prefix contribute what the answer prints (source, file lists, counts, pins,
-    // the Flow strip, the blast-radius callers), apart from the reads listed below. The recall itself is
+    // the Flow strip, the blast-radius callers), apart from the reads listed below and the closing out-of-focus
+    // name lines (a name, no path, no source). The recall itself is
     // focus-aware: it gets the focus as `pathPrefixes` (and is not asked at all when `prefixes` is `[]`, a focus
     // with no directory in this index). Its traversal can still return out-of-focus nodes, so the candidate gather
     // is cut to in-focus nodes once, right after it is complete (see "Session focus cut" below). Every stage that
@@ -4892,7 +4893,9 @@ export class ToolHandler {
     // whole index, and the focus does not cut them: the candidate names behind the empty-result explanation
     // (`getExploreMissDiagnostics`) and the unseen-name check (`getUnseenNames`); every definition of a name
     // (`getNodesByName` / `findAllSymbols`), which decides whether a name is reported as not in the index (the
-    // seeds still come only from in-focus definitions); the caller counts that rank overloads (`getCallers`); the
+    // seeds still come only from in-focus definitions; the same whole-index read also decides the closing
+    // out-of-focus lines (up to three), one for each bare query name defined only outside the focus,
+    // independent of `focusDropped`); the caller counts that rank overloads (`getCallers`); the
     // weak-kind isolation probe (`getIncomingEdges` and `getOutgoingEdges`, full graph); the
     // interface-owned-method check (`getIncomingEdges`); and the one unfocused probe recall (see below).
     // `focusDropped` records that something outside the focus was left out of the answer: a pinned path or a
@@ -5304,6 +5307,12 @@ export class ToolHandler {
     // Tokens written like code names that resolved to no node at all, not even
     // a camel-infix definer: candidates for the "not in the index" note (#2462).
     const unresolvedNamedTokens: string[] = [];
+    // Bare identifier-shaped query names the index defines, but only outside the session focus (query order,
+    // de-duplicated, at most `OUT_OF_FOCUS_NAME_CAP`). They become the closing lines of a focused answer that
+    // renders (see `outOfFocusBlock`); the early exits of `handleExplore` (the empty focus, no relevant code,
+    // nothing in focus) do not carry them. Stays empty without a focus.
+    const OUT_OF_FOCUS_NAME_CAP = 3;
+    const outOfFocusNames: string[] = [];
     {
       const CALLABLE = new Set(['method', 'function', 'component', 'constructor']);
       // Variables/constants seed too: in Svelte/React a `$state` variable
@@ -5383,9 +5392,20 @@ export class ToolHandler {
         const isQual = /[.\/]|::/.test(t);
         // Every definition the index has (`rawAll`) decides whether the name is known at all; only the ones in
         // focus (`raw`) can seed, so a name defined only outside the focus is not reported as "not in the
-        // index" and never earns an out-of-focus seed.
+        // index" and never earns an out-of-focus seed. Under a focus, `rawAll` also decides the closing
+        // out-of-focus line: a bare identifier-shaped name with definitions and none in focus is named there
+        // (`outOfFocusNames`). A qualified token is not: its lookup (`findAllSymbols`) also accepts path
+        // matches, so a node that only sits under the qualifier's path could count as the token's definition
+        // when the index has none.
         const rawAll = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
         const raw = prefixes === null ? rawAll : rawAll.filter((n) => inScope(n.filePath));
+        if (
+          prefixes !== null && prefixes.length > 0 && !isQual && isIdentifierShapedToken(t)
+          && rawAll.length > 0 && raw.length === 0
+          && outOfFocusNames.length < OUT_OF_FOCUS_NAME_CAP && !outOfFocusNames.includes(t)
+        ) {
+          outOfFocusNames.push(t);
+        }
         // A query that NAMES a declared type is a question ABOUT that type, and
         // must still reach its declaration file at full weight — so record the
         // files those declarations live in and exempt them from the
@@ -6265,8 +6285,12 @@ export class ToolHandler {
     // of 47 measured responses over the 25K inline cap (up to 25,032), or the
     // lost-pointer note above squeezed out.
     // Reserved at its worst case: the gather's symbol and file counts bound the
-    // shown ones from above.
+    // shown ones from above. The out-of-focus lines (`outOfFocusBlock`) are appended after the summary is
+    // filled in, so their exact length is reserved here with it; zero when there are none.
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const outOfFocusBlock = outOfFocusNames.length > 0
+      ? `\n\n${outOfFocusNames.map((name) => `\`${name}\` is defined in this index, outside this session's focus; pass scope: "repo" to include it.`).join('\n')}`
+      : '';
     // What the summary says when the focus left something out, reserved like the rest of it. Names the focus
     // directories and the way to widen the call, and carries no count and no path of what was left out.
     const focusNote = focusDropped && prefixes !== null
@@ -6278,7 +6302,8 @@ export class ToolHandler {
       + (unresolvedPathSpans.length > 0
         ? ` No indexed file uniquely matches ${unresolvedPathSpans.map((sp) => `\`${sp}\``).join(', ')}.`.length
         : 0)
-      + setAsideNote.length;
+      + setAsideNote.length
+      + outOfFocusBlock.length;
     const epilogueFloor = Math.max(
       EXPLORE_FALLBACK_NOTES.lost.complete.length, EXPLORE_FALLBACK_NOTES.lost.trimmed.length,
     ) + 2 + cliffPointerFloor + summaryReserve;
@@ -8601,6 +8626,19 @@ export class ToolHandler {
     summaryLine += setAsideNote;
     summaryLine += focusNote;
     finalText = finalText.replace(SUMMARY_SENTINEL, summaryLine);
+
+    // Out-of-focus names: one closing line for each of up to three bare, identifier-shaped query names that the
+    // index defines outside this session's focus and nowhere inside it (`outOfFocusNames`), so the agent that asked
+    // for them learns they exist and how to reach them instead of reading the answer's silence as "no such symbol".
+    // Name only: existence is all it states, with no path, kind or source of the out-of-focus definition, so the
+    // focus still hides what it hides. Bare tokens only: a qualified token resolves through a lookup that also
+    // accepts path matches, which could count a node as the token's definition when the index has none. Capped at
+    // three so a wide query cannot turn the closing into a listing. Appended last, after the summary is in place,
+    // so the diagnostic and the emission record below both measure it; the render loop leaves room for it in
+    // `summaryReserve`, and a response the final cut above had to trim gets no room for it. The answer's own
+    // trailing newlines are dropped first (the rendered answer ends in a newline), so exactly one blank line sets
+    // the block off. The early exits (nothing in focus, empty focus, no relevant code) never reach here.
+    if (outOfFocusBlock.length > 0) finalText = finalText.replace(/\n+$/, '') + outOfFocusBlock;
 
     // Emit the allocation diagnostic from the FINAL text, so per-file bytes and
     // shares account for the hard-ceiling truncation above (CG-4).
