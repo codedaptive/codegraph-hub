@@ -37,7 +37,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Date: 2026-10-30 / Bob
 - Ruling: install 1.6.2-sm.4, and sm.5 when WP1 lands, globally once each passes the release gate and the tarball check, by the R-1/R-3 procedure (telemetry off confirmed; rollback to the previous sm.N on a failed check).
 - Work implied: Orc-Codegraph installs each and reports the version and checks.
-- sm.4 done: 2026-10-30, Orc-Codegraph (#1033); global install reports 1.6.2-sm.4 (ours cc50cfa9), telemetry off, all 10 tools list and all 7 teams answered their probe. sm.5 open, waits on WP1.
+- sm.4 done: 2026-10-30, Orc-Codegraph (#1033); global install reports 1.6.2-sm.4 (ours cc50cfa9), telemetry off, all 10 tools list and all 7 teams answered their probe. sm.5 done: 2026-10-31, Orc-Codegraph (#1448); ours 687fb5a6, global install reports 1.6.2-sm.5, telemetry off, the ten tools list, all seven teams answered a codegraph_search through one machine server (state dir ~/.codegraph).
 
 ## R-7. Q-10: clear the graft leftovers
 - Date: 2026-10-30 / Bob
@@ -133,3 +133,19 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Restated 2026-10-30 (#1252) for the whole team, wider: the harness also includes the team's `.claude` settings,
   rules and hooks, and Claude Code's and herdr's settings. A hook now refuses writes to it. The product-guide and
   bilby.md questions are closed.
+
+## R-14. Q-13: CLI index writes go through the builder when it is running
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: the CLI commands that write an index (`codegraph init`, `index`, `sync`, `checkpoint`/`--fresh`) hand the
+  work to the builder when it is running; when it is not, they write the index in their own process (under the
+  writer lock), so the CLI stays the repair path.
+- Refines: [B9] (R-11); answers Kong's K-43 (#1307).
+- Work implied: Orc-Codegraph routes the CLI write commands to a running builder (host lane).
+
+## R-15. Q-14: uninit releases through a running server; unlock refuses a live holder
+- Date: 2026-10-31 / Bob ("agreed", to the recommendation).
+- Ruling: `codegraph uninit`, with a server running, asks it to release the root first (the builder's release op),
+  then deletes `.codegraph/`; with none running it deletes as today. `codegraph unlock` stays the repair tool for a
+  lock whose owner is dead; when a live process holds the lock it says so and removes nothing.
+- Refines: R-14; answers Kong's K-45 (#1516).
+- Work implied: Orc-Codegraph routes both changes (host lane).

@@ -26,6 +26,11 @@ gives coding agents a code graph of any repository or directory on the computer 
 The first client starts the server; the server starts the builder; neither exits when idle (R-12). That keeps
 pinned databases open and current [B13].
 
+The CLI commands that write an index (`init`, `index`, `sync`, `checkpoint`/`--fresh`) hand the work to the builder
+when it is running; when it is not, they write in their own process under the writer lock (R-14).
+`codegraph uninit` asks a running server to release the root before it deletes `.codegraph/`; `codegraph unlock`
+removes only a lock whose owner is dead, and with a live holder says so and removes nothing (R-15).
+
 While no server answers, a session is served in-process, read-only: it never writes, seeds or builds an index, and
 it moves to the server as soon as one answers.
 
@@ -126,14 +131,16 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-10-31)
 
-| Part | State |
+Every item of the governing spec [B1]-[B14] is built and shipped in **1.6.2-sm.5** (ours 687fb5a6, installed
+globally 2026-10-31): one machine server and index builder, 10-minute close with no cap, pinned standing databases,
+repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree
+hook, building guidance, and the worktree lifecycle and tools carried from sm.4.
+
+| Left | State |
 |---|---|
-| grep, blast, orphans, suspects, checkpoint/fresh, worktree lifecycle and pins, Swift/Rust resolution | shipped through sm.4 |
-| Worktree hook (§5) | built and integrated (integration ff8e7d27); ships with sm.5 |
-| One server per computer (never idles out, dev state dir), 10-minute close with no cap, repo anchor, required `projectPath` | built and integrated (integration 162d4bad, `machine-server`); ships with sm.5 |
-| Separate builder with queue (no-sibling and non-git cold builds, no opt-in); session `--focus` with `scope: "repo"` | built and integrated (integration 47548e7c, `index-builder`, `session-focus`); ships with sm.5 |
-| `--focus` for `grep` and `blast` | built (`queries`, 8a034e74), in review |
-| Building guidance | in progress (`host`, `build-guidance`) |
+| Three `explore`-under-focus defects (queries ledger `reports/focus-grep-blast-defects.md`) | scheduled after sm.5 (queries, then host) |
+| CLI write commands hand their work to a running builder (R-14) | to build (`host`) |
+| `uninit` releases through a running server; `unlock` refuses a live holder (R-15) | to build (`host`) |
 
 ## 9. Out of scope (R-12)
 
