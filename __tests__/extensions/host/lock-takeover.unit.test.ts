@@ -26,7 +26,7 @@ import {
 } from '../../../src/mcp/lock-takeover';
 import { getWriterPidPath, markWriterReady, tryAcquireWriterLock } from '../../../src/mcp/writer-lock';
 import { refreshDaemonLock, tryAcquireDaemonLock } from '../../../src/mcp/daemon';
-import { encodeLockInfo, getDaemonPidPath } from '../../../src/mcp/daemon-paths';
+import { encodeServerLock, getServerPidPath } from '../../../src/mcp/daemon-paths';
 import { FileLock } from '../../../src/utils';
 
 // Writable copies of the builtin namespaces, shared by this file and every src
@@ -49,14 +49,19 @@ function deadPid(): number {
 let dir: string;
 let lock: string;
 let guard: string;
+let previousStateDir: string | undefined;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-lock-takeover-'));
+  previousStateDir = process.env.CODEGRAPH_STATE_DIR;
+  process.env.CODEGRAPH_STATE_DIR = dir;
   lock = path.join(dir, 'test.lock');
   guard = `${lock}.takeover`;
 });
 
 afterEach(() => {
+  if (previousStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+  else process.env.CODEGRAPH_STATE_DIR = previousStateDir;
   try { fs.chmodSync(lock, 0o600); } catch { /* not there */ }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -296,11 +301,11 @@ describe('callers honour the guard and fail closed', () => {
     const root = path.join(dir, 'proj');
     fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
     const pidPath = getWriterPidPath(root);
-    const record = JSON.stringify({ pid: deadPid(), mode: 'serve', startedAt: 1 });
+    const record = JSON.stringify({ pid: deadPid(), mode: 'fallback', startedAt: 1 });
     fs.writeFileSync(pidPath, record);
     fs.writeFileSync(`${pidPath}.takeover`, String(process.ppid));
 
-    const r = tryAcquireWriterLock(root, 'taker');
+    const r = tryAcquireWriterLock(root, 'fallback');
     expect(r.kind).toBe('taken');
     expect(fs.readFileSync(pidPath, 'utf8')).toBe(record);
   });
@@ -452,7 +457,7 @@ describe.runIf(!isWin)('lock temp files: random name, exclusive create, never fo
   it('markWriterReady on writer.pid: the ready record replaces the lock, nothing planted is touched', () => {
     const root = path.join(dir, 'proj');
     fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
-    expect(tryAcquireWriterLock(root, 'serve').kind).toBe('acquired');
+    expect(tryAcquireWriterLock(root, 'fallback').kind).toBe('acquired');
     const pidPath = getWriterPidPath(root);
     plantBeside(pidPath);
     forceRandomNames();
@@ -467,28 +472,26 @@ describe.runIf(!isWin)('lock temp files: random name, exclusive create, never fo
     expectExclusiveTempOpens(pidPath);
   });
 
-  it('tryAcquireDaemonLock then refreshDaemonLock on daemon.pid: both temps draw past planted names', () => {
-    const root = path.join(dir, 'proj');
-    fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
-    const pidPath = getDaemonPidPath(root);
+  it('tryAcquireDaemonLock then refreshDaemonLock on server.pid: both temps draw past planted names', () => {
+    const pidPath = getServerPidPath();
     plantBeside(pidPath);
     forceRandomNames();
 
-    const r = tryAcquireDaemonLock(root);
+    const r = tryAcquireDaemonLock();
     expectNothingFollowedOrLeft(path.dirname(pidPath));
     expect(r.kind).toBe('acquired');
     if (r.kind !== 'acquired') return;
     expect(fs.lstatSync(pidPath).isFile()).toBe(true);
     const initial = fs.readFileSync(pidPath, 'utf8');
-    expect(initial).toBe(encodeLockInfo(r.info));
+    expect(initial).toBe(encodeServerLock(r.info));
 
-    const bound = { ...r.info, socketPath: path.join(root, 'bound.sock') };
+    const bound = { ...r.info, socketPath: path.join(dir, 'bound.sock') };
     const forcedOpensBefore = opens.filter((o) => o.path === forcedName(pidPath)).length;
     refreshDaemonLock(pidPath, initial, bound);
 
     expectNothingFollowedOrLeft(path.dirname(pidPath));
     expect(fs.lstatSync(pidPath).isFile()).toBe(true);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(encodeLockInfo(bound));
+    expect(fs.readFileSync(pidPath, 'utf8')).toBe(encodeServerLock(bound));
     expect(opens.filter((o) => o.path === forcedName(pidPath)).length).toBeGreaterThan(forcedOpensBefore);
     expectExclusiveTempOpens(pidPath);
   });

@@ -74,20 +74,42 @@ extension's commands after it are skipped.
 - **Off by default.** No extension tool is on the default surface (`codegraph_explore` alone). An
   operator enables one by short name in `CODEGRAPH_MCP_TOOLS`, e.g. `explore,my_tool`. As with
   built-ins, with no allowlist a call to it is still served; with one, only listed tools are.
-- **Exempt from the tiny-repo gate** (<500 files keeps only explore/search/node): an operator who
+- The tiny-repo gate (CLI only) keeps explore, search, node and extension tools: an operator who
   named a tool meant it.
 - **Runs in a worker or on the main thread.** `handle` runs inside a query-pool worker only when the
   pool is attached, healthy and warm and the call has a project; otherwise on the main thread. Write
   it to work in either. A worker loads the extensions itself from the env it inherited. Keep the
   module's top level light and pure — it is loaded on the main thread and in every worker — and work
-  only from `args` and `ctx`. `ctx.getCodeGraph(projectPath?)` returns that project (or the session
-  default) and throws the same errors the built-in handlers get (`NotIndexedError`,
+  only from `args` and `ctx`. `ctx.getCodeGraph(projectPath)` returns that project and throws the same errors the built-in handlers get (`NotIndexedError`,
   `PathRefusalError`, the WSL-shared-index and database-open failures); `executeReadTool` turns them
   into the usual responses.
-- **The daemon's env decides what can be called.** Behind the proxy, `tools/list` comes from the
-  client process's env and extensions (`getStaticTools`), `tools/call` from the daemon's. A shared
-  daemon has the env of whichever client started it, so its `CODEGRAPH_EXTENSION_MODULES` and
+- **The machine server's env decides what can be called.** Behind the proxy, `tools/list` comes from
+  the client process's env and extensions (`getStaticTools`), `tools/call` from the server's. The one
+  machine server has the env of whichever client started it, so its `CODEGRAPH_EXTENSION_MODULES` and
   `CODEGRAPH_MCP_TOOLS` decide what can be called, even if the client lists something else.
+
+## The machine server and its state dir
+
+One CodeGraph MCP server runs per state dir, started by the first `serve --mcp` client when none is
+running; it never exits when idle (`codegraph daemon --stop` stops it). It answers for any project a
+session names, so nothing is keyed on a project root.
+
+- **State dir.** `~/.codegraph`, or the absolute path in `CODEGRAPH_STATE_DIR`
+  (`server/state-dir.ts`: `getStateDir()` creates nothing, `ensureStateDir()` makes it mode 0700; a
+  relative value throws `InvalidStateDirError`). It holds `server.pid` and `server.log`, and
+  `server.sock` unless the path is too long or the filesystem cannot host a socket, plus the project
+  registry (`projects/`). Read on every call, never cached.
+- **State dir identity.** `getStateDirIdentity()` is the directory's own identity (`dev:ino`; the
+  lower-cased native realpath on Windows; null until the dir exists). The lock's `stateId`, the
+  tmpdir socket name and the Windows pipe name use it, and lock judgement compares it, never the
+  path, so two spellings of one directory (a macOS firmlink) are one state dir and a copied state
+  dir is another. The lock's `stateDir` path is for display only.
+- **A development build** sets `CODEGRAPH_STATE_DIR` to its own directory and so runs its own server
+  beside the live one: two state dirs never share a socket, a lock or a registry record, and stopping
+  one leaves the other.
+- **Control** (`src/mcp/server-control.ts`): `probeServer`, `stopServer` (identity verified by the
+  server's socket hello before any signal), `requestProjectRelease` (what `codegraph index` calls
+  before it rebuilds a project's index). Paths and the lock record are in `src/mcp/daemon-paths.ts`.
 
 ## Avoiding an import cycle
 

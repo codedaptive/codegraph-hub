@@ -5,12 +5,12 @@
  *
  * A dead holder's locks are reclaimed already (G-L2 guards that). What still
  * blocks is pid reuse: the killed server's pid now names an unrelated live
- * process. G-L1 (direct mode) and G-L3 (daemon mode) model it on POSIX by
- * moving ONLY the pid in each leftover record onto a live `sleep 600`
+ * process. G-L1 (direct mode) and G-L3 (machine-server mode) model it on POSIX
+ * by moving ONLY the pid in each leftover record onto a live `sleep 600`
  * (fixtures/dead-lock-helpers.ts reusePid); everything else, the recorded
  * start time included, stays what the dead holder wrote. The records come
- * from the real code: the killed server's own writer.pid / daemon.pid, and a
- * victim process (fixtures/dead-lock-victim.ts) that takes rebuild.pid and
+ * from the real code: the killed server's own writer.pid / <state>/server.pid,
+ * and a victim process (fixtures/dead-lock-victim.ts) that takes rebuild.pid and
  * codegraph.lock through src and is SIGKILL'd holding them.
  *
  * The servers are `node dist/bin/codegraph.js`, the surface an agent
@@ -19,6 +19,10 @@
  *
  * Each test spawns two real servers and a vite-node victim; on an idle
  * machine one takes 10-20 s, under load much more, hence the 180 s timeouts.
+ * Every test has its own state dir (`CODEGRAPH_STATE_DIR`), so no test touches
+ * the live server of this machine. A server holds no project until a call
+ * names one, so each server below is first given a call that opens the project
+ * (it takes the project's writer slot then, through the project lifecycle).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
@@ -27,6 +31,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import { getCodeGraphDir } from '../../../src/directory';
+import { getServerPidPath } from '../../../src/mcp/daemon-paths';
 import { getWriterPidPath } from '../../../src/mcp/writer-lock';
 import {
   STALE_GUARD_AGE_S,
@@ -54,12 +59,19 @@ const BASE_ENV = {
   CODEGRAPH_STARTUP_HANDSHAKE_TIMEOUT_MS: '0',
   CODEGRAPH_NO_RELAUNCH: '1',
   CODEGRAPH_WASM_RELAUNCHED: '1',
-  CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS: '30000',
+  CODEGRAPH_ALLOW_UNSAFE_NODE: '1',
   DO_NOT_TRACK: '1',
   CODEGRAPH_TELEMETRY: '0',
 };
 const DIRECT_ENV = { ...BASE_ENV, CODEGRAPH_NO_DAEMON: '1' };
-const DAEMON_ENV = { ...BASE_ENV, CODEGRAPH_NO_DAEMON: '0' };
+// A proxy that found no server (a lock younger than the candidate's startup grace
+// is deferred to) retries on a short backoff, so it attaches soon after one binds.
+const DAEMON_ENV = {
+  ...BASE_ENV,
+  CODEGRAPH_NO_DAEMON: '0',
+  CODEGRAPH_DAEMON_RETRY_MS: '300',
+  CODEGRAPH_DAEMON_RETRY_MAX_MS: '1000',
+};
 
 interface Server {
   child: ChildProcessWithoutNullStreams;
@@ -70,11 +82,14 @@ interface Server {
 
 const servers: Server[] = [];
 
+/** The throwaway state dir of the current test; every server below gets it. */
+let stateDir: string;
+
 function spawnServer(cwd: string, env: NodeJS.ProcessEnv): Server {
   const child = spawn(process.execPath, [BIN, 'serve', '--mcp'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...env, CODEGRAPH_STATE_DIR: stateDir },
   }) as ChildProcessWithoutNullStreams;
   child.on('error', () => {});
   child.stdin.on('error', () => {});
@@ -130,34 +145,34 @@ async function request(s: Server, method: string, params: object, timeoutMs: num
   return r;
 }
 
-function daemonLogTail(root: string): string {
+function serverLogTail(): string {
   try {
-    return fs.readFileSync(path.join(getCodeGraphDir(root), 'daemon.log'), 'utf8').split('\n').slice(-15).join('\n');
-  } catch { return '(no daemon.log)'; }
+    return fs.readFileSync(path.join(stateDir, 'server.log'), 'utf8').split('\n').slice(-15).join('\n');
+  } catch { return '(no server.log)'; }
 }
 
-async function initialize(s: Server, root: string): Promise<any> {
+async function initialize(s: Server): Promise<any> {
   const r = await request(s, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
     clientInfo: { name: 'dead-lock-reclaim', version: '0.0.0' },
-    rootUri: `file://${root}`,
   }, 60_000);
   send(s, { jsonrpc: '2.0', method: 'notifications/initialized' });
   return r;
+}
+
+/** `codegraph_search` for the project, which every call must name. */
+function search(s: Server, root: string, query: string): Promise<any> {
+  return request(s, 'tools/call', { name: 'codegraph_search', arguments: { query, projectPath: root } }, 60_000);
 }
 
 function readJson(file: string): Record<string, any> | null {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
-function daemonPidPath(root: string): string {
-  return path.join(getCodeGraphDir(root), 'daemon.pid');
-}
-
-function listeningLines(root: string): number {
+function listeningLines(): number {
   try {
-    return fs.readFileSync(path.join(getCodeGraphDir(root), 'daemon.log'), 'utf8')
+    return fs.readFileSync(path.join(stateDir, 'server.log'), 'utf8')
       .split('\n').filter((l) => l.includes('[CodeGraph daemon] Listening on')).length;
   } catch { return 0; }
 }
@@ -179,9 +194,14 @@ function assertDistFresh(): void {
 let tempDir: string;
 let root: string;
 
+const priorStateDir = process.env.CODEGRAPH_STATE_DIR;
+
 beforeEach(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dlr-gate-'));
   root = fs.realpathSync(tempDir);
+  stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dlr-state-')));
+  // getServerPidPath() below reads the state dir from this process's env.
+  process.env.CODEGRAPH_STATE_DIR = stateDir;
   fs.mkdirSync(path.join(root, 'src'));
   fs.writeFileSync(path.join(root, 'src/a.ts'), 'export function alpha() { return 1; }\n');
   const cg = await CodeGraph.init(root);
@@ -191,13 +211,16 @@ beforeEach(async () => {
 
 afterEach(async () => {
   for (const s of servers.splice(0)) { if (!exited(s)) { try { s.child.kill('SIGKILL'); } catch { /* gone */ } } }
-  const daemon = readJson(daemonPidPath(root))?.pid;
-  if (typeof daemon === 'number' && daemon !== process.pid && isAlive(daemon)) {
-    try { process.kill(daemon, 'SIGKILL'); } catch { /* gone */ }
+  const server = readJson(getServerPidPath())?.pid;
+  if (typeof server === 'number' && server !== process.pid && isAlive(server)) {
+    try { process.kill(server, 'SIGKILL'); } catch { /* gone */ }
   }
   killStarted();
   await sleep(50);
   await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  await fs.promises.rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  if (priorStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+  else process.env.CODEGRAPH_STATE_DIR = priorStateDir;
 }, 30_000);
 
 /**
@@ -210,7 +233,8 @@ const MID_WRITE_BOUND_MS = 60_000;
 const LOCK_ROUND_MS = 5_000;
 
 /**
- * Start a direct-mode server, let it finish its catch-up, then edit files so
+ * Start a direct-mode server, open the project with a call (which takes the
+ * project's writer slot), let it finish its catch-up, then edit files so
  * its watcher syncs, and SIGKILL it the moment codegraph.lock (taken for the
  * sync's writes) is seen. A sync can take and drop the lock between two
  * polls, so each round that does not see it edits again, up to
@@ -222,7 +246,8 @@ const LOCK_ROUND_MS = 5_000;
  */
 async function killDirectServerMidWrite(): Promise<{ serverPid: number; victimPid: number; lastStart: number }> {
   const first = spawnServer(root, DIRECT_ENV);
-  await initialize(first, root);
+  await initialize(first);
+  await search(first, root, 'alpha'); // opens the project: the writer slot is taken from here
   const serverPid = first.child.pid!;
   await waitFor(() => {
     const w = readJson(getWriterPidPath(root));
@@ -256,17 +281,20 @@ async function killDirectServerMidWrite(): Promise<{ serverPid: number; victimPi
 /** The acceptance check on a second direct server: it serves, owns writer.pid, and indexed the late edit. */
 async function expectSecondDirectServerAnswers(): Promise<Server> {
   const second = spawnServer(root, DIRECT_ENV);
-  await initialize(second, root);
+  await initialize(second);
   const pid = second.child.pid!;
+  // The first call opens the project; the slot is claimed (and the leftover records reclaimed) there.
+  const opened = await search(second, root, 'alpha');
+  expect(opened.result?.isError, JSON.stringify(opened.result?.content ?? opened.error)).not.toBe(true);
   await waitFor(() => {
     if (exited(second)) throw new Error(`second server exited (${second.child.exitCode}): ${second.stderr()}`);
     const w = readJson(getWriterPidPath(root));
     return w?.pid === pid && w?.ready === true;
   }, 60_000, 'the second server to own writer.pid and finish its catch-up');
 
-  const search = await request(second, 'tools/call', { name: 'codegraph_search', arguments: { query: 'reclaimedAfterKill' } }, 60_000);
-  const text = JSON.stringify(search.result?.content ?? search.error);
-  expect(search.result?.isError, text).not.toBe(true);
+  const found = await search(second, root, 'reclaimedAfterKill');
+  const text = JSON.stringify(found.result?.content ?? found.error);
+  expect(found.result?.isError, text).not.toBe(true);
   expect(text).toContain('reclaimedAfterKill');
 
   await sleep(500);
@@ -299,44 +327,51 @@ describe.runIf(posix)('dead-lock reclaim gates', () => {
     await expectSecondDirectServerAnswers();
   }, TEST_TIMEOUT_MS);
 
-  it('G-L3 daemon mode: daemon killed, daemon.pid and writer.pid name a live unrelated process; a replacement daemon binds and serves', async () => {
+  it('G-L3 machine-server mode: server killed, server.pid and writer.pid name a live unrelated process; a replacement server binds and serves', async () => {
     assertDistFresh();
     const first = spawnServer(root, DAEMON_ENV);
-    await initialize(first, root);
-    await waitFor(() => listeningLines(root) >= 1, 60_000, 'the first daemon to listen');
+    await initialize(first);
+    await waitFor(() => listeningLines() >= 1, 60_000, 'the first server to listen');
+    await search(first, root, 'alpha'); // opens the project: the server takes its writer slot
     const killed = await waitFor(() => {
-      const d = readJson(daemonPidPath(root))?.pid;
+      const d = readJson(getServerPidPath())?.pid;
       const w = readJson(getWriterPidPath(root));
-      return typeof d === 'number' && w?.pid === d && w?.mode === 'daemon' ? d : null;
-    }, 60_000, 'the daemon to own writer.pid');
-    const daemonStarted = Date.now(); // the daemon started before this point
+      return typeof d === 'number' && w?.pid === d ? d : null;
+    }, 60_000, 'the server to own writer.pid');
+    const serverStarted = Date.now(); // the server started before this point
 
     // The proxy first, so it cannot start a replacement before the records are rewritten.
     first.child.kill('SIGKILL');
     await waitFor(() => exited(first), 10_000, 'the first proxy to die');
     await killAndWait(killed);
 
-    const holder = await startUnrelatedHolder(daemonStarted);
-    reusePid(daemonPidPath(root), killed, holder);
+    const holder = await startUnrelatedHolder(serverStarted);
+    reusePid(getServerPidPath(), killed, holder);
     reusePid(getWriterPidPath(root), killed, holder);
 
     const second = spawnServer(root, DAEMON_ENV);
-    const init = await initialize(second, root);
+    const init = await initialize(second);
     expect(init.result?.serverInfo?.name).toBe('codegraph');
-    await waitFor(() => listeningLines(root) >= 2, 60_000, () =>
-      `a replacement daemon to listen; proxy stderr:\n${second.stderr()}\ndaemon.log tail:\n${daemonLogTail(root)}`);
+    await waitFor(() => listeningLines() >= 2, 60_000, () =>
+      `a replacement server to listen; proxy stderr:\n${second.stderr()}\nserver.log tail:\n${serverLogTail()}`);
     const replacement = await waitFor(() => {
-      const d = readJson(daemonPidPath(root))?.pid;
+      const d = readJson(getServerPidPath())?.pid;
       return typeof d === 'number' && d !== holder && d !== killed && isAlive(d) ? d : null;
-    }, 30_000, 'daemon.pid to name the replacement');
-    // Not a read-only fallback: the replacement daemon owns the writer slot.
-    await waitFor(() => readJson(getWriterPidPath(root))?.pid === replacement, 30_000,
-      `writer.pid to name the replacement daemon ${replacement} (it names ${JSON.stringify(readJson(getWriterPidPath(root)))})`);
+    }, 30_000, 'server.pid to name the replacement');
 
-    const search = await request(second, 'tools/call', { name: 'codegraph_search', arguments: { query: 'alpha' } }, 60_000);
-    const text = JSON.stringify(search.result?.content ?? search.error);
-    expect(search.result?.isError, text).not.toBe(true);
+    // The call must reach the replacement server, not the proxy's in-process
+    // fallback (which serves reads without claiming the slot): wait for the attach.
+    await waitFor(
+      () => second.stderr().includes('Attached to shared daemon') && second.stderr().includes(`(pid ${replacement},`),
+      60_000, () => `the proxy to attach to the replacement server ${replacement}; proxy stderr:\n${second.stderr()}`);
+    // The first call on the project reclaims the leftover writer.pid: not a
+    // read-only fallback, the replacement server owns the writer slot.
+    const found = await search(second, root, 'alpha');
+    const text = JSON.stringify(found.result?.content ?? found.error);
+    expect(found.result?.isError, text).not.toBe(true);
     expect(text).toContain('alpha');
+    await waitFor(() => readJson(getWriterPidPath(root))?.pid === replacement, 30_000,
+      `writer.pid to name the replacement server ${replacement} (it names ${JSON.stringify(readJson(getWriterPidPath(root)))})`);
     expect(isAlive(holder), 'the unrelated holder was signalled').toBe(true);
   }, TEST_TIMEOUT_MS);
 });

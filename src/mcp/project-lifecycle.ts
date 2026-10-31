@@ -1,13 +1,10 @@
 /** Shared synchronization ownership for projects accessed by MCP engines (#1835). */
 import { realpathSync } from 'fs';
 import * as path from 'path';
-import type { Socket } from 'net';
 import type CodeGraph from '../index';
 import { canonicalProjectRoot, getCodeGraphDir, isInitialized } from '../directory';
 import { LockUnavailableError, watchDisabledReason } from '../sync';
-import { getDaemonSocketCandidates } from './daemon-paths';
 import { addWatchdogProgressPaths } from './liveness-watchdog';
-import { connectWithHello } from './proxy';
 import { markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from './writer-lock';
 
 interface Project {
@@ -19,7 +16,6 @@ interface Project {
   caughtUp: boolean;
   retirement: Promise<void> | null;
   gate: Promise<void> | null;
-  socket: Socket | null;
   timer: NodeJS.Timeout;
   options: Parameters<CodeGraph['watch']>[0];
   /** Drops the index files from the liveness watchdog's progress; set while this process writes them (#2404). */
@@ -45,7 +41,7 @@ export function acquireProject(
   let project = projects.get(key);
   if (!project) {
     const cg = open();
-    project = { key, cg, refs: 0, owner: false, caughtUp: false, retirement: null, gate: null, socket: null, options,
+    project = { key, cg, refs: 0, owner: false, caughtUp: false, retirement: null, gate: null, options,
       dropProgress: null, timer: setInterval(() => { void ready(root, project!); }, 1000) };
     project.timer.unref();
     projects.set(key, project);
@@ -71,8 +67,6 @@ function retire(root: string, project: Project): Promise<void> {
   const retirement = new Promise<void>((done) => { resolve = done; });
   project.retirement = retirement;
   clearInterval(project.timer);
-  project.socket?.destroy();
-  project.socket = null;
   // A timed-out gate or an already-running watcher sync still owns this DB.
   // Leave the entry discoverable so a new lease can reuse it while it drains.
   const finish = (): void => {
@@ -101,7 +95,7 @@ function retire(root: string, project: Project): Promise<void> {
 
 function ready(root: string, project: Project): Promise<void> {
   if (project.gate) return project.gate;
-  if (project.refs === 0 || (project.owner && project.caughtUp) || (project.socket && !project.socket.destroyed)) {
+  if (project.refs === 0 || (project.owner && project.caughtUp)) {
     return Promise.resolve();
   }
   const gate = activate(root, project).catch((err) => {
@@ -124,24 +118,11 @@ async function activate(root: string, project: Project): Promise<void> {
   if (project.cg.hasPendingIndexRecovery?.()) await project.cg.recoverIndexes();
   const writer = tryAcquireWriterLock(root, 'fallback');
   if (writer.kind === 'taken') {
-    // Keep a real daemon session, so its idle timeout cannot strand this reader.
-    // Direct writers have no socket; the periodic retry takes over on their exit.
-    if (writer.existing?.mode === 'daemon') {
-      for (const candidate of getDaemonSocketCandidates(root)) {
-        const socket = await connectWithHello(candidate);
-        // A daemon of another version, older or not, is left to the project's own launchers.
-        if (!socket || typeof socket === 'string') continue;
-        if (project.refs === 0) { socket.destroy(); return; }
-        project.socket = socket;
-        socket.once('close', () => {
-          if (project.socket === socket) project.socket = null;
-        });
-        await daemonCatchUp(socket);
-        return;
-      }
-    }
-    // A direct owner cannot accept RPC, but advertises completion in writer.pid.
-    // Wait for its startup reconcile too; legacy writers have no readiness flag.
+    // Another process owns this project's updates (a CLI watcher, a server of
+    // another state dir, another session's engine). It cannot take RPC from us,
+    // but it advertises completion in writer.pid: wait for its startup
+    // reconcile, and answer reads from the shared WAL meanwhile. Legacy writers
+    // have no readiness flag. The periodic retry takes over when it exits.
     const deadline = Date.now() + 30_000;
     while (project.refs > 0 && writer.existing?.ready === false && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -175,35 +156,4 @@ async function activate(root: string, project: Project): Promise<void> {
   await project.cg.sync();
   project.caughtUp = true;
   markWriterReady(root);
-}
-
-/** A tool request passes through the daemon's own first-query catch-up gate. */
-function daemonCatchUp(socket: Socket): Promise<void> {
-  return new Promise((resolve) => {
-    let buffer = '';
-    const finish = (): void => {
-      clearTimeout(timer);
-      socket.removeListener('data', onData);
-      socket.removeListener('close', finish);
-      resolve();
-    };
-    const onData = (chunk: string | Buffer): void => {
-      buffer += String(chunk);
-      let newline: number;
-      while ((newline = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        try {
-          const message = JSON.parse(line);
-          if (message.id === 'project-catchup') finish();
-        } catch { /* ignore non-response lines */ }
-      }
-    };
-    const timer = setTimeout(() => { socket.destroy(); finish(); }, 30_000);
-    timer.unref();
-    socket.on('data', onData);
-    socket.once('close', finish);
-    socket.write(JSON.stringify({ jsonrpc: '2.0', id: 'project-catchup', method: 'tools/call',
-      params: { name: 'codegraph_status', arguments: {} } }) + '\n');
-  });
 }

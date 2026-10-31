@@ -6,7 +6,7 @@
  * `fs.unlinkSync(lockPath)`, before B's unlink proceeds. It loads the real
  * lock code from src and performs the same stale-lock takeover B is in the
  * middle of, then prints one JSON line: `{"acquired": boolean}` (plus the
- * daemon record it wrote, for the daemon case).
+ * server record it wrote, for the daemon case).
  *
  * `acquired: false` means only that the lock code reported the lock held: a
  * `taken` result, or FileLock's "locked by another process" error. Any other
@@ -21,13 +21,14 @@
  *   kind = writer        arg = projectRoot   (tryAcquireWriterLock)
  *   kind = filelock      arg = lockPath      (new FileLock(lockPath).acquire())
  *   kind = filelock-owner arg = projectRoot  (FileLock on .codegraph/codegraph.lock with a lockStamp owner)
- *   kind = daemon        arg = projectRoot   (clearStaleDaemonLock, then tryAcquireDaemonLock)
+ *   kind = daemon        arg = stateDir      (clearStaleDaemonLock, then tryAcquireDaemonLock)
+ *     CODEGRAPH_STATE_DIR must name that same isolated state dir.
  */
 import * as path from 'path';
 import { tryAcquireWriterLock, lockStamp, isForeignLockRecord } from '../../../../src/mcp/writer-lock';
 import { FileLock } from '../../../../src/utils';
 import { getCodeGraphDir } from '../../../../src/directory';
-import { getDaemonPidPath } from '../../../../src/mcp/daemon-paths';
+import { getServerPidPath } from '../../../../src/mcp/daemon-paths';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2).filter((a) => a !== '--');
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
   switch (kind) {
     case 'writer': {
       // A throw from the lock code propagates to main's handler (exit 2).
-      const r = tryAcquireWriterLock(arg!, 'competitor');
+      const r = tryAcquireWriterLock(arg!, 'fallback');
       out = { acquired: r.kind === 'acquired' };
       break;
     }
@@ -63,10 +64,13 @@ async function main(): Promise<void> {
     case 'daemon': {
       // daemon.ts pulls in the MCP engine; load it only for this case.
       const daemon = await import('../../../../src/mcp/daemon');
-      const pidPath = getDaemonPidPath(arg!);
+      if (!arg || !path.isAbsolute(arg) || process.env.CODEGRAPH_STATE_DIR !== arg) {
+        throw new Error('daemon competitor requires the isolated CODEGRAPH_STATE_DIR passed by the gate');
+      }
+      const pidPath = getServerPidPath();
       // A throw from either call propagates to main's handler (exit 2).
       const cleared = daemon.clearStaleDaemonLock(pidPath, deadPid);
-      const r = daemon.tryAcquireDaemonLock(arg!);
+      const r = daemon.tryAcquireDaemonLock();
       out = { acquired: r.kind === 'acquired', cleared, record: r.kind === 'acquired' ? r.info : null };
       break;
     }

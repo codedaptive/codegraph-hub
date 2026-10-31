@@ -1,6 +1,6 @@
 /**
  * Atomic stale-lock takeover for pid lock files (`writer.pid`, `rebuild.pid`,
- * `daemon.pid`, `codegraph.lock`).
+ * `codegraph.lock`, and the state dir's `server.pid`).
  *
  * The race this closes: taker B reads a lock, judges it stale (dead pid,
  * foreign record), then unlinks it. Between B's judgement and B's unlink,
@@ -51,10 +51,10 @@
  * new holder to have the dead holder's pid, so it needs pid reuse inside that
  * window. For a bare-pid `codegraph.lock` (FileLock without an owner) pid
  * reuse is all it needs. Every stamped record (`writer.pid`, `rebuild.pid`,
- * `daemon.pid`, and `codegraph.lock` with an owner) also carries its writer's
+ * and `codegraph.lock` with an owner) also carries its writer's
  * OS start time, `pidStart`, where one can be read, so the new holder must
  * also have started in the same second (macOS) or clock tick (Linux) as the
- * dead one; and `writer.pid`, `rebuild.pid` and `daemon.pid` carry their
+ * dead one; and `writer.pid`, `rebuild.pid` and `server.pid` carry their
  * `startedAt` millisecond, which must match too. Off Windows the fresh file
  * must also land in the judged file's freed inode; on Windows no start time
  * is recorded and the bytes are all that is compared, so a `codegraph.lock`

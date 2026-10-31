@@ -8,8 +8,8 @@
  * instead of telling the agent the project is not indexed. A worktree with no
  * indexed sibling keeps the not-indexed guidance unless the user opted in to
  * a cold build. `CODEGRAPH_NO_AUTO_SEED=1` restores the old behaviour. A
- * pinned project is never released by the handler's idle timer or its LRU
- * bound.
+ * pinned project is never released by the handler's idle timer; no cap on
+ * how many projects stay open bounds the cache.
  *
  * G2/G3/G7/G8 drive a real MCPEngine (the ToolHandler with the
  * ProjectLifecycle the engine wires) against real git worktrees and real
@@ -25,7 +25,8 @@ import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
-import { ToolHandler, MAX_CACHED_PROJECTS, __setLoadCodeGraphForTests, type ProjectLifecycle } from '../../../src/mcp/tools';
+import { ToolHandler, __setLoadCodeGraphForTests, type ProjectLifecycle } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
 import { pinProject, registerProject, unregisterProject, listRegisteredProjects } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
 
@@ -118,12 +119,8 @@ describe('worktree seeding at the tool-call entry point', { timeout: 60_000 }, (
     main = path.join(workspace, 'main');
     makeRepo(main);
     __setLoadCodeGraphForTests(CodeGraph);
+    // The engine has no default project: every call goes through projectPath.
     engine = new MCPEngine({ watch: true });
-    // A root with nothing indexed at or below it: no default project, so every
-    // call goes through the explicit-projectPath path.
-    const emptyRoot = path.join(workspace, 'empty-root');
-    fs.mkdirSync(emptyRoot);
-    await engine.ensureInitialized(emptyRoot);
   }, 60_000);
 
   afterEach(async () => {
@@ -135,7 +132,7 @@ describe('worktree seeding at the tool-call entry point', { timeout: 60_000 }, (
   }, 60_000);
 
   async function search(projectPath: string, query: string): Promise<{ text: string; isError: boolean }> {
-    const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath });
+    const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath }, undefined, ADMIT_ALL);
     return { text: res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n'), isError: Boolean(res.isError) };
   }
 
@@ -322,7 +319,7 @@ describe('pinned projects and the handler cache (G10, pinned half)', () => {
   }
 
   async function touch(dir: string): Promise<void> {
-    const res = await handler.execute('codegraph_files', { projectPath: dir, path: OVERSIZED_PATH });
+    const res = await handler.execute('codegraph_files', { projectPath: dir, path: OVERSIZED_PATH }, undefined, ADMIT_ALL);
     expect(res.content[0]!.text).toContain('path exceeds maximum length');
   }
 
@@ -338,20 +335,5 @@ describe('pinned projects and the handler cache (G10, pinned half)', () => {
     expect(await waitUntil(() => released.includes('peer'), 4000)).toBe(true);
     await new Promise((r) => setTimeout(r, 300));
     expect(released).toEqual(['peer']);
-  });
-
-  it('G10: a pinned root survives LRU eviction and does not count toward MAX_CACHED_PROJECTS', async () => {
-    process.env.CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS = '0'; // only the LRU bound releases
-    const pinned = project('pinned');
-    pinProject(real(pinned));
-    await touch(pinned); // least recently used from here on
-
-    for (let i = 0; i < MAX_CACHED_PROJECTS; i++) await touch(project(`u${i}`));
-    // The pinned root plus MAX_CACHED_PROJECTS unpinned ones: within the bound.
-    expect(released).toEqual([]);
-
-    await touch(project(`u${MAX_CACHED_PROJECTS}`));
-    // One over: the oldest UNPINNED root goes, the pinned one stays.
-    expect(released).toEqual(['u0']);
   });
 });

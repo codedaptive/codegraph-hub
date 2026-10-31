@@ -181,12 +181,12 @@ describe('fresh-answers tool schemas (M4)', () => {
     }
   }
 
-  it('M4: every tool (no default project) lists fresh and checkpoint as booleans, required unchanged', () => {
+  it('M4: every tool (a handler with no default CodeGraph) lists fresh and checkpoint as booleans, required gaining only projectPath', () => {
     process.env[TOOLS_ENV] = allNames;
     const defs = new ToolHandler(null).getTools() as Def[];
     expect(defs.map((t) => t.name).sort()).toEqual(tools.map((t) => t.name).sort());
     expectFlags(defs);
-    // No default project: the only change to `required` is projectPath (#993).
+    // The only change to `required` is projectPath (#993).
     for (const t of defs) {
       const base = baseRequired.get(t.name) ?? [];
       const expected = base.includes('projectPath') ? base : [...base, 'projectPath'];
@@ -194,7 +194,7 @@ describe('fresh-answers tool schemas (M4)', () => {
     }
   });
 
-  it('M4: every tool a default project exposes lists fresh and checkpoint, required unchanged', async () => {
+  it('M4: every tool a handler with a default CodeGraph exposes lists fresh and checkpoint, required gaining only projectPath', async () => {
     repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fresh-schema-')));
     fs.writeFileSync(path.join(repo, 'a.ts'), 'export function alpha() { return 1; }\n');
     cg = CodeGraph.initSync(repo);
@@ -202,8 +202,11 @@ describe('fresh-answers tool schemas (M4)', () => {
     process.env[TOOLS_ENV] = allNames;
     const defs = new ToolHandler(cg).getTools() as Def[];
     expectFlags(defs);
+    // projectPath is required on every tool whatever the handler holds (#993).
     for (const t of defs) {
-      expect(t.inputSchema.required, t.name).toEqual(baseRequired.get(t.name));
+      const base = baseRequired.get(t.name) ?? [];
+      const expected = base.includes('projectPath') ? base : [...base, 'projectPath'];
+      expect(t.inputSchema.required, t.name).toEqual(expected);
     }
   });
 });

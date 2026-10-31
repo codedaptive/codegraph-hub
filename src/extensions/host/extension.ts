@@ -6,7 +6,7 @@
  *     and exits 0 fresh, 3 not fresh, 1 on error;
  *   - `codegraph project list|pin|unpin|remove` lists, pins, unpins or unregisters the projects in the
  *     project registry (./worktree-lifecycle/project-registry.ts). A pinned project is never
- *     idle-released or evicted from an MCP server's project cache; `remove` deletes no file.
+ *     idle-released from an MCP server's project cache; `remove` deletes no file.
  *
  * The host loads this module on the main thread of every CLI invocation that reaches `program.parse()`
  * (`serve --mcp` included; not the bare installer run or -v / -version), and a query-pool worker loads
@@ -48,7 +48,7 @@ function registerProjectCommand(program: Command): void {
 
   project
     .command('pin <path>')
-    .description('Keep a project open in CodeGraph MCP servers (never idle-released or evicted)')
+    .description('Keep a project open in the CodeGraph MCP server (never idle-released)')
     .action(async (pathArg: string) => {
       const { runProjectPin } = await import('./worktree-lifecycle/cli');
       await runProjectPin(pathArg);
@@ -56,7 +56,7 @@ function registerProjectCommand(program: Command): void {
 
   project
     .command('unpin <path>')
-    .description('Let a pinned project be idle-released and evicted again')
+    .description('Let a pinned project be idle-released again')
     .action(async (pathArg: string) => {
       const { runProjectUnpin } = await import('./worktree-lifecycle/cli');
       runProjectUnpin(pathArg);

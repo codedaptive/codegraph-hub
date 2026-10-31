@@ -7,8 +7,8 @@
  * launcher chain during startup (config probe, instant cancel, initialize
  * timeout) but kept our stdio pipe fds open, so stdin never EOFs. If the kill
  * landed before {@link ../mcp/early-ppid} could observe the real parent, the
- * PPID watchdog is blind too (baseline `1`), and — pre-#1185 — the orphan
- * lived until the HOST process exited, accumulating one ~30MB node process
+ * PPID watchdog is blind too (baseline `1`), and the orphan lived until the
+ * HOST process exited, accumulating one ~30MB node process
  * per occurrence.
  *
  * This backstop closes that last hole: arm a one-shot timer at serve start
@@ -22,8 +22,8 @@
  * IMPORTANT (callers): attaching a `'data'` listener switches the stream into
  * flowing mode. Arm this AFTER the real stdin consumer is attached, in the
  * same synchronous block, so no early bytes are emitted while only our
- * listener exists. The detached daemon must never arm this — its stdin is
- * `'ignore'` and its lifecycle is refcount/idle-based.
+ * listener exists. The detached server must never arm this: its stdin is
+ * `'ignore'` and it has no stdin lifeline.
  *
  * Tune with `CODEGRAPH_STARTUP_HANDSHAKE_TIMEOUT_MS`; `0` disables.
  */

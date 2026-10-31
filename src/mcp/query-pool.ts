@@ -158,8 +158,6 @@ interface Job {
 }
 
 export interface QueryPoolOptions {
-  /** Default project root each worker opens at spawn, or null for per-call projects. */
-  root: string | null;
   /** Max worker threads. Defaults to `clamp(cores-1, 1, 16)`. */
   size?: number;
   /** Linger before a queued call gets busy-guidance. Default 45s. */
@@ -282,7 +280,6 @@ export class QueryPool {
   private nextId = 1;
   private totalCrashes = 0;
   private destroyed = false;
-  private readonly root: string | null;
   private readonly maxSize: number;
   private readonly softTimeoutMs: number;
   private readonly maxRetries: number;
@@ -291,11 +288,12 @@ export class QueryPool {
   private readonly idleTimeoutMs: number;
 
   constructor(opts: QueryPoolOptions) {
-    this.root = opts.root;
     this.maxSize = Math.max(1, Math.min(opts.size ?? Math.max(1, os.cpus().length - 1), MAX_POOL_SIZE));
     this.softTimeoutMs = opts.softTimeoutMs ?? resolveBusyTimeoutMs();
     this.maxRetries = opts.maxRetries ?? 1;
-    this.createWorker = opts.createWorker ?? (() => new Worker(WORKER_FILE, { workerData: { root: this.root } }));
+    // A pool worker opens no project at spawn: every call names its project
+    // (the machine server has no default one), and the worker opens it lazily.
+    this.createWorker = opts.createWorker ?? (() => new Worker(WORKER_FILE, { workerData: { root: null } }));
     this.startSettleMs = opts.startSettleMs ?? WORKER_START_SETTLE_MS;
     const idleMs = opts.idleTimeoutMs ?? resolveWorkerIdleTimeoutMs(process.env.CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS);
     this.idleTimeoutMs = Number.isFinite(idleMs) && idleMs > 0 ? idleMs : 0;

@@ -1,7 +1,7 @@
 /**
  * The actions of `codegraph project list|pin|unpin|remove`, the project
  * registry's CLI (./project-registry.ts). A PINNED project is never
- * idle-released or evicted from an MCP server's project cache; a SEEDED one
+ * idle-released from an MCP server's project cache; a SEEDED one
  * got its index from CodeGraph itself (copied from a sibling git worktree, or
  * cold-built by the MCP server), and the housekeeping sweep deletes that index
  * once the worktree is removed. `remove` only unregisters: it deletes no file.

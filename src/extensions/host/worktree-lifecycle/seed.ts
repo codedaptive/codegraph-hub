@@ -6,7 +6,7 @@
  *
  * The server calls {@link ensureWorktreeIndex} on the async path of a tool
  * call (`ToolHandler.awaitProjectGate`, src/mcp/tools.ts), and only when it owns a project
- * lifecycle (the engine and the daemon). The CLI and the query-pool workers
+ * lifecycle (the machine server's engine). The CLI and the query-pool workers
  * never seed. Nothing here touches the agent's code: the only writes are a new
  * `.codegraph/` in the worktree and a record in the project registry.
  *
@@ -85,7 +85,7 @@ import {
   releaseWriterLock,
   tryAcquireWriterLock,
 } from '../../../mcp/writer-lock';
-import { isProcessAlive } from '../../../mcp/daemon-registry';
+import { isProcessAlive } from '../../../mcp/server-control';
 import { hasRegisteredRepository, registerProject, stampSeedNonce } from './project-registry';
 
 export type SeedMethod = 'clone' | 'copy' | 'backup';

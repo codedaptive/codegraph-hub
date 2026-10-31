@@ -3,7 +3,7 @@
  *
  * `codegraph index` rebuilds through `CodeGraph.recreate()`, which unlinks
  * `.codegraph/codegraph.db` and creates a new file (a new inode) at the same
- * path. A long-lived instance — the MCP daemon — keeps its handle on the old,
+ * path. A long-lived instance — the MCP server — keeps its handle on the old,
  * unlinked inode. Before the fix its watcher kept "auto-syncing" into that dead
  * inode (nothing it wrote was visible to any other process), and the #925
  * self-heal on the tool-call path reopened the live file without a catch-up,
@@ -18,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import CodeGraph, { LockUnavailableError } from '../src/index';
 import type { MCPEngine } from '../src/mcp/engine';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 const posixOnly = it.runIf(process.platform !== 'win32');
 
@@ -222,10 +223,10 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
       seed.close();
       if (!fs.existsSync(ENGINE)) throw new Error(`${ENGINE} missing — run \`npm run build\` first`);
       const { MCPEngine: Engine } = require(ENGINE) as { MCPEngine: typeof MCPEngine };
-      const engine = new Engine({ watch, writerLockRoot: watch ? root : undefined });
-      await engine.ensureInitialized(root);
-      // Drain the post-open catch-up gate (and prove the project is loaded).
-      const first = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha' });
+      const engine = new Engine({ watch });
+      // Open the project through its projectPath and drain its post-open
+      // catch-up gate (this proves the project is loaded).
+      const first = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha', projectPath: root }, undefined, ADMIT_ALL);
       expect(first.content[0].text).toMatch(/alpha/);
       return engine;
     }
@@ -240,8 +241,8 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
         const handler = engine.getToolHandler();
         // This call reopens the replaced database and starts the catch-up;
         // the next call awaits its gate.
-        await handler.execute('codegraph_search', { query: 'alpha' });
-        const res = await handler.execute('codegraph_search', { query: 'foxtrot' });
+        await handler.execute('codegraph_search', { query: 'alpha', projectPath: root }, undefined, ADMIT_ALL);
+        const res = await handler.execute('codegraph_search', { query: 'foxtrot', projectPath: root }, undefined, ADMIT_ALL);
         expect(res.isError).toBeFalsy();
         expect(res.content[0].text).toMatch(/foxtrot/);
         expect(await onDiskHas(root, 'foxtrot')).toBe(true);
@@ -257,8 +258,8 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
         fs.appendFileSync(path.join(root, 'src', 'b.ts'), 'export function golf() { return 8; }\n');
 
         const handler = engine.getToolHandler();
-        await handler.execute('codegraph_search', { query: 'alpha' });
-        await handler.execute('codegraph_search', { query: 'golf' });
+        await handler.execute('codegraph_search', { query: 'alpha', projectPath: root }, undefined, ADMIT_ALL);
+        await handler.execute('codegraph_search', { query: 'golf', projectPath: root }, undefined, ADMIT_ALL);
         expect(await onDiskHas(root, 'golf')).toBe(false);
       } finally {
         engine.stop();

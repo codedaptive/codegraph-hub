@@ -2,11 +2,10 @@
  * What the OS says a running process is, for judging a lock file that names it
  * (#2770).
  *
- * A pid in `.codegraph/daemon.pid` proves nothing once the OS has given that
- * number to another process, and a daemon that does not answer its socket hello
- * cannot vouch for itself (#1553). The process's command line is the evidence
- * left: every CodeGraph daemon runs `<runtime> … codegraph.js serve --mcp --path
- * <root>`. A lock whose live holder runs anything else is as stale as one whose
+ * A pid in a lock file proves nothing once the OS has given that number to
+ * another process, and a server that does not answer its socket hello cannot
+ * vouch for itself (#1553). The process's command line is the evidence left:
+ * every CodeGraph server runs `<runtime> … codegraph.js serve --mcp`. A lock whose live holder runs anything else is as stale as one whose
  * holder has exited. When the OS withholds the command line (another user's or
  * an elevated process), the executable's name can still rule out a holder that
  * is no JavaScript runtime at all.
@@ -128,7 +127,7 @@ export async function describeProcess(pid: number): Promise<ProcessDescription> 
 
 /**
  * Whether a command line is a CodeGraph MCP server's, the only kind of process
- * that writes `daemon.pid`: it names CodeGraph and has `serve` and `--mcp` as
+ * that writes `server.pid`: it names CodeGraph and has `serve` and `--mcp` as
  * arguments.
  */
 export function isCodeGraphServerCommandLine(commandLine: string): boolean {

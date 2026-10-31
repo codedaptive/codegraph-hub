@@ -1,16 +1,19 @@
 /**
  * Project writer lock (#1740).
  *
- * At most one long-lived MCP *writer* (shared daemon OR direct-mode /
- * in-process engine that owns the FileWatcher) may serve a given project.
- * The shared daemon already multiplexes N stdio proxies onto one writer; this
- * lock closes the same-OS gap where two direct-mode `serve --mcp` processes
- * (via `CODEGRAPH_NO_DAEMON=1` or proxy→in-process fallback) each start a
- * watcher, contend on `codegraph.lock`, and degrade auto-sync.
+ * At most one long-lived *writer* (a process whose engine owns the project's
+ * FileWatcher and sync) may serve a given project. The machine server
+ * multiplexes every client onto one engine, so within one state directory a
+ * project has one writer; this lock closes the gap between processes: two
+ * servers on different state dirs (a development build beside the live one),
+ * or a server and a `CODEGRAPH_NO_DAEMON=1` session, would each start a
+ * watcher, contend on `codegraph.lock`, and degrade auto-sync. The project
+ * lifecycle (`project-lifecycle.ts`) takes it per project, with mode
+ * `fallback`; the index builders take `rebuild.pid` with their own modes.
  *
- * Deliberately separate from `daemon.pid`: proxies probe the daemon socket
- * and may clear a live pid that has no socket. A direct-mode holder must not
- * look like a daemon. `writer.pid` is only about "who owns live auto-sync".
+ * Deliberately separate from `server.pid`: the server lock says which process
+ * is the machine server of a state dir, and is proven by a socket hello; a
+ * writer lock is per project and only about "who owns live auto-sync".
  *
  * Every record also carries a {@link LockStamp}: the writer's canonical
  * project root, the identity of the physical index it had open (the
@@ -61,13 +64,12 @@ import { canonicalProjectRoot, getCodeGraphDir, statInode } from '../directory';
 import {
   createLockFile,
   removeLockIfUnchanged,
-  replaceLockIfUnchanged,
   snapshotLock,
   writeExclusiveTemp,
   type LockSnapshot,
 } from './lock-takeover';
 import { processStartTime } from './process-identity';
-/** Signal-0 liveness (EPERM ⇒ alive). Local copy to avoid a daemon↔writer cycle. */
+/** Signal-0 liveness (EPERM ⇒ alive). Local copy so the lock layer imports nothing from the server modules. */
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -82,7 +84,7 @@ function isProcessAlive(pid: number): boolean {
 
 /**
  * Who wrote a lock record, stamped into every project lock: `writer.pid`,
- * `rebuild.pid`, `daemon.pid` and `codegraph.lock`. The identities are
+ * `rebuild.pid` and `codegraph.lock`. The identities are
  * `dev:ino` strings read as bigints, in {@link statInode}'s form, so inodes
  * above 2^53 keep their precision.
  */
@@ -263,7 +265,7 @@ export function getWriterPidPath(projectRoot: string, lockName: 'writer.pid' | '
  */
 export interface WriterLockInfo extends Partial<LockStamp> {
   pid: number;
-  /** `direct` | `daemon` | `fallback` — for actionable error text only. */
+  /** Who took the slot (`fallback`: the project lifecycle; `cold-build`, `seed`: the index builders; `rebuild`: `codegraph index`) — for actionable error text only. */
   mode: string;
   startedAt: number;
   /** False until the MCP owner has finished its initial catch-up. */
@@ -281,8 +283,7 @@ function encode(info: WriterLockInfo): string {
 /**
  * Parse a writer record. Passes the stamp fields (`root`, `dirId`, `dbId`,
  * `pidStart`) through when they are strings, so a record rewritten from its
- * decode ({@link markWriterReady}, a hand-back through {@link swapWriterLock})
- * keeps them. With `projectRoot`, a record foreign to that project
+ * decode ({@link markWriterReady}) keeps them. With `projectRoot`, a record foreign to that project
  * ({@link isForeignLockRecord}: its pid reused, or another project's) decodes
  * as null, exactly like an unreadable record, so callers see no holder.
  */
@@ -358,7 +359,7 @@ export function tryAcquireWriterLock(
   const first = attempt();
   const result = first.result;
   if (result.kind === 'taken' && result.existing && result.existing.pid === process.pid) {
-    // Same process already holds it (daemon acquired before engine watch).
+    // Same process already holds it (re-acquiring its own slot).
     return { kind: 'acquired', pidPath: result.pidPath, info: result.existing };
   }
   if (result.kind === 'taken') {
@@ -394,32 +395,6 @@ export function markWriterReady(projectRoot: string): void {
     fs.renameSync(tmp, pidPath);
   } finally {
     try { fs.unlinkSync(tmp); } catch { /* renamed into place */ }
-  }
-}
-
-/**
- * Replace the writer record of `fromPid` with `next`, and only that record, so
- * the slot passes between two processes without ever falling free (#2335). A
- * stopped daemon's sessions serve themselves in-process the moment it goes, and
- * one that found the slot free or stale would claim it as their own writer.
- * The pid compare is made on one {@link snapshotLock}, and the rename happens
- * through {@link replaceLockIfUnchanged}: under the `.takeover` guard, and only
- * if the record is still that very file, so a stale takeover (a dead `fromPid`)
- * cannot overwrite a fresh lock another taker created after the compare. On
- * Windows a rename refused because another process has the file open is
- * retried briefly inside the guard. Returns whether the record was replaced.
- * `next` is written as given, stamp included or not: a hand-back restores the
- * previous holder's record exactly, so a caller building a fresh claim adds
- * {@link lockStamp} itself. Never throws.
- */
-export function swapWriterLock(projectRoot: string, fromPid: number, next: WriterLockInfo): boolean {
-  const pidPath = getWriterPidPath(projectRoot);
-  try {
-    const snapshot = snapshotLock(pidPath);
-    if (!snapshot || decodeWriterLockInfo(snapshot.raw, projectRoot)?.pid !== fromPid) return false;
-    return replaceLockIfUnchanged(pidPath, snapshot, encode(next), 0o600) === 'replaced';
-  } catch {
-    return false;
   }
 }
 
@@ -468,7 +443,7 @@ export function writerLockHeldMessage(
   return (
     'CodeGraph writer lock held by ' + who + '. ' +
     'Only one live MCP writer may serve a project (auto-sync / index). ' +
-    'Stop the other server (if it is the shared daemon, pick it in `codegraph daemon` to stop it; otherwise end the other MCP session), ' +
+    'Stop the other server (if it is the shared daemon, stop it with `codegraph daemon --stop`; otherwise end the other MCP session), ' +
     'or unset CODEGRAPH_NO_DAEMON so additional clients proxy to the shared daemon. ' +
     'If that process is not a CodeGraph server, delete ' + pidPath
   );
@@ -492,8 +467,8 @@ export function assertNoRebuild(root: string): void {
 /**
  * Whether another live process holds the project's rebuild lock (`codegraph
  * index`). Rebuild intent is separate from writer ownership: the rebuild takes
- * `rebuild.pid` BEFORE stopping the daemon, so its disconnected proxies cannot
- * reopen SQLite in the gap. A foreign `rebuild.pid` (another project's,
+ * `rebuild.pid` BEFORE asking the server to release the project, so a tool call
+ * arriving in the gap cannot reopen SQLite. A foreign `rebuild.pid` (another project's,
  * copied in with its `.codegraph/`) is not a rebuild of this one, and neither
  * is one whose pid now names a process that started at another time than the
  * record says (a rebuild killed, its pid since reused): that record reads as no

@@ -6,8 +6,7 @@
  * roots that are gone (directory missing, or no longer listed by
  * `git worktree list` of their repository, located from the root's `.git` file
  * or the recorded common dir) and tears each down: deps.release(root), then,
- * judged gone once more under the record lock, clear what a dead daemon left
- * for it, delete `<root>/.codegraph` only when the registry says it was
+ * judged gone once more under the record lock, delete `<root>/.codegraph` only when the registry says it was
  * SEEDED, the directory still exists, and the database there holds the seed
  * nonce the record holds, and unregister. deps.release here is
  * ToolHandler.releaseProjectRoot on a handler whose ProjectLifecycle is the one
@@ -29,15 +28,15 @@
  * so dist/ must be rebuilt (`npm run build`) after the pool and worker change.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { execFileSync, spawn, spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
-import { encodeLockInfo, getDaemonPidPath, getDaemonSocketCandidates } from '../../../src/mcp/daemon-paths';
 import type { QueryPool } from '../../../src/mcp/query-pool';
 import type { ToolHandler } from '../../../src/mcp/tools';
 
@@ -127,7 +126,7 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
 
   /** Open `root` through the engine's handler and wait until this process is its writer. */
   async function openThroughHandler(handler: ToolHandler, root: string): Promise<void> {
-    const res = await handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' });
+    const res = await handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' }, undefined, ADMIT_ALL);
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain('appSymbol');
     expect(cachedRoots(handler)).toContain(root);
@@ -208,38 +207,34 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(reg.getRegisteredProject(main)).not.toBeNull();
   });
 
-  // The daemon registry is best-effort: a live daemon whose registry write
-  // failed has no record there, only its daemon.pid. Its sockets must survive.
-  it.runIf(process.platform !== 'win32')('keeps the sockets of a live daemon named only by daemon.pid', async () => {
+  // The machine server is one per state dir, not one per root: tearing a root
+  // down touches only that root's index and registry record, never the
+  // server's lock or socket (the server releases the root itself).
+  it('leaves the machine server\'s lock and socket alone, and keeps its registry under the state dir', async () => {
+    const stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-teardown-state-')));
+    vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
-    const wt = await addIndexedWorktree('live-daemon');
+    const wt = await addIndexedWorktree('server-files');
     reg.registerProject(wt, { commonDir });
+    expect(reg.registryDir()).toBe(path.join(stateDir, 'projects'));
 
-    // A live process named by a current-format record stamped with this root.
-    const holder = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
-    holder.unref();
-    const sockets = getDaemonSocketCandidates(wt);
+    // Plain files stand in for a live server's lock and bound socket.
+    const pidPath = path.join(stateDir, 'server.pid');
+    const socketPath = path.join(stateDir, 'server.sock');
     try {
-      expect(holder.pid).toBeGreaterThan(0);
-      fs.writeFileSync(getDaemonPidPath(wt), encodeLockInfo({
-        pid: holder.pid!,
-        version: '1.6.2',
-        socketPath: sockets[0]!,
-        startedAt: Date.now(),
-        root: wt,
-      }));
-      // Plain files stand in for the bound sockets: teardown only unlinks them.
-      for (const s of sockets) fs.writeFileSync(s, '');
+      fs.writeFileSync(pidPath, '{"pid":1}\n');
+      fs.writeFileSync(socketPath, '');
 
       pruneKeepingDir(wt);
 
       const torn = await sweepWorktrees({ release: async () => { /* nothing held */ } });
       expect(torn).toEqual([wt]);
-      for (const s of sockets) expect(fs.existsSync(s)).toBe(true);
+      expect(reg.getRegisteredProject(wt)).toBeNull();
+      expect(fs.readFileSync(pidPath, 'utf8')).toBe('{"pid":1}\n');
+      expect(fs.existsSync(socketPath)).toBe(true);
     } finally {
-      try { process.kill(holder.pid!, 'SIGKILL'); } catch { /* gone */ }
-      for (const s of sockets) fs.rmSync(s, { force: true });
+      fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });

@@ -19,6 +19,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 const DIST = path.resolve(__dirname, '../dist');
 const CodeGraph = (require(path.join(DIST, 'index.js')) as typeof import('../src/index')).default;
@@ -173,7 +174,7 @@ describe('recovering an interrupted bulk load off the event loop (#1887)', () =>
     const engine = new MCPEngine({ watch: false });
     engines.push(engine);
     const seen = spyOnIndexDdl();
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root });
+    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
     expect(seen).toEqual([]);
@@ -197,36 +198,12 @@ describe('recovering an interrupted bulk load off the event loop (#1887)', () =>
       events.push('sync');
       return sync.apply(this, args);
     });
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root });
+    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
     expect(seen).toEqual([]);
     expect(events[0]).toBe('rebuilt');
     expect(events).toContain('sync');
-  }, 30_000);
-
-  it('opens the default project at once on the retry path and serves it rebuilt', async () => {
-    const { root, dbPath } = interruptedProject(SMALL);
-    const engine = new MCPEngine({ watch: false });
-    engines.push(engine);
-    const seen = spyOnIndexDdl();
-    engine.retryInitializeSync(root);
-    expect(engine.hasDefaultCodeGraph()).toBe(true);
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1' });
-    expect(result.isError).toBeFalsy();
-    expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
-    expect(seen).toEqual([]);
-  }, 30_000);
-
-  it('opens the default project with the indexes back on the startup path', async () => {
-    const { root, dbPath } = interruptedProject(SMALL);
-    const engine = new MCPEngine({ watch: false });
-    engines.push(engine);
-    const seen = spyOnIndexDdl();
-    await engine.ensureInitialized(root);
-    expect(engine.hasDefaultCodeGraph()).toBe(true);
-    expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
-    expect(seen).toEqual([]);
   }, 30_000);
 
   /**

@@ -4,9 +4,8 @@
  * F2 cross-process release: the first process to sweep a gone worktree
  *    unregisters it, so every other process's sweep no longer sees it. Each
  *    engine's housekeeping tick therefore also releases its OWN cached
- *    explicit roots whose directory or `.codegraph/codegraph.db` is gone,
- *    through MCPEngine.releaseProjectRoot (a gone default project is retired
- *    the same way: worktree-lifecycle-ownership.gate.test.ts O5).
+ *    roots whose directory or `.codegraph/codegraph.db` is gone,
+ *    through MCPEngine.releaseProjectRoot.
  *    Two MCPEngines in one process stand in for two processes: they share one
  *    CodeGraph per root through project-lifecycle.ts's refcount, so engine A's
  *    release leaves the database open until engine B lets go too.
@@ -37,6 +36,7 @@ import * as path from 'path';
 import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests, type ToolHandler } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import { buildingNote, isBuilding } from '../../../src/extensions/host/worktree-lifecycle/seed';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
 import {
@@ -216,7 +216,7 @@ describe('F2: an engine releases its own cached roots another process tore down'
   }, 60_000);
 
   async function open(handler: ToolHandler, root: string, query: string): Promise<void> {
-    const res = await handler.execute('codegraph_search', { projectPath: root, query });
+    const res = await handler.execute('codegraph_search', { projectPath: root, query }, undefined, ADMIT_ALL);
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain(query);
     expect(cachedRoots(handler)).toContain(root);
@@ -319,9 +319,6 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     main = path.join(workspace, 'main');
     __setLoadCodeGraphForTests(CodeGraph);
     engine = new MCPEngine({ watch: true });
-    const emptyRoot = path.join(workspace, 'empty-root');
-    fs.mkdirSync(emptyRoot);
-    await engine.ensureInitialized(emptyRoot);
   }, 60_000);
 
   afterEach(async () => {
@@ -336,7 +333,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
   }, 60_000);
 
   async function search(projectPath: string, query: string): Promise<{ text: string; isError: boolean }> {
-    const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath });
+    const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath }, undefined, ADMIT_ALL);
     return { text: res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n'), isError: Boolean(res.isError) };
   }
 

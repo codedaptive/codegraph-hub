@@ -1,20 +1,16 @@
 /**
- * A copy of a project taken while the original's daemon runs gets its own
- * daemon, its own writer, and auto-sync.
+ * A copy taken while the original's writer is alive reclaims copied project
+ * locks and auto-syncs without disturbing the original.
  *
- * The copy carries the original's daemon.pid, writer.pid and (when the copy
- * landed mid-sync) codegraph.lock, all naming the original's LIVE daemon. Pid
- * liveness alone would make the copy's daemon candidate defer to that live pid
- * and exit, leaving the copy's session serving reads in-process without
- * auto-sync. Each lock record carries the root it was written at and the
- * identity of the physical index it was written for (the inodes of
- * `.codegraph/` and `codegraph.db`). A copy at another path has another root
- * and new inodes, so the copy recognises these as another project's records
- * and treats them as stale. A record at the copy's own root would never be
- * foreign; pid liveness would decide it.
+ * writer.pid and a planted mid-sync codegraph.lock name the original's LIVE
+ * writer and carry its physical-index stamp. A copy at another root has new
+ * directory/database inodes, so these records are foreign there. Project lock
+ * stamping is independent of the machine server's state-scoped server.pid.
  *
- * Spawns real `node dist/bin/codegraph.js serve --mcp` processes over real
- * sockets, as `__tests__/mcp-daemon.test.ts` does, with copies of its helpers.
+ * Two isolated state directories give the source and copy genuinely distinct
+ * live server processes, exercising the foreign-live-writer case even though
+ * all projects sharing one state directory normally use one machine server.
+ * Spawns real `node dist/bin/codegraph.js serve --mcp` proxies and servers.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -36,12 +32,18 @@ interface SpawnedServer {
   stderr: string[];
 }
 
-function spawnServer(cwd: string, env: NodeJS.ProcessEnv = {}): SpawnedServer {
+function spawnServer(cwd: string, stateDir: string): SpawnedServer {
   const recorder = recordSpawns(cwd);
   const child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, ...recorder.args, BIN, 'serve', '--mcp'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { CODEGRAPH_MCP_LOG_ATTACH: '1', ...process.env, ...recorder.env, ...env },
+    env: {
+      ...process.env,
+      ...recorder.env,
+      CODEGRAPH_MCP_LOG_ATTACH: '1',
+      CODEGRAPH_MCP_TOOLS: 'explore,search',
+      CODEGRAPH_STATE_DIR: stateDir,
+    },
   }) as ChildProcessWithoutNullStreams;
   child.on('error', () => { /* ignore */ });
   child.stdin.on('error', () => { /* ignore */ });
@@ -72,7 +74,7 @@ function sendMessage(child: ChildProcessWithoutNullStreams, msg: unknown): void 
   try { child.stdin.write(JSON.stringify(msg) + '\n'); } catch { /* child may be gone */ }
 }
 
-function sendInitialize(child: ChildProcessWithoutNullStreams, rootUri: string, id: number): void {
+function sendInitialize(child: ChildProcessWithoutNullStreams, id: number): void {
   sendMessage(child, {
     jsonrpc: '2.0',
     id,
@@ -81,7 +83,6 @@ function sendInitialize(child: ChildProcessWithoutNullStreams, rootUri: string, 
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: { name: 'test', version: '0.0.0' },
-      rootUri,
     },
   });
 }
@@ -120,6 +121,18 @@ function waitFor<T>(
   });
 }
 
+/** Projects open lazily on an explicit tool call, not during initialize. */
+async function openProject(server: SpawnedServer, projectPath: string): Promise<void> {
+  sendMessage(server.child, {
+    jsonrpc: '2.0', id: 2, method: 'tools/call',
+    params: { name: 'codegraph_search', arguments: { query: 'originalSymbol', projectPath } },
+  });
+  const reply = await waitFor(() => findResponse(server.stdout, 2), 90_000, 50, `${projectPath} open response`);
+  expect(reply.error).toBeUndefined();
+  expect(reply.result?.isError).not.toBe(true);
+  expect(JSON.stringify(reply.result)).toContain('originalSymbol');
+}
+
 function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
@@ -132,19 +145,21 @@ function readJson(file: string): Record<string, unknown> | null {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>; } catch { return null; }
 }
 
-function lockPid(root: string, name: 'daemon.pid' | 'writer.pid'): number | null {
-  const rec = readJson(path.join(root, '.codegraph', name));
+function serverPid(stateDir: string): number | null {
+  const rec = readJson(path.join(stateDir, 'server.pid'));
   return rec && typeof rec.pid === 'number' ? rec.pid : null;
 }
 
-function readDaemonLog(root: string): string {
-  try { return fs.readFileSync(path.join(root, '.codegraph', 'daemon.log'), 'utf8'); } catch { return ''; }
+function writerPid(root: string): number | null {
+  const rec = readJson(path.join(getCodeGraphDir(root), 'writer.pid'));
+  return rec && typeof rec.pid === 'number' ? rec.pid : null;
 }
 
-/**
- * Copy a project with its index while its daemon runs. Sockets cannot be
- * copied, and `*.tmp` files are a lock writer's private in-flight records.
- */
+function readServerLog(stateDir: string): string {
+  try { return fs.readFileSync(path.join(stateDir, 'server.log'), 'utf8'); } catch { return ''; }
+}
+
+/** Copy the live index, excluding sockets and private in-flight lock records. */
 function copyProject(from: string, to: string): void {
   fs.cpSync(from, to, {
     recursive: true,
@@ -157,25 +172,29 @@ function copyProject(from: string, to: string): void {
 
 const NEW_SYMBOL = 'copiedIndexFreshlyAddedSymbol';
 
-describe('copied index locks: a copy taken while the original daemon runs syncs on its own', () => {
+describe('copied index locks: a copy of a live writer\'s index syncs independently', () => {
   let parent: string;
-  let srcDir: string;   // S, as spawned (may sit behind the /var symlink on macOS)
-  let srcReal: string;  // realpath(S): what the daemon keys on
-  let copyDir: string;  // C
+  let srcDir: string;
+  let srcReal: string;
+  let copyDir: string;
   let copyReal: string;
+  let srcState: string;
+  let copyState: string;
   const servers: SpawnedServer[] = [];
-  let srcDaemonPid: number | null = null;
+  let srcServerPid: number | null = null;
 
   beforeEach(async () => {
-    parent = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-copied-gate-'));
+    parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-copied-gate-')));
     srcDir = path.join(parent, 'src-project');
     copyDir = path.join(parent, 'copy-project');
+    srcState = fs.mkdtempSync(path.join(parent, 'src-state-'));
+    copyState = fs.mkdtempSync(path.join(parent, 'copy-state-'));
     fs.mkdirSync(srcDir);
     fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export function originalSymbol() { return 1; }\n');
     const cg = await CodeGraph.init(srcDir);
     try { await cg.indexAll(); } finally { cg.close(); }
     srcReal = fs.realpathSync(srcDir);
-    srcDaemonPid = null;
+    srcServerPid = null;
   });
 
   afterEach(async () => {
@@ -186,57 +205,57 @@ describe('copied index locks: a copy taken while the original daemon runs syncs 
       await exited;
     }));
     servers.length = 0;
-    const fixtures = [srcDir, copyDir];
+    const fixtures = [{ root: srcDir, state: srcState }, { root: copyDir, state: copyState }];
     // A losing candidate still starting must not outlive the fixture (#1773).
-    await settleLosingCandidates(srcDir, () => lockPid(srcReal, 'daemon.pid')).catch(() => { /* reaped below */ });
-    if (fs.existsSync(copyDir)) {
-      await settleLosingCandidates(copyDir, () => lockPid(fs.realpathSync(copyDir), 'daemon.pid')).catch(() => { /* reaped below */ });
+    for (const { root, state } of fixtures) {
+      if (fs.existsSync(root)) {
+        await settleLosingCandidates(root, () => serverPid(state)).catch(() => { /* reaped below */ });
+      }
     }
-    // Both daemons are detached: reap them by the pids they recorded, plus every
-    // candidate either launcher spawned. Never signal the vitest worker itself.
+    // Servers are detached. Reap only these isolated states' recorded holders
+    // and their launch candidates, never the vitest worker or a live server.
     const pids = new Set<number>();
-    if (srcDaemonPid) pids.add(srcDaemonPid);
-    for (const root of fixtures) {
-      const p = lockPid(root, 'daemon.pid');
-      if (p) pids.add(p);
-      for (const r of recordedPids(root)) pids.add(r);
+    if (srcServerPid) pids.add(srcServerPid);
+    for (const { root, state } of fixtures) {
+      const pid = serverPid(state);
+      if (pid) pids.add(pid);
+      for (const recorded of recordedPids(root)) pids.add(recorded);
     }
     pids.delete(process.pid);
     for (const pid of pids) {
       if (isAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch { /* race */ } }
     }
     for (const pid of pids) await waitProcessExit(pid, 5000);
-    for (const root of fixtures) removeSpawnLog(root);
+    for (const { root } of fixtures) removeSpawnLog(root);
     await fs.promises.rm(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }, 60_000);
 
-  // Exceeds 5 s by design: it starts two real daemons, each with an initial
-  // catch-up sync, then waits for a watcher-driven sync of an edit. On a
-  // loaded machine each of those steps can take tens of seconds, so every wait
-  // carries its own explicit, labelled timeout.
-  // POSIX only: on Windows lock records carry no index identity, so a copied record is never foreign and the copy's daemon defers to the original's.
+  // Exceeds 5 s by design: two real state-isolated servers catch up their
+  // projects, then a watcher syncs an edit. Loaded-machine startup and sync
+  // can each take tens of seconds; every wait has a labelled timeout.
+  // POSIX only: Windows project lock stamps carry no physical-index identity,
+  // so a copied live writer record cannot be recognised as foreign there.
   it.runIf(process.platform !== 'win32')(
-    'the copy gets its own daemon and writer, and an edit in the copy is synced and found',
+    'a separate-state server reclaims the copy\'s writer locks and finds a synced edit',
     async () => {
-      // 1. S: a running daemon whose writer has finished its catch-up.
-      const s = spawnServer(srcDir);
+      const s = spawnServer(srcDir, srcState);
       servers.push(s);
-      sendInitialize(s.child, `file://${srcDir}`, 1);
-      await waitFor(() => findResponse(s.stdout, 1), 60_000, 50, 'S initialize response');
-      srcDaemonPid = await waitFor(() => {
-        const pid = lockPid(srcReal, 'daemon.pid');
+      sendInitialize(s.child, 1);
+      const initialized = await waitFor(() => findResponse(s.stdout, 1), 60_000, 50, 'S initialize response');
+      expect(initialized.error).toBeUndefined();
+      await openProject(s, srcReal);
+      srcServerPid = await waitFor(() => {
+        const pid = serverPid(srcState);
         return pid && isAlive(pid) ? pid : null;
-      }, 60_000, 50, "S's daemon.pid naming a live daemon");
+      }, 60_000, 50, "S's server.pid naming a live server");
       await waitFor(() => {
-        const w = readJson(path.join(srcReal, '.codegraph', 'writer.pid'));
-        return w && w.pid === srcDaemonPid && w.ready === true;
-      }, 90_000, 50, "S's writer.pid ready:true for its daemon");
+        const writer = readJson(path.join(srcReal, '.codegraph', 'writer.pid'));
+        return writer && writer.pid === srcServerPid && writer.ready === true;
+      }, 90_000, 50, "S's writer.pid ready:true for its server");
 
-      // 2. C: a copy of S taken while S's daemon runs, landed mid-sync.
+      // Copy the live source and plant the FileLock it would carry mid-sync.
       copyProject(srcDir, copyDir);
       copyReal = fs.realpathSync(copyDir);
-      // The codegraph.lock S's daemon writes while it syncs: its pid, then S's
-      // lock stamp, copied over byte for byte.
       const srcDirId = statInode(getCodeGraphDir(srcReal));
       const srcDbId = srcDirId === null ? null : statInode(path.join(getCodeGraphDir(srcReal), 'codegraph.db'));
       const srcStamp = {
@@ -245,46 +264,37 @@ describe('copied index locks: a copy taken while the original daemon runs syncs 
       };
       fs.writeFileSync(
         path.join(copyReal, '.codegraph', 'codegraph.lock'),
-        `${srcDaemonPid}\n${JSON.stringify(srcStamp)}`,
+        `${srcServerPid}\n${JSON.stringify(srcStamp)}`,
       );
-      // The copied records really do name S's live daemon.
-      expect(lockPid(copyReal, 'daemon.pid')).toBe(srcDaemonPid);
-      expect(lockPid(copyReal, 'writer.pid')).toBe(srcDaemonPid);
+      expect(writerPid(copyReal)).toBe(srcServerPid);
 
-      // 3. serve --mcp in C, with the search tool exposed to find the edit.
-      const c = spawnServer(copyDir, { CODEGRAPH_MCP_TOOLS: 'explore,search' });
+      const c = spawnServer(copyDir, copyState);
       servers.push(c);
-      sendInitialize(c.child, `file://${copyDir}`, 1);
-      await waitFor(() => findResponse(c.stdout, 1), 60_000, 50, 'C initialize response');
+      sendInitialize(c.child, 1);
+      const copyInitialized = await waitFor(() => findResponse(c.stdout, 1), 60_000, 50, 'C initialize response');
+      expect(copyInitialized.error).toBeUndefined();
 
       const diagnostics = () =>
-        `\n--- C proxy stderr ---\n${c.stderr.join('\n')}\n--- C daemon.log ---\n${readDaemonLog(copyReal)}` +
-        `\n--- C daemon.pid ---\n${JSON.stringify(readJson(path.join(copyReal, '.codegraph', 'daemon.pid')))}` +
+        `\n--- C proxy stderr ---\n${c.stderr.join('\n')}\n--- C server.log ---\n${readServerLog(copyState)}` +
+        `\n--- C server.pid ---\n${JSON.stringify(readJson(path.join(copyState, 'server.pid')))}` +
         `\n--- C writer.pid ---\n${JSON.stringify(readJson(path.join(copyReal, '.codegraph', 'writer.pid')))}`;
 
-      // C's own daemon: a live pid that is not S's, recording C as its root.
-      let copyDaemonPid: number;
+      let copyServerPid: number;
       try {
-        copyDaemonPid = await waitFor(() => {
-          const rec = readJson(path.join(copyReal, '.codegraph', 'daemon.pid'));
+        await openProject(c, copyReal);
+        copyServerPid = await waitFor(() => {
+          const rec = readJson(path.join(copyState, 'server.pid'));
           const pid = rec && typeof rec.pid === 'number' ? rec.pid : null;
-          return pid && pid !== srcDaemonPid && isAlive(pid) && rec!.root === copyReal ? pid : null;
-        }, 60_000, 50, "C's daemon.pid naming its own live daemon with root realpath(C)");
-      } catch (err) {
-        throw new Error(`${(err as Error).message}${diagnostics()}`);
-      }
-
-      // C's writer: that daemon, mode 'daemon', and it reaches ready.
-      try {
+          return pid && pid !== srcServerPid && isAlive(pid) && rec!.stateDir === copyState ? pid : null;
+        }, 60_000, 50, "C's isolated server.pid naming its own live server");
         await waitFor(() => {
-          const w = readJson(path.join(copyReal, '.codegraph', 'writer.pid'));
-          return w && w.pid === copyDaemonPid && w.mode === 'daemon' && w.ready === true;
-        }, 90_000, 50, "C's writer.pid ready:true for C's daemon");
+          const writer = readJson(path.join(copyReal, '.codegraph', 'writer.pid'));
+          return writer && writer.pid === copyServerPid && writer.mode === 'fallback' && writer.ready === true;
+        }, 90_000, 50, "C's writer.pid ready:true for C's server");
       } catch (err) {
         throw new Error(`${(err as Error).message}${diagnostics()}`);
       }
 
-      // 4. An edit in C is synced and found through C's MCP session.
       fs.writeFileSync(path.join(copyReal, 'added.ts'), `export function ${NEW_SYMBOL}() { return 2; }\n`);
       let nextId = 10;
       let lastText = '';
@@ -293,15 +303,15 @@ describe('copied index locks: a copy taken while the original daemon runs syncs 
           const pending = nextId - 1;
           if (pending >= 10) {
             const reply = findResponse(c.stdout, pending);
-            if (!reply) return null; // still waiting on the previous call
+            if (!reply) return null;
             lastText = JSON.stringify(reply.result ?? reply.error);
-            if (reply.result?.isError !== true && lastText.includes(NEW_SYMBOL) && !lastText.includes('No results found')) {
+            if (!reply.error && reply.result?.isError !== true && lastText.includes(NEW_SYMBOL) && !lastText.includes('No results found')) {
               return true;
             }
           }
           sendMessage(c.child, {
             jsonrpc: '2.0', id: nextId++, method: 'tools/call',
-            params: { name: 'codegraph_search', arguments: { query: NEW_SYMBOL } },
+            params: { name: 'codegraph_search', arguments: { query: NEW_SYMBOL, projectPath: copyReal } },
           });
           return null;
         }, 90_000, 500, `C's MCP session finding ${NEW_SYMBOL}`);
@@ -309,10 +319,11 @@ describe('copied index locks: a copy taken while the original daemon runs syncs 
         throw new Error(`${(err as Error).message}\nlast reply: ${lastText}${diagnostics()}`);
       }
 
-      // 5. C never fell back to read-only, and S's daemon is untouched.
-      expect(c.stderr.some((l) => l.includes('Serving reads in-process without auto-sync'))).toBe(false);
-      expect(isAlive(srcDaemonPid!)).toBe(true);
-      expect(lockPid(srcReal, 'daemon.pid')).toBe(srcDaemonPid);
+      expect(c.stderr.some((line) => line.includes('Serving reads in-process without auto-sync'))).toBe(false);
+      expect(writerPid(copyReal)).toBe(copyServerPid);
+      expect(isAlive(srcServerPid!)).toBe(true);
+      expect(serverPid(srcState)).toBe(srcServerPid);
+      expect(writerPid(srcReal)).toBe(srcServerPid);
     },
     420_000,
   );

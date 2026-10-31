@@ -25,6 +25,7 @@ import { CodeGraph } from '../../../src';
 import type { MCPEngine } from '../../../src/mcp/engine';
 import { QueryPool, type PoolWorker, type QueryPoolOptions } from '../../../src/mcp/query-pool';
 import type { ToolResult } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ok = (text: string): ToolResult => ({ content: [{ type: 'text', text }] });
@@ -134,7 +135,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
     const active = { count: 0 };
     const gate = new Gate();
     pool = makePool({
-      root: '/x', size: 4, idleTimeoutMs: 50,
+      size: 4, idleTimeoutMs: 50,
       createWorker: () => {
         const f = new IdleFake(async (_w, m) => {
           active.count++;
@@ -170,7 +171,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
     const gates = [new Gate(), new Gate()];
     const servedBy = new Map<number, IdleFake>(); // call arg i -> fake
     pool = makePool({
-      root: '/x', size: 2, idleTimeoutMs: 50,
+      size: 2, idleTimeoutMs: 50,
       createWorker: () => {
         const f = new IdleFake(async (w, m) => {
           const i = (m.args as { i: number }).i;
@@ -213,7 +214,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
     const active = { count: 0 };
     const gate = new Gate();
     pool = makePool({
-      root: '/x', size: 3, idleTimeoutMs: 0,
+      size: 3, idleTimeoutMs: 0,
       createWorker: () => {
         const f = new IdleFake(async (_w, m) => {
           active.count++;
@@ -238,7 +239,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
     const active = { count: 0 };
     let gate = new Gate();
     pool = makePool({
-      root: '/x', size: 2, idleTimeoutMs: 20,
+      size: 2, idleTimeoutMs: 20,
       createWorker: () => {
         const f = new IdleFake(async (_w, m) => {
           active.count++;
@@ -272,7 +273,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
     const active = { count: 0 };
     const gate = new Gate();
     pool = makePool({
-      root: '/x', size: 2, idleTimeoutMs: 50, startSettleMs: 50,
+      size: 2, idleTimeoutMs: 50, startSettleMs: 50,
       createWorker: () => {
         const f = new IdleFake(async (_w, m) => {
           active.count++;
@@ -302,7 +303,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
     let endTerminate!: (code: number) => void;
     const retiredTerminate = new Promise<number>((r) => { endTerminate = r; });
     pool = makePool({
-      root: '/x', size: 2, idleTimeoutMs: 50, startSettleMs: 50,
+      size: 2, idleTimeoutMs: 50, startSettleMs: 50,
       createWorker: () => {
         const f = new IdleFake(async (_w, m) => {
           active.count++;
@@ -343,7 +344,7 @@ describe('QueryPool idle retirement (fake workers)', () => {
       let endTerminate!: (code: number) => void;
       const retiredTerminate = new Promise<number>((r) => { endTerminate = r; });
       pool = makePool({
-        root: '/x', size: 2, idleTimeoutMs: 50, startSettleMs: 50,
+        size: 2, idleTimeoutMs: 50, startSettleMs: 50,
         createWorker: () => {
           const f = new IdleFake(async (_w, m) => {
             active.count++;
@@ -447,32 +448,29 @@ describe('query pool idle retirement (real workers)', () => {
     const alpha = await indexProject('alpha', 'alphaSymbol');
     const beta = await indexProject('beta', 'betaSymbol');
     engine = new BuiltEngine({ watch: false, queryPool: true });
-    await engine.ensureInitialized(alpha);
     pool = (engine as unknown as { queryPool: QueryPool | null }).queryPool;
     expect(pool).not.toBeNull();
     await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 15000 });
     const handler = engine.getToolHandler();
-    await handler.execute('codegraph_status', { projectPath: alpha });
+    await handler.execute('codegraph_status', { projectPath: alpha }, undefined, ADMIT_ALL);
 
     const results = await Promise.all(Array.from({ length: 6 }, (_, i) => handler.execute(
       'codegraph_explore',
-      { projectPath: i % 2 ? beta : alpha, query: i % 2 ? 'betaSymbol' : 'alphaSymbol' },
+      { projectPath: i % 2 ? beta : alpha, query: i % 2 ? 'betaSymbol' : 'alphaSymbol' }, undefined, ADMIT_ALL,
     )));
     for (const r of results) expect(r.isError).toBeFalsy();
     expect(pool!.liveWorkers).toBe(2);
 
-    // Alpha is every worker's default project, opened at worker start
-    // (query-worker.ts), so the retired worker certainly held an alpha
-    // connection: alpha's own count must drop. Beta was open on the retired
-    // worker only if one of the burst's beta calls landed on it, so it is
-    // counted in the total only.
+    // No worker has a default project: a worker holds a project only once a
+    // call that names it landed on that worker, so which projects the retired
+    // worker held (none, alpha, beta or both) depends on how the burst was
+    // spread. The total over both can therefore only be asserted not to grow.
     // Count the `-wal` handle, not `codegraph.db`: each connection holds its
     // own `-wal` fd and closing the connection closes it, but SQLite keeps a
     // closed connection's main `.db` fd open while another connection in the
     // same process still has that WAL database open (the engine's main thread
-    // always holds alpha), so the `.db` count does not drop on retirement.
+    // holds both projects), so the `.db` count does not drop on retirement.
     const [alphaWal, betaWal] = [alpha, beta].map((r) => path.join(fs.realpathSync(path.join(r, '.codegraph')), 'codegraph.db-wal'));
-    const alphaAfterBurst = HAS_LSOF ? openFdCount([alphaWal]) : 0;
     const totalAfterBurst = HAS_LSOF ? openFdCount([alphaWal, betaWal]) : 0;
 
     await vi.waitFor(() => expect(pool!.liveWorkers).toBe(1), { timeout: 15000 });
@@ -480,14 +478,13 @@ describe('query pool idle retirement (real workers)', () => {
     expect(pool!.ready).toBe(true);
 
     if (HAS_LSOF) {
-      expect(alphaAfterBurst).toBeGreaterThan(0);
-      await vi.waitFor(() => {
-        expect(openFdCount([alphaWal])).toBeLessThanOrEqual(alphaAfterBurst - 1);
-        expect(openFdCount([alphaWal, betaWal])).toBeLessThan(totalAfterBurst);
-      }, { timeout: 5000 });
+      // The main thread and the surviving worker(s) still hold their handles;
+      // the retired worker's, if it held any, are closed.
+      expect(totalAfterBurst).toBeGreaterThan(0);
+      expect(openFdCount([alphaWal, betaWal])).toBeLessThanOrEqual(totalAfterBurst);
     }
 
-    const after = await handler.execute('codegraph_explore', { projectPath: beta, query: 'betaSymbol' });
+    const after = await handler.execute('codegraph_explore', { projectPath: beta, query: 'betaSymbol' }, undefined, ADMIT_ALL);
     expect(after.isError).toBeFalsy();
     expect(after.content[0].text).toContain('betaSymbol');
   }, 45000);
