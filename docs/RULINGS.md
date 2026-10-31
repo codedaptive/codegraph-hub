@@ -133,3 +133,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Restated 2026-10-30 (#1252) for the whole team, wider: the harness also includes the team's `.claude` settings,
   rules and hooks, and Claude Code's and herdr's settings. A hook now refuses writes to it. The product-guide and
   bilby.md questions are closed.
+
+## R-14. Q-13: CLI index writes go through the builder when it is running
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: the CLI commands that write an index (`codegraph init`, `index`, `sync`, `checkpoint`/`--fresh`) hand the
+  work to the builder when it is running; when it is not, they write the index in their own process (under the
+  writer lock), so the CLI stays the repair path.
+- Refines: [B9] (R-11); answers Kong's K-43 (#1307).
+- Work implied: Orc-Codegraph routes the CLI write commands to a running builder (host lane).
