@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 const MODULE = path.resolve(__dirname, '../dist/mcp/proxy.js');
@@ -19,9 +21,12 @@ function alive(pid: number): boolean {
 
 // Exercise the real local-handshake entry point and its real watchdog child,
 // with only the server/engine dependencies replaced to inject bounded faults.
-// The fake tool is unknown to the proxy, so its call reaches the engine without
-// the repo-anchor guard (an unknown tool is the handler's to report).
+// The fallback modes' tools/call names a real built-in tool with a projectPath equal
+// to the child's launch directory, a fresh temp dir (the anchor is that directory, or
+// the repository containing it), so it passes dispatchToolCall's tool-name check and
+// the repo-anchor guard, and reaches the injected engine handler.
 async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fallback'): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-proxy-watchdog-'));
   const child = spawn(process.execPath, ['-e', `
     const { runLocalHandshakeProxy } = require(${JSON.stringify(MODULE)});
     const mode = ${JSON.stringify(mode)};
@@ -61,6 +66,7 @@ async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fall
       CODEGRAPH_MCP_DEBUG: '1', CODEGRAPH_PPID_POLL_MS: '0',
       CODEGRAPH_STARTUP_HANDSHAKE_TIMEOUT_MS: '0',
     },
+    cwd: dir,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '', stderr = '';
@@ -71,7 +77,7 @@ async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fall
   try {
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }) + '\n');
     if (mode !== 'connecting-wedge') {
-      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'test', arguments: {} } }) + '\n');
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'codegraph_explore', arguments: { projectPath: dir, query: 'proxy' } } }) + '\n');
     }
     if (mode === 'slow-fallback') {
       await until(() => stdout.includes('finished') || exited());
@@ -94,14 +100,20 @@ async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fall
     expect(watchdogPid()).toBeGreaterThan(0);
     await until(() => !alive(watchdogPid()));
   } finally {
-    if (!exited()) child.kill('SIGKILL');
-    await until(exited);
-    const pid = watchdogPid();
-    if (pid && alive(pid)) {
-      try { await until(() => !alive(pid)); }
-      finally { if (alive(pid)) process.kill(pid, 'SIGKILL'); }
+    try {
+      if (!exited()) child.kill('SIGKILL');
+      await until(exited);
+      const pid = watchdogPid();
+      if (pid && alive(pid)) {
+        try { await until(() => !alive(pid)); }
+        finally { if (alive(pid)) process.kill(pid, 'SIGKILL'); }
+      }
+      child.stdin.destroy();
+    } finally {
+      // Removed after the cleanup attempt, whatever its outcome: the child's cwd is this
+      // dir, and a live process can pin it (Windows).
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    child.stdin.destroy();
   }
 }
 
