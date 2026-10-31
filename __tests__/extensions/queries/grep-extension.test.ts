@@ -113,6 +113,22 @@ describe('queries extension, in process', () => {
     expect(res.content).toEqual([{ type: 'text', text: formatGrepResult(await grepIndex(root, 'TOKEN')) }]);
   });
 
+  it('handle passes ctx.focus to the search: a focus dir narrows it, scope "repo" widens it, a context with no focus searches everything', async () => {
+    const focusCtx = { getCodeGraph: () => cg, focus: [path.join(root, 'lib')] };
+    const narrow = await findExtensionTool('codegraph_grep')!.handle({ pattern: 'TOKEN' }, focusCtx);
+    expect(narrow.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN', { focus: ['lib'] })));
+    expect(narrow.content[0]!.text).not.toContain('src/app.ts');
+    const wide = await findExtensionTool('codegraph_grep')!.handle({ pattern: 'TOKEN', scope: 'repo' }, focusCtx);
+    expect(wide.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN')));
+    const none = await findExtensionTool('codegraph_grep')!.handle({ pattern: 'TOKEN' }, { getCodeGraph: () => cg });
+    expect(none.content[0]!.text).toBe(wide.content[0]!.text);
+  });
+
+  it("GREP_TOOL's scope property takes focus or repo", () => {
+    const schema = GREP_TOOL.inputSchema as { properties: Record<string, { type?: string; enum?: string[] }> };
+    expect(schema.properties.scope).toMatchObject({ type: 'string', enum: ['focus', 'repo'] });
+  });
+
   it('handle with no projectPath uses the session default from ctx.getCodeGraph()', async () => {
     const asked: Array<string | undefined> = [];
     const ctx = { getCodeGraph: (p?: string) => { asked.push(p); return cg; } };

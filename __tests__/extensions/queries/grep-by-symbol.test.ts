@@ -487,7 +487,7 @@ describe('MCP tool', () => {
     expect(schema.type).toBe('object');
     expect(schema.required).toEqual(['pattern']);
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ['fixed', 'ignore_case', 'in', 'json', 'pattern', 'projectPath', 'strict'].sort(),
+      ['fixed', 'ignore_case', 'in', 'json', 'pattern', 'projectPath', 'scope', 'strict'].sort(),
     );
   });
 

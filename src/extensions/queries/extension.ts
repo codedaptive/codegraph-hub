@@ -87,14 +87,16 @@ const extension: CodegraphExtension = {
        * (executeReadTool turns its NotIndexedError into success-shaped
        * guidance and its PathRefusalError into isError), then searches that
        * project's root. handleGrepTool checks the root with
-       * validateProjectPath again before searching.
+       * validateProjectPath again before searching. It also gets the session's
+       * focus (ctx.focus, `[]` when the context has none), which narrows the
+       * search unless the call passes `scope: "repo"`.
        */
       async handle(args, ctx) {
         const projectPath = typeof args.projectPath === 'string' && args.projectPath !== '' ? args.projectPath : undefined;
         const root = ctx.getCodeGraph(projectPath).getProjectRoot();
         const { handleGrepTool } = await import('./grep/grep-mcp');
         const { projectPath: _resolved, ...rest } = args;
-        return handleGrepTool(rest, root);
+        return handleGrepTool(rest, root, ctx.focus ?? []);
       },
     },
     blastTool,

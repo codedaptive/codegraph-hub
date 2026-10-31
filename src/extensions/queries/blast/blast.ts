@@ -118,6 +118,16 @@ export interface BlastReport {
   areas: Area[];
   /** Set (to true) only when the report was computed with `strict`. */
   strict?: true;
+  /**
+   * Set only for a call from a session that has a focus (`splitReportByFocus`,
+   * `./focus.ts`), so an unfocused report and the CLI's serialize unchanged; empty
+   * (`count` 0) when the focus holds the whole index. `modules` then holds the
+   * dependents inside the focus; this holds the rest, grouped the same way.
+   * `dirs` names the focus as a sentence does, and `count` is the number of
+   * dependent symbols outside it (symbols, not modules). `impacted`, `testModules`,
+   * `areas`, `seeds` and `changed` are not split.
+   */
+  outsideFocus?: { dirs: string; count: number; modules: Module[] };
 }
 
 export interface BlastOptions {
