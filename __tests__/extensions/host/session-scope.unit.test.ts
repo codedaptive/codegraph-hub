@@ -404,6 +404,8 @@ describe('parseClientHelloLine: the session fields focus and tools', () => {
       pid: 1234,
       hostPid: 56,
       launchDir,
+      hasLaunchDir: true,
+      control: false,
       focus: ['src/app', 'lib'],
       tools: 'explore,search',
     });

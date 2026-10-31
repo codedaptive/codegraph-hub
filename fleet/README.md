@@ -17,17 +17,17 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 96 upstream files** (84 modified, 12 deleted) at exchange `a927dcc8`, 2026-10-31. An upstream file is one
+**Total: 100 upstream files** (88 modified, 12 deleted) at exchange `5e2d04a594`, 2026-10-31. An upstream file is one
 that exists at the fork's merge-base with upstream (`60b0d7a9`; upstream `main` has since moved to `2008e2f33f`, which
 the fork has not taken) and that exchange modifies or deletes. Recount with
 `git diff --name-status 60b0d7a9 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
-files the fork added (19: 16 new files in upstream's folders, such as `src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
+files the fork added (20: 16 new files in upstream's folders, such as `src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
 `src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts` and new tests in `__tests__/`; and the fork-only
-`Makefile`, `docs/RULINGS.md`, `docs/lanes/queries.md`). 55 of the 96 are named in the rows below; the other 41 are
+`Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/lanes/queries.md`). 60 of the 100 are named in the rows below; the other 40 are
 flat upstream tests that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
 of those two commits). Each row from `machine-server` on was checked on its own against its commit
-(`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`)
-and against upstream.
+(`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
+`-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`) and against upstream.
 
 | Feature | Upstream files |
 |---|---|
@@ -58,6 +58,11 @@ and against upstream.
 | `build-guidance` (host) | modified (4): `src/directory.ts` (comments only), `src/sync/worktree.ts` (`gitCommonDir`'s answer now says whether git reported "not a git repository" or could not answer, for the nested-clone check), `src/mcp/server-instructions.ts` and `src/mcp/tools.ts` (the instructions and not-indexed texts; both also named in other rows). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: `src/extensions/host/` (`README.md`, `builder/`: `client`, `seed-host`, `service`; `server/index-root`; `worktree-lifecycle/`: `seed-check`, `seed`) and its tests in `__tests__/extensions/host/` (new `own-index-root.unit`; edited `builder-service`, `index-builder.gate`, `index-builder.server`, `machine-server.gate`, `machine-server.harness`, `session-scope.unit`, `worktree-seed`) |
 
 | `installer-block` (host) | `src/installer/instructions-template.ts` (the block's last line and its comment: with no `.codegraph/` yet, an agent that has the MCP tool is pointed at `codegraph_explore` with the project's path; `src/installer/` is upstream-owned, so this edit is the orchestrator's decision). The only upstream file in the commit; no deletions, no new files in upstream's tree. Fork-only: the new test `__tests__/extensions/host/installer-block.gate.test.ts` |
+
+| `focus-recall` (queries) | `src/types.ts`, `src/index.ts` (also named in other rows), `src/context/index.ts`, `src/db/queries.ts` (`findRelevantContext` takes an optional index-relative `pathPrefixes` list; every recall lookup and top-N limit counts in-focus hits only; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-recall.test.ts` |
+| `cli-builder-route` (host) | modified (7): `src/bin/codegraph.ts`, `src/mcp/daemon.ts`, `src/mcp/engine.ts`, `src/mcp/liveness-watchdog.ts`, `src/mcp/proxy.ts`, `src/mcp/session.ts`, `src/mcp/writer-lock.ts`; one upstream test, `__tests__/daemon-client-liveness.test.ts` (edited; the commit's only edit to upstream's flat `__tests__/`; also in `machine-server`'s count). Also edits `src/mcp/server-control.ts` (ours, from machine-server; absent from upstream, so not counted). No deletions, no new files in upstream's tree. Fork-only: `src/extensions/host/` (`README.md`; new `builder/`: `cli-jobs`, `cli-relay`, `cli-route`, `cli-wire`, `fences`; edited `builder/`: `client`, `holder`, `main`, `protocol`, `queue`, `seed-host`, `service`; `fresh/`: `checkpoint`, `cli`; `worktree-lifecycle/seed`) and its tests in `__tests__/extensions/host/` (new `cli-builder-route.gate`, `cli-builder-route.unit`, `daemon-socket-mode.unit`; edited `server-control.unit`, `session-scope.unit`) |
+| `focus-note` (host) | `src/mcp/tools.ts` (also named in other rows; a focused explore ends with one line per query name defined only outside the focus). The only file in the commit outside fork-only trees; no deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new tests `__tests__/extensions/host/focus-note.gate.test.ts` and `focus-note.unit.test.ts` |
+| docs (Designer, no feature; `52f0392a`) | `docs/AGENTS.md` (the per-root-daemon text, one line), `AGENTS.md` (the same line; also named in `node-25-support`). Fork-only in the same commit: `docs/SPEC.md` |
 
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of

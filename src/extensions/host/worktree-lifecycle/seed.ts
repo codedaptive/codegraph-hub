@@ -203,19 +203,33 @@ function sameRoot(a: string, b: string): boolean {
   return a === b || canonicalProjectRoot(a) === canonicalProjectRoot(b);
 }
 
+/**
+ * Whether a rebuild keeps `root` off limits to readers and seeders: the question the source choice, the
+ * abandoned-index checks and the build decisions ask. By default another live process holds `rebuild.pid`
+ * (`isRebuildInProgress`); the builder's host answers it with its own fences added ({@link SeedHost.rebuildHeld}),
+ * because a rebuild it fenced holds `rebuild.pid` under the builder's own pid, which that default does not count.
+ */
+export type RebuildHeld = (root: string) => boolean;
+
+/** The host's answer to {@link RebuildHeld}, or the default when the host has none. */
+function rebuildHeldBy(host: SeedHost): RebuildHeld {
+  return (root) => (host.rebuildHeld ? host.rebuildHeld(root) : isRebuildInProgress(root));
+}
+
 // ---------------------------------------------------------------------------
 // Source choice
 // ---------------------------------------------------------------------------
 
 /**
  * Whether `root` holds a database whose index finished (`index_state` is
- * 'complete') and is not being rebuilt. A database that cannot be read is not
- * a source. One read-only open and a primary-key lookup.
+ * 'complete') and is not being rebuilt (`rebuildHeld`: {@link RebuildHeld}). A
+ * database that cannot be read is not a source. One read-only open and a
+ * primary-key lookup.
  */
-function hasCompleteIndex(root: string): boolean {
+function hasCompleteIndex(root: string, rebuildHeld: RebuildHeld): boolean {
   const dbFile = path.join(getCodeGraphDir(root), 'codegraph.db');
   if (!fs.existsSync(dbFile)) return false;
-  if (isRebuildInProgress(root)) return false;
+  if (rebuildHeld(root)) return false;
   const state = readIndexState(dbFile);
   return state.read && state.value === 'complete';
 }
@@ -265,8 +279,8 @@ function isUnfinishedIndex(dbFile: string): boolean {
 
 /**
  * Whether `root`'s own index is one a killed build left behind: a
- * `rebuild.pid` whose holder is dead (absent from `isRebuildInProgress`'s
- * view, and not this process), no live `writer.pid` holder, and an
+ * `rebuild.pid` whose holder is dead (not held per `rebuildHeld`, which
+ * defaults to `isRebuildInProgress`'s view, and not this process), no live `writer.pid` holder, and an
  * `index_state` read and found other than 'complete' ({@link isUnfinishedIndex}).
  * A killed child leaves 'indexing', or no state at all when it died between
  * creating the schema and marking it. A database whose state cannot be read
@@ -277,12 +291,12 @@ function isUnfinishedIndex(dbFile: string): boolean {
  * `root` must be a checkout root (a `.git` entry there): an index of a plain
  * directory is never replaced.
  */
-export function isAbandonedIndex(root: string): boolean {
+export function isAbandonedIndex(root: string, rebuildHeld: RebuildHeld = isRebuildInProgress): boolean {
   const dir = getCodeGraphDir(root);
   if (!fs.existsSync(path.join(dir, 'rebuild.pid'))) return false;
   if (!fs.existsSync(path.join(root, '.git'))) return false;
   const rebuild = readWriterLock(root, 'rebuild.pid');
-  if (rebuild?.pid === process.pid || isRebuildInProgress(root)) return false;
+  if (rebuild?.pid === process.pid || rebuildHeld(root)) return false;
   const writer = readWriterLock(root);
   if (writer && writer.pid > 0 && isProcessAlive(writer.pid)) return false;
   return isUnfinishedIndex(path.join(dir, 'codegraph.db'));
@@ -295,11 +309,15 @@ export function isAbandonedIndex(root: string): boolean {
  * longer read as unfinished, keeps it), then remove everything in its
  * `.codegraph/` but `.gitignore` and those two locks, and release them. True
  * when the index is gone (it may already have been); false when a live
- * process holds either lock or the index turned out not to be abandoned.
+ * process holds either lock, a rebuild holds the root (`rebuildHeld`: a fence of
+ * this builder would be released by this function's own release of
+ * `rebuild.pid`, which names the same pid) or the index turned out not to be
+ * abandoned.
  */
-function discardAbandonedIndex(root: string): boolean {
+function discardAbandonedIndex(root: string, rebuildHeld: RebuildHeld): boolean {
   const dir = getCodeGraphDir(root);
   if (!fs.existsSync(path.join(dir, 'codegraph.db'))) return true;
+  if (rebuildHeld(root)) return false;
   const rebuild = tryAcquireWriterLock(root, 'seed', 'rebuild.pid');
   if (rebuild.kind === 'taken') return false;
   const lock = new FileLock(path.join(dir, 'codegraph.lock'), lockOwner(root));
@@ -345,9 +363,9 @@ function removeDeadSeedStaging(dir: string): void {
 /** How many `git rev-list --count` runs at once: enough to overlap, never a fork storm. */
 const DISTANCE_CONCURRENCY = 4;
 
-async function pickFromEntries(worktreeRoot: string, entries: GitWorktreeEntry[]): Promise<string | null> {
+async function pickFromEntries(worktreeRoot: string, entries: GitWorktreeEntry[], rebuildHeld: RebuildHeld): Promise<string | null> {
   const self = entries.find((e) => sameRoot(e.path, worktreeRoot));
-  const candidates = entries.filter((e) => !sameRoot(e.path, worktreeRoot) && hasCompleteIndex(e.path));
+  const candidates = entries.filter((e) => !sameRoot(e.path, worktreeRoot) && hasCompleteIndex(e.path, rebuildHeld));
   const scored: Array<{ path: string; distance: number | null }> = [];
   for (let i = 0; i < candidates.length; i += DISTANCE_CONCURRENCY) {
     const batch = candidates.slice(i, i + DISTANCE_CONCURRENCY);
@@ -371,13 +389,14 @@ async function pickFromEntries(worktreeRoot: string, entries: GitWorktreeEntry[]
 
 /**
  * The sibling worktree to seed `worktreeRoot` from, canonical (git.ts), or null
- * when no other worktree of its repository has a complete index.
+ * when no other worktree of its repository has a complete index that is not
+ * being rebuilt (`rebuildHeld`, by default another live process's `rebuild.pid`).
  */
-export async function pickSeedSource(worktreeRoot: string): Promise<string | null> {
+export async function pickSeedSource(worktreeRoot: string, rebuildHeld: RebuildHeld = isRebuildInProgress): Promise<string | null> {
   const root = (await gitWorktreeRootAsync(worktreeRoot)) ?? path.resolve(worktreeRoot);
   const entries = await listGitWorktrees(root);
   if (!entries) return null;
-  return pickFromEntries(root, entries);
+  return pickFromEntries(root, entries, rebuildHeld);
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +834,13 @@ export interface SeedHost {
    */
   hasFailedBuild(root: string): boolean;
   /**
+   * Whether a rebuild holds `root`: another live process's `rebuild.pid`, or (the builder's host) a fence it
+   * gave a `codegraph index` that runs through it, whose `rebuild.pid` names the builder's own pid and so
+   * is not another process's. A host without it answers by `rebuild.pid` of another live process alone.
+   * A root a rebuild holds is neither a seed source, nor discarded, nor seeded or built over.
+   */
+  rebuildHeld?(root: string): boolean;
+  /**
    * Queue the cold build of `root` (./cold-build.ts), unless one is already queued or running. `approval` is
    * what {@link admitColdBuild} approved: the job runs that admission again when it starts (the queue may
    * hold it for minutes, and `root` is a path, not a directory) and builds nothing unless it still holds.
@@ -933,7 +959,7 @@ export async function ensureWorktreeIndex(projectPath: string, host: SeedHost, a
     // `target`, not on `up`: an index above a nested repository that holds an
     // abandoned index of its own is another repository's, so it is none for `target`.
     let abandoned: string | null = null;
-    if (nearest && isAbandonedIndex(nearest)) {
+    if (nearest && isAbandonedIndex(nearest, rebuildHeldBy(host))) {
       abandoned = nearest;
       const up = path.dirname(nearest);
       nearest = ownIndexRootFor(target, up === nearest ? null : selectIndexRoot(up));
@@ -1000,7 +1026,7 @@ function ensurePlainDirectoryIndex(projectPath: string, anchorRoot: string | und
   // Another process (a `codegraph init`, an earlier builder) gave it an index meanwhile.
   if (isInitialized(root)) return NONE;
   // Someone else (`codegraph index`, another server's build) is already at it.
-  if (isRebuildInProgress(root)) return { kind: 'building', root };
+  if (rebuildHeldBy(host)(root)) return { kind: 'building', root };
   host.queueColdBuild(root, admission.approval);
   return { kind: 'building', root };
 }
@@ -1030,10 +1056,11 @@ async function seedOrBuild(
   const considered: SeedOutcome = replaceAbandoned ? NONE : { kind: 'none', worktree };
 
   const commonDir = await gitCommonDirAsync(worktree);
-  const source = await pickFromEntries(worktree, entries);
+  const rebuildHeld = rebuildHeldBy(host);
+  const source = await pickFromEntries(worktree, entries, rebuildHeld);
   if (source) {
-    // A live process took W's locks meanwhile: its index is not abandoned.
-    if (replaceAbandoned && !discardAbandonedIndex(worktree)) return NONE;
+    // A live process took W's locks meanwhile, or a rebuild holds W: its index is not abandoned.
+    if (replaceAbandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return NONE;
     try {
       // The copy is a job on the builder's queue; one that waits behind a long
       // job past the host's bound keeps its place, and the call answers 'building'.
@@ -1067,8 +1094,8 @@ async function seedOrBuild(
   const admission = admitColdBuild(worktree, false);
   if (!admission.ok) return considered;
   // Someone else (`codegraph index`, another server's build) is already at it.
-  if (isRebuildInProgress(worktree)) return { kind: 'building', root: worktree };
-  if (replaceAbandoned && !discardAbandonedIndex(worktree)) return NONE;
+  if (rebuildHeld(worktree)) return { kind: 'building', root: worktree };
+  if (replaceAbandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return NONE;
   host.queueColdBuild(worktree, admission.approval);
   return { kind: 'building', root: worktree };
 }

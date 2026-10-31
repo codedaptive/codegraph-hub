@@ -1,13 +1,16 @@
 /**
  * The server's side of the index builder: the only thing the server (and direct mode) uses to cause an index
  * write. The builder is a child process (./main.ts) that does every cold build, seed, sync and watcher sync
- * of every index; the server opens databases read-only and asks the builder for the rest through this class.
+ * of every index, and the codegraph CLI's `init`, `index` and `sync` when a server relays them (./cli-jobs.ts);
+ * the server opens databases read-only and asks the builder for the rest through this class.
  *
  * {@link BuilderClient.start} forks the builder with an IPC channel and keeps it running: a builder that
  * exits for any reason but {@link BuilderClient.stop} is started again after a short backoff, and every root
  * this client still holds, or has been told is being built, is sent to it again so the new builder holds it
  * as the old one did. A request while the builder is down waits for the next one (bounded) and then answers
- * as if it had failed: `ensure` answers `none`, `caughtUp` and `release` return, `sync` rejects.
+ * as if it had failed: `ensure` answers `none`, `caughtUp` and `release` return, `unfence` returns, and
+ * `sync`, `fence`, `cliIndex` and `cliSync` reject. A request in flight when the builder exits rejects
+ * ('the index builder exited'); a rebuild lease does not outlive its builder (its locks name a dead pid).
  *
  * The builder exits once this process goes away (its IPC channel closes): a job already running gets the
  * exit grace to finish first, so the builder does not outlive its server for long.
@@ -18,7 +21,9 @@ import * as path from 'path';
 import { canonicalProjectRoot } from '../../../directory';
 import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm-runtime-flags';
 import { LockUnavailableError } from '../../../sync/watcher';
-import { isReply, type BuilderRequest, type BuilderToServer } from './protocol';
+import type { IndexResult, SyncResult } from '../../../extraction';
+import type { IndexWriteEvent } from './cli-wire';
+import { isReply, type BuilderReply, type BuilderRequest, type BuilderToServer, type CliIndexMode } from './protocol';
 
 export interface BuilderFreshness {
   root: string;                    // canonical root
@@ -73,6 +78,19 @@ export function builderEntry(): string | null {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+  /** Receives the `requestEvent` pushes the builder sends for this request (a `cliIndex` or `cliSync`), in order. */
+  onEvent?: (event: IndexWriteEvent) => void;
+}
+
+/**
+ * The error a failed reply stands for: the builder's message kept, a LockUnavailableError rebuilt as such, any
+ * other error given the class name the builder sent as its `name` (the CLI's lock-contention test reads it).
+ */
+function errorOfReply(reply: Extract<BuilderReply, { ok: false }>): Error {
+  if (reply.errorName === 'LockUnavailableError') return new LockUnavailableError(reply.error);
+  const err = new Error(reply.error);
+  if (reply.errorName) err.name = reply.errorName;
+  return err;
 }
 
 export class BuilderClient {
@@ -141,10 +159,57 @@ export class BuilderClient {
     }
   }
 
-  /** A sync job at sync priority; resolves with its counts when done. Rejects on failure (LockUnavailableError message kept). */
+  /** The server's sync of a held root: a sync job at sync priority; resolves with its counts when done (the CLI's sync answers the whole result: {@link cliSync}). Rejects on failure (LockUnavailableError message kept). */
   async sync(root: string): Promise<{ filesChanged: number }> {
     const result = await this.rpc({ op: 'sync', root }) as { filesChanged?: unknown };
     return { filesChanged: typeof result?.filesChanged === 'number' ? result.filesChanged : 0 };
+  }
+
+  /** The builder said `ready` and has not exited. Answers now: it never waits for a builder that is starting or restarting. */
+  isUp(): boolean {
+    return this.up && !this.stopping;
+  }
+
+  /**
+   * Take the rebuild lease of `root` (a `codegraph index` run through the server): the builder keeps its
+   * `rebuild.pid` until {@link unfence}. Rejects with the builder's refusal (message kept, `.name` set from its
+   * class name) when a rebuild already holds the root. No timeout.
+   */
+  async fence(root: string): Promise<void> {
+    await this.rpc({ op: 'fence', root });
+  }
+
+  /**
+   * End the rebuild lease on `root`: resolves once the builder released its locks, after the lease's queued and
+   * running jobs settled. Never rejects, and answers at once when the builder is down (its locks went with it).
+   * No timeout: a running index is waited for.
+   */
+  async unfence(root: string): Promise<void> {
+    if (!this.up) return;
+    try {
+      await this.rpc({ op: 'unfence', root });
+    } catch {
+      /* the builder went away: its locks went with it */
+    }
+  }
+
+  /**
+   * One `init`, `rebuild` (the CLI's `index`), `reindex` or `reindex-leased` of the codegraph CLI as a job on the builder's queue (`mode`: see
+   * ./cli-jobs.ts; `rebuild` and `reindex-leased` need the lease of {@link fence}). `onEvent` receives the job's
+   * events (`initialized`, `progress`, and with `verbose` the engine's `log` lines) in order, before the result. Rejects with the builder's error (message
+   * kept, `.name` set from its class name, a LockUnavailableError rebuilt). No timeout: an index runs for minutes.
+   */
+  async cliIndex(root: string, mode: CliIndexMode, onEvent: (event: IndexWriteEvent) => void, verbose = false): Promise<IndexResult> {
+    return await this.rpc({ op: 'cliIndex', root, mode, ...(verbose ? { verbose } : {}) }, undefined, onEvent) as IndexResult;
+  }
+
+  /**
+   * One sync of `root` as a job at sync priority; the builder's whole SyncResult. `onEvent` (optional) receives
+   * the sync's progress events in order, before the result, as {@link cliIndex}'s does. Rejects like
+   * {@link cliIndex}. No timeout.
+   */
+  async cliSync(root: string, onEvent?: (event: IndexWriteEvent) => void): Promise<SyncResult> {
+    return await this.rpc({ op: 'cliSync', root }, undefined, onEvent) as SyncResult;
   }
 
   /** Drop the hold: stop the watcher, close, release writer.pid. Resolves after, so a CLI can take the slot. Never rejects. */
@@ -277,10 +342,18 @@ export class BuilderClient {
       if (!request) return;
       this.pending.delete(message.id);
       if (message.ok) request.resolve(message.result);
-      else request.reject(message.errorName === 'LockUnavailableError' ? new LockUnavailableError(message.error) : new Error(message.error));
+      else request.reject(errorOfReply(message));
       return;
     }
     switch (message.op) {
+      case 'requestEvent':
+        // Pushed while the request runs: it goes to that request's own callback, none to a request that already answered.
+        try {
+          this.pending.get(message.requestId)?.onEvent?.(message.event);
+        } catch (err) {
+          this.log(`an index event handler failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        return;
       case 'ready':
         this.up = true;
         this.settleUpWaiters(true);
@@ -339,7 +412,11 @@ export class BuilderClient {
     });
   }
 
-  private async rpc(request: DistributiveOmit<BuilderRequest, 'id'>, timeoutMs?: number): Promise<unknown> {
+  /**
+   * One request and its one reply. `timeoutMs` (absent: none) bounds the wait for the reply. `onEvent` receives
+   * the `requestEvent` pushes the builder sends for this request until it answers.
+   */
+  private async rpc(request: DistributiveOmit<BuilderRequest, 'id'>, timeoutMs?: number, onEvent?: (event: IndexWriteEvent) => void): Promise<unknown> {
     if (!(await this.whenUp(UP_WAIT_MS))) throw new Error('the index builder is not running');
     const child = this.child;
     if (!child) throw new Error('the index builder is not running');
@@ -349,6 +426,7 @@ export class BuilderClient {
       const done: PendingRequest = {
         resolve: (value) => { clearTimeout(timer); resolve(value); },
         reject: (err) => { clearTimeout(timer); reject(err); },
+        ...(onEvent ? { onEvent } : {}),
       };
       this.pending.set(id, done);
       if (timeoutMs !== undefined) {

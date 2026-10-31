@@ -27,6 +27,7 @@ import {
   waitForFreshTracked, type AnswerCheckpoint,
 } from './checkpoint';
 import { EXIT_NOT_FRESH, type FreshFlags } from './options';
+import type { SyncWriter } from '../builder/cli-route';
 
 /** Loads the engine; src/bin/codegraph.ts's loadCodeGraph (banner and exit 1 on failure). */
 export type LoadCodeGraph = () => Promise<typeof import('../../../index')>;
@@ -86,36 +87,53 @@ export async function startFresh(
 
 /**
  * The `--fresh` wait, run BEFORE openIndexToRead. openIndexToRead's instance is read-only and cannot
- * sync, so the wait runs on its own writable CodeGraph; the answer itself is read exactly as without the
- * flag. waitForFreshTracked retries a held write lock (a daemon mid-sync) within its time bound.
+ * sync, so the wait syncs on its own. With a machine server whose index builder is up, each sync is a sync
+ * job on that builder (../builder/cli-route), the process that owns the index's writes, and this
+ * process holds a read-only instance only, to count the pending files. Otherwise the wait runs on its own
+ * writable CodeGraph. The answer itself is read exactly as without the flag. waitForFreshTracked retries a
+ * held write lock (a daemon mid-sync) within its time bound.
  *
- * The bound counts for the answer, not for process exit. The writable instance stays open while the
- * answer is read and printed, and the returned `finish` waits for a sync still running at the bound to
- * settle before destroying it (finishFreshWait): closing it earlier would cut that sync and leave its
- * files pending for the next caller. Undefined without `--fresh`.
+ * The bound counts for the answer, not for process exit. The instance stays open while the answer is read
+ * and printed, and the returned `finish` waits for a sync still running at the bound to settle before
+ * destroying it (finishFreshWait): closing it earlier would cut a sync running in this process and leave
+ * its files pending for the next caller. (A sync running in the builder is not this process's to cut:
+ * dropping the connection leaves it to finish.) Undefined without `--fresh`.
  */
 async function freshBeforeAnswer(
   projectPath: string, flags: FreshFlags, loadCodeGraph: LoadCodeGraph,
 ): Promise<FreshWait | undefined> {
   if (!flags.fresh) return undefined;
   let writer: CodeGraph;
+  let routed: SyncWriter | null = null;
   try {
     const { default: CodeGraph } = await loadCodeGraph();
-    writer = await CodeGraph.open(projectPath);
+    const { openRoutedSync } = await import('../builder/cli-route');
+    routed = await openRoutedSync(projectPath);
+    writer = await CodeGraph.open(projectPath, routed ? { readOnly: true } : {});
   } catch (err) {
+    routed?.destroy();
     return { syncError: syncErrorText(err), finish: NOTHING_TO_FINISH };
   }
+  // What finishFreshWait closes: the instance and, when the syncs go to the builder, the connection.
+  const open: Closable = { destroy: () => { try { writer.destroy(); } finally { routed?.destroy(); } } };
   try {
-    const { checkpoint, settled } = await waitForFreshTracked(writer, { sync: () => writer.sync() });
+    const { checkpoint, settled } = await waitForFreshTracked(writer, {
+      sync: () => (routed ? routed.sync() : writer.sync()),
+    });
     let finishing: Promise<void> | undefined;
-    const finish: FreshFinish = (exitCode) => (finishing ??= finishFreshWait(writer, settled, exitCode));
+    const finish: FreshFinish = (exitCode) => (finishing ??= finishFreshWait(open, settled, exitCode, routed !== null));
     return { checkpoint, finish };
   } catch (err) {
     // waitForFreshTracked returns, rather than throws, for every expected condition. A throw is a
     // malfunction with no sync outcome left to track, so the instance is closed here.
-    writer.destroy();
+    open.destroy();
     return { syncError: syncErrorText(err), finish: NOTHING_TO_FINISH };
   }
+}
+
+/** What the `--fresh` wait holds open until its sync has settled. */
+interface Closable {
+  destroy(): void;
 }
 
 /**
@@ -128,20 +146,23 @@ function syncErrorText(err: unknown): string {
 
 /**
  * Wait for the `--fresh` wait's sync to settle, capped by CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS (see
- * resolveFreshSettleTimeoutMs for the default and the ceiling), then destroy the writable instance.
+ * resolveFreshSettleTimeoutMs for the default and the ceiling), then destroy `writer`, the wait's
+ * instance (and, when the syncs went to the builder, its connection).
  * Already settled (the wait's sync finished, or it started none): destroyed at once.
  *
- * Cap passed with the sync still running: the instance is NOT closed, since that would cut the sync
- * mid-write. One stderr line says so, and the process exits with `exitCode` without closing the index,
+ * Cap passed with the sync still running: `writer` is NOT closed, since that would cut a sync running in
+ * this process mid-write. One stderr line says so, and the process exits with `exitCode` without closing the index,
  * leaving it as a crash would. A sync's transactions are never left half-applied: SQLite rolls back one
  * that is open at exit, including the synthesis publish, which stays open across yields. A file stored in
  * chunks has no files-table row until its last chunk, so it re-indexes. The next writer reclaims the lock
  * this dead pid leaves (FileLock). The files the sync did not reach stay pending for the next sync.
+ * When `routed` (the syncs go to the builder), the sync is the builder's and keeps running there after this
+ * process exits, so the stderr line says that instead.
  *
  * The cap timer is cleared once the race is decided, so it never holds the process open after the sync
  * settles. `settled` never rejects and a destroy error is swallowed, so this never rejects either.
  */
-async function finishFreshWait(writer: CodeGraph, settled: Promise<void>, exitCode?: number): Promise<void> {
+async function finishFreshWait(writer: Closable, settled: Promise<void>, exitCode?: number, routed = false): Promise<void> {
   const capMs = resolveFreshSettleTimeoutMs(process.env.CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cap = new Promise<'cap'>(resolve => { timer = setTimeout(() => resolve('cap'), capMs); });
@@ -158,7 +179,9 @@ async function finishFreshWait(writer: CodeGraph, settled: Promise<void>, exitCo
   }
   process.stderr.write(
     `The sync started by --fresh is still running after CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS (${capMs} ms); ` +
-    'exiting without closing the index, so the files it did not reach are left for the next sync.\n',
+    (routed
+      ? 'exiting; the sync keeps running in the CodeGraph server\'s index builder.\n'
+      : 'exiting without closing the index, so the files it did not reach are left for the next sync.\n'),
   );
   process.exit(exitCode ?? (typeof process.exitCode === 'number' ? process.exitCode : 0));
 }
@@ -307,7 +330,7 @@ export async function runCheckpointCommand(
     wait = await freshBeforeAnswer(projectPath, options, loadCodeGraphForCheckpoint);
     let cp = wait && 'checkpoint' in wait ? wait.checkpoint : undefined;
     if (!cp) {
-      // No wait, or the writable open failed: read it from the read-only index.
+      // No wait, or its open failed: read it from the read-only index.
       const cg = await openIndexToRead(projectPath);
       try {
         cp = await answerCheckpoint(cg, { ...options, checkpoint: true }, wait);

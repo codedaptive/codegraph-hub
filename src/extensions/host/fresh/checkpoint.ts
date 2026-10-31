@@ -285,7 +285,8 @@ export interface FreshWaitOptions {
   measurePending?: () => Promise<number | null>;
   /**
    * The sync to run while files are pending: the MCP server's is a sync job on the index builder, the
-   * CLI's `--fresh` runs its own writable instance's. Absent when the caller holds the index read-only
+   * CLI's `--fresh` is one too when a machine server's index builder is up (src/extensions/host/builder/cli-route.ts),
+   * otherwise its own writable instance's. Absent when the caller holds the index read-only
    * with no one to sync it for it: the wait then measures pending and never syncs (see waitForFresh).
    */
   sync?: () => Promise<unknown>;
