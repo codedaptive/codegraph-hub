@@ -123,8 +123,26 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   one leaves the other.
 - **Control** (`src/mcp/server-control.ts`): `probeServer`, `stopServer` (identity verified by the
   server's socket hello before any signal), `requestProjectRelease` (what `codegraph index` calls
-  before it rebuilds a project's index: the server closes its handle and the builder drops its hold,
-  and 'released' is answered after both). Paths and the lock record are in `src/mcp/daemon-paths.ts`.
+  before it rebuilds a project's index in its own process, when no server routes the write to its
+  builder: the server closes its handle and the builder drops its hold, and 'released' is answered
+  after both). Paths and the lock record are in `src/mcp/daemon-paths.ts`.
+- **CLI writes** (`builder/cli-route.ts`, wire in `builder/cli-wire.ts`). `codegraph init`, `index`
+  and `sync`, and the `--fresh` wait of the commands that answer from the index, ask a running
+  server whose index builder is up to have that builder do the write. `builderRoute()` is the one decision: `probeServer()` proved
+  a server (a live `server.pid` whose socket hello names its pid and version), and the CLI holds one
+  connection to its socket, with a client hello that carries `control: 1` and no `launchDir` (a control
+  client, not an agent session; the server refuses these requests to any other peer, and `--verbose`
+  returns the engine's console lines as `log` events). `builder.pid` is not consulted:
+  a direct-mode builder writes the same file for its own state dir, so it proves nothing about a
+  server. No server, or a server whose builder is not up, and the command writes in its own process; the route creates no file or directory and starts nothing. The requests are
+  `codegraph/indexWrite` (`init`, `index`, `reindex`, `sync`) and `codegraph/indexWriteEnd`; the
+  server's `codegraph/indexWriteEvent` notifications (relayed from the builder's progress events) carry an
+  init's `initialized` event and the indexing progress, which the CLI renders with the same code as in-process. An `index` request leaves
+  a lease on the connection (the root's `rebuild.pid` and `writer.pid`, held by the builder) so the
+  interactive re-run (`reindex`) runs under it; the CLI ends it with `indexWriteEnd`, and the server
+  releases it when the connection goes. A request sent and not answered (the connection dropped) fails
+  the command: the write may have run, so it is never redone in-process. The `--fresh` wait then holds
+  the index read-only and sends each sync as a `sync` request.
 - **The index builder** (`builder/`, started by the server with itself, in direct mode by the direct
   session). The server only reads: it opens every index read-only and never syncs, watches, seeds,
   builds, recovers an index or takes `writer.pid`, `rebuild.pid` or `codegraph.lock`. Every index
@@ -163,7 +181,8 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   (A linked worktree of the checkout's own repository still borrows the checkout's index until it is
   seeded.) A path in a different repository than the session's still gets the anchor guidance. The proxy's
   in-process fallback (the server unreachable) and the query workers have no builder and are read-only;
-  the CLI has no builder either but is not read-only. All three keep `selectIndexRoot`: a worktree with no
+  the CLI has no builder of its own and is not read-only: with a server whose index builder is up its writes go to that
+  builder (see "CLI writes"), otherwise it writes in its own process. All three keep `selectIndexRoot`: a worktree with no
   index gets the not-indexed guidance there, and a nested repository the outer index leaves out gets the
   nested text.
 

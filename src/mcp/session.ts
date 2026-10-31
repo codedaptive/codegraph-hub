@@ -26,6 +26,8 @@ import type { SessionToolList } from '../extensions/host/server/session-scope';
 import { getTelemetry, ClientInfo } from '../telemetry';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { ExploreSessionState } from './explore-session-state';
+import { CliRelay } from '../extensions/host/builder/cli-relay';
+import { INDEX_WRITE_END_METHOD, INDEX_WRITE_METHOD } from '../extensions/host/builder/cli-wire';
 
 /**
  * MCP Server Info — kept on the session because some clients log it. The
@@ -85,6 +87,14 @@ export interface MCPSessionOptions {
    * own CODEGRAPH_MCP_TOOLS.
    */
   toolAllowlist?: SessionToolList;
+  /**
+   * Whether this connection sent the control-client hello (the `control: 1` marker and no `launchDir`; the
+   * daemon decides, from `ClientPeers`). Only such a connection may send `codegraph/indexWrite` /
+   * `codegraph/indexWriteEnd`; every other session (an agent's proxy, a legacy client with no hello, a
+   * direct-mode stdio session) is refused. Absent means false. The hello is a protocol shape, not an
+   * identity: any process of this user can send it.
+   */
+  controlClient?: boolean;
 }
 
 /**
@@ -97,6 +107,12 @@ export class MCPSession {
   private readonly anchor: RepoAnchor | null;
   private readonly focus: readonly string[];
   private readonly toolAllowlist: SessionToolList;
+  private readonly controlClient: boolean;
+  /**
+   * The relay of this connection's CLI index writes (`codegraph/indexWrite`): holds the index leases the
+   * connection took, which {@link releaseLeases} lets go of when the connection goes.
+   */
+  private readonly cliRelay: CliRelay;
   /**
    * What `codegraph_explore` has already returned to THIS client, per project
    * (CG-17). Owned by the session, not the engine: the machine server shares one engine
@@ -115,6 +131,8 @@ export class MCPSession {
     this.anchor = opts.anchor;
     this.focus = opts.focus ?? [];
     this.toolAllowlist = opts.toolAllowlist;
+    this.controlClient = opts.controlClient === true;
+    this.cliRelay = new CliRelay(transport, engine);
   }
 
   /**
@@ -131,6 +149,17 @@ export class MCPSession {
    */
   stop(): void {
     this.transport.stop();
+  }
+
+  /**
+   * Let go of the index leases this connection holds (a `codegraph/indexWrite` `index` that was not ended
+   * by `codegraph/indexWriteEnd`). The daemon calls it when the connection's client is dropped, on a peer
+   * close and on the reaper's stop; the transport's own stop skips close handlers, so the close handler
+   * alone is not enough. Fire-and-forget: the builder answers once the lease's jobs have settled. Never
+   * throws.
+   */
+  releaseLeases(): void {
+    this.cliRelay.releaseLeases();
   }
 
   /** Underlying transport — exposed for the server's close hooks. */
@@ -164,9 +193,17 @@ export class MCPSession {
         break;
       case 'codegraph/releaseProject':
         // Not a tool call, so it sits outside the repo anchor: it is the
-        // server's own control surface (the release `codegraph index` requests), which
-        // names the root it wants closed and may be any project the server holds.
+        // server's own control surface (the release the in-process `codegraph index`
+        // requests when no builder serves it), which names the root it wants closed
+        // and may be any project the server holds.
         if (isRequest) await this.handleReleaseProject(message as JsonRpcRequest);
+        break;
+      case INDEX_WRITE_METHOD:
+      case INDEX_WRITE_END_METHOD:
+        // The codegraph CLI's index writes, relayed to the index builder (cli-relay.ts). Control surface
+        // like releaseProject, so outside the repo anchor, and for control clients alone: an agent's
+        // session could otherwise start a rebuild of any directory it names.
+        if (isRequest) await this.handleIndexWrite(message as JsonRpcRequest);
         break;
       case 'ping':
         if (isRequest) this.transport.sendResult((message as JsonRpcRequest).id, {});
@@ -261,12 +298,26 @@ export class MCPSession {
   }
 
   /**
+   * `codegraph/indexWrite` and `codegraph/indexWriteEnd`: refused unless this is the CLI's control
+   * connection; otherwise relayed to the index builder by the {@link CliRelay}, which answers the request.
+   */
+  private async handleIndexWrite(request: JsonRpcRequest): Promise<void> {
+    if (!this.controlClient) {
+      this.transport.sendError(request.id, ErrorCodes.InvalidRequest, `${request.method} is only for the codegraph CLI`);
+      return;
+    }
+    if (request.method === INDEX_WRITE_END_METHOD) await this.cliRelay.handleIndexWriteEnd(request);
+    else await this.cliRelay.handleIndexWrite(request);
+  }
+
+  /**
    * `codegraph/releaseProject {root}`: close the server's handle on one project
    * and have the builder drop its hold (its watcher and writer lock), so a CLI
    * that wants to take its writer lock can. 'released' is answered only after
    * the builder has let go (`releaseProjectRoot` awaits it). The root names a project
    * the server may hold for any session, so it is not checked against this
-   * session's anchor.
+   * session's anchor. An in-process `codegraph index` sends it when no builder
+   * serves the write; with a builder, `codegraph/indexWrite` is the route.
    */
   private async handleReleaseProject(request: JsonRpcRequest): Promise<void> {
     const root = (request.params as { root?: unknown } | undefined)?.root;

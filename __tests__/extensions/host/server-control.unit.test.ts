@@ -391,7 +391,7 @@ describe('requestProjectRelease', () => {
   it('sends a client hello without launchDir, then the release request, and resolves released on the reply', async () => {
     fake = await startFakeServer();
     expect(await requestProjectRelease(root, 5_000)).toBe('released');
-    expect(fake.clientHellos).toEqual([{ codegraph_client: 1, pid: process.pid, hostPid: null }]);
+    expect(fake.clientHellos).toEqual([{ codegraph_client: 1, control: 1, pid: process.pid, hostPid: null }]);
     expect(fake.clientHellos[0]).not.toHaveProperty('launchDir');
     expect(fake.requests).toEqual([
       { jsonrpc: '2.0', id: 'release', method: 'codegraph/releaseProject', params: { root } },

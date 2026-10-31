@@ -4,15 +4,18 @@
  * tree, and every write to it, whoever asked, is a job on the builder's queue (./queue.ts), except the
  * oversized-WAL checkpoint a writable open starts, which its job does not await (see openWritable).
  *
- * This is the project writer: the one place a root's writer slot, watcher and syncs are owned, so the server
- * only reads:
+ * This is the project writer for the HELD roots: the one place a held root's writer slot, watcher and syncs
+ * are owned, so the server only reads (a CLI command's one-shot index writes on a root, which need no hold,
+ * are ./cli-jobs.ts's):
  *   - the writable open is a job: taking `writer.pid` and opening the database (which can run migrations,
  *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, SYNC class, so it
  *     never runs beside a cold build or another root's sync;
  *   - one writer per root: `writer.pid` is taken with mode `builder`; when another live process owns it (a
  *     `codegraph watch`, a server of another state dir) the hold serves no writes and tries again every
  *     {@link HolderDeps.ownRetryMs};
- *   - a hold never starts while a `codegraph index` rebuild holds `rebuild.pid`;
+ *   - a hold never starts, opens or takes over a root while a rebuild holds it: `rebuild.pid` of another
+ *     live process (`codegraph index` in its own process), or a fence this builder gave a `codegraph index`
+ *     that runs through the server (./fences.ts);
  *   - a hold ends when the root is released (stop the watcher, wait out a running job, close, free
  *     `writer.pid`).
  *
@@ -33,20 +36,23 @@ import CodeGraph from '../../../index';
 import { canonicalProjectRoot, isInitialized } from '../../../directory';
 import { FileWatcher, LockUnavailableError, type WatchOptions } from '../../../sync/watcher';
 import { watchDisabledReason } from '../../../sync/watch-policy';
-import { isRebuildInProgress, markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
+import { markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import type { BuilderFreshness } from './client';
+import type { RebuildFences } from './fences';
 import type { JobQueue } from './queue';
 
 export type HoldResult =
   | { kind: 'held'; root: string }
   /** The `open` job (and the recovery wait after it) had not finished within `openWaitMs`; it carries on in the queue. */
   | { kind: 'opening'; root: string }
-  /** A `codegraph index` rebuild (or another process's cold build) holds `rebuild.pid`: nothing was opened. */
+  /** A `codegraph index` rebuild (another process's, or one fenced here), or another process's cold build, holds the root: nothing was opened. */
   | { kind: 'rebuilding'; root: string }
   | { kind: 'failed'; root: string; error: string };
 
 export interface HolderDeps {
   queue: JobQueue;
+  /** The builder's rebuild fences: a fenced root is never held, opened or taken over (see {@link RebuildFences.rebuildHeld}). */
+  fences: RebuildFences;
   /** A held root's watcher state changed. */
   onFreshness(state: BuilderFreshness): void;
   /** One diagnostic line (stderr). */
@@ -203,7 +209,7 @@ export class HolderSet {
     // one's teardown to free.
     if (existing?.closing) return existing.closing.then(() => this.holdNow(rootIn));
     if (existing) return existing.opening;
-    if (isRebuildInProgress(root)) return Promise.resolve({ kind: 'rebuilding', root });
+    if (this.deps.fences.rebuildHeld(root)) return Promise.resolve({ kind: 'rebuilding', root });
     const hold: Hold = {
       key, root, cg: null, watcher: null, owner: false, closed: false, openJobPending: false,
       opening: Promise.resolve({ kind: 'held', root }), caughtUp: Promise.resolve(),
@@ -238,9 +244,10 @@ export class HolderSet {
   }
 
   /**
-   * Sync `root` at sync priority. Concurrent calls for one root share the job while it waits. Resolves with
-   * the number of files changed; rejects when the root is not held or the sync fails. A root another process
-   * owns resolves with 0: that process syncs it.
+   * Sync a held `root` at sync priority (the server's `sync` request). Concurrent calls for one root share the
+   * job while it waits. Resolves with the number of files changed; rejects when the root is not held or the
+   * sync fails. A root another process owns resolves with 0: that process syncs it. The codegraph CLI's sync
+   * of any root, held or not, answers a whole SyncResult and is `cliSync` (./cli-jobs.ts).
    */
   async sync(root: string): Promise<{ filesChanged: number }> {
     const hold = this.holds.get(canonicalProjectRoot(root));
@@ -263,6 +270,16 @@ export class HolderSet {
     if (!hold) return Promise.resolve();
     if (!hold.closing) hold.closing = this.teardown(hold);
     return hold.closing;
+  }
+
+  /**
+   * The open writable graph of a root this builder holds and owns (`writer.pid` is its), or null. Asked by a
+   * job that runs on the queue (the CLI's `sync`, ./cli-jobs.ts), which syncs through it rather than opening
+   * the database a second time.
+   */
+  ownedGraph(root: string): CodeGraph | null {
+    const hold = this.holds.get(canonicalProjectRoot(root));
+    return hold && !hold.closed && hold.owner ? hold.cg : null;
   }
 
   /** The watcher state of a held root; null when it is not held. */
@@ -314,9 +331,10 @@ export class HolderSet {
 
   /**
    * The body of the `open` job: take `writer.pid` and open the database writable. Null when nothing was
-   * opened: the hold was released while the job waited, or another live process owns the slot (this serves
-   * nothing for the root, and the retry takes over when that process exits). Throws when the index cannot be
-   * opened.
+   * opened: the hold was released while the job waited, a rebuild holds the root now (one that started while
+   * the job waited: the retry opens it once the rebuild is over), or another live process owns the slot (this
+   * serves nothing for the root, and the retry takes over when that process exits). Throws when the index
+   * cannot be opened.
    *
    * Not awaited by the job: the open starts CodeGraph's oversized-WAL heal fire-and-forget (db/index.ts `open`,
    * `void conn.healOversizedWal()`: an off-thread PASSIVE then TRUNCATE checkpoint), and the job ends without
@@ -327,6 +345,13 @@ export class HolderSet {
    */
   private openWritable(hold: Hold): { recoveryPending: boolean } | null {
     if (hold.closed) return null;
+    // A rebuild (fenced here, or another process's `rebuild.pid`) may have started since holdNow looked: the
+    // open would take `writer.pid` and migrate a database the rebuild is about to replace.
+    if (this.deps.fences.rebuildHeld(hold.root)) {
+      hold.owner = false;
+      this.scheduleOwnRetry(hold);
+      return null;
+    }
     const writer = tryAcquireWriterLock(hold.root, 'builder');
     if (writer.kind === 'taken') {
       // Another process owns this project's updates (a CLI watcher, a server of another state dir). It does
@@ -349,15 +374,21 @@ export class HolderSet {
   }
 
   /**
-   * The retry for a root whose `writer.pid` another live process owns. While that process lives the retry
-   * does nothing, not even a job (a job per {@link HolderDeps.ownRetryMs} would fill builder.log); once its
-   * pid is gone the open runs as a job again.
+   * The retry for a root whose `writer.pid` another live process owns, or that a rebuild holds. While that
+   * process lives, or the rebuild runs, the retry does nothing, not even a job (a job per
+   * {@link HolderDeps.ownRetryMs} would fill builder.log); once its pid is gone, or the rebuild is over, the
+   * open runs as a job again.
    */
   private scheduleOwnRetry(hold: Hold): void {
     if (hold.ownTimer || hold.closed) return;
     hold.ownTimer = setTimeout(() => {
       hold.ownTimer = null;
       if (hold.closed || hold.owner || !isInitialized(hold.root)) return;
+      // While a rebuild holds the root nothing is taken over; the next tick looks again.
+      if (this.deps.fences.rebuildHeld(hold.root)) {
+        this.scheduleOwnRetry(hold);
+        return;
+      }
       const other = readWriterLock(hold.root);
       if (other && other.pid !== process.pid && pidAlive(other.pid)) {
         this.scheduleOwnRetry(hold);

@@ -156,6 +156,8 @@ export async function connectWithHello(
  * us; a write failure here is harmless (the server just falls back to the
  * socket-close lifecycle). `hostPid` mirrors the PPID watchdog: the threaded
  * host pid if set, else our own parent (the host, on a no-relaunch bundle).
+ * Never send the `control` marker from an agent session: the server takes a hello with it and no `launchDir`
+ * for a control client (daemon.ts ClientPeers.control), which may send codegraph/indexWrite.
  */
 function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[]): void {
   const clientHello: DaemonClientHello = {

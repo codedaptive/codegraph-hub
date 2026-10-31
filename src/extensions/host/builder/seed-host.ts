@@ -10,6 +10,8 @@ import { canonicalProjectRoot } from '../../../directory';
 import { ownIndexRootFor } from '../server/index-root';
 import { COLD_BUILD_EXIT_BUSY, COLD_BUILD_EXIT_FAILED, runColdBuild } from '../worktree-lifecycle/cold-build';
 import { admitColdBuild, isAtOrBelow, type ColdBuildApproval, type SeedHost } from '../worktree-lifecycle/seed';
+import { isRebuildInProgress } from '../../../mcp/writer-lock';
+import type { RebuildFences } from './fences';
 import type { JobQueue } from './queue';
 
 /** How long a call waits for its seed copy before it answers "building" and leaves the job queued. */
@@ -34,10 +36,18 @@ export class BuilderSeedHost implements SeedHost {
   /** Roots whose cold build failed in this builder: never retried until this builder restarts. */
   private readonly failed = new Set<string>();
 
+  /**
+   * `fences`: the builder's rebuild fences (./fences.ts). Without them (a host a test builds on its own) no
+   * root is ever fenced, and only another live process's `rebuild.pid` holds a root.
+   */
   constructor(
     private readonly queue: JobQueue,
-    private readonly opts: { seedWaitMs?: number; log?: (line: string) => void } = {},
+    private readonly opts: { seedWaitMs?: number; log?: (line: string) => void; fences?: RebuildFences } = {},
   ) {}
+
+  rebuildHeld(root: string): boolean {
+    return this.opts.fences ? this.opts.fences.rebuildHeld(root) : isRebuildInProgress(root);
+  }
 
   buildingRootFor(projectPath: string): string | null {
     if (this.cold.size === 0 && this.seeds.size === 0) return null;
@@ -68,6 +78,9 @@ export class BuilderSeedHost implements SeedHost {
         // (the job log carries the reason) and is not a failed build: nothing was tried, so a later call asks again.
         const admission = admitColdBuild(root, approval.plain, approval);
         if (!admission.ok) throw new Error(`the cold build was not started: ${admission.reason}`);
+        // A `codegraph index` fenced the root while this job waited. runColdBuild would take the fence's own
+        // `rebuild.pid` (same pid: re-acquired), and its release at the end would end the lease under it.
+        if (this.opts.fences?.isFenced(root)) throw new Error('the cold build was not started: an index rebuild holds the root');
         const code = await runColdBuild(root);
         if (code === COLD_BUILD_EXIT_FAILED) {
           this.failed.add(key);

@@ -182,11 +182,16 @@ export interface DaemonHello {
  * whichever client started it, so neither can stand in for a later client's).
  * Entirely optional and fail-safe: a legacy client that never sends it falls
  * back to the socket-close lifecycle, and one that sends no `tools` gets the
- * server process's own CODEGRAPH_MCP_TOOLS. The one-shot release request of
- * `requestProjectRelease` sends a client hello without a `launchDir`, `focus`
- * or `tools`, so it has no anchor; a session without a `launchDir` answers a
- * call without a projectPath with the missing-argument text, as every session
- * does, and a call that names a path with guidance to restart it. The
+ * server process's own CODEGRAPH_MCP_TOOLS. The codegraph CLI's own connections
+ * (`requestProjectRelease`'s one-shot release request, and the index writes it
+ * routes through `codegraph/indexWrite`) send a client hello without a
+ * `launchDir`, `focus` or `tools`, so they have no anchor; a session without a
+ * `launchDir` answers a call without a projectPath with the missing-argument
+ * text, as every session does, and a call that names a path with guidance to
+ * restart it. A hello that carries `control: 1` and no `launchDir` key at all is
+ * what makes the connection a control client (`ClientPeers.control` true and
+ * `hasLaunchDir` false), the only kind that may send `codegraph/indexWrite`:
+ * the role is granted on that positive marker, never on a missing field. The
  * `codegraph_client` marker is what tells it apart from the client's first
  * JSON-RPC message.
  */
@@ -194,6 +199,8 @@ export interface DaemonClientHello {
   codegraph_client: 1;
   pid: number;             // the proxy process's own pid
   hostPid: number | null;  // the MCP host pid (past any launcher shim), if known
+  /** Present (1) only in the codegraph CLI's own control connections: see ClientPeers.control. */
+  control?: 1;
   /** Absolute directory the session was launched in (`-p` or the cwd); fixes the session's repo anchor. */
   launchDir?: string;
   /**
@@ -222,17 +229,63 @@ export interface ClientPeers {
   pid: number | null;
   hostPid: number | null;
   launchDir: string | null;
+  /**
+   * Whether the hello carried a `launchDir` key at all (even an unusable one, which `launchDir` reads as
+   * null): an agent's session always sends one, the codegraph CLI's control connection never does. False
+   * for a client with no hello.
+   */
+  hasLaunchDir: boolean;
+  /**
+   * Whether the hello carried `control: 1`, the codegraph CLI's marker for its control connections (false
+   * for a client with no hello). A hello with it and no `launchDir` key makes the connection the CLI's
+   * control client, the only kind that may send `codegraph/indexWrite`: the role is granted on this marker
+   * being present, not on `launchDir` being absent.
+   */
+  control: boolean;
   focus?: string[];
   tools?: string;
 }
 
-const NO_PEERS: ClientPeers = { pid: null, hostPid: null, launchDir: null };
+const NO_PEERS: ClientPeers = { pid: null, hostPid: null, launchDir: null, hasLaunchDir: false, control: false };
 
 export interface DaemonStartResult {
   /** Always-non-null for a successfully-started server. */
   socketPath: string;
   /** Lockfile contents as written. */
   lock: ServerLockInfo;
+}
+
+/**
+ * Bind the server's socket at `socketPath` and resolve once it listens, after clearing a stale socket left by
+ * a SIGKILL'd previous server (the caller holds the server lock, so no live server owns it; without the
+ * unlink `listen` would wedge on EADDRINUSE).
+ *
+ * POSIX: the socket is created under umask 0077, so it is owner-only from the moment it exists. A chmod
+ * after `listen` alone leaves a window in which a connection made under a permissive umask (a state dir that
+ * already exists with mode 0755, or the tmpdir fallback) is accepted by a server that now carries index
+ * writes for a control client. `listen` binds a path synchronously, so the umask covers exactly the bind; it
+ * is put back before this returns, also when `listen` throws. The chmod after listening stays as the
+ * belt to that: a bind that ignores the umask (some filesystems) still ends owner-only.
+ */
+export function bindServerSocket(socketPath: string, onConnection: (socket: net.Socket) => void): Promise<net.Server> {
+  return new Promise<net.Server>((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      try { fs.unlinkSync(socketPath); } catch { /* not-exists is fine */ }
+    }
+    const server = net.createServer(onConnection);
+    server.once('error', reject);
+    const priorUmask = process.platform === 'win32' ? null : process.umask(0o077);
+    try {
+      server.listen(socketPath, () => {
+        if (process.platform !== 'win32') {
+          try { fs.chmodSync(socketPath, 0o600); } catch { /* best-effort */ }
+        }
+        resolve(server);
+      });
+    } finally {
+      if (priorUmask !== null) process.umask(priorUmask);
+    }
+  });
 }
 
 /**
@@ -304,21 +357,7 @@ export class Daemon {
     // owns it; without it `listen` would wedge on EADDRINUSE.
     const candidates = getServerSocketCandidates();
     const listen = (socketPath: string): Promise<net.Server> =>
-      new Promise<net.Server>((resolve, reject) => {
-        if (process.platform !== 'win32') {
-          try { fs.unlinkSync(socketPath); } catch { /* not-exists is fine */ }
-        }
-        const server = net.createServer((socket) => this.handleConnection(socket));
-        server.once('error', reject);
-        server.listen(socketPath, () => {
-          // POSIX: tighten permissions to user-only — the socket lives under
-          // the per-user state dir or tmpdir.
-          if (process.platform !== 'win32') {
-            try { fs.chmodSync(socketPath, 0o600); } catch { /* best-effort */ }
-          }
-          resolve(server);
-        });
-      });
+      bindServerSocket(socketPath, (socket) => this.handleConnection(socket));
 
     let bound: { server: net.Server; socketPath: string };
     try {
@@ -472,6 +511,9 @@ export class Daemon {
         anchor,
         focus: sessionFocusEntries(peers.focus),
         toolAllowlist: peers.tools === undefined ? undefined : parseToolAllowlist(peers.tools),
+        // The codegraph CLI's control connection: a client hello (numeric pid) with the `control: 1` marker
+        // and no launchDir key.
+        controlClient: peers.pid !== null && peers.control && !peers.hasLaunchDir,
       });
       transport.onClose(() => this.dropClient(session));
       this.clients.add(session);
@@ -480,9 +522,15 @@ export class Daemon {
     });
   }
 
+  /**
+   * Forget a client and let go of the index leases it holds. Runs on the peer's close and on the reaper's
+   * stop of a dead peer; `SocketTransport.stop` skips close handlers, so the reaper path needs this call.
+   * The server's own stop clears its clients without it: the builder releases every fence when it stops.
+   */
   private dropClient(session: MCPSession): void {
     if (!this.clients.delete(session)) return;
     this.clientPeers.delete(session);
+    session.releaseLeases();
   }
 
   /**
@@ -889,6 +937,8 @@ export function parseClientHelloLine(line: string): ClientPeers | null {
     pid: o.pid,
     hostPid: typeof o.hostPid === 'number' ? o.hostPid : null,
     launchDir: typeof o.launchDir === 'string' && path.isAbsolute(o.launchDir) ? o.launchDir : null,
+    hasLaunchDir: o.launchDir !== undefined,
+    control: o.control === 1,
   };
   if (Array.isArray(o.focus) && o.focus.length <= MAX_FOCUS_ENTRIES && o.focus.every((d) => typeof d === 'string')) {
     peers.focus = o.focus as string[];
