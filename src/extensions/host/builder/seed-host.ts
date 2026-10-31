@@ -7,6 +7,7 @@
  * `cold-build` job (COLD class: it indexes a whole repository, so every queued SYNC job goes before it).
  */
 import { canonicalProjectRoot } from '../../../directory';
+import { ownIndexRootFor } from '../server/index-root';
 import { COLD_BUILD_EXIT_BUSY, COLD_BUILD_EXIT_FAILED, runColdBuild } from '../worktree-lifecycle/cold-build';
 import { admitColdBuild, isAtOrBelow, type ColdBuildApproval, type SeedHost } from '../worktree-lifecycle/seed';
 import type { JobQueue } from './queue';
@@ -42,7 +43,11 @@ export class BuilderSeedHost implements SeedHost {
     if (this.cold.size === 0 && this.seeds.size === 0) return null;
     const p = canonicalProjectRoot(projectPath);
     for (const map of [this.cold, this.seeds]) {
-      for (const [key, root] of map) if (isAtOrBelow(p, key)) return root;
+      for (const [key, root] of map) {
+        // A queued root above a git repository nested around `projectPath` is another repository's build: it
+        // does not name the nested repository's path (a stat walk first, git only when a `.git` is below the root).
+        if (isAtOrBelow(p, key) && ownIndexRootFor(projectPath, root) !== null) return root;
+      }
     }
     return null;
   }

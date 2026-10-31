@@ -13,13 +13,22 @@
  * `.codegraph/` in the worktree and a record in the project registry.
  *
  * When it runs: `projectPath` is inside git worktree W and the index it
- * resolves to (`selectIndexRoot`, ../server/index-root.ts) is not W's own, i.e.
- * there is none, or it is another worktree of the SAME repository (the
+ * resolves to (`selectOwnIndexRoot`, ../server/index-root.ts) is not W's own,
+ * i.e. there is none, or it is another worktree of the SAME repository (the
  * borrowed-index case). An index of W's own changes nothing: a stat walk from
  * `projectPath` up to the index finds no `.git` below it, so no git runs at
- * all; past that walk, the toplevel lookup is one memoized
- * `git rev-parse --show-toplevel`. A sub-project's index nested inside W is not
- * W's own: `selectIndexRoot` resolves past it.
+ * all; past that walk, the own-root check (`selectOwnIndexRoot`: git, a nested
+ * answer remembered) and the toplevel lookup (one memoized
+ * `git rev-parse --show-toplevel`) run. A sub-project's index nested inside W is not
+ * W's own: `selectIndexRoot` resolves past it. An index above W is not W's
+ * own either when W is a git repository nested below that index's root (an
+ * embedded clone, a gitignored checkout, a submodule: its own worktree root,
+ * with its own git common dir): it belongs to another repository, so
+ * `selectOwnIndexRoot` does not select it, and W is seeded from its own
+ * sibling worktrees or cold-built at W, whatever is indexed above it. That
+ * holds when the index above covers W too (an embedded clone that is not
+ * gitignored, a submodule): W still gets its own index and is not answered
+ * from the outer one.
  *
  * Plain directory: `projectPath` has no `.git` entry at or above it and no
  * index at or above it either ({@link ensurePlainDirectoryIndex}). Its build
@@ -93,7 +102,7 @@ import {
 } from '../../../directory';
 import { FileLock, validateProjectPath } from '../../../utils';
 import { loadNodeSqlite, type NodeSqliteModule } from '../../../db/node-sqlite';
-import { gitRootByStat, realLocation, selectIndexRoot } from '../server/index-root';
+import { gitRootByStat, ownIndexRootFor, realLocation, selectIndexRoot, selectOwnIndexRoot } from '../server/index-root';
 import {
   canonicalGitPath,
   commitDistance,
@@ -149,13 +158,18 @@ function seedingDisabled(): boolean {
 
 /**
  * `git rev-parse --show-toplevel` per start directory. Keyed by the resolved
- * path, and remembered only when that path exists. A cached answer, null
- * included, is kept until the memo is cleared, so a directory that becomes a
- * working tree later (`git init`, `git worktree add` into it) is seen only
- * after a clear. Bounded: a long-lived daemon queried with many paths drops
+ * path, and remembered only when that path exists and git named a toplevel. A
+ * null answer is never kept: it cannot tell "not in a working tree" from "git
+ * could not run" (not installed, a failed spawn, a timeout), and remembering the
+ * second would answer none for the path until the builder restarts, so the next
+ * call asks again (one more `git rev-parse` per such call). A toplevel is kept
+ * until the memo is cleared. Bounded: a long-lived builder process queried with many paths drops
  * the whole memo and starts over rather than grow; 512 is ample because only
- * paths that pass the git-free pre-check reach this lookup, and a clear costs
- * one more `git rev-parse` per path.
+ * paths that pass the stat check in {@link ensureWorktreeIndex} (a `.git` entry
+ * between the path and the index it selected, or no index) reach this lookup,
+ * and a clear costs one more `git rev-parse` per path. (The server's own gate
+ * before it asks the builder, `worktreeSeedMayApply`, is a stat walk too, but
+ * the index it selects may cost a git check: `selectOwnIndexRoot`.)
  */
 const TOPLEVEL_MEMO_MAX = 512;
 const toplevelMemo = new Map<string, Promise<string | null>>();
@@ -167,8 +181,14 @@ function worktreeRootOf(projectPath: string): Promise<string | null> {
     if (toplevelMemo.size >= TOPLEVEL_MEMO_MAX) toplevelMemo.clear();
     hit = gitWorktreeRootAsync(key);
     // A path that does not exist yet may become a worktree later: remember
-    // only answers about an existing path.
-    if (fs.existsSync(key)) toplevelMemo.set(key, hit);
+    // only answers about an existing path. Concurrent calls share the pending
+    // lookup; once it settles without a toplevel the entry is dropped.
+    if (fs.existsSync(key)) {
+      const pending = hit;
+      toplevelMemo.set(key, pending);
+      const forget = (): void => { if (toplevelMemo.get(key) === pending) toplevelMemo.delete(key); };
+      pending.then((root) => { if (root === null) forget(); }, forget);
+    }
   }
   return hit;
 }
@@ -781,8 +801,11 @@ export function admitColdBuild(root: string, plain: boolean, approved?: ColdBuil
 export interface SeedHost {
   /**
    * The root that is being built or seeded here (a cold build queued or
-   * running, a seed queued or running) and that `projectPath` is at or below;
-   * null when none. Calls for that root answer {@link buildingNote}.
+   * running, a seed queued or running) and that `projectPath` is at or below
+   * and is its own root (`ownIndexRootFor`, ../server/index-root.ts): a root
+   * above a git repository nested around `projectPath` is another repository's
+   * build and is not named. Null when none. Calls for that root answer
+   * {@link buildingNote}.
    */
   buildingRootFor(projectPath: string): string | null;
   /**
@@ -820,7 +843,10 @@ export function buildingNote(root: string): string {
 }
 
 /**
- * The not-indexed guidance for `projectPath`, inside git worktree `worktree`,
+ * The not-indexed guidance for `projectPath`, inside git worktree `worktree`
+ * (a linked worktree, or the main working tree of a repository nested in another
+ * one's checkout: `projectPath` need not itself be a worktree root, so the note
+ * says it is "in the git worktree", which holds for both),
  * when {@link ensureWorktreeIndex} could neither seed it nor build it: the
  * copy from a sibling failed, the build failed, or automatic seeding is off.
  * A later call tries again where it can (it retries a failed copy), so the
@@ -829,12 +855,12 @@ export function buildingNote(root: string): string {
  */
 export function unseededWorktreeNote(projectPath: string, worktree: string): string {
   return (
-    `The project at ${projectPath} isn't indexed with codegraph yet: it is a git worktree (${worktree}) ` +
-    'with no index of its own, and codegraph could not give it one (the copy from another worktree of its ' +
+    `The project at ${projectPath} isn't indexed with codegraph yet: it is in the git worktree (${worktree}), ` +
+    'which has no index of its own, and codegraph could not give it one (the copy from another worktree of its ' +
     'repository failed, the build failed, or automatic indexing is off), so codegraph cannot query it ' +
     'now. Use your built-in tools (Read/Grep/Glob) for that codebase ' +
-    'meanwhile. The next codegraph call here tries again where it can: a failed copy is retried, and it ' +
-    'succeeds once whatever held it up is done. ' +
+    'meanwhile. The next codegraph call here tries again where it can: a failed copy is retried on the ' +
+    'next call. ' +
     "If it keeps failing, the user can run 'codegraph init' in a " +
     'worktree of this repository to index it by hand.'
   );
@@ -874,7 +900,7 @@ const inflight = new Map<string, Promise<SeedOutcome>>();
  * Make sure the git worktree `projectPath` is in has an index of its own when
  * it should get one (see "When it runs" in the file comment): seed it from a
  * sibling, queue a cold build, or leave it alone. `none` without a worktree
- * says nothing needed doing: the caller serves the index `selectIndexRoot`
+ * says nothing needed doing: the caller serves the index `selectOwnIndexRoot`
  * names, if any. Deduped per worktree root. Never throws; a failure is logged
  * to stderr and answers `none`.
  *
@@ -895,16 +921,22 @@ export async function ensureWorktreeIndex(projectPath: string, host: SeedHost, a
     // is made on that spelling, and two spellings of one directory get one answer. A symlink into a nested
     // repository from a plain anchor would otherwise read as plain and build the anchor.
     const target = canonicalGitPath(projectPath);
-    // Everything up to the git lookup is synchronous stats, so the common
-    // cases (an index of the tree's own, no git repository) cost no spawn.
-    let nearest = selectIndexRoot(target);
+    // Up to the toplevel lookup this is synchronous: stats, plus the git check inside selectOwnIndexRoot for a
+    // path with a `.git` entry below the index it finds (synchronous git spawns, a nested answer remembered).
+    // The common cases (an index of the tree's own, no git repository) cost no spawn.
+    // The index of the tree's own: one from above a git repository nested around `target` belongs to another
+    // repository and is none here (selectOwnIndexRoot), so a nested clone is seeded or built for itself. So is
+    // one git could not vouch for (git failing: the selection fails closed).
+    let nearest = selectOwnIndexRoot(target);
     // A killed build's index of the tree's own counts as none: resolve past
-    // it, and let the seed or build below replace it.
+    // it, and let the seed or build below replace it. The own-root test is on
+    // `target`, not on `up`: an index above a nested repository that holds an
+    // abandoned index of its own is another repository's, so it is none for `target`.
     let abandoned: string | null = null;
     if (nearest && isAbandonedIndex(nearest)) {
       abandoned = nearest;
       const up = path.dirname(nearest);
-      nearest = up === nearest ? null : selectIndexRoot(up);
+      nearest = ownIndexRootFor(target, up === nearest ? null : selectIndexRoot(up));
     }
     // No index to serve and no git repository around the path: a plain directory (a killed
     // build's abandoned index needs a `.git` at its root, so none is left unresolved here).
@@ -988,9 +1020,9 @@ async function seedOrBuild(
   if (validateProjectPath(worktree)) return NONE;
   const entries = await listGitWorktrees(worktree);
   if (!entries) return NONE;
-  // An index above W that is not one of its repository's worktrees is a plain
-  // ancestor directory's or another repository's (W is a submodule or an
-  // embedded clone it covers): not a case this module seeds or builds.
+  // The own-root selection above drops an index above a nested clone W, and one git could not vouch for, so an
+  // index still above W is a sibling worktree's of W's repository. Anything else (a plain ancestor directory's
+  // or another repository's) is not a case this module seeds or builds: a guard that should not fire.
   if (nearest && !entries.some((e) => sameRoot(e.path, nearest))) return NONE;
   // Another process (or an earlier call) may have given W its index meanwhile.
   if (!replaceAbandoned && isInitialized(worktree)) return NONE;

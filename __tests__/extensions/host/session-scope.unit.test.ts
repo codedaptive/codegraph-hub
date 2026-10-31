@@ -467,3 +467,10 @@ describe('the tool surface and the instructions describe scope and --focus', () 
     expect(SERVER_INSTRUCTIONS).toContain('Outside focus');
   });
 });
+
+describe('the server instructions on indexing', () => {
+  it('tell the agent to mention `codegraph init` to the user, and do not call indexing the user\'s decision', () => {
+    expect(SERVER_INSTRUCTIONS).not.toContain("user's decision");
+    expect(SERVER_INSTRUCTIONS).toContain('codegraph init');
+  });
+});

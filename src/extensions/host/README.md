@@ -103,7 +103,9 @@ extension's commands after it are skipped.
 
 One CodeGraph MCP server runs per state dir, started by the first `serve --mcp` client when none is
 running; it never exits when idle (`codegraph daemon --stop` stops it). It answers for any project a
-session names, so nothing is keyed on a project root.
+session names, so the server itself is keyed on no project root; the per-project records it and the builder
+keep (holds, cold-build and seed state, registry records, writer locks) are keyed by `canonicalProjectRoot`
+(`src/directory.ts`).
 
 - **State dir.** `~/.codegraph`, or the absolute path in `CODEGRAPH_STATE_DIR`
   (`server/state-dir.ts`: `getStateDir()` creates nothing, `ensureStateDir()` makes it mode 0700; a
@@ -147,11 +149,23 @@ session names, so nothing is keyed on a project root.
   tool answer tells the agent to stop calling codegraph.
   It never exits on idle; it ends when its server does (its IPC channel closes), and the server restarts
   it when it dies (`<state dir>/builder.pid`, `builder.log`). Which index answers a path is
-  `server/index-root.ts` `selectIndexRoot`, for both: a sub-project index inside a worktree does not
-  shadow the worktree's own, and it is decided on the path's real location, so a symlink into a nested
-  checkout is answered from the index the builder builds for that checkout. The proxy's in-process
-  fallback (the server unreachable) has no builder and stays read-only: a worktree with no index gets the
-  not-indexed guidance there.
+  `server/index-root.ts` `selectOwnIndexRoot`, for both the server (with a builder) and the builder: a
+  sub-project index inside a worktree does not shadow the worktree's own, and it is decided on the path's
+  real location, so a symlink into a nested checkout is answered from the index the builder builds for
+  that checkout. A git repository nested inside an indexed checkout is its own worktree root with its own
+  git common dir, so the outer index is another repository's and is never selected, admitted or refused
+  for a path in it; when git cannot answer, no index above the path's git root is selected either
+  (`ownIndexRootFor` fails closed), and the call gets the builder's not-indexed guidance. That holds on a builder engine
+  whether or not the outer index covers the nested repository: an embedded clone that is not gitignored,
+  or a submodule, is still not answered from the outer index; it gets its own. The builder seeds it from
+  its own sibling worktrees or cold-builds it at its own root, unless automatic indexing is off; calls
+  answer the building note while that runs, and the not-indexed guidance when the copy or build fails.
+  (A linked worktree of the checkout's own repository still borrows the checkout's index until it is
+  seeded.) A path in a different repository than the session's still gets the anchor guidance. The proxy's
+  in-process fallback (the server unreachable) and the query workers have no builder and are read-only;
+  the CLI has no builder either but is not read-only. All three keep `selectIndexRoot`: a worktree with no
+  index gets the not-indexed guidance there, and a nested repository the outer index leaves out gets the
+  nested text.
 
 ## Avoiding an import cycle
 

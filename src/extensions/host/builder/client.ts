@@ -108,7 +108,7 @@ export class BuilderClient {
     return client;
   }
 
-  /** Resolve projectPath with selectIndexRoot; hold an indexed root, else seed or queue a cold build. Resolves once the builder opened
+  /** Resolve projectPath with selectOwnIndexRoot (never an index above a git repository nested around the path); hold an indexed root, else seed or queue a cold build. Resolves once the builder opened
    *  (and migrated) the index, or after a bounded wait (CODEGRAPH_BUILDER_ENSURE_WAIT_MS, default 10 s) when that open is queued behind
    *  a running job, or when the hold could not open it (another live writer, an open failure); the server then opens read-only whatever
    *  is on disk. Never rejects: a dead builder or IPC failure answers { kind: 'none' }.

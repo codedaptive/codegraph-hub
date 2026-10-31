@@ -256,7 +256,8 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
   // G6. A writer child process commits to the source's database in a tight
   // loop while the source is seeded five times. Each seed must be a sound
   // database, whichever path (clone under the fence, or backup) it took.
-  // Five tiny seeds plus a node child start: about 2 s.
+  // Five tiny seeds plus a node child start: about 2 s on an idle machine. Five seeds against a busy writer child
+  // can pass 5 s under load, so the test has an explicit 20 s timeout rather than the 5 s default.
   it('G6: seeds taken while a writer commits to the source all pass integrity_check', async () => {
     const writerScript = [
       "const { DatabaseSync } = require('node:sqlite');",
@@ -302,5 +303,5 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
         db.close();
       }
     }
-  });
+  }, 20_000);
 });

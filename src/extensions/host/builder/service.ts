@@ -13,7 +13,7 @@ import { canonicalProjectRoot } from '../../../directory';
 import type { WatchOptions } from '../../../sync/watcher';
 import { EngineHousekeeping } from '../worktree-lifecycle/housekeeping';
 import { ensureWorktreeIndex, isAbandonedIndex } from '../worktree-lifecycle/seed';
-import { selectIndexRoot } from '../server/index-root';
+import { selectOwnIndexRoot } from '../server/index-root';
 import type { BuilderFreshness, EnsureOutcome } from './client';
 import { HolderSet } from './holder';
 import type { BuilderRequest, BuilderToServer } from './protocol';
@@ -131,11 +131,14 @@ export class BuilderService {
       const held = await this.holdRoot(decision.root);
       return held.kind === 'building' ? held : { ...decision, root: held.root };
     }
-    // Nothing to seed or build: the call is answered from the index selectIndexRoot names, if there is one.
-    // A git worktree's index a killed build left half-made is no index (isAbandonedIndex, seed.ts). A plain
-    // directory's is never judged abandoned (it needs a `.git`): it is held below, recovered, and a full
-    // catch-up queued, and the call may be answered from it before the catch-up ends.
-    const root = selectIndexRoot(projectPath);
+    // Nothing to seed or build: the call is answered from the index selectOwnIndexRoot names, if there is one.
+    // That is never an index above a git repository nested around the path (another repository's), nor one
+    // git could not vouch for (ownIndexRootFor fails closed): with seeding off, such a path holds nothing.
+    // A git worktree's index a killed build left half-made is no index
+    // (isAbandonedIndex, seed.ts). A plain directory's is never judged abandoned (it needs a `.git`): it is
+    // held below, recovered, and a full catch-up queued, and the call may be answered from it before the
+    // catch-up ends.
+    const root = selectOwnIndexRoot(projectPath);
     if (root === null || isAbandonedIndex(root)) return { kind: 'none' };
     return this.holdRoot(root);
   }
