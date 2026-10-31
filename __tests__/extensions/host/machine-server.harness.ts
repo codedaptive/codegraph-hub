@@ -244,6 +244,7 @@ export class McpSession {
   readonly spawnLog: string;
   readonly child: ChildProcessWithoutNullStreams;
   private exited = false;
+  private instructionsText: string | null = null;
   private stdoutBuf = '';
   private stderrText = '';
   private nextId = 1;
@@ -338,7 +339,14 @@ export class McpSession {
       60_000,
     );
     if (res.error !== undefined) throw new Error(`initialize failed: ${JSON.stringify(res.error)}`);
+    const init = (res.result ?? {}) as { instructions?: unknown };
+    this.instructionsText = typeof init.instructions === 'string' ? init.instructions : null;
     this.write({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  }
+
+  /** The `instructions` the server sent in its initialize answer, or null before initialize or when it sent none. */
+  get instructions(): string | null {
+    return this.instructionsText;
   }
 
   /** One tools/call, as an agent makes it. */

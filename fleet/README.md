@@ -17,8 +17,8 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only. Checked against `git diff --name-only $(git merge-base HEAD upstream) HEAD` at upstream
 60b0d7a9 on exchange 2026-10-30: 54 files, the 53 in the table plus `docs/RULINGS.md`, the fork's own rulings
-register (no feature). The `machine-server`, `index-builder`, `session-focus` and `proxy-watchdog-test` rows were added later, each checked on its own against its commit
-(`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`) and against upstream; the 54 count was not redone for them or for later features.
+register (no feature). The `machine-server`, `index-builder`, `session-focus`, `proxy-watchdog-test` and `build-guidance` rows were added later, each checked on its own against its commit
+(`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`) and against upstream; the 54 count was not redone for them or for later features.
 
 | Feature | Upstream files |
 |---|---|
@@ -45,6 +45,8 @@ register (no feature). The `machine-server`, `index-builder`, `session-focus` an
 | `session-focus` (host) | modified (7): `src/bin/codegraph.ts`, `src/mcp/daemon.ts`, `src/mcp/index.ts`, `src/mcp/proxy.ts`, `src/mcp/server-instructions.ts`, `src/mcp/session.ts`, `src/mcp/tools.ts`; no deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: `src/extensions/host/` (`README.md`, `api.ts`, `server/tool-call.ts`, new `server/session-scope`) and its tests in `__tests__/extensions/host/` (new `session-focus.gate`, `session-scope.unit`, fixture `focus-probe-extension.cjs`; `machine-server.harness.ts` edited) |
 
 | `proxy-watchdog-test` (host) | `__tests__/proxy-liveness-watchdog.test.ts` (edited: its `tools/call` names `codegraph_explore` with the child's launch dir as `projectPath`, so it passes machine-server's tool-name check and repo-anchor guard). The only file in the commit; no `src/` files, no fork-only files |
+
+| `build-guidance` (host) | modified (4): `src/directory.ts` (comments only), `src/sync/worktree.ts` (`gitCommonDir`'s answer now says whether git reported "not a git repository" or could not answer, for the nested-clone check), `src/mcp/server-instructions.ts` and `src/mcp/tools.ts` (the instructions and not-indexed texts; both also named in other rows). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: `src/extensions/host/` (`README.md`, `builder/`: `client`, `seed-host`, `service`; `server/index-root`; `worktree-lifecycle/`: `seed-check`, `seed`) and its tests in `__tests__/extensions/host/` (new `own-index-root.unit`; edited `builder-service`, `index-builder.gate`, `index-builder.server`, `machine-server.gate`, `machine-server.harness`, `session-scope.unit`, `worktree-seed`) |
 
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of

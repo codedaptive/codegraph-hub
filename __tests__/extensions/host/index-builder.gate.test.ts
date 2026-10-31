@@ -1,5 +1,5 @@
 /**
- * Index-builder gates IB1-IB8.
+ * Index-builder gates IB1-IB10.
  *
  * Each gate drives the built CLI's `serve --mcp` over stdio, as an agent host does, against throwaway git
  * repositories, with CODEGRAPH_STATE_DIR set per test. The gates assert only what is observable from outside:
@@ -619,4 +619,93 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
 
     expect(problems, 'IB8 problems (empty when the first call is the building note and a later call answers from the directory index, with no subdirectory index)').toEqual([]);
   }, 240_000);
+
+  // IB9: a git repository nested in an indexed checkout is its own build root. A session in it is answered building for
+  // itself, never from the outer checkout's index (the outer one gitignores the repository and holds none of its files).
+  // A session of the outer checkout asking about a nested repository gets the anchor guidance, and builds nothing there.
+  it('IB9: a nested repository inside an indexed checkout is built for itself, and an outer session is guided away from it', async () => {
+    // Over 5 s by design: a CLI index run of the outer checkout, a cold build of a small nested repository on an overloaded machine, and serve --mcp sessions polled until it answers.
+    const root = fx.tempRoot();
+    const stateDir = stateDirUnder(root);
+    const outer = fx.makeRepo(path.join(root, 'outer'), {
+      '.gitignore': 'nested/\nnested2/\n',
+      'src/outer.ts': 'export const ib9Outer = 1;\n',
+    });
+    fx.index(outer, stateDir);
+    // Both nested repositories are created after the outer index: the outer index holds neither.
+    const nested = fx.makeRepo(path.join(outer, 'nested'), {
+      'src/nested.ts': 'export function ib9NestedSymbol(): string {\n  return "ib9-nested-body-marker";\n}\n',
+    });
+    const nested2 = fx.makeRepo(path.join(outer, 'nested2'), { 'src/other.ts': 'export const ib9Other = 2;\n' });
+    const session = startSession({ cwd: nested, stateDir });
+    await session.initialize();
+
+    const problems: string[] = [];
+    const seen: string[] = [];
+    const first = await session.tool(EXPLORE, { query: 'ib9NestedSymbol', projectPath: nested });
+    seen.push(first.text);
+    if (first.rpcError !== null || first.isError) {
+      problems.push(`(1) the first call must be success-shaped, not an error: ${excerpt(first)}`);
+    }
+    if (!first.text.includes(`building the index for ${nested}`)) {
+      problems.push(`(1) the first call should answer the building note naming ${nested} (not the outer index's refusal): ${excerpt(first)}`);
+    }
+
+    // Polled until the nested index answers with its body: a small repository is seconds, under load a minute or two.
+    const deadline = Date.now() + 120_000;
+    let last: ToolAnswer = first;
+    let answered = false;
+    while (!answered && Date.now() < deadline) {
+      await sleep(500);
+      last = await session.tool(EXPLORE, { query: 'ib9NestedSymbol', projectPath: nested });
+      seen.push(last.text);
+      answered = answers(last, 'ib9NestedSymbol', 'ib9-nested-body-marker');
+    }
+    if (!answered) {
+      problems.push(`(2) no call on ${nested} answered from its own index within 120 s (last answer ${excerpt(last)})`);
+    }
+    if (!fs.existsSync(path.join(nested, '.codegraph', 'codegraph.db'))) {
+      problems.push(`(2) ${path.join(nested, '.codegraph', 'codegraph.db')} is missing: the nested repository has no index of its own`);
+    }
+
+    // The outer checkout's session. nested2 has no index and no build yet: the guidance must come back and nothing is built there.
+    const outerSession = startSession({ cwd: outer, stateDir });
+    await outerSession.initialize();
+    for (const [label, projectPath] of [['nested2', nested2], ['nested', nested]] as const) {
+      const guided = await outerSession.tool(EXPLORE, { query: 'ib9Other', projectPath });
+      seen.push(guided.text);
+      if (guided.isError || guided.rpcError !== null) {
+        problems.push(`(3) a path in ${label} must be answered success-shaped by the outer session: ${excerpt(guided)}`);
+      }
+      if (!guided.text.includes('answers only for the repository it was launched in')) {
+        problems.push(`(3) the outer session should get the anchor guidance for ${label} (${projectPath}): ${excerpt(guided)}`);
+      }
+    }
+    if (fs.existsSync(path.join(nested2, '.codegraph'))) {
+      problems.push(`(4) the outer session created ${path.join(nested2, '.codegraph')}: nothing may be built for a path it is not anchored to`);
+    }
+    if (jobsOf(stateDir).some((j) => j.root.includes(nested2))) {
+      problems.push(`(4) the builder ran a job for ${nested2}: ${jobsOf(stateDir).filter((j) => j.root.includes(nested2)).map((j) => `${j.kind} ${j.edge}`).join(', ')}`);
+    }
+
+    if (seen.some((text) => text.includes("user's decision"))) {
+      problems.push('(5) an answer says indexing is the user\'s decision');
+    }
+    expect(problems, 'IB9 problems (empty when the nested repository is built for itself and the outer session is guided away from it)').toEqual([]);
+  }, 300_000);
+
+  // IB10: the instructions the server sends at initialize do not call indexing the user's decision, and still name codegraph init.
+  it('IB10: the initialize instructions from serve --mcp do not call indexing the user\'s decision, and name codegraph init', async () => {
+    // One serve --mcp cold start and one initialize: a spawn on an overloaded machine can pass 5 s, the bound is the answer's.
+    const root = fx.tempRoot();
+    const stateDir = stateDirUnder(root);
+    const repo = fx.makeRepo(path.join(root, 'repo'), { 'src/a.ts': 'export const ib10 = 1;\n' });
+    const session = startSession({ cwd: repo, stateDir });
+    await session.initialize();
+
+    const instructions = session.instructions;
+    expect(instructions, 'the initialize answer carries instructions').not.toBeNull();
+    expect(instructions ?? '', 'the instructions name codegraph init').toContain('codegraph init');
+    expect(instructions ?? '', 'the instructions do not call indexing the user\'s decision').not.toContain("user's decision");
+  }, 120_000);
 });

@@ -31,6 +31,8 @@ import { BuilderService } from '../../../src/extensions/host/builder/service';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
 import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { resolveRepoAnchor } from '../../../src/extensions/host/server/repo-anchor';
+import { dispatchToolCall } from '../../../src/extensions/host/server/tool-call';
 import { ADMIT_ALL } from '../../helpers/admit-all';
 
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
@@ -200,6 +202,74 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
     expect(textOf(res)).toContain(NOT_INDEXED);
     expect(textOf(res), 'the fallback text does not tell the agent to stop calling codegraph').not.toContain("don't call");
     expect(fs.existsSync(path.join(wt, '.codegraph')), 'nothing was built or copied').toBe(false);
+  });
+
+  /**
+   * An indexed checkout whose `nested/` is gitignored by it, and a separate git repository inside it (with one
+   * commit and `src/`). Returns the realpaths.
+   */
+  async function indexedOuterWithNested(): Promise<{ outer: string; nested: string; src: string }> {
+    const outer = path.join(workspace, 'outer');
+    const nested = path.join(outer, 'nested');
+    const src = path.join(nested, 'src');
+    fs.mkdirSync(path.join(outer, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(outer, '.gitignore'), 'nested/\n');
+    fs.writeFileSync(path.join(outer, 'src', 'a.ts'), 'export function outerSymbol() { return "outer-body-marker"; }\n');
+    git(outer, 'init', '-q', '-b', 'main');
+    git(outer, 'config', 'user.email', 'test@example.com');
+    git(outer, 'config', 'user.name', 'Test');
+    git(outer, 'config', 'commit.gpgsign', 'false');
+    git(outer, 'add', '-A');
+    git(outer, 'commit', '-q', '-m', 'init');
+    const cg = await CodeGraph.init(outer);
+    try { await cg.indexAll(); } finally { cg.close(); }
+
+    fs.mkdirSync(src, { recursive: true });
+    fs.writeFileSync(path.join(src, 'a.ts'), 'export function nestedSymbol() { return "nested-body-marker"; }\n');
+    git(nested, 'init', '-q', '-b', 'main');
+    git(nested, 'config', 'user.email', 'test@example.com');
+    git(nested, 'config', 'user.name', 'Test');
+    git(nested, 'config', 'commit.gpgsign', 'false');
+    git(nested, 'add', '-A');
+    git(nested, 'commit', '-q', '-m', 'init');
+    return { outer: fs.realpathSync(outer), nested: fs.realpathSync(nested), src: fs.realpathSync(src) };
+  }
+
+  it('a session launched in a nested repository is asked about its own path: the builder answers for it, and the outer index is not refused for it', async () => {
+    const { nested, src } = await indexedOuterWithNested();
+    const { builder, calls } = stubBuilder(() => ({ kind: 'building', root: nested }));
+    engine = new MCPEngine({ builder });
+    // The server's own path for a call: the session's call guard, its index admission and its anchor root.
+    const anchor = await resolveRepoAnchor(nested);
+    const outcome = await dispatchToolCall({
+      handler: engine.getToolHandler(),
+      anchor,
+      params: { name: 'codegraph_explore', arguments: { query: 'nestedSymbol', projectPath: src } },
+    });
+    if (!('result' in outcome)) throw new Error(`the call was turned down as a protocol error: ${JSON.stringify(outcome.error)}`);
+
+    const res = outcome.result;
+    expect(res.isError, 'success-shaped').toBeFalsy();
+    expect(textOf(res), 'not the refusal for the outer index').not.toContain('answers only for the repository');
+    expect(textOf(res)).toContain(buildingNote(nested));
+    expect(textOf(res)).not.toContain(DONT_CALL_AGAIN);
+    expect(calls, 'the builder is asked about the nested path, with the session anchor').toContain(`ensure ${src} anchor ${nested}`);
+  });
+
+  it('an engine with no builder answers a plain directory, and a nested repository under an indexed parent, with the not-indexed text that names codegraph init, never the user\'s decision', async () => {
+    const plain = path.join(workspace, 'plain');
+    fs.mkdirSync(plain);
+    const { src } = await indexedOuterWithNested();
+    engine = new MCPEngine();
+    const handler = engine.getToolHandler();
+
+    for (const projectPath of [plain, src]) {
+      const text = textOf(await handler.execute('codegraph_explore', { query: 'x', projectPath }, undefined, ADMIT_ALL));
+      expect(text, projectPath).toContain(NOT_INDEXED);
+      expect(text, projectPath).toContain('codegraph init');
+      expect(text, projectPath).toContain('built-in tools');
+      expect(text, projectPath).not.toContain("user's decision");
+    }
   });
 
   // ---- the hold, once per open ----

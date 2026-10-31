@@ -16,12 +16,36 @@ import { unsafeIndexRootReason } from '../../../src/directory';
 import { validateProjectPath } from '../../../src/utils';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
-import { ensureWorktreeIndex, unbuiltDirectoryNote, type SeedHost } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { JobQueue } from '../../../src/extensions/host/builder/queue';
+import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
+import {
+  ensureWorktreeIndex,
+  isAbandonedIndex,
+  unbuiltDirectoryNote,
+  unseededWorktreeNote,
+  type SeedHost,
+} from '../../../src/extensions/host/worktree-lifecycle/seed';
 import type { BuilderFreshness } from '../../../src/extensions/host/builder/client';
 import type { BuilderToServer } from '../../../src/extensions/host/builder/protocol';
 
+// vite's resolver strips the `node:` prefix from an import of node:sqlite, so the module is required (as in the
+// server test and the followups gate).
+const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+
+/** A pid no process holds (the followups gate's choice): a rebuild.pid naming it is a killed build's. */
+const DEAD_PID = 999999;
+
 function real(p: string): string {
   return fs.realpathSync(path.resolve(p));
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 async function waitUntil(check: () => boolean, timeoutMs: number, stepMs = 20): Promise<boolean> {
@@ -360,5 +384,150 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
+  });
+
+  // ---- a git repository nested in an indexed checkout (the outer checkout's index is another repository's) ----
+
+  /** One git repository with a commit: `git init`, then everything added and committed. */
+  function commitAll(dir: string): void {
+    const identity = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false'];
+    execFileSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
+    execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
+    execFileSync('git', [...identity, 'commit', '-q', '-m', 'init'], { cwd: dir, stdio: 'ignore' });
+  }
+
+  /**
+   * An outer checkout, indexed, with `nested/` gitignored by it, and a separate git repository inside at `nested/`
+   * with `src/`. Returns the realpaths.
+   */
+  async function outerAndNested(): Promise<{ outer: string; nested: string; src: string }> {
+    const outer = path.join(workspace, 'outer');
+    const nested = path.join(outer, 'nested');
+    const src = path.join(nested, 'src');
+    fs.mkdirSync(path.join(outer, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(outer, '.gitignore'), 'nested/\n');
+    fs.writeFileSync(path.join(outer, 'src', 'base.ts'), 'export function baseSymbol() { return 1; }\n');
+    commitAll(outer);
+    const cg = await CodeGraph.init(outer);
+    try { await cg.indexAll(); } finally { cg.close(); }
+    fs.mkdirSync(src, { recursive: true });
+    fs.writeFileSync(path.join(src, 'nested.ts'), 'export function nestedSymbol() { return 2; }\n');
+    commitAll(path.join(outer, 'nested'));
+    return { outer: real(outer), nested: real(nested), src: real(src) };
+  }
+
+  /** What a build killed mid-index leaves behind: an index whose state is 'indexing' and a rebuild.pid naming a dead pid. */
+  function plantAbandonedIndex(root: string): void {
+    CodeGraph.initSync(root).close();
+    const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'));
+    try {
+      db.prepare("INSERT OR REPLACE INTO project_metadata (key, value, updated_at) VALUES ('index_state', 'indexing', ?)").run(Date.now());
+    } finally {
+      db.close();
+    }
+    fs.writeFileSync(
+      path.join(root, '.codegraph', 'rebuild.pid'),
+      JSON.stringify({ pid: DEAD_PID, mode: 'cold-build', startedAt: Date.now(), root }) + '\n',
+    );
+  }
+
+  /** A SeedHost with nothing queued and no sibling: a cold build is recorded, never run. */
+  function recordingHost(queued: string[]): SeedHost {
+    return {
+      buildingRootFor: () => null,
+      hasFailedBuild: () => false,
+      queueColdBuild: (root) => { queued.push(root); },
+      runSeed: async () => ({ done: false as const }),
+    };
+  }
+
+  // The outer checkout's index does not cover this repository (it gitignores nested/): a call for a path in the nested repository
+  // is about that repository's own index, which it has none of, so the builder queues a cold build of it.
+  it('a nested repository with no index of its own is queued for a cold build of its own (not answered none, not built at the outer checkout)', async () => {
+    const { outer, nested, src } = await outerAndNested();
+    expect(fs.existsSync(path.join(nested, '.codegraph')), 'premise: the nested repository has no index').toBe(false);
+    expect(fs.existsSync(path.join(outer, '.codegraph', 'codegraph.db')), 'premise: the outer checkout is indexed').toBe(true);
+    const queued: string[] = [];
+
+    expect(await ensureWorktreeIndex(src, recordingHost(queued), nested)).toEqual({ kind: 'building', root: nested });
+    expect(queued).toEqual([nested]);
+    expect(queued, 'the outer checkout is not built for the nested path').not.toContain(outer);
+  });
+
+  it('a nested repository whose own index a killed build left behind is answered building for itself, not none', async () => {
+    const { nested, src } = await outerAndNested();
+    plantAbandonedIndex(nested);
+    expect(pidAlive(DEAD_PID), 'premise: the pid is dead').toBe(false);
+    expect(isAbandonedIndex(nested), 'premise: the nested index is abandoned').toBe(true);
+    const queued: string[] = [];
+
+    expect(await ensureWorktreeIndex(src, recordingHost(queued), nested)).toEqual({ kind: 'building', root: nested });
+    expect(queued).toEqual([nested]);
+  });
+
+  it('a build queued for the outer checkout does not name a path in its nested repository: the nested repository is queued itself', async () => {
+    const { outer, nested, src } = await outerAndNested();
+    const queue = new JobQueue();
+    const host = new BuilderSeedHost(queue, { seedWaitMs: 1_000 });
+    // A job that does not end holds the queue, so the outer checkout's cold build stays queued (nothing runs a build).
+    let finishBlocker!: () => void;
+    const blocker = queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { finishBlocker = resolve; }));
+    await waitUntil(() => queue.runningJob()?.root === '/blocker', 2_000);
+    try {
+      host.queueColdBuild(outer, { realRoot: outer, plain: false });
+      expect(host.buildingRootFor(outer)).toBe(outer);
+      expect(host.buildingRootFor(src), 'the outer checkout\'s build does not name a path in the nested repository').toBeNull();
+
+      expect(await ensureWorktreeIndex(src, host, nested)).toEqual({ kind: 'building', root: nested });
+      expect(host.buildingRootFor(src)).toBe(nested);
+      expect(queue.waiting().cold, 'the outer build and the nested build both wait').toBe(2);
+    } finally {
+      // Dropping the queue rejects the two waiting builds (nothing runs them); the blocker then ends.
+      const closing = queue.close();
+      finishBlocker();
+      await closing;
+      await blocker;
+    }
+  });
+
+  it('with CODEGRAPH_NO_AUTO_SEED=1, a call for a path in the nested repository holds no index of the outer checkout', async () => {
+    const { outer, nested, src } = await outerAndNested();
+    vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
+    const svc = startService();
+
+    expect(await svc.ensure(src, nested)).toEqual({ kind: 'none' });
+    expect(svc.holders.has(outer), 'the outer checkout is not held for a path in the nested repository').toBe(false);
+    expect(readWriterLock(outer), 'the outer checkout\'s writer slot is not taken').toBeNull();
+  });
+
+  // A git that could not run is "could not ask", not "no worktree": the builder must ask again on the next call,
+  // not keep answering none for the path until it restarts.
+  it('a nested repository asked about while git cannot run answers none, and is queued for its own build once git is back', async () => {
+    const { nested, src } = await outerAndNested();
+    const queued: string[] = [];
+    const host = recordingHost(queued);
+
+    const savedPath = process.env.PATH;
+    const noGit = path.join(workspace, 'no-git-here');
+    fs.mkdirSync(noGit, { recursive: true });
+    let whileBroken: Awaited<ReturnType<typeof ensureWorktreeIndex>>;
+    try {
+      process.env.PATH = noGit;
+      whileBroken = await ensureWorktreeIndex(src, host, nested);
+    } finally {
+      if (savedPath === undefined) delete process.env.PATH;
+      else process.env.PATH = savedPath;
+    }
+
+    expect(whileBroken, 'git could not run: nothing can be seeded or built').toEqual({ kind: 'none' });
+    expect(queued).toEqual([]);
+    expect(await ensureWorktreeIndex(src, host, nested), 'with git back the same path is asked about again').toEqual({ kind: 'building', root: nested });
+    expect(queued).toEqual([nested]);
+  });
+
+  it('the not-yet-seeded note for a worktree names the worktree and never calls indexing the user\'s decision', () => {
+    const note = unseededWorktreeNote('/w/sub', '/w');
+    expect(note).toContain("isn't indexed with codegraph");
+    expect(note).not.toContain("user's decision");
   });
 });
