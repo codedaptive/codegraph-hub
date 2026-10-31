@@ -121,14 +121,16 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-10-30)
+## 8. Status (2026-10-31)
 
 | Part | State |
 |---|---|
 | grep, blast, orphans, suspects, checkpoint/fresh, worktree lifecycle and pins, Swift/Rust resolution | shipped through sm.4 |
 | Worktree hook (§5) | built and integrated (integration ff8e7d27); ships with sm.5 |
 | One server per computer (never idles out, dev state dir), 10-minute close with no cap, repo anchor, required `projectPath` | built and integrated (integration 162d4bad, `machine-server`); ships with sm.5 |
-| Separate builder with queue; `--focus` | to build (`lane/host`, then `queries` for grep/blast focus) |
+| Separate builder with queue (no-sibling and non-git cold builds, no opt-in); session `--focus` with `scope: "repo"` | built and integrated (integration 47548e7c, `index-builder`, `session-focus`); ships with sm.5 |
+| `--focus` for `grep` and `blast` | built (`queries`, 8a034e74), in review |
+| Building guidance | in progress (`host`, `build-guidance`) |
 
 ## 9. Out of scope (R-12)
 
