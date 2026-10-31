@@ -2,12 +2,14 @@
  * The local-handshake proxy's shutdown waits for every in-process engine it
  * owns, and starts nothing new once it is shutting down (#2311). An engine's
  * stop can wait on a query worker still starting up — exiting before it
- * settles is the Windows crash QueryPool.destroy avoids — and stopping is
- * what releases the writer lock.
+ * settles is the Windows crash QueryPool.destroy avoids — and stopping is what
+ * closes the databases the read-only fallback engine has open.
  *
  * Each case runs the real proxy entry point in a child process, with only the
- * daemon and engine dependencies replaced. Engines print `ENGINE n` when made
- * and `STOPPED n` once a deliberately slow stop settles.
+ * server and engine dependencies replaced. Engines print `ENGINE n` when made
+ * and `STOPPED n` once a deliberately slow stop settles. The calls are real,
+ * known-tool calls on the launch directory, so they pass the shared dispatch
+ * (tool-call.ts) and reach the fake engine's handler.
  */
 import { describe, it, expect } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
@@ -28,7 +30,8 @@ async function until(check: () => boolean, what: string, timeout = 10_000): Prom
 
 const line = (msg: object): string => JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n';
 const INITIALIZE = line({ id: 1, method: 'initialize', params: {} });
-const toolCall = (id: number): string => line({ id, method: 'tools/call', params: { name: 'test', arguments: {} } });
+const toolCall = (id: number): string =>
+  line({ id, method: 'tools/call', params: { name: 'codegraph_explore', arguments: { projectPath: '.' } } });
 
 /** Shared by every scenario: the proxy, with markers on stdout. */
 const PRELUDE = `
@@ -38,12 +41,10 @@ const PRELUDE = `
   const say = (s) => fs.writeSync(1, s + '\\n');
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let engines = 0;
-  const makeEngine = ({ readOnly, callMs, stopMs }) => () => {
+  const makeEngine = ({ callMs, stopMs }) => () => {
     const n = ++engines;
     say('ENGINE ' + n);
     return {
-      ensureInitialized: async () => {},
-      isReadOnly: () => { say('RETRY ' + n); return readOnly; },
       getToolHandler: () => ({ execute: async () => {
         await delay(n === 1 ? callMs : 0);
         return { content: [{ type: 'text', text: 'finished ' + n }] };
@@ -97,21 +98,34 @@ function startProxy(script: string, env: Record<string, string> = {}): Proxy {
 
 describe('local proxy shutdown (#2311)', () => {
   it('waits for an engine being retired before it exits', async () => {
-    // A writing engine is retired so a daemon can take its lock: the retry
-    // hands it back once its call answers. stdin closes while the retirement is
-    // still waiting on that call, so `engine` is already null at shutdown.
+    // The fallback engine is retired once a retry reaches the server: it is
+    // stopped when the call it is serving answers. stdin closes while the
+    // retirement is still waiting on that call, so `engine` is already null at
+    // shutdown and only the retiring set names it.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-proxy-retire-'));
+    const sock = process.platform === 'win32'
+      ? `\\\\.\\pipe\\cg-proxy-retire-${process.pid}-${Date.now()}`
+      : path.join(dir, 'd.sock');
     const proxy = startProxy(`
-      runLocalHandshakeProxy({
-        root: process.cwd(),
-        getDaemonSocket: async () => null,
-        makeEngine: makeEngine({ readOnly: false, callMs: 10000, stopMs: 500 }),
-      });
+      const server = net.createServer((c) => { c.on('data', () => {}); });
+      let gets = 0;
+      server.listen(${JSON.stringify(sock)}, () => runLocalHandshakeProxy({
+        launchDir: process.cwd(),
+        getDaemonSocket: async () => {
+          if (++gets === 1) return null;
+          const s = net.createConnection(${JSON.stringify(sock)});
+          await new Promise((resolve, reject) => { s.once('connect', resolve); s.once('error', reject); });
+          return s;
+        },
+        makeEngine: makeEngine({ callMs: 10000, stopMs: 500 }),
+      }));
     `);
     try {
       proxy.write(INITIALIZE);
       proxy.write(toolCall(2));
-      await until(() => proxy.out().includes('RETRY 1') || proxy.exited(), 'the retry to retire the engine');
-      expect(proxy.out(), proxy.err()).toContain('RETRY 1');
+      await until(() => proxy.err().includes('Shared daemon reachable') || proxy.exited(), 'the retry to reach the server');
+      expect(proxy.out(), proxy.err()).toContain('ENGINE 1');
+      expect(proxy.out()).not.toContain('STOPPED 1');
       proxy.child.stdin!.end();
       await until(proxy.exited, 'the proxy to exit');
       expect(proxy.child.exitCode, proxy.err()).toBe(0);
@@ -119,11 +133,12 @@ describe('local proxy shutdown (#2311)', () => {
       expect(proxy.out()).not.toContain('finished 1');
     } finally {
       await proxy.dispose();
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 20_000);
 
   it('starts no engine for client input that arrives once shutdown has begun', async () => {
-    // A read-only engine is retired after the daemon comes back; the daemon
+    // The fallback engine is retired after the server comes back; the server
     // then drops again, so calls are served in-process with no live engine.
     // The host pid exiting starts shutdown while stdin is still open, and a
     // call written then must not start an engine shutdown() never stops.
@@ -138,7 +153,7 @@ describe('local proxy shutdown (#2311)', () => {
       const server = net.createServer((c) => { conns.push(c); c.on('data', () => {}); });
       let gets = 0;
       server.listen(${JSON.stringify(sock)}, () => runLocalHandshakeProxy({
-        root: process.cwd(),
+        launchDir: process.cwd(),
         getDaemonSocket: async () => {
           if (++gets !== 2) return null;
           const s = net.createConnection(${JSON.stringify(sock)});
@@ -146,7 +161,7 @@ describe('local proxy shutdown (#2311)', () => {
           setTimeout(() => { for (const c of conns) c.destroy(); }, 100);
           return s;
         },
-        makeEngine: makeEngine({ readOnly: true, callMs: 10000, stopMs: 1500 }),
+        makeEngine: makeEngine({ callMs: 10000, stopMs: 1500 }),
       }));
     `, { CODEGRAPH_PPID_POLL_MS: '50', CODEGRAPH_HOST_PPID: String(host.pid) });
     try {

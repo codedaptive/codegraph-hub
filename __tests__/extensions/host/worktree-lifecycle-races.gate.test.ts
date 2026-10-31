@@ -55,6 +55,7 @@ import { FileLock } from '../../../src/utils';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { QueryPool, type PoolWorker } from '../../../src/mcp/query-pool';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import {
   PROJECT_FLAG_PINNED,
   getRegisteredProject,
@@ -159,9 +160,6 @@ describe('a seed that fails while a sibling qualifies never starts a cold build'
     fs.writeFileSync(path.join(wt, '.codegraph', 'codegraph.lock'), String(process.pid));
     __setLoadCodeGraphForTests(CodeGraph);
     engine = new MCPEngine({ watch: true });
-    const emptyRoot = path.join(workspace, 'empty-root');
-    fs.mkdirSync(emptyRoot);
-    await engine.ensureInitialized(emptyRoot);
   }, 60_000);
 
   afterEach(async () => {
@@ -174,7 +172,7 @@ describe('a seed that fails while a sibling qualifies never starts a cold build'
   }, 60_000);
 
   async function search(): Promise<{ text: string; isError: boolean }> {
-    const res = await engine!.getToolHandler().execute('codegraph_search', { query: 'appSymbol', projectPath: wt });
+    const res = await engine!.getToolHandler().execute('codegraph_search', { query: 'appSymbol', projectPath: wt }, undefined, ADMIT_ALL);
     return { text: res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n'), isError: Boolean(res.isError) };
   }
 

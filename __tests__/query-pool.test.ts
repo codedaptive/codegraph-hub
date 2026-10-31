@@ -18,6 +18,7 @@ import { ExploreSessionState, EXPLORE_EMISSION_KEY } from '../src/mcp/explore-se
 import type { MCPEngine } from '../src/mcp/engine';
 import { QueryPool, resolvePoolSize, type PoolWorker } from '../src/mcp/query-pool';
 import type { ToolResult } from '../src/mcp/tools';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -87,7 +88,7 @@ describe('resolvePoolSize', () => {
 
 describe('QueryPool', () => {
   it('dispatches a call and returns the worker result', async () => {
-    const pool = new QueryPool({ root: '/x', size: 1, createWorker: () => new FakeWorker((m) => ({ result: ok(`r:${m.toolName}`) })) });
+    const pool = new QueryPool({ size: 1, createWorker: () => new FakeWorker((m) => ({ result: ok(`r:${m.toolName}`) })) });
     const res = await pool.run('codegraph_explore', { query: 'q' });
     expect(res.content[0].text).toBe('r:codegraph_explore');
     await pool.destroy();
@@ -107,7 +108,7 @@ describe('QueryPool', () => {
         return ok(`r${m.id}`);
       })(),
     });
-    const pool = new QueryPool({ root: '/x', size: 5, createWorker: () => new FakeWorker(behavior) });
+    const pool = new QueryPool({ size: 5, createWorker: () => new FakeWorker(behavior) });
     const calls = Promise.all(Array.from({ length: 5 }, (_, i) => pool.run('codegraph_search', { i })));
     await sleep(40); // let all workers spawn (cold-start cap → a few generations) + dispatch
     expect(maxActive).toBe(5);
@@ -119,7 +120,7 @@ describe('QueryPool', () => {
 
   it('does not spawn the whole pool for a single call (pending-aware growth)', async () => {
     let created = 0;
-    const pool = new QueryPool({ root: '/x', size: 8, createWorker: () => { created++; return new FakeWorker((m) => ({ result: ok(`r${m.id}`) })); } });
+    const pool = new QueryPool({ size: 8, createWorker: () => { created++; return new FakeWorker((m) => ({ result: ok(`r${m.id}`) })); } });
     await pool.run('codegraph_node', { symbol: 's' });
     // One eager worker + at most the cold-start cap — never all 8.
     expect(created).toBeLessThanOrEqual(2);
@@ -129,7 +130,7 @@ describe('QueryPool', () => {
   it('recovers from a worker crash: retries the in-flight call and respawns', async () => {
     let calls = 0;
     const pool = new QueryPool({
-      root: '/x', size: 2, maxRetries: 1,
+      size: 2, maxRetries: 1,
       // First dispatch crashes its worker; the retry (on a respawn/other worker) succeeds.
       createWorker: () => new FakeWorker((m) => (++calls === 1 ? { crash: true } : { result: ok(`recovered:${m.id}`) })),
     });
@@ -151,7 +152,7 @@ describe('QueryPool', () => {
     // This specific call always crashes its worker; a normal call still works.
     const poison = (m: CallMsg) => m.toolName === 'codegraph_explore';
     const pool = new QueryPool({
-      root: '/x', size: 3, maxRetries: 1,
+      size: 3, maxRetries: 1,
       createWorker: () => new FakeWorker((m) => (poison(m) ? { crash: true } : { result: ok(`ok:${m.id}`) })),
     });
     const bad = await pool.run('codegraph_explore', { query: 'boom' });
@@ -165,7 +166,7 @@ describe('QueryPool', () => {
   it('graceful backstop: a call that can\'t be served in time gets success-shaped busy guidance', async () => {
     // 1 worker, every call hangs; soft-timeout small → the caller gets guidance,
     // never a hard error, never a hang.
-    const pool = new QueryPool({ root: '/x', size: 1, softTimeoutMs: 60, createWorker: () => new FakeWorker(() => ({ hang: true })) });
+    const pool = new QueryPool({ size: 1, softTimeoutMs: 60, createWorker: () => new FakeWorker(() => ({ hang: true })) });
     const res = await pool.run('codegraph_explore', { query: 'q' });
     expect(res.isError).toBeFalsy();            // NOT an error (abandonment rule)
     expect(res.content[0].text).toMatch(/busy|retry/i);
@@ -173,7 +174,7 @@ describe('QueryPool', () => {
   });
 
   it('destroy settles outstanding calls instead of hanging', async () => {
-    const pool = new QueryPool({ root: '/x', size: 1, softTimeoutMs: 10_000, createWorker: () => new FakeWorker(() => ({ hang: true })) });
+    const pool = new QueryPool({ size: 1, softTimeoutMs: 10_000, createWorker: () => new FakeWorker(() => ({ hang: true })) });
     const pending = pool.run('codegraph_explore', { query: 'q' });
     await sleep(5);
     await pool.destroy();
@@ -189,7 +190,7 @@ describe('QueryPool', () => {
     it('answers callers at once, then waits for the worker to start', async () => {
       let worker!: FakeWorker;
       const pool = new QueryPool({
-        root: '/x', size: 1, softTimeoutMs: 10_000,
+        size: 1, softTimeoutMs: 10_000,
         createWorker: () => (worker = new FakeWorker(() => ({ hang: true }), null)),
       });
       const pending = pool.run('codegraph_explore', { query: 'q' });
@@ -206,7 +207,7 @@ describe('QueryPool', () => {
 
     it('terminates a started worker at once', async () => {
       let worker!: FakeWorker;
-      const pool = new QueryPool({ root: '/x', size: 1, startSettleMs: 10_000, createWorker: () => (worker = new FakeWorker(() => ({ result: ok('r') }))) });
+      const pool = new QueryPool({ size: 1, startSettleMs: 10_000, createWorker: () => (worker = new FakeWorker(() => ({ result: ok('r') }))) });
       await sleep(5);
       const started = Date.now();
       await pool.destroy();
@@ -216,7 +217,7 @@ describe('QueryPool', () => {
 
     it('gives up waiting on a start that never finishes', async () => {
       let worker!: FakeWorker;
-      const pool = new QueryPool({ root: '/x', size: 1, startSettleMs: 60, createWorker: () => (worker = new FakeWorker(() => ({ hang: true }), null)) });
+      const pool = new QueryPool({ size: 1, startSettleMs: 60, createWorker: () => (worker = new FakeWorker(() => ({ hang: true }), null)) });
       const started = Date.now();
       await pool.destroy();
       expect(worker.alive).toBe(false);
@@ -226,7 +227,7 @@ describe('QueryPool', () => {
     it('does not wait on a worker that died while starting', async () => {
       const workers: FakeWorker[] = [];
       const pool = new QueryPool({
-        root: '/x', size: 1, startSettleMs: 10_000,
+        size: 1, startSettleMs: 10_000,
         // The first never starts; its replacement does.
         createWorker: () => { const w = new FakeWorker(() => ({ result: ok('r') }), workers.length ? true : null); workers.push(w); return w; },
       });
@@ -246,7 +247,7 @@ describe('QueryPool', () => {
     // `ready` is false before the first 'ready' handshake and true after.
     // (FakeWorker posts 'ready' on a macrotask — the synchronous check below
     // observes the cold-start window.)
-    const pool = new QueryPool({ root: '/x', size: 1, createWorker: () => new FakeWorker((m) => ({ result: ok(`r:${m.toolName}`) })) });
+    const pool = new QueryPool({ size: 1, createWorker: () => new FakeWorker((m) => ({ result: ok(`r:${m.toolName}`) })) });
     expect(pool.ready).toBe(false); // eager worker spawned but not yet warm
     await sleep(5);                 // let the ready handshake land
     expect(pool.ready).toBe(true);
@@ -259,7 +260,7 @@ describe('QueryPool', () => {
   it('retires a failed cold start and serves queued work on its replacement', async () => {
     const workers: FakeWorker[] = [];
     const pool = new QueryPool({
-      root: '/x', size: 1,
+      size: 1,
       createWorker: () => {
         const worker = new FakeWorker(() => ({ result: ok('recovered') }), null);
         workers.push(worker);
@@ -283,7 +284,7 @@ describe('QueryPool', () => {
     const workers: FakeWorker[] = [];
     const dispatched: number[] = [];
     const pool = new QueryPool({
-      root: '/x', size: 2,
+      size: 2,
       createWorker: () => {
         const index = workers.length;
         const worker = new FakeWorker(() => { dispatched.push(index); return { result: ok('served') }; }, null);
@@ -319,7 +320,7 @@ describe('QueryPool', () => {
   it('counts each failed startup once and stops replacing at the crash budget', async () => {
     const workers: FakeWorker[] = [];
     const pool = new QueryPool({
-      root: '/x', size: 8, softTimeoutMs: 30,
+      size: 8, softTimeoutMs: 30,
       createWorker: () => {
         const worker = new FakeWorker(() => ({ result: ok('must not dispatch') }), null);
         workers.push(worker);
@@ -381,29 +382,27 @@ describe('MCP query pool with real projects (#1465)', () => {
     return root;
   }
 
-  async function start(root: string): Promise<MCPEngine> {
+  /** An engine with a query pool; it has no default project, and the pool starts at construction. */
+  function start(): MCPEngine {
     engine = new BuiltEngine({ watch: false, queryPool: true });
-    await engine.ensureInitialized(root);
     pool = (engine as unknown as { queryPool: QueryPool | null }).queryPool;
     return engine;
   }
 
-  it.each([true, false])('routes concurrent reads across projects with default=%s, preserving output and session state', async (hasDefault) => {
+  it('routes concurrent reads across projects, preserving output and session state', async () => {
     const alpha = await indexProject('alpha', 'alphaSymbol');
     const beta = await indexProject('beta', 'betaSymbol');
-    const workspace = path.join(tempDir, 'workspace');
-    fs.mkdirSync(workspace);
-    const activeEngine = await start(hasDefault ? alpha : workspace);
+    const activeEngine = start();
     expect(pool).not.toBeNull();
     await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 15000 });
     const handler = activeEngine.getToolHandler();
     // Drain catch-up before comparing the worker and in-process paths.
-    await handler.execute('codegraph_status', { projectPath: alpha });
+    await handler.execute('codegraph_status', { projectPath: alpha }, undefined, ADMIT_ALL);
     const session = new ExploreSessionState();
     const calls = Array.from({ length: 6 }, (_, i) => {
       const projectPath = i % 2 ? beta : alpha;
       const query = i % 2 ? 'betaSymbol' : 'alphaSymbol';
-      return handler.execute('codegraph_explore', { projectPath, query }, session);
+      return handler.execute('codegraph_explore', { projectPath, query }, session, ADMIT_ALL);
     });
     const results = await Promise.all(calls);
     // Explicit projects pass an asynchronous catch-up gate before dispatch.
@@ -418,22 +417,15 @@ describe('MCP query pool with real projects (#1465)', () => {
     expect(session.callCount(alpha)).toBe(3);
     expect(session.callCount(beta)).toBe(3);
     const args = { projectPath: beta, query: 'betaSymbol' };
-    const pooled = await handler.execute('codegraph_explore', args);
+    const pooled = await handler.execute('codegraph_explore', args, undefined, ADMIT_ALL);
     handler.setQueryPool(null);
-    expect(await handler.execute('codegraph_explore', args)).toEqual(pooled);
+    expect(await handler.execute('codegraph_explore', args, undefined, ADMIT_ALL)).toEqual(pooled);
     handler.setQueryPool(pool);
-    if (!hasDefault) {
-      const missing = await handler.execute('codegraph_explore', { query: 'alphaSymbol' });
-      expect(missing.isError).toBeFalsy();
-      expect(missing.content[0].text).toContain(workspace);
-      expect(missing.content[0].text).toContain('No CodeGraph project');
-      // A default index can appear after rootless workers are already warm.
-      await indexProject('workspace', 'lateSymbol');
-      activeEngine.retryInitializeSync(workspace);
-      const late = await handler.execute('codegraph_explore', { query: 'lateSymbol' });
-      expect(late.isError).toBeFalsy();
-      expect(late.content[0].text).toContain('lateSymbol');
-    }
+    // No default project: a call that names none is answered with the
+    // missing-argument text, whether or not workers are warm.
+    const missing = await handler.execute('codegraph_explore', { query: 'alphaSymbol' }, undefined, ADMIT_ALL);
+    expect(missing.isError).toBeFalsy();
+    expect(missing.content[0].text).toBe('missing argument: root path to the code you wish to query');
   }, 30000);
 
   it('retires real failed-open workers and recovers on a valid SQLite index (#1357)', async () => {
@@ -441,7 +433,7 @@ describe('MCP query pool with real projects (#1465)', () => {
     const workers: Worker[] = [];
     const exits: Promise<unknown>[] = [];
     pool = new QueryPool({
-      root: alpha, size: 1,
+      size: 1,
       createWorker: () => {
         const worker = new Worker(path.resolve(__dirname, '../dist/mcp/query-worker.js'), {
           workerData: { root: workers.length === 0 ? tempDir : alpha },
@@ -469,7 +461,7 @@ describe('MCP query pool with real projects (#1465)', () => {
     const alpha = await indexProject('alpha', 'alphaSymbol');
     const startedWhenEnded: boolean[] = [];
     pool = new QueryPool({
-      root: alpha, size: 1,
+      size: 1,
       createWorker: () => {
         const worker = new Worker(path.resolve(__dirname, '../dist/mcp/query-worker.js'), { workerData: { root: alpha } });
         let started = false;
@@ -488,7 +480,7 @@ describe('MCP query pool with real projects (#1465)', () => {
 
   it('engine stop waits for the query pool to shut down', async () => {
     const alpha = await indexProject('alpha', 'alphaSymbol');
-    const activeEngine = await start(alpha);
+    const activeEngine = start();
     expect(pool).not.toBeNull();
     const realPool = pool!;
     let release!: () => void;
@@ -511,21 +503,19 @@ describe('MCP query pool with real projects (#1465)', () => {
 
   it('honors size=0 for projectPath-only sessions', async () => {
     const alpha = await indexProject('alpha', 'alphaSymbol');
-    const workspace = path.join(tempDir, 'workspace');
-    fs.mkdirSync(workspace);
     vi.stubEnv('CODEGRAPH_QUERY_POOL_SIZE', '0');
-    const activeEngine = await start(workspace);
+    const activeEngine = start();
     expect(pool).toBeNull();
     const result = await activeEngine.getToolHandler().execute('codegraph_explore', {
       projectPath: alpha, query: 'alphaSymbol',
-    });
+    }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain('alphaSymbol');
   }, 30000);
 
   it('stops real workers and settles queued calls on engine teardown', async () => {
-    const alpha = await indexProject('alpha', 'alphaSymbol');
-    const activeEngine = await start(alpha);
+    await indexProject('alpha', 'alphaSymbol');
+    const activeEngine = start();
     expect(pool).not.toBeNull();
     const calls = Array.from({ length: 6 }, () => pool!.run('codegraph_explore', { query: 'alphaSymbol' }));
     const workers = (pool as unknown as { workers: Set<import('worker_threads').Worker> }).workers;
@@ -536,7 +526,6 @@ describe('MCP query pool with real projects (#1465)', () => {
     expect(results.every((r) => r.content[0].text.includes('shutting down'))).toBe(true);
     expect(pool!.liveWorkers).toBe(0);
     expect(pool!.healthy).toBe(false);
-    await activeEngine.ensureInitialized(alpha);
     expect((activeEngine as unknown as { queryPool: QueryPool | null }).queryPool).toBeNull();
   }, 30000);
 });

@@ -1,43 +1,48 @@
 /**
- * Shared MCP daemon — issue #411.
+ * The machine server: one CodeGraph MCP server per state directory.
  *
- * One detached `codegraph serve --mcp` daemon process per project root,
- * accepting N concurrent MCP clients over a Unix-domain socket (or named pipe
- * on Windows). Each incoming connection gets its own {@link MCPSession}; all
- * sessions share a single {@link MCPEngine}, which means a single file watcher
- * (one inotify set), a single SQLite connection (one WAL writer), and a single
- * tree-sitter warm-up — paid once, amortized across every agent talking to the
- * project.
+ * One detached `codegraph serve --mcp` process per computer (per user state
+ * directory, see `getStateDir()`), accepting N concurrent MCP clients over a
+ * Unix-domain socket (or named pipe on Windows). Each incoming connection gets
+ * its own {@link MCPSession}; all sessions share a single {@link MCPEngine}, so
+ * every repository any agent asks about is served by one process: one query
+ * worker pool and one SQLite connection per open project. The server is not rooted anywhere: it holds no default project, and
+ * every tool call names its own `projectPath` (the session's repo anchor decides
+ * which repositories that session may ask about).
  *
  * Lifecycle (see also `./index.ts` and `./proxy.ts`):
- *   - The daemon is spawned **detached** (its own session/process group, stdio
- *     decoupled) by the first launcher that finds no daemon running. It is NOT
- *     a child of any MCP host, so closing one terminal / Ctrl-C'ing one session
- *     can't take it down and sever the others. That's why this process has no
- *     PPID watchdog: it deliberately outlives every individual client.
- *   - Every MCP host talks to the daemon through a thin `proxy` process (the
+ *   - The server is spawned **detached** (its own session/process group, stdio
+ *     decoupled, cwd = the state directory) by the first launcher that finds no
+ *     server running. It is NOT a child of any MCP host, so closing one terminal
+ *     / Ctrl-C'ing one session can't take it down and sever the others. That's
+ *     why this process has no PPID watchdog: it deliberately outlives every
+ *     individual client.
+ *   - Every MCP host talks to the server through a thin `proxy` process (the
  *     thing the host actually spawned). The proxy keeps the #277 PPID watchdog,
  *     so a SIGKILL'd host still reaps its proxy promptly; the proxy's socket
- *     close then decrements the daemon's refcount.
- *   - When the last client disconnects the daemon lingers for
- *     `CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS` (default 300s) so back-to-back agent
- *     runs in the same project don't repay startup, then exits cleanly. This is
- *     what keeps a single-agent session from leaking a daemon forever (#277).
+ *     close then drops that client's session.
+ *   - The server never exits because it is idle: it is a standing service, and
+ *     what is left when the last client leaves (open projects) is bounded by
+ *     the project idle close in `tools.ts`. It exits on SIGTERM/SIGINT
+ *     (`codegraph daemon --stop`) or when the install it runs from is upgraded or
+ *     removed ({@link installChangedReason}).
  *
  * What this file owns:
- *   - Listening on the daemon socket and spawning per-connection sessions.
+ *   - Listening on the server socket and spawning per-connection sessions.
  *   - The handshake "hello" line that lets a proxy verify it found a
- *     same-version daemon before piping any JSON-RPC through it.
- *   - The lockfile (`.codegraph/daemon.pid`) competing daemons arbitrate
- *     against — atomic `O_EXCL` create with the full record written in the same
- *     breath (no empty-file window) + cleanup on exit.
- *   - Reference counting + idle timeout.
- *   - Graceful shutdown on SIGTERM/SIGINT and idle exit.
+ *     same-version server before piping any JSON-RPC through it, and the
+ *     optional client hello carrying the client's pids and launch directory.
+ *   - The lockfile (`<state>/server.pid`) competing servers arbitrate
+ *     against — an atomic hard-link create of a complete record; an O_EXCL create
+ *     where links are unsupported. Cleanup on exit.
+ *   - The dead-client liveness sweep and the install-changed exit.
+ *   - Graceful shutdown on SIGTERM/SIGINT.
  *
  * What this file does NOT own:
  *   - The proxy side (`./proxy.ts`).
- *   - The decision of *whether* to run as daemon at all — that's `MCPServer`.
+ *   - The decision of *whether* to run as the server at all — that's `MCPServer`.
  *   - The MCP protocol state machine — that's `./session.ts`.
+ *   - The repo anchor and the call guard — `src/extensions/host/server/repo-anchor.ts`.
  */
 
 import * as fs from 'fs';
@@ -47,39 +52,18 @@ import { MCPEngine } from './engine';
 import { MCPSession } from './session';
 import { SocketTransport } from './transport';
 import {
-  DaemonLockInfo,
-  decodeLockInfo,
-  encodeLockInfo,
-  getDaemonPidPath,
-  getDaemonSocketCandidates,
-  getDaemonSocketPath,
+  ServerLockInfo,
+  decodeServerLock,
+  encodeServerLock,
+  getServerPidPath,
+  getServerSocketCandidates,
+  getServerSocketPath,
 } from './daemon-paths';
 import { CodeGraphPackageJsonPath, CodeGraphPackageVersion } from './version';
-import {
-  releaseWriterLock,
-  swapWriterLock,
-  tryAcquireWriterLock,
-  assertNoRebuild,
-  isForeignLockRecord,
-  lockStamp,
-  writerLockHeldMessage,
-  type WriterLockInfo,
-} from './writer-lock';
-import { registerDaemon, deregisterDaemon } from './daemon-registry';
+import { isProcessAlive } from './server-control';
 import { removeLockIfUnchanged, snapshotLock, writeExclusiveTemp } from './lock-takeover';
-
-/** Default idle linger after the last client disconnects. */
-const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
-
-/**
- * Hard ceiling on how long the daemon stays up with clients connected but no
- * inbound traffic. A backstop (#692): if a client's socket-close is never
- * delivered (a Windows named-pipe hazard) it stays counted forever and the
- * normal idle timer — which only arms at zero clients — never fires. A phantom
- * client sends no traffic, so bounding on inactivity reaps the daemon anyway.
- * Set generously so a real but momentarily-idle session isn't reaped mid-use.
- */
-const DEFAULT_MAX_IDLE_MS = 1_800_000; // 30 min
+import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/host/server/state-dir';
+import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -155,56 +139,77 @@ export function installChangedReason(packageJsonPath: string, runningVersion: st
     : null;
 }
 
-/** How long the daemon waits for the optional client-hello before proceeding without it. */
+/** How long the server waits for the optional client-hello before proceeding without it. */
 const CLIENT_HELLO_TIMEOUT_MS = 3_000;
 
-/** Bytes/parse-window for an oversized hello line — bounded against a malicious peer. */
-const MAX_HELLO_LINE_BYTES = 4096;
+/**
+ * Bytes/parse-window for an oversized hello line — bounded against a malicious
+ * peer. Sized for a client hello that carries a launch directory (a path can be
+ * a few KiB on a deep tree, and JSON escaping can multiply it), and also bounds
+ * the proxy's read of the server hello.
+ */
+const MAX_HELLO_LINE_BYTES = 65536;
 
 /**
- * Wire format for the one-shot hello line the daemon emits on every new
- * connection. Versioned with the package's own semver so a 0.9.x proxy never
- * pipes through a 0.10.x daemon (or vice-versa) — the proxy falls back to
- * direct mode on mismatch rather than risk subtle wire incompatibilities.
+ * Wire format for the one-shot hello line the server emits on every new
+ * connection. Versioned with the package's own semver. A proxy never pipes
+ * through another version: an older server is replaced by the launcher; a newer
+ * one leaves that session in-process.
  */
 export interface DaemonHello {
   codegraph: string; // package version (must match the proxy's own version)
-  pid: number;       // daemon pid (informational; for `ps` debugging)
+  pid: number;       // server pid (informational; for `ps` debugging)
   socketPath: string; // echoed back so the proxy can log it
   protocol: 1;       // bump if the hello shape changes
 }
 
 /**
  * Optional reverse-handshake line a proxy sends right after it verifies the
- * daemon hello, carrying its own pids so the daemon can reap the client if its
- * process dies WITHOUT the socket ever signalling close (the Windows named-pipe
- * hazard behind #692). Entirely optional and fail-safe: a connection that never
- * sends it (a legacy/direct client) just falls back to the socket-close
- * lifecycle. The `codegraph_client` marker is what tells it apart from the
- * client's first JSON-RPC message.
+ * server hello. It carries the proxy's own pids, so the server can reap the
+ * client if its process dies WITHOUT the socket ever signalling close (the
+ * Windows named-pipe hazard behind #692), and the directory the session was
+ * launched in, which fixes the session's repo anchor. Entirely optional and
+ * fail-safe: a legacy client that never sends it falls back to the socket-close
+ * lifecycle. The one-shot release request of `requestProjectRelease` sends a
+ * client hello without a `launchDir`, so it has no anchor; a session without a
+ * `launchDir` answers a call without a projectPath with the missing-argument
+ * text, as every session does, and a call that names a path with guidance to
+ * restart it. The `codegraph_client` marker is what
+ * tells it apart from the client's first JSON-RPC message.
  */
 export interface DaemonClientHello {
   codegraph_client: 1;
   pid: number;             // the proxy process's own pid
   hostPid: number | null;  // the MCP host pid (past any launcher shim), if known
+  /** Absolute directory the session was launched in (`-p` or the cwd); fixes the session's repo anchor. */
+  launchDir?: string;
 }
 
+/** What the server learns about one client from its client hello; all null without one. */
+export interface ClientPeers {
+  pid: number | null;
+  hostPid: number | null;
+  launchDir: string | null;
+}
+
+const NO_PEERS: ClientPeers = { pid: null, hostPid: null, launchDir: null };
+
 export interface DaemonStartResult {
-  /** Always-non-null for a successfully-started daemon. */
+  /** Always-non-null for a successfully-started server. */
   socketPath: string;
   /** Lockfile contents as written. */
-  lock: DaemonLockInfo;
+  lock: ServerLockInfo;
 }
 
 /**
- * Run as the shared daemon for `projectRoot`. Resolves once the socket is
- * listening. The Daemon owns the socket, the engine, and the lockfile until
- * `stop()` is called or it exits on idle/signal.
+ * Run as the machine server of this state directory. Resolves once the socket
+ * is listening. The Daemon owns the socket, the engine, and the lockfile until
+ * `stop()` is called or it exits on signal / install change.
  *
- * Race-safe: callers must first call `tryAcquireDaemonLock(projectRoot)` and
- * only construct a Daemon if they got the lock (`kind: 'acquired'`). The atomic
- * create/link inside the acquire helper elects one candidate. The project
- * writer lock then fences bind/ownership refresh against stale-artifact cleanup.
+ * Race-safe: callers must first call `tryAcquireDaemonLock()` and only
+ * construct a Daemon if they got the lock (`kind: 'acquired'`). The atomic
+ * create/link inside the acquire helper elects one candidate; the lock record
+ * is refreshed against an exact snapshot after the bind.
  */
 export class Daemon {
   private server: net.Server | null = null;
@@ -213,88 +218,49 @@ export class Daemon {
   private acceptedSockets = new Set<net.Socket>();
   private clients = new Set<MCPSession>();
   /** Per-client peer pids from the optional client-hello, for the liveness sweep. */
-  private clientPeers = new Map<MCPSession, { pid: number | null; hostPid: number | null }>();
-  private idleTimer: NodeJS.Timeout | null = null;
-  private idleTimeoutMs: number;
-  private maxIdleMs: number;
-  private lastActivityAt = Date.now();
-  private maxIdleTimer: NodeJS.Timeout | null = null;
+  private clientPeers = new Map<MCPSession, ClientPeers>();
   private clientSweepTimer: NodeJS.Timeout | null = null;
   private installCheckTimer: NodeJS.Timeout | null = null;
   private engine: MCPEngine;
   private stopping = false;
   private socketPath: string;
   private pidPath: string;
-  /** The launcher holding the writer slot for this daemon, when it replaced an older one (#2335). */
-  private handoverFrom: number | null;
 
-  constructor(
-    private projectRoot: string,
-    opts: { idleTimeoutMs?: number; maxIdleMs?: number; handoverFrom?: number | null } = {},
-  ) {
-    this.socketPath = getDaemonSocketPath(projectRoot);
-    this.pidPath = getDaemonPidPath(projectRoot);
-    this.idleTimeoutMs = opts.idleTimeoutMs ?? resolveIdleTimeoutMs();
-    this.maxIdleMs = opts.maxIdleMs ?? resolveMaxIdleMs();
-    this.handoverFrom = opts.handoverFrom ?? null;
-    // Daemon mode serves many concurrent clients on one event loop, so off-load
+  constructor() {
+    this.socketPath = getServerSocketPath();
+    this.pidPath = getServerPidPath();
+    // The server serves many concurrent clients on one event loop, so off-load
     // read-tool dispatch to a worker pool — otherwise concurrent explores
-    // serialize and starve the MCP transport (clients time out). Direct mode
-    // (one stdio client) leaves the pool off; `CODEGRAPH_QUERY_POOL_SIZE=0`
-    // disables it here too.
+    // serialize and starve the MCP transport (clients time out). Read tools run
+    // on a worker pool; `CODEGRAPH_QUERY_POOL_SIZE=0` disables it. The engine is
+    // rootless: no project is opened until a tool call names one.
     this.engine = new MCPEngine({ queryPool: true });
-    this.engine.setProjectPathHint(projectRoot);
   }
 
   /**
-   * Bind the socket, refresh the ownership record, kick off engine init, and
-   * register signal handlers. The promise resolves once the server is listening
-   * — the daemon then sticks around until idle/shutdown.
+   * Bind the socket, refresh the ownership record, and register signal
+   * handlers. The promise resolves once the server is listening — the server
+   * then sticks around until a signal or an install change.
    */
   async start(): Promise<DaemonStartResult> {
-    // #1740: claim the project writer lock before opening/watching so a
-    // concurrent direct-mode serve --mcp cannot start a second watcher.
-    assertNoRebuild(this.projectRoot);
-    let writer = tryAcquireWriterLock(this.projectRoot, 'daemon');
-    // The launcher that stopped an older daemon has held the slot for us since
-    // (#2335); take it over without letting it fall free.
-    if (writer.kind === 'taken' && this.handoverFrom !== null &&
-        writer.existing?.pid === this.handoverFrom && writer.existing.mode === 'handover') {
-      const info: WriterLockInfo = {
-        pid: process.pid, mode: 'daemon', startedAt: Date.now(), ready: false,
-        ...lockStamp(this.projectRoot),
-      };
-      if (swapWriterLock(this.projectRoot, this.handoverFrom, info)) {
-        writer = { kind: 'acquired', pidPath: writer.pidPath, info };
-        process.stderr.write(`[CodeGraph daemon] Took over the writer lock from launcher pid ${this.handoverFrom}, which stopped an older daemon.\n`);
-      }
-    }
-    if (writer.kind === 'taken') {
-      const msg = writerLockHeldMessage(writer.existing, writer.pidPath);
-      process.stderr.write(`[CodeGraph daemon] ${msg}\n`);
-      this.cleanupLockfile();
-      throw new Error(msg);
-    }
-
     let initialLockContents: string;
     try {
       initialLockContents = fs.readFileSync(this.pidPath, 'utf8');
-      if (decodeLockInfo(initialLockContents)?.pid !== process.pid) {
-        throw new Error('daemon lock belongs to another process');
+      if (decodeServerLock(initialLockContents)?.pid !== process.pid) {
+        throw new Error('server lock belongs to another process');
       }
     } catch {
-      releaseWriterLock(this.projectRoot);
-      throw new Error('Lost daemon lock ownership before startup.');
+      throw new Error('Lost server lock ownership before startup.');
     }
 
     // Walk the ordered socket candidates and bind the first that works. The
-    // in-project path comes first; the deterministic tmpdir path is the fallback
+    // state-dir path comes first; the deterministic tmpdir path is the fallback
     // for a filesystem that can't host an AF_UNIX node at all (ExFAT/FAT external
     // volumes, some network mounts, WSL2 DrvFs → ENOTSUP/EACCES; #997, #974). The
-    // `listen` closure clears a stale socket (left by a SIGKILL'd previous daemon)
-    // before each attempt — safe because we hold the lockfile, so no live daemon
+    // `listen` closure clears a stale socket (left by a SIGKILL'd previous server)
+    // before each attempt — safe because we hold the lockfile, so no live server
     // owns it; without it `listen` would wedge on EADDRINUSE.
-    const candidates = getDaemonSocketCandidates(this.projectRoot);
+    const candidates = getServerSocketCandidates();
     const listen = (socketPath: string): Promise<net.Server> =>
       new Promise<net.Server>((resolve, reject) => {
         if (process.platform !== 'win32') {
@@ -304,7 +270,7 @@ export class Daemon {
         server.once('error', reject);
         server.listen(socketPath, () => {
           // POSIX: tighten permissions to user-only — the socket lives under
-          // `.codegraph/` (git-ignored, maybe a shared FS) or tmpdir.
+          // the per-user state dir or tmpdir.
           if (process.platform !== 'win32') {
             try { fs.chmodSync(socketPath, 0o600); } catch { /* best-effort */ }
           }
@@ -325,8 +291,8 @@ export class Daemon {
       // racing EADDRINUSE). We already hold the lockfile `tryAcquireDaemonLock`
       // wrote; release it and any partial sockets so the NEXT launcher doesn't
       // spin respawning us on a stale lock pointing at our now-dying pid. Then
-      // re-throw so the caller (the bin's try/catch) exits this detached daemon
-      // cleanly and every launcher falls back to direct mode (#974).
+      // re-throw so the caller (the bin's try/catch) exits this detached server
+      // with status 1 and every launcher serves its session in-process (#974).
       this.cleanupLockfile();
       if (process.platform !== 'win32') {
         for (const candidate of candidates) {
@@ -338,23 +304,21 @@ export class Daemon {
 
     this.server = bound.server;
     // Adopt the path we ACTUALLY bound — it may be a tmpdir fallback past an
-    // unusable in-project location. Everything downstream (lockfile, registry,
-    // chmod, cleanup, status) keys off this real path, not the preferred guess.
+    // unusable state-dir location. Everything downstream (lockfile, chmod,
+    // cleanup, status) keys off this real path, not the preferred guess.
     this.socketPath = bound.socketPath;
 
-    const lock: DaemonLockInfo = {
+    const lock: ServerLockInfo = {
       pid: process.pid,
       version: CodeGraphPackageVersion,
       socketPath: this.socketPath,
       startedAt: Date.now(),
-      // The stamp `tryAcquireDaemonLock` wrote: this record replaces that one,
-      // and a record without it could not be told apart from a copied one.
-      ...lockStamp(this.projectRoot),
+      stateDir: getStateDir(),
+      stateId: requireStateDirIdentity(),
     };
 
-    // Refresh the lock on every successful bind, not only relocation. The
-    // writer lock prevents stale-artifact cleanup from racing this ownership
-    // check, and the exact snapshot prevents overwriting a replacement record.
+    // Refresh the lock on every successful bind, not only relocation: the exact
+    // snapshot compare prevents overwriting a replacement record.
     try {
       refreshDaemonLock(this.pidPath, initialLockContents, lock);
     } catch (err) {
@@ -363,33 +327,10 @@ export class Daemon {
       throw err;
     }
 
-    // Engine init is deliberately backgrounded — see #172. It starts only
-    // after bind and ownership refresh, so a delayed daemon that lost election
-    // can never open a second watcher or writer.
-    void this.engine.ensureInitialized(this.projectRoot);
-
-    // Drop a discovery record so `codegraph list` / `stop --all` can find us.
-    // Best-effort; a missing record only means list's liveness prune covers it.
-    // The entry names the root this daemon was started with. The lock stamp
-    // (a canonical `root`, `dirId`, `dbId`) belongs to the pidfile only, so the
-    // entry copies the pidfile's other fields one by one rather than spreading
-    // `lock`, whose `root` would replace this one.
-    registerDaemon({
-      root: this.projectRoot,
-      pid: lock.pid,
-      version: lock.version,
-      socketPath: lock.socketPath,
-      startedAt: lock.startedAt,
-    });
-
     process.stderr.write(
-      `[CodeGraph daemon] Listening on ${this.socketPath} (pid ${process.pid}, v${CodeGraphPackageVersion}). Idle timeout ${this.idleTimeoutMs}ms.\n`
+      `[CodeGraph daemon] Listening on ${this.socketPath} (pid ${process.pid}, v${CodeGraphPackageVersion}).\n`
     );
 
-    // No clients yet: arm the idle timer immediately so a daemon that nobody
-    // ever connects to (e.g. spawned then abandoned because the launcher died)
-    // doesn't pin resources forever.
-    this.armIdleTimer();
     this.startLivenessTimers();
 
     process.on('SIGINT', () => this.stop('SIGINT'));
@@ -403,7 +344,7 @@ export class Daemon {
     return this.clients.size;
   }
 
-  /** The socket path the daemon is (or will be) listening on. */
+  /** The socket path the server is (or will be) listening on. */
   getSocketPath(): string {
     return this.socketPath;
   }
@@ -412,14 +353,6 @@ export class Daemon {
   async stop(reason: string = 'stop'): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
-    }
-    if (this.maxIdleTimer) {
-      clearInterval(this.maxIdleTimer);
-      this.maxIdleTimer = null;
-    }
     if (this.clientSweepTimer) {
       clearInterval(this.clientSweepTimer);
       this.clientSweepTimer = null;
@@ -441,12 +374,11 @@ export class Daemon {
     }
     await this.engine.stop();
     this.cleanupLockfile();
-    deregisterDaemon(this.projectRoot);
     if (process.platform !== 'win32') {
       try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
     }
     // POSIX exits here; Windows drains first (engine.stop() above began closing
-    // the file watcher, and exiting mid-teardown aborts the process). See
+    // the file watchers, and exiting mid-teardown aborts the process). See
     // finalizeDaemonExit / DAEMON_SHUTDOWN_BACKSTOP_MS.
     finalizeDaemonExit(process.platform, (code) => process.exit(code));
   }
@@ -465,90 +397,57 @@ export class Daemon {
     };
     socket.write(JSON.stringify(hello) + '\n');
 
-    // Read the optional client-hello (proxy → daemon) to learn the client's
-    // peer pids, then hand the socket to the session. Fail-safe: any problem —
-    // timeout, a non-hello first line, an early close — yields null pids and we
-    // fall back to the socket-close lifecycle exactly as before (#692).
-    void readClientHello(socket).then((peers) => {
+    // Read the optional client-hello (proxy → server) to learn the client's
+    // peer pids and launch directory, then hand the socket to the session.
+    // Fail-safe: any problem — timeout, a non-hello first line, an early close —
+    // yields null peers and we fall back to the socket-close lifecycle (#692);
+    // the session then has no anchor.
+    void readClientHello(socket).then(async (peers) => {
       if (this.stopping || socket.destroyed) { socket.destroy(); return; }
+      // The socket is paused by readClientHello until the transport starts, so
+      // the anchor's git lookups cannot cost the client's first message.
+      let anchor: RepoAnchor | null = null;
+      if (peers.launchDir !== null) {
+        try {
+          anchor = await resolveRepoAnchor(peers.launchDir);
+        } catch (err) {
+          process.stderr.write(
+            `[CodeGraph daemon] Could not resolve the repo anchor of ${peers.launchDir}: ${err instanceof Error ? err.message : String(err)}\n`
+          );
+        }
+        if (this.stopping || socket.destroyed) { socket.destroy(); return; }
+      }
       const transport = new SocketTransport(socket);
-      const session = new MCPSession(transport, this.engine, {
-        explicitProjectPath: this.projectRoot,
-      });
+      const session = new MCPSession(transport, this.engine, { anchor });
       transport.onClose(() => this.dropClient(session));
       this.clients.add(session);
       this.clientPeers.set(session, peers);
-      this.disarmIdleTimer();
       session.start();
-      // Observe inbound bytes purely to feed the inactivity backstop — a second
-      // 'data' listener that reads nothing, added AFTER the transport's so the
-      // unshifted client-hello tail reaches the transport intact.
-      socket.on('data', () => { this.lastActivityAt = Date.now(); });
     });
   }
 
   private dropClient(session: MCPSession): void {
     if (!this.clients.delete(session)) return;
     this.clientPeers.delete(session);
-    if (this.clients.size === 0) this.armIdleTimer();
-  }
-
-  private armIdleTimer(): void {
-    if (this.idleTimer || this.stopping) return;
-    if (this.idleTimeoutMs <= 0) return; // 0 = never idle-exit
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = null;
-      // Last-second sanity check: if a connection landed between the timer
-      // firing and now, don't exit. (setImmediate-ordering is the only way
-      // this races; cheap to defend against.)
-      if (this.clients.size > 0) {
-        this.armIdleTimer();
-        return;
-      }
-      void this.stop('idle timeout');
-    }, this.idleTimeoutMs);
-    // Don't keep the event loop alive just for this — the net.Server keeps the
-    // loop alive while listening, so the timer still fires; once we stop() the
-    // loop should drain naturally.
-    this.idleTimer.unref?.();
-  }
-
-  private disarmIdleTimer(): void {
-    if (!this.idleTimer) return;
-    clearTimeout(this.idleTimer);
-    this.idleTimer = null;
   }
 
   /**
-   * Defense-in-depth against a daemon that outlives its clients (#692), for the
-   * cases the refcount + idle timer miss because a socket close never arrives:
-   *   - **Inactivity backstop:** after `maxIdleMs` with no inbound traffic, reap
-   *     the daemon — but ONLY if no connected client can be proven alive (see
-   *     {@link backstopShouldExit}). This is the sole phantom class the sweep
-   *     below can't catch: a client whose client-hello never arrived, so we have
-   *     no pid to check.
-   *   - **Liveness sweep:** drop any client whose peer process has died (per the
-   *     client-hello pids), which re-arms the idle timer once the last real
-   *     client is gone. Catches a dead peer within one sweep instead of waiting
-   *     out the whole backstop.
-   * Both timers are unref'd — the listening server keeps the loop alive, and
-   * neither should hold it open on its own.
+   * Defense-in-depth against a client counted but gone (#692), for the case
+   * where a socket close is never delivered. The **liveness sweep** drops any
+   * client whose peer process has died (per the client-hello pids). The server
+   * has no idle exit, so a phantom client costs only its session object; the
+   * sweep keeps even that bounded. Also arms the install check. Both timers are
+   * unref'd — the listening server keeps the loop alive, and neither should
+   * hold it open on its own.
    */
   private startLivenessTimers(): void {
-    if (this.maxIdleMs > 0) {
-      const tick = Math.min(this.maxIdleMs, 60_000);
-      this.maxIdleTimer = setInterval(() => {
-        if (this.backstopShouldExit(isProcessAlive)) void this.stop('inactivity backstop');
-      }, tick);
-      this.maxIdleTimer.unref?.();
-    }
     const sweepMs = resolveClientSweepMs();
     if (sweepMs > 0) {
       this.clientSweepTimer = setInterval(() => this.reapDeadClients(isProcessAlive), sweepMs);
       this.clientSweepTimer.unref?.();
     }
     // An install whose version could not be read at startup has nothing to
-    // compare against; leave that daemon alone.
+    // compare against; leave that server alone.
     const installMs = resolveInstallCheckMs();
     if (installMs > 0 && CodeGraphPackageVersion !== '0.0.0-unknown') {
       this.installCheckTimer = setInterval(() => { this.checkInstall(); }, installMs);
@@ -557,10 +456,10 @@ export class Daemon {
   }
 
   /**
-   * Exit once the install this daemon runs from has been upgraded or removed
+   * Exit once the install this server runs from has been upgraded or removed
    * (#2335; see {@link installChangedReason}). Its clients' proxies fall back
-   * and reconnect, and the next launch starts a daemon from the current
-   * install. Returns whether the daemon is exiting. The check is injected for
+   * and reconnect, and the next launch starts a server from the current
+   * install. Returns whether the server is exiting. The check is injected for
    * tests; the timer passes the real one.
    */
   checkInstall(
@@ -569,40 +468,9 @@ export class Daemon {
     if (this.stopping) return false;
     const reason = changed();
     if (!reason) return false;
-    process.stderr.write(`[CodeGraph daemon] ${reason}; exiting so the next session starts a daemon from the current install.\n`);
+    process.stderr.write(`[CodeGraph daemon] ${reason}; exiting so the next session starts a server from the current install.\n`);
     void this.stop('install changed');
     return true;
-  }
-
-  /**
-   * Decide whether the inactivity backstop should reap the daemon right now.
-   * Public + `isAlive`-injected for deterministic tests; the timer calls it each
-   * tick with the real liveness probe.
-   *
-   * The backstop exists ONLY to catch a **phantom** client (#692) — one counted
-   * but actually gone, whose socket-close was never delivered. It must never
-   * reap a **live-but-quiet** session (connected, alive peer, just not querying):
-   * doing so silently severed the shared daemon and degraded that session — and
-   * any others sharing it — to an in-process engine. `lastActivityAt` only tracks
-   * inbound query bytes, and MCP has no keepalive, so a genuinely-live session
-   * trips the raw inactivity window after ~30 min of not being queried.
-   *
-   * So: once the inactivity window elapses, drop provably-dead peers (the same
-   * check the periodic sweep runs), then reap the daemon only when NOT ONE
-   * remaining client can be proven alive — i.e. every client left is an
-   * unknown-pid connection the sweep can't verify. A single provably-alive
-   * client keeps the daemon up. Has the sweep's side effect (drops dead peers).
-   */
-  backstopShouldExit(isAlive: (pid: number) => boolean): boolean {
-    if (this.stopping || this.clients.size === 0) return false; // idle timer owns the no-client case
-    if (Date.now() - this.lastActivityAt < this.maxIdleMs) return false; // still within the window
-    this.reapDeadClients(isAlive);
-    if (this.clients.size === 0) return false; // sweep cleared them — idle timer takes over
-    const anyProvablyAlive = [...this.clients].some((session) => {
-      const peers = this.clientPeers.get(session);
-      return peers != null && peers.pid !== null && !peerIsDead(peers, isAlive);
-    });
-    return !anyProvablyAlive;
   }
 
   /**
@@ -627,19 +495,30 @@ export class Daemon {
   }
 
   private cleanupLockfile(): void {
-    releaseWriterLock(this.projectRoot);
     try {
       if (fs.existsSync(this.pidPath)) {
-        // Only remove if it still belongs to us — another daemon may have
+        // Only remove if it still belongs to us — another server may have
         // already taken over while we were shutting down (extremely rare).
         const raw = fs.readFileSync(this.pidPath, 'utf8');
-        const info = decodeLockInfo(raw);
+        const info = decodeServerLock(raw);
         if (info && info.pid === process.pid) {
           fs.unlinkSync(this.pidPath);
         }
       }
     } catch { /* best-effort; we're exiting anyway */ }
   }
+}
+
+/**
+ * Identity of the state dir the server is about to publish in its lock record.
+ * Both callers have already created the directory ({@link ensureStateDir}), so
+ * null means it was removed under us: the server cannot say which state dir it
+ * serves, and refuses to write a record nobody could judge.
+ */
+function requireStateDirIdentity(): string {
+  const stateId = getStateDirIdentity();
+  if (stateId === null) throw new Error(`The state dir ${getStateDir()} is gone; cannot publish the server lock.`);
+  return stateId;
 }
 
 /**
@@ -653,9 +532,9 @@ export class Daemon {
 const LOCK_REFRESH_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 400, 400];
 
 /**
- * Publish the bound socket without abandoning a live daemon on a transient
- * Windows sharing violation. Keep this startup step synchronous: accepting a
- * client before ownership is refreshed could initialize an engine too early.
+ * Publish the bound socket without abandoning a live server on a transient
+ * Windows sharing violation. Keep this startup step synchronous: the record
+ * must name the bound socket before any client can find the server through it.
  * Retries wait per {@link LOCK_REFRESH_RETRY_DELAYS_MS}; permanent failures
  * still abort startup. The new record is written to a private temp file
  * ({@link writeExclusiveTemp}: a fresh random name, created exclusively, so
@@ -664,15 +543,15 @@ const LOCK_REFRESH_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 400, 400];
 export function refreshDaemonLock(
   pidPath: string,
   initialContents: string,
-  lock: DaemonLockInfo,
+  lock: ServerLockInfo,
   platform: NodeJS.Platform = process.platform,
 ): void {
-  const tmpPid = writeExclusiveTemp(pidPath, encodeLockInfo(lock), 0o600);
+  const tmpPid = writeExclusiveTemp(pidPath, encodeServerLock(lock), 0o600);
   try {
     for (let attempt = 0; ; attempt++) {
       // A retry must never replace a record whose owner changed while waiting.
       if (fs.readFileSync(pidPath, 'utf8') !== initialContents) {
-        throw new Error('Lost daemon lock ownership after binding.');
+        throw new Error('Lost server lock ownership after binding.');
       }
       try {
         fs.renameSync(tmpPid, pidPath);
@@ -693,79 +572,71 @@ export function refreshDaemonLock(
 
 /**
  * Result of `tryAcquireDaemonLock`. Either we got the lockfile (caller becomes
- * the daemon), or it already existed (caller should connect to the existing
- * daemon as a proxy, or — if the holder is dead — clear it and retry).
+ * the server), or it already existed (caller should defer to the existing
+ * server, or — if the holder is dead — clear it and retry).
  */
 export type AcquireResult =
-  | { kind: 'acquired'; pidPath: string; info: DaemonLockInfo }
+  | { kind: 'acquired'; pidPath: string; info: ServerLockInfo }
   | {
       kind: 'taken';
-      existing: DaemonLockInfo | null;
+      existing: ServerLockInfo | null;
       /** Exact record read after losing acquisition; null when it was unreadable. */
       lockContents: string | null;
       pidPath: string;
     };
 
 /**
- * Atomically create the daemon pidfile with its full record already in place.
- * Returns either an `acquired` result (the caller is the daemon-elect and may
+ * Atomically create the server pidfile (`<state>/server.pid`) with its full record already in place.
+ * Returns either an `acquired` result (the caller is the server-elect and may
  * construct a {@link Daemon}) or a `taken` result.
  *
- * must-fix 1 (issue #411 review): the lockfile must appear in ONE atomic step,
- * already complete — never empty, even momentarily. The first attempt at this
- * (`O_EXCL` create then a separate `writeSync`) left a microsecond window where
- * the file existed but was empty; under concurrent daemon startup a third
- * candidate could read that empty file, decode it as `null`, and `unlink` the
- * winner's lock → two daemons (two watchers, two writers). The window was
- * normally too small to hit, but the file watcher's extra startup time made
- * concurrent daemons overlap enough to reproduce it reliably.
+ * The lock appears in one atomic step with its full record: written to a private
+ * temp file, then hard-linked into place. `link()` is atomic AND exclusive
+ * (EEXIST if the target exists), so the pidfile becomes visible already
+ * containing a full record. Whoever links first wins; everyone else gets EEXIST
+ * and reads a complete file. A reader can never see an empty pidfile and
+ * unlink the winner's lock.
  *
- * The fix writes the complete record to a private temp file, then hard-links it
- * into place: `link()` is atomic AND exclusive (EEXIST if the target exists), so
- * the pidfile becomes visible in one step already containing a full record.
- * Whoever links first wins; everyone else gets EEXIST and reads a complete file.
- * There is no empty-file window at all.
- *
- * The record carries this project's {@link lockStamp} (its root and the
- * identity of its physical index), so a copy of this `.codegraph/` at another
- * path can tell the source's record from its own: there the record is foreign
- * (see {@link isForeignLockRecord}), decodes to `existing: null`, and is
- * cleared as stale instead of making the copy's daemon defer to the source's
- * live one. Every record that is not foreign is decided by pid liveness.
+ * The record names the state directory it was written for
+ * ({@link ServerLockInfo.stateId}, the directory's identity, not a path). A
+ * state directory copied elsewhere carries its source's live record along,
+ * which the caller recognises by that field and clears (see
+ * `startDaemonProcess`). Every other record is decided by
+ * pid liveness and the socket hello.
  *
  * Filesystems without hard links (#997): ExFAT/FAT external volumes and some
  * network mounts can't `link()` at all — it throws ENOTSUP/EPERM, which would
  * otherwise kill the daemon before it ever reaches the socket bind. There we
  * fall back to an O_EXCL create (`acquireLockViaExclusiveOpen`): still exclusive
  * ("first writer wins"), but the full record is written through the fd in a
- * second step, so the empty-file window the link approach removed is reopened —
- * only on these filesystems, only for the microseconds between create and write
- * (far narrower than the original bug, which the file watcher's startup latency
- * widened). The race's worst case is two daemons briefly; on a single external
+ * second step, so the empty-file window the link approach removes is reopened —
+ * only on these filesystems, only for the microseconds between create and write.
+ * The race's worst case is two daemons briefly; on a single external
  * drive that's strictly better than the daemon never starting at all.
  */
-export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
-  const pidPath = getDaemonPidPath(projectRoot);
-  // Make sure the .codegraph/ directory exists — the daemon may be the first
-  // thing to touch it on a fresh-clone-but-already-initialized checkout.
-  fs.mkdirSync(path.dirname(pidPath), { recursive: true });
+export function tryAcquireDaemonLock(): AcquireResult {
+  const pidPath = getServerPidPath();
+  // The state directory may not exist yet: the first server on a machine (or on
+  // a development build's own state dir) is the first thing to touch it.
+  ensureStateDir();
 
-  const info: DaemonLockInfo = {
+  const info: ServerLockInfo = {
     pid: process.pid,
     version: CodeGraphPackageVersion,
-    socketPath: getDaemonSocketPath(projectRoot),
+    socketPath: getServerSocketPath(),
     startedAt: Date.now(),
-    ...lockStamp(projectRoot),
+    stateDir: getStateDir(),
+    stateId: requireStateDirIdentity(),
   };
 
   // The temp name is drawn fresh per call and the file created exclusively
   // (writeExclusiveTemp), so racing candidates, worker threads sharing a pid
   // included, never collide on it and nothing planted there is written through.
-  const tmp = writeExclusiveTemp(pidPath, encodeLockInfo(info), 0o600);
+  const tmp = writeExclusiveTemp(pidPath, encodeServerLock(info), 0o600);
   let acquired = false;
   try {
     try {
-      fs.linkSync(tmp, pidPath); // atomic + exclusive (race-free; see must-fix 1)
+      fs.linkSync(tmp, pidPath); // atomic + exclusive (race-free; see the doc above)
       acquired = true;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -788,17 +659,15 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
   if (acquired) return { kind: 'acquired', pidPath, info };
 
   // Taken. On the link path the pidfile always holds a complete record, so
-  // `existing` is null only for a corrupt leftover or a foreign record
-  // (another project's, copied in with its `.codegraph/`, or one whose pid
-  // was reused by a process that started later); on the O_EXCL
-  // fallback it can also be a holder mid-write. Either way `lockContents` keeps the exact
+  // `existing` is null only for a corrupt leftover; on the O_EXCL fallback it
+  // can also be a holder mid-write. Either way `lockContents` keeps the exact
   // bytes so the caller can hand them to clearStaleDaemonLock as
   // `expectedLockContents`, which removes the lock only if it still holds them.
-  let existing: DaemonLockInfo | null = null;
+  let existing: ServerLockInfo | null = null;
   let lockContents: string | null = null;
   try {
     lockContents = fs.readFileSync(pidPath, 'utf8');
-    existing = decodeLockInfo(lockContents, projectRoot);
+    existing = decodeServerLock(lockContents);
   } catch { /* unreadable lockfile — treat as malformed */ }
   return { kind: 'taken', existing, lockContents, pidPath };
 }
@@ -812,7 +681,7 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
  * exactly as the link path does; the only difference is the brief empty-file
  * window between create and write. Exported for testing.
  */
-export function acquireLockViaExclusiveOpen(pidPath: string, info: DaemonLockInfo): boolean {
+export function acquireLockViaExclusiveOpen(pidPath: string, info: ServerLockInfo): boolean {
   let fd: number;
   try {
     fd = fs.openSync(pidPath, 'wx', 0o600); // O_CREAT | O_EXCL | O_WRONLY
@@ -821,7 +690,7 @@ export function acquireLockViaExclusiveOpen(pidPath: string, info: DaemonLockInf
     throw err;
   }
   try {
-    fs.writeSync(fd, encodeLockInfo(info));
+    fs.writeSync(fd, encodeServerLock(info));
   } finally {
     fs.closeSync(fd);
   }
@@ -837,22 +706,18 @@ export function acquireLockViaExclusiveOpen(pidPath: string, info: DaemonLockInf
  * lock in place and returns false.
  *
  * Passing `expectedDeadPid` (the pid the caller believed dead) makes the clear
- * bail if the file holds a different pid. By
- * default a live pid is also preserved; `allowLivePid` is reserved for callers that have
- * already disproved daemon identity with the socket hello (#1553). Passing
- * `projectRoot` (the project `pidPath` belongs to) also clears a FOREIGN record
- * (see {@link isForeignLockRecord}) even though its pid is alive: one copied
- * in with a `.codegraph/`, whose pid is the source project's daemon, not this
- * project's; or one whose pid the OS has given to a process that started at
- * another time than the record's `pidStart` (a daemon killed, its pid since
- * reused). A live record that is not foreign is kept. The `expectedLockContents` and
+ * bail if the file holds a different pid. By default a live pid is also
+ * preserved; `allowLivePid` is reserved for callers that have already disproved
+ * the holder's identity: the socket hello did not match the record (a pid the
+ * OS reused, #1553), or the record names another state directory (a state dir
+ * copied along with its source's live record). The `expectedLockContents` and
  * `expectedDeadPid` compares still apply first. Returns true when the stale
  * lock is gone (or was already gone).
  */
 export function clearStaleDaemonLock(
   pidPath: string,
   expectedDeadPid?: number,
-  opts: { allowLivePid?: boolean; expectedLockContents?: string; projectRoot?: string } = {}
+  opts: { allowLivePid?: boolean; expectedLockContents?: string } = {}
 ): boolean {
   try {
     const snapshot = snapshotLock(pidPath);
@@ -862,16 +727,14 @@ export function clearStaleDaemonLock(
     // PID may now advertise a newly-bound socket, so this snapshot was never
     // disproved and must not be deleted.
     if (opts.expectedLockContents !== undefined && raw !== opts.expectedLockContents) return false;
-    const info = decodeLockInfo(raw);
+    const info = decodeServerLock(raw);
     if (info) {
       // A different pid took over since we read it — not ours to clear.
       if (expectedDeadPid !== undefined && info.pid !== expectedDeadPid) return false;
-      // A foreign record (another project's, copied in with its `.codegraph/`)
-      // names that project's daemon; its liveness says nothing about this one.
-      const foreign = opts.projectRoot !== undefined && isForeignLockRecord(info, opts.projectRoot);
       // PID liveness is normally sufficient. The takeover caller may override
-      // it only after a failed identity handshake proves PID reuse.
-      if (!foreign && !opts.allowLivePid && info.pid > 0 && isProcessAlive(info.pid)) return false;
+      // it only after a failed identity handshake (or a foreign state dir)
+      // disproves the holder.
+      if (!opts.allowLivePid && info.pid > 0 && isProcessAlive(info.pid)) return false;
     }
     const removed = removeLockIfUnchanged(pidPath, snapshot);
     return removed === 'removed' || removed === 'gone';
@@ -882,27 +745,11 @@ export function clearStaleDaemonLock(
 }
 
 /**
- * Probe whether `pid` is currently alive (signal-0). Treats EPERM as alive on
- * every platform (the process exists, it's just not ours to signal) so we never
- * mistake a live daemon for a dead one and clear its lock.
- */
-export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === 'EPERM') return true; // exists, just not ours to signal
-    return false;
-  }
-}
-
-/**
  * The one `listen()` error we must NOT relocate past. EADDRINUSE means the path
  * is genuinely occupied — a racing daemon that legitimately owns it, or a
  * leftover node we couldn't clear (the #974 planted-dir case) — so relocating
  * would abandon a path another daemon owns; the caller instead releases its lock
- * and falls back to direct mode. EVERY OTHER bind error just means "this path
+ * and every launcher serves in-process. EVERY OTHER bind error just means "this path
  * didn't work," almost always a filesystem that can't host an AF_UNIX node at all
  * (ExFAT/FAT, network mounts, WSL2 DrvFs), which reports a DIFFERENT errno per OS
  * (ENOTSUP macOS, EPERM Linux; #997). Enumerating the "unsupported" codes is
@@ -920,8 +767,8 @@ const SOCKET_BIND_CONFLICT_CODE = 'EADDRINUSE';
  * `net.Server.listen` (and stale-socket clear); abstracted so the relocation
  * policy is unit-testable without a real unsupported filesystem. Returns the
  * server plus the path actually bound. An EADDRINUSE, or any error on the LAST
- * candidate, propagates — the caller releases the lockfile and falls back to
- * direct mode (#974). Exported for testing.
+ * candidate, propagates — the caller releases the lockfile and every
+ * launcher serves in-process (#974). Exported for testing.
  */
 export async function bindFirstUsableSocket(
   candidates: string[],
@@ -945,24 +792,10 @@ export async function bindFirstUsableSocket(
       throw err;
     }
   }
-  // Only reachable with an empty candidate list — a programmer error.
+  // Only reachable with an empty candidate list: a caller passing none, or the state dir
+  // deleted between taking the lock and binding (the candidates are keyed on its identity,
+  // so `getServerSocketCandidates()` is then empty).
   throw lastErr ?? new Error('no socket candidates to bind');
-}
-
-function resolveIdleTimeoutMs(): number {
-  const raw = process.env.CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS;
-  if (raw === undefined || raw === '') return DEFAULT_IDLE_TIMEOUT_MS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_IDLE_TIMEOUT_MS;
-  return Math.floor(parsed);
-}
-
-function resolveMaxIdleMs(): number {
-  const raw = process.env.CODEGRAPH_DAEMON_MAX_IDLE_MS;
-  if (raw === undefined || raw === '') return DEFAULT_MAX_IDLE_MS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_MAX_IDLE_MS;
-  return Math.floor(parsed); // 0 disables the backstop
 }
 
 function resolveClientSweepMs(): number {
@@ -982,19 +815,23 @@ function resolveInstallCheckMs(): number {
 }
 
 /**
- * Parse one client-hello line. Returns the peer pids if `line` is a well-formed
- * client-hello (carries the `codegraph_client` marker), or null otherwise — in
- * which case the caller treats the bytes as ordinary JSON-RPC.
+ * Parse one client-hello line. Returns the peer pids and launch directory if
+ * `line` is a well-formed client-hello (carries the `codegraph_client` marker),
+ * or null otherwise — in which case the caller treats the bytes as ordinary
+ * JSON-RPC. A `launchDir` that is not an absolute path reads as absent: the
+ * session then has no anchor rather than one anchored on a relative path.
  */
-export function parseClientHelloLine(
-  line: string,
-): { pid: number; hostPid: number | null } | null {
+export function parseClientHelloLine(line: string): ClientPeers | null {
   let parsed: unknown;
   try { parsed = JSON.parse(line); } catch { return null; }
   if (!parsed || typeof parsed !== 'object') return null;
   const o = parsed as Record<string, unknown>;
   if (o.codegraph_client !== 1 || typeof o.pid !== 'number') return null;
-  return { pid: o.pid, hostPid: typeof o.hostPid === 'number' ? o.hostPid : null };
+  return {
+    pid: o.pid,
+    hostPid: typeof o.hostPid === 'number' ? o.hostPid : null,
+    launchDir: typeof o.launchDir === 'string' && path.isAbsolute(o.launchDir) ? o.launchDir : null,
+  };
 }
 
 /**
@@ -1013,25 +850,20 @@ export function peerIsDead(
 }
 
 /**
- * Read the optional client-hello line a proxy sends after the daemon hello.
+ * Read the optional client-hello line a proxy sends after the server hello.
  * Always resolves (never rejects) — fail-safe by design, since every connection
- * funnels through here. Resolves with the peer pids when the first line is a
- * client-hello; otherwise resolves with null pids and unshifts the already-read
+ * funnels through here. Resolves with the peer pids and launch directory when
+ * the first line is a client-hello; otherwise resolves with null peers and unshifts the already-read
  * bytes so the transport parses them as the client's first JSON-RPC message(s).
  * Accumulates as Buffers and splits on the newline byte so a UTF-8 sequence
  * straddling a chunk boundary in the unshifted tail is never corrupted.
  */
-function readClientHello(
-  socket: net.Socket,
-): Promise<{ pid: number | null; hostPid: number | null }> {
+function readClientHello(socket: net.Socket): Promise<ClientPeers> {
   return new Promise((resolve) => {
     let chunks: Buffer[] = [];
     let total = 0;
     let settled = false;
-    const finish = (
-      peers: { pid: number | null; hostPid: number | null },
-      putBack?: Buffer,
-    ) => {
+    const finish = (peers: ClientPeers, putBack?: Buffer) => {
       if (settled) return;
       settled = true;
       // PAUSE before detaching: removing the last 'data' listener does NOT
@@ -1066,7 +898,7 @@ function readClientHello(
       if (nl === -1) {
         // No newline yet. If it's already too long to be a hello, it isn't one —
         // hand the bytes back as data; otherwise keep accumulating.
-        if (total > MAX_HELLO_LINE_BYTES) finish({ pid: null, hostPid: null }, all);
+        if (total > MAX_HELLO_LINE_BYTES) finish(NO_PEERS, all);
         else chunks = [all];
         return;
       }
@@ -1077,15 +909,15 @@ function readClientHello(
       } else {
         // First line is not a client-hello (legacy/direct client) — hand the
         // whole buffer back so the transport sees the message verbatim.
-        finish({ pid: null, hostPid: null }, all);
+        finish(NO_PEERS, all);
       }
     };
-    const onEnd = () => finish({ pid: null, hostPid: null });
+    const onEnd = () => finish(NO_PEERS);
     // On timeout, hand back whatever partial bytes accumulated — discarding
     // them would tear the first message the transport parses.
     const timer = setTimeout(() => {
       const partial = chunks.length === 0 ? undefined : (chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total));
-      finish({ pid: null, hostPid: null }, partial);
+      finish(NO_PEERS, partial);
     }, CLIENT_HELLO_TIMEOUT_MS);
     timer.unref?.();
     socket.on('data', onData);

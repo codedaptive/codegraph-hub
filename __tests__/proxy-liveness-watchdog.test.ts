@@ -18,7 +18,9 @@ function alive(pid: number): boolean {
 }
 
 // Exercise the real local-handshake entry point and its real watchdog child,
-// with only the daemon/engine dependencies replaced to inject bounded faults.
+// with only the server/engine dependencies replaced to inject bounded faults.
+// The fake tool is unknown to the proxy, so its call reaches the engine without
+// the repo-anchor guard (an unknown tool is the handler's to report).
 async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fallback'): Promise<void> {
   const child = spawn(process.execPath, ['-e', `
     const { runLocalHandshakeProxy } = require(${JSON.stringify(MODULE)});
@@ -29,7 +31,7 @@ async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fall
       while (true) {}
     }
     runLocalHandshakeProxy({
-      root: process.cwd(),
+      launchDir: process.cwd(),
       getDaemonSocket: async () => {
         if (mode === 'connecting-wedge') {
           await delay(300);
@@ -38,7 +40,6 @@ async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fall
         return null;
       },
       makeEngine: () => ({
-        ensureInitialized: async () => {},
         getToolHandler: () => ({ execute: async () => {
           if (mode === 'fallback-wedge') wedge();
           // Longer than two watchdog deadlines, but yielding healthy work.
@@ -105,7 +106,7 @@ async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fall
 }
 
 describe('local proxy liveness (#943)', () => {
-  it.runIf(process.platform === 'win32')('terminates a wedged proxy during daemon connection and reaps its watchdog', async () => {
+  it.runIf(process.platform === 'win32')('terminates a wedged proxy during server connection and reaps its watchdog', async () => {
     await exercise('connecting-wedge');
   }, 20000);
 

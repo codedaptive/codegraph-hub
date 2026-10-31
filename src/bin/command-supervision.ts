@@ -30,7 +30,7 @@
  */
 import { installMainThreadWatchdog, WatchdogOptions } from '../mcp/liveness-watchdog';
 import { supervisionLostReason, parsePpidPollMs, parseHostPpid } from '../mcp/ppid-watchdog';
-import { isProcessAlive } from '../mcp/daemon-registry';
+import { isProcessAlive } from '../mcp/server-control';
 import { EARLY_PPID } from '../mcp/early-ppid';
 import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
 

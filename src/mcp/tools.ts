@@ -145,7 +145,8 @@ function wslSharedIndexGuidance(err: WslSharedIndexError): string {
 export { PathRefusalError } from '../errors';
 import { PathRefusalError } from '../errors';
 import { indexedHashInput } from '../file-limits';
-import { resolve as resolvePath, relative as relativePath } from 'path';
+import { resolve as resolvePath } from 'path';
+import { MISSING_PROJECT_PATH_TEXT } from '../extensions/host/server/repo-anchor';
 import { extensionTools, findExtensionTool, isExtensionTool, setBuiltins } from '../extensions/host/registry';
 
 /** Maximum output length to prevent context bloat (characters) */
@@ -1654,7 +1655,7 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'Absolute path to the project to query (or any directory inside it) — codegraph uses the nearest .codegraph/ index at or above that path. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call. Omit to use this session\'s default project. Pass it to query a second codebase, or when the server root has no index of its own (e.g. a monorepo where only sub-projects are indexed, so there is no default project).',
+  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the nearest .codegraph/ index at or above that path. There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call.',
 };
 
 /**
@@ -1665,7 +1666,7 @@ const projectPathProperty: PropertySchema = {
  * its own is seeded from an indexed sibling worktree of the same repository
  * (or, when the user opted in with CODEGRAPH_AUTO_INDEX=1 or a registered
  * repository, built in the background), writing only that worktree's
- * `.codegraph/` and its record in the project registry (`~/.codegraph/projects/`;
+ * `.codegraph/` and its record in the project registry (`<state dir>/projects/`, `~/.codegraph` by default;
  * see src/extensions/host/worktree-lifecycle/seed.ts). That is an index the
  * user already chose to have, not a change to the workspace, so readOnlyHint
  * (about the user's workspace) stays true. Advertising this read-only contract lets clients that gate on it
@@ -1944,14 +1945,12 @@ function allToolDefinitions(): ToolDefinition[] {
 /**
  * Return `defs` with `projectPath` marked `required` in each tool's inputSchema.
  *
- * Used for the NO-DEFAULT-PROJECT tool surface (issue #993): when the MCP server
- * has no default project to fall back to — a gateway server started outside any
- * repo, or a monorepo root whose `.codegraph/` indexes live only in sub-projects
- * — every call MUST carry an explicit `projectPath`, so the schema should say so.
- * A `required` field is a HIGH-salience channel (MCP clients surface and often
- * validate it), unlike the instructions text the reporter found too weak to stop
- * the agent omitting the param. When a default project IS open, callers leave
- * projectPath optional and never call this.
+ * Applied to every tool surface the MCP server lists (`getTools`,
+ * `getStaticTools`): the server has no default project to fall back to, so
+ * every call MUST carry an explicit `projectPath` and the schema says so
+ * (issue #993). A `required` field is a HIGH-salience channel (MCP clients
+ * surface and often validate it), unlike the instructions text the reporter
+ * found too weak to stop the agent omitting the param.
  *
  * Pure: clones each tool's schema rather than mutating the shared module-level
  * `tools` array (reused by every session and the static surface). A tool that
@@ -1974,18 +1973,31 @@ function withRequiredProjectPath(defs: ToolDefinition[]): ToolDefinition[] {
 /**
  * Allowlist-filtered tool definitions WITHOUT an engine — the static surface the
  * proxy answers `tools/list` with before any project is open. Mirrors
- * `ToolHandler.getTools()` in the no-CodeGraph case (the dynamic per-repo budget
- * note in a description only adds once `cg` is loaded; the schemas are static).
+ * `ToolHandler.getTools()` of the MCP engine's handler (which has no CodeGraph
+ * of its own): `projectPath` is required on every tool, and the dynamic per-repo
+ * budget note in a description is a CLI-handler-only addition.
  * Extension tools are listed only when CODEGRAPH_MCP_TOOLS names them.
  */
 export function getStaticTools(): ToolDefinition[] {
   const all = allToolDefinitions();
   const raw = process.env.CODEGRAPH_MCP_TOOLS;
   if (!raw || !raw.trim()) {
-    return all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
+    return withRequiredProjectPath(all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, ''))));
   }
   const allow = new Set(raw.split(',').map(s => s.trim().replace(/^codegraph_/, '')).filter(Boolean));
-  return allow.size ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, ''))) : tools;
+  return withRequiredProjectPath(allow.size ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, ''))) : tools);
+}
+
+/**
+ * Whether `name` is a tool this server can run: a built-in or a loaded
+ * extension's tool (src/extensions/host). The one definition of "known":
+ * `ToolHandler.execute` refuses anything else before it opens or waits for
+ * anything, and the shared call dispatch (src/extensions/host/server/tool-call.ts)
+ * refuses it before the repo guard. Not the allowlist question
+ * (CODEGRAPH_MCP_TOOLS), which `execute` answers separately.
+ */
+export function isKnownTool(name: string): boolean {
+  return tools.some((t) => t.name === name) || isExtensionTool(name);
 }
 
 /**
@@ -1993,7 +2005,7 @@ export function getStaticTools(): ToolDefinition[] {
  * — the single tool that reliably earns its place: one capped call returns the
  * verbatim source of the relevant symbols grouped by file. Every other tool is a
  * narrower slice of what explore already does, and presence itself steers
- * mis-picks, so they are no longer LISTED to agents.
+ * mis-picks, so they are not listed to agents.
  *
  * The other defined tools (`node`, `search`, `callers`, plus callees/impact/files/
  * status) remain fully functional — handlers stay, the library API and CLI are
@@ -2011,26 +2023,18 @@ function canonicalPath(p: string): string {
 }
 
 /**
- * How many explicit-`projectPath` projects a handler keeps open at once
- * (#1835). Each cached project may hold a file watcher, a writer lock and a
- * SQLite connection, so the cache is bounded LRU: opening one more than this
- * closes the least recently used. Small on purpose — a session that queries
- * many repositories still leaks nothing; it only pays a reopen + catch-up.
- * Pinned projects (`codegraph project pin`, the project registry) are never
- * evicted and do not count toward this bound: it limits the unpinned ones.
- */
-export const MAX_CACHED_PROJECTS = 8;
-
-/**
  * How long an explicit-`projectPath` project may go unused before the handler
  * releases it (#2087). Releasing frees its SQLite handle, its watcher and the
  * writer lock the engine may hold on that project — which otherwise stays held
- * for the whole life of this daemon, locking the project's own daemon and
- * `codegraph index` out. The next call reopens it and catches up.
+ * for the whole life of the machine server, locking `codegraph index` out. The
+ * next call reopens it and catches up. This idle close is the ONLY bound on
+ * how many projects stay open: there is no count cap (a repository with many
+ * worktrees keeps all of them open while they are in use).
  * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases. A
- * pinned project is never idle-released; it closes on shutdown, or when
- * housekeeping releases it (`releaseProjectRoot`: its worktree was torn down,
- * or its directory or database is gone).
+ * pinned project (`codegraph project pin`, the project registry) is never
+ * idle-released; it closes on shutdown, or when housekeeping releases it
+ * (`releaseProjectRoot`: its worktree was torn down, or its directory or
+ * database is gone).
  */
 const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
 
@@ -2051,8 +2055,7 @@ const MAX_UNSEEDED_WORKTREES = 256;
 
 /**
  * Whether a cached root is pinned in the project registry. An unreadable
- * registry pins nothing: every cached root is then subject to the LRU bound
- * and the idle timeout.
+ * registry pins nothing: every cached root is then subject to the idle timeout.
  */
 function projectRootPinned(root: string): boolean {
   try {
@@ -2070,12 +2073,32 @@ function resolveProjectIdleTimeoutMs(): number {
 }
 
 /**
+ * A session's judgement of the index root a call is about to be answered from
+ * (canonical path of the `.codegraph/`'s project root). Resolves to null to
+ * admit it, or to the success-shaped guidance to answer the call with instead.
+ * Run before the index is opened, so an index the session may not read is
+ * never opened, watched or queried on its behalf.
+ */
+export type IndexRootAdmission = (indexRoot: string) => Promise<string | null>;
+
+/** Per-call options of {@link ToolHandler.execute}. */
+export interface ExecuteOptions {
+  /**
+   * The session's admission check of the selected index root. Required of a
+   * handler that owns a project lifecycle (every MCP engine's): such a handler
+   * refuses a call that arrives without one, so a caller that forgets it gets
+   * guidance, never an unchecked answer. The CLI's handler has no lifecycle and
+   * passes none.
+   */
+  admitIndexRoot?: IndexRootAdmission;
+}
+
+/**
  * Engine-side lifecycle for a project the ToolHandler opened for an explicit
- * `projectPath` (#1835). `activate` gives it the same treatment the default
- * project gets — a file watcher while it stays open and a catch-up sync — and
- * returns the catch-up promise, which the handler awaits (time-boxed) before
+ * `projectPath` (#1835). `activate` gives it a file watcher while it stays
+ * open and a catch-up sync, and returns the catch-up promise, which the handler awaits (time-boxed) before
  * calls against that project. `release` runs after active calls drain, so the
- * engine can release shared ownership safely on LRU eviction or shutdown.
+ * engine can release shared ownership safely on idle release or shutdown.
  */
 export interface ProjectLifecycle {
   open(root: string, open: () => CodeGraph): CodeGraph;
@@ -2091,8 +2114,8 @@ export interface ProjectLifecycle {
  */
 export class ToolHandler {
   // Cache of opened CodeGraph instances for cross-project queries, keyed by the
-  // CANONICAL (realpath) index root. Map insertion order doubles as LRU order:
-  // a hit re-inserts, and `MAX_CACHED_PROJECTS` bounds the size (#1835).
+  // CANONICAL (realpath) index root. Map insertion order doubles as last-use order:
+  // a hit re-inserts. No cap bounds the size; the idle close does (#2087).
   private projectCache: Map<string, CodeGraph> = new Map();
   // When each cached root was last handed to a call, and the one timer that
   // releases the oldest once it has been idle long enough (#2087).
@@ -2101,6 +2124,12 @@ export class ToolHandler {
   // Engine hook that watches + catches up an explicit project (null for the
   // CLI and worker-thread handlers, which never own a watcher).
   private projectLifecycle: ProjectLifecycle | null = null;
+  // True for a read-only engine's handler (setReadOnly). It is consulted at each
+  // place this handler could write an index, not by the callers: every project it
+  // opens is opened read-only (openProjectRoot), `fresh: true` never syncs
+  // (execute), and a worktree's index is never seeded, built or registered
+  // (seedWorktreeIndex).
+  private readOnly = false;
   // Every concurrent call shares its project's pending catch-up promise.
   private projectGates: Map<CodeGraph, Promise<void>> = new Map();
   // projectPath → the git worktree it is in, for paths the seeding hook
@@ -2112,25 +2141,6 @@ export class ToolHandler {
   private closing = false;
   private pendingCloses = 0;
   private closeWaiters: Array<() => void> = [];
-  // The directory the server last searched for a default project. Surfaced in
-  // the "not initialized" error so users can see why detection missed.
-  private defaultProjectHint: string | null = null;
-  // Indexed sub-projects the engine's bounded down-scan saw below the search
-  // base when no default project resolved (#1607). Listed in the "not
-  // initialized" error so the fact is reachable through the protocol, not just
-  // the host's stderr capture. Engine-maintained (initial resolve + throttled
-  // retry) — tool calls themselves never scan.
-  private knownSubprojects: string[] = [];
-  private knownSubprojectsBase: string | null = null;
-  // Why the default project failed to open, when that is worth telling the
-  // agent instead of "no project loaded": the Windows/WSL shared-index error
-  // (#995), or an index that exists but could not be opened (SQLite's own
-  // failure, or no node:sqlite). Engine-maintained; cleared by a successful open.
-  private defaultOpenFailure: WslSharedIndexError | DatabaseOpenError | NodeSqliteUnavailableError | null = null;
-  // Why the default project was refused: the folder it resolved to, or was
-  // searched for from, is a sensitive one (the guard a `projectPath` gets).
-  // Engine-maintained; cleared by a successful open.
-  private defaultRootRefusal: string | null = null;
   // Per-start-path cache of the git worktree/index mismatch (issue #155). The
   // mismatch is a fixed property of (where the request came from → which
   // .codegraph/ it resolves to), so the up-to-two `git rev-parse` spawns run
@@ -2141,14 +2151,15 @@ export class ToolHandler {
   // path sits in below that root, if any (#2110) — the git half of
   // `uncoveredNestedRepo`, memoized like the mismatch above.
   private nestedRepoCache: Map<string, NestedRepository | null> = new Map();
-  // Gate that the MCP engine pokes after `cg.open()` so the first tool call
-  // blocks on the post-open filesystem reconcile (catch-up sync). Without
-  // this, a tool call that races past `catchUpSync()` serves rows for files
-  // that were deleted (or edited) while no MCP server was running — and the
-  // per-file staleness banner can't help, because `getPendingFiles()` is
-  // populated by the watcher, not by catch-up. The wait is time-boxed
-  // (see {@link resolveCatchUpGateTimeoutMs}) so a minutes-long reconcile on a
-  // huge repo can't hang a call (#905); cleared when the reconcile settles.
+  // Gate the engine sets (setCatchUpGate) after `freshen` reopened a replaced
+  // database, so the next tool call blocks on the catch-up sync of the new
+  // file. Without it, a call that races past the reconcile serves rows for
+  // files that were deleted (or edited) while the old handle was dead — and
+  // the per-file staleness banner can't help, because `getPendingFiles()` is
+  // populated by the watcher, not by catch-up. The wait is time-boxed (see
+  // {@link resolveCatchUpGateTimeoutMs}) so a minutes-long reconcile on a huge
+  // repo can't hang a call (#905); cleared when the reconcile settles. The
+  // catch-up a project runs when first opened has its own gate (`projectGates`).
   private catchUpGate: Promise<void> | null = null;
   // Engine hook fired when `freshen` reopened a replaced database (#1902), so
   // the engine can reconcile the new file with a catch-up sync.
@@ -2161,8 +2172,8 @@ export class ToolHandler {
 
   /**
    * Engine-only: attach (or detach with null) the worker-thread query pool. The
-   * engine sets this after resolving its default project; the workers each
-   * hold their own WAL read connection and run {@link executeReadTool}. A
+   * workers each hold their own WAL read connections (opened per project, on
+   * first use) and run {@link executeReadTool}. A
    * worker's own ToolHandler never has a pool, so there is no nested off-loading.
    */
   setQueryPool(pool: QueryPool | null): void {
@@ -2178,49 +2189,13 @@ export class ToolHandler {
   }
 
   /**
-   * Engine-only: set the default CodeGraph instance (after lazy
-   * initialization, or when the engine re-adopts a retired default).
-   * {@link detachDefaultProject} drops it again.
+   * Engine-only: mark this handler read-only (the read-only engine does). It
+   * then never writes an index: no seed, cold build or registry entry for a
+   * worktree, no sync for `fresh: true`, and every project opens read-only,
+   * through the same open closure a writable engine uses.
    */
-  setDefaultCodeGraph(cg: CodeGraph): void {
-    this.cg = cg;
-    this.defaultOpenFailure = null;
-    this.defaultRootRefusal = null;
-  }
-
-  /**
-   * Engine-only: drop the default project, which the engine is retiring
-   * because its directory or database is gone. Detaches at once, together
-   * with its catch-up gate, so no call that starts from now on reaches the
-   * default graph: a call without `projectPath` gets the no-default-project
-   * guidance. Resolves once no tool call is in flight (the handler counts
-   * calls, not calls per project, as {@link releaseProjectRoot} does), so the
-   * engine may then close the graph a call already holding it was reading.
-   * The handler never closes the default graph itself; the engine owns it.
-   */
-  async detachDefaultProject(): Promise<void> {
-    this.cg = null;
-    this.setCatchUpGate(null);
-    if (this.activeCalls > 0) await new Promise<void>((resolve) => this.idleCallWaiters.push(resolve));
-  }
-
-  /**
-   * Engine-only: record why the default project was refused as a sensitive
-   * folder, so a call without a projectPath says why there is none. `null`
-   * clears it. A refused root was never opened, so no open failure stands.
-   */
-  setDefaultRootRefusal(refusal: string | null): void {
-    this.defaultRootRefusal = refusal;
-    if (refusal) this.defaultOpenFailure = null;
-  }
-
-  /**
-   * Engine-only: record why the default project failed to open (#995), so a
-   * call that needs it answers with that fix rather than "no project loaded".
-   * `null` clears it.
-   */
-  setDefaultOpenFailure(err: WslSharedIndexError | DatabaseOpenError | NodeSqliteUnavailableError | null): void {
-    this.defaultOpenFailure = err;
+  setReadOnly(readOnly: boolean): void {
+    this.readOnly = readOnly;
   }
 
   /**
@@ -2242,7 +2217,7 @@ export class ToolHandler {
   /**
    * Engine-only: called after a tool call's {@link freshen} reopened a database
    * that was replaced on disk (#1902). The engine decides whether a catch-up
-   * sync is its to run (only for the instance it watches and writes).
+   * sync is its to run (only for a project it watches and writes).
    */
   setOnDatabaseReopened(fn: ((cg: CodeGraph) => void) | null): void {
     this.onDatabaseReopened = fn;
@@ -2283,42 +2258,6 @@ export class ToolHandler {
     } finally {
       if (timer) clearTimeout(timer);
     }
-  }
-
-  /**
-   * Record the directory the server tried to resolve the default project from.
-   * Used only to make the "no default project" error actionable.
-   */
-  setDefaultProjectHint(searchedPath: string): void {
-    this.defaultProjectHint = searchedPath;
-  }
-
-  /**
-   * Engine-only: record the indexed sub-projects the workspace down-scan saw
-   * when it could not adopt a default project (#1606/#1607). An empty list
-   * clears any previous note.
-   */
-  setKnownSubprojects(roots: string[], base: string): void {
-    this.knownSubprojects = roots;
-    this.knownSubprojectsBase = base;
-  }
-
-  /** One message line naming the indexed sub-projects, or '' when none known. */
-  private formatKnownSubprojects(): string {
-    if (this.knownSubprojects.length === 0) return '';
-    const base = this.knownSubprojectsBase;
-    const rels = this.knownSubprojects.map((r) => (base ? relativePath(base, r) || '.' : r));
-    return (
-      `Indexed sub-projects were found below it: ${rels.join(', ')} — ` +
-      'pass one of them (absolute, or resolved against that directory) as projectPath.\n'
-    );
-  }
-
-  /**
-   * Whether a default CodeGraph instance is available
-   */
-  hasDefaultCodeGraph(): boolean {
-    return this.cg !== null;
   }
 
   /**
@@ -2367,34 +2306,29 @@ export class ToolHandler {
   getTools(): ToolDefinition[] {
     const allow = this.toolAllowlist();
     const all = allToolDefinitions();
-    // No explicit allowlist → the default 4-tool surface (see
+    // No explicit allowlist → the default surface: `codegraph_explore` alone (see
     // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
     // default entirely, so any defined tool can be re-enabled.
-    let visible = allow
-      ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, '')))
-      : all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
-    // No default project loaded → no-root-index case (#993): a gateway server
-    // started outside any repo, or a monorepo root whose indexes live in
-    // sub-projects. With nothing to fall back to, EVERY call needs an explicit
-    // projectPath, so mark it required in the schema — a high-salience nudge the
-    // agent acts on, where SERVER_INSTRUCTIONS_NO_ROOT_INDEX's prose alone
-    // wasn't enough (the reporter had to add an AGENTS.md note). `this.cg` is
-    // settled by `retryInitIfNeeded()` before `handleToolsList` calls us, so a
-    // null here means "genuinely no default", not a startup race. When a default
-    // IS open we leave projectPath optional (below): a bare call falls back to
-    // it, exactly as in the common single-project launch.
-    if (!this.cg) return withRequiredProjectPath(visible);
+    // The server has no default project: EVERY call needs an explicit
+    // projectPath, so mark it required in the schema — a high-salience channel
+    // (MCP clients surface and often validate it) that the instructions text
+    // alone does not match (#993).
+    let visible = withRequiredProjectPath(
+      allow
+        ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, '')))
+        : all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, ''))),
+    );
+    // The MCP engine's handler has no CodeGraph of its own, so no project size
+    // to tailor the descriptions to; only the CLI's handler has one.
+    if (!this.cg) return visible;
 
     try {
       const stats = this.cg.getStats();
       const budget = getExploreBudget(stats.fileCount);
 
-      // Tiny-repo tool gating: on projects under TINY_REPO_FILE_THRESHOLD
-      // files, only expose the core trio (search, node, explore) — one
-      // below even the 4-tool default: at this scale callers, too, reduces
-      // to one grep. (Historical note: the audit below ran when context and
-      // trace still existed; its "5 core tools" are today's trio.)
-      // Extension tools are exempt: one is visible only because the operator named it.
+      // Tiny-repo tool gating (CLI handler only): under 500 files
+      // (TINY_REPO_FILE_THRESHOLD), expose only explore, search and node;
+      // extension tools are exempt: one is visible only because the operator named it.
       //
       // n=2 audits ruled out cutting below 5 tools:
       // - 3-tool gate (search + context + trace): cost regressed on
@@ -2441,39 +2375,17 @@ export class ToolHandler {
    * Get CodeGraph instance for a project
    *
    * If projectPath is provided, opens that project's CodeGraph (cached).
-   * Otherwise returns the default CodeGraph instance.
+   * Otherwise returns the default CodeGraph instance, which only the CLI's
+   * handler has: the MCP engine's handler has no default project, so a call
+   * without `projectPath` is answered with {@link MISSING_PROJECT_PATH_TEXT}
+   * (the session's call guard answers the same text before a call gets here).
    *
    * Walks up parent directories to find the nearest .codegraph/ folder,
    * similar to how git finds .git/ directories.
    */
   private getCodeGraph(projectPath?: string): CodeGraph {
     if (!projectPath) {
-      if (!this.cg) {
-        if (this.defaultOpenFailure) throw this.defaultOpenFailure;
-        const searched = this.defaultProjectHint ?? process.cwd();
-        // A refused default is the same "pass projectPath" state, success-shaped
-        // like the rest: the agent can still query every other project.
-        const why = this.defaultRootRefusal
-          ? `${this.defaultRootRefusal}. CodeGraph never uses a credential, config or system folder ` +
-            'as a project, so this session has no default project. To query a project outside such ' +
-            'folders, target it explicitly:\n'
-          : `Searched for a .codegraph/ directory starting from: ${searched}\n` +
-            this.formatKnownSubprojects() +
-            'Either the server root has no index of its own (e.g. a monorepo where only ' +
-            "sub-projects are indexed), or the MCP client launched the server outside your " +
-            'project without reporting the workspace root. Either way, target the project ' +
-            'explicitly:\n';
-        throw new NotIndexedError(
-          'No CodeGraph project is loaded for this session.\n' +
-          why +
-          '  • Pass projectPath to the tool call, e.g. projectPath: "/absolute/path/to/your/project" ' +
-          '(any project that has a .codegraph/ — including a sub-project of a monorepo)\n' +
-          '  • Or add --path to the server\'s MCP config args: ["serve", "--mcp", "--path", "/absolute/path/to/your/project"]\n' +
-          'If a project simply has no index, use your built-in tools (Read/Grep/Glob) for THAT ' +
-          "project (the user can run 'codegraph init' there to enable it) — you can still query " +
-          'other indexed projects by projectPath in the same session.'
-        );
-      }
+      if (!this.cg) throw new NotIndexedError(MISSING_PROJECT_PATH_TEXT);
       return this.freshen(this.cg);
     }
 
@@ -2499,12 +2411,9 @@ export class ToolHandler {
     // worktree kept being served the parent checkout's index until restart
     // (#926). The DB connection itself is still cached (by resolved root,
     // below), so re-resolving costs only the stat walk, never a reopen.
-    const resolvedRoot = findNearestCodeGraphRoot(projectPath);
-    // Two spellings of one root (a symlinked checkout, `/tmp` vs
-    // `/private/tmp`) must share one connection and one watcher (#1835).
-    const canonicalRoot = resolvedRoot ? canonicalPath(resolvedRoot) : null;
+    const selected = this.selectIndex(projectPath);
 
-    if (!resolvedRoot || !canonicalRoot) {
+    if (!selected) {
       // A git worktree the seeding hook looked at but could not seed or build
       // gets the seeder's guidance: a later call may still copy an index in.
       const worktree = this.unseededWorktrees.get(projectPath);
@@ -2516,6 +2425,8 @@ export class ToolHandler {
         "Indexing is the user's decision — they can run 'codegraph init' in that project to enable it."
       );
     }
+
+    const { resolvedRoot, canonicalRoot } = selected;
 
     // The root the walk landed on gets the same refusal. A path that doesn't
     // exist skips the check above, so `~/.config/no-such-dir` would otherwise
@@ -2545,17 +2456,33 @@ export class ToolHandler {
   }
 
   /**
-   * The open CodeGraph for an index root the up-walk resolved: the default
-   * instance, a cached one, or a newly opened (and cached) one.
+   * The index a call on `projectPath` is answered from: the nearest `.codegraph/`
+   * at or above it, as the root the walk landed on and its canonical spelling
+   * (two spellings of one root, a symlinked checkout or `/tmp` vs
+   * `/private/tmp`, must share one connection and one watcher, #1835). Null when
+   * no index is found. The ONE resolver: {@link getCodeGraph} opens what it
+   * returns, and a session's admission check ({@link ExecuteOptions}) judges
+   * the same root before anything is opened.
+   */
+  private selectIndex(projectPath: string): { resolvedRoot: string; canonicalRoot: string } | null {
+    const resolvedRoot = findNearestCodeGraphRoot(projectPath);
+    if (!resolvedRoot) return null;
+    return { resolvedRoot, canonicalRoot: canonicalPath(resolvedRoot) };
+  }
+
+  /**
+   * The open CodeGraph for an index root the up-walk resolved: the CLI's
+   * default instance, a cached one, or a newly opened (and cached) one.
    */
   private openProjectRoot(resolvedRoot: string, canonicalRoot: string): CodeGraph {
-    // If the path resolves to the default project, reuse the already-open
+    // If the path resolves to the default project (the CLI handler's own
+    // CodeGraph; the MCP engine's handler has none), reuse the already-open
     // default instance rather than opening a SECOND connection to the same DB.
     // A duplicate connection serializes reads against the watcher's auto-sync
     // writes; when WAL isn't in effect (e.g. a filesystem without shared-memory
     // support) that surfaces as intermittent
     // "database is locked" on concurrent tool calls. See issue #238. The
-    // default instance is owned/closed by the server, so it's never cached.
+    // default instance is owned/closed by its creator, so it's never cached.
     // Another spelling of the same root counts too (#1057).
     if (this.cg && isSameIndexRoot(this.cg.getProjectRoot(), resolvedRoot)) {
       return this.freshen(this.cg);
@@ -2566,7 +2493,7 @@ export class ToolHandler {
     // a changed resolution maps to a different entry instead of a stale hit.
     const cached = this.projectCache.get(canonicalRoot);
     if (cached) {
-      // Refresh LRU position.
+      // Refresh the last-use position.
       this.projectCache.delete(canonicalRoot);
       this.projectCache.set(canonicalRoot, cached);
       this.projectUsedAt.set(canonicalRoot, Date.now());
@@ -2585,8 +2512,12 @@ export class ToolHandler {
     }
 
     // Indexes an interrupted bulk load dropped are rebuilt off this thread,
-    // before the project is served (awaitIndexRecovery, #1887).
-    const open = () => loadCodeGraph().openSync(canonicalRoot, { deferIndexRecovery: true });
+    // before the project is served (awaitIndexRecovery, #1887). The ONE open
+    // path: a read-only handler passes `readOnly`, which leaves migrations,
+    // index repair and WAL maintenance to the writer, and the engine's
+    // lifecycle calls this closure for it like for any other open.
+    const readOnly = this.readOnly;
+    const open = () => loadCodeGraph().openSync(canonicalRoot, { deferIndexRecovery: true, readOnly });
     const cg = this.projectLifecycle?.open(canonicalRoot, open) ?? open();
     this.projectCache.set(canonicalRoot, cg);
     this.projectUsedAt.set(canonicalRoot, Date.now());
@@ -2646,14 +2577,18 @@ export class ToolHandler {
    * it (src/extensions/host/worktree-lifecycle/seed.ts): seeded from an
    * indexed sibling worktree, or, when the user opted in, a background build,
    * answered with the building note (success-shaped, through NotIndexedError)
-   * until it is done. Only on a handler that owns a project lifecycle; CLI and
-   * worker handlers never seed. The module is loaded lazily, keeping its
+   * until it is done. Only on a writable handler that owns a project lifecycle:
+   * CLI and worker handlers never seed, and a read-only engine's handler
+   * returns here before it considers the path (no seed, no cold build, no
+   * registry entry, no lock; the call falls through to the plain not-indexed
+   * guidance, or to the index the worktree already has). The module is loaded lazily, keeping its
    * writer-lock dependency off the startup path, and only once a path passes
    * the git-free pre-check (`worktreeSeedMayApply`): a call against a finished
    * index of the tree's own does not load it before it is needed, and never
    * spawns git; once loaded, such a call costs a few stats.
    */
   private async seedWorktreeIndex(projectPath: string): Promise<void> {
+    if (!this.projectLifecycle || this.readOnly) return;
     if (!worktreeSeedModule) {
       if (!worktreeSeedMayApply(projectPath)) return;
       worktreeSeedModule = await import('../extensions/host/worktree-lifecycle/seed');
@@ -2669,10 +2604,26 @@ export class ToolHandler {
     }
   }
 
-  private async awaitProjectGate(projectPath: string): Promise<void> {
-    if (this.projectLifecycle) await this.seedWorktreeIndex(projectPath);
+  /**
+   * Seed (seedWorktreeIndex declines on a read-only or lifecycle-less handler),
+   * admit, then open the project a call names, and wait for its catch-up.
+   * Resolves to the refusal to answer with when the session's admission check
+   * turns the call's index down.
+   */
+  private async awaitProjectGate(projectPath: string, admit?: IndexRootAdmission): Promise<ToolResult | null> {
+    await this.seedWorktreeIndex(projectPath);
+    // The session's check of the index this call would be answered from: the
+    // one `getCodeGraph` is about to open. An index outside the session's
+    // repository is never opened, watched or queried for it.
+    if (admit) {
+      const selected = this.selectIndex(projectPath);
+      if (selected) {
+        const refusal = await admit(selected.canonicalRoot);
+        if (refusal) return this.textResult(refusal);
+      }
+    }
     const cg = this.getCodeGraph(projectPath);
-    if (!this.projectLifecycle || cg === this.cg) return;
+    if (!this.projectLifecycle || cg === this.cg) return null;
     let gate = this.projectGates.get(cg);
     if (!gate) {
       gate = this.projectLifecycle.activate(cg).catch(() => { /* engine logs */ });
@@ -2683,17 +2634,17 @@ export class ToolHandler {
       });
     }
     await this.awaitCatchUpGate(gate);
+    return null;
   }
 
   /**
    * Never evict a graph while a tool call or its timed-out reconcile uses it.
-   * Evicts over the LRU bound, on close, and once idle past the timeout
-   * (#2087). The cache is in last-use order, so idle entries lead it. A
-   * pinned root is skipped by both the bound and the idle timeout and is not
-   * counted toward the bound; only close releases it here. The trim reads the
-   * registry (one small file per root) only when the cache is over the bound
-   * or an entry is idle; arming the idle timer reads it for the oldest roots,
-   * up to the first unpinned one.
+   * Evicts on close and once idle past the timeout (#2087); no cap bounds how
+   * many projects stay open, only the idle close does. The cache is in
+   * last-use order, so idle entries lead it. A pinned root is skipped by the
+   * idle timeout; only close releases it here. The trim reads the registry
+   * (one small file per root) only for an entry that is idle; arming the idle
+   * timer reads it for the oldest roots, up to the first unpinned one.
    */
   private trimProjects(): void {
     if (this.activeCalls > 0) return;
@@ -2706,15 +2657,9 @@ export class ToolHandler {
       if (p === undefined) pinnedMemo.set(root, (p = projectRootPinned(root)));
       return p;
     };
-    const overBound = (): boolean => {
-      if (this.projectCache.size <= MAX_CACHED_PROJECTS) return false;
-      let unpinned = 0;
-      for (const root of this.projectCache.keys()) if (!pinned(root)) unpinned++;
-      return unpinned > MAX_CACHED_PROJECTS;
-    };
     for (const [root, cg] of this.projectCache) {
       const idle = idleMs > 0 && now - (this.projectUsedAt.get(root) ?? now) >= idleMs;
-      if (!this.closing && !idle && !overBound()) break;
+      if (!this.closing && !idle) break;
       if (this.projectGates.has(cg)) continue;
       if (!this.closing && pinned(root)) continue;
       this.projectCache.delete(root);
@@ -2761,12 +2706,10 @@ export class ToolHandler {
   /**
    * Heal a long-lived connection whose `.codegraph/` was removed and recreated
    * at the same path (a worktree recreated, or `rm -rf .codegraph` + re-init)
-   * before handing it to a tool. Otherwise the daemon keeps serving the
-   * pre-removal snapshot from its now-unlinked file handle until restart — and
-   * because the daemon registry is keyed by path, a same-path recreate routes
-   * new clients straight back to this same stale daemon (#925). The check is one
-   * stat() and a no-op unless the inode actually changed; it never throws into a
-   * tool call.
+   * before handing it to a tool. Otherwise the server keeps serving the
+   * pre-removal snapshot from its now-unlinked file handle until restart
+   * (#925). The check is one stat() and a no-op unless the inode actually
+   * changed; it never throws into a tool call.
    */
   private freshen(cg: CodeGraph): CodeGraph {
     try {
@@ -2785,12 +2728,9 @@ export class ToolHandler {
   }
 
   /**
-   * The canonical roots of the explicit projects this handler holds open
-   * now, in last-use order. A call that names the default project by
-   * `projectPath` is served from the default graph and not cached, so the
-   * default root is among them only when it was cached before it became the
-   * default. The engine's housekeeping pass reads it, adds the default root
-   * itself, and releases the ones whose index is gone.
+   * The canonical roots of the projects this handler holds open now, in
+   * last-use order. The engine's housekeeping pass reads it and releases the
+   * ones whose directory or index is gone.
    */
   cachedProjectRoots(): string[] {
     return [...this.projectCache.keys()];
@@ -2897,15 +2837,14 @@ export class ToolHandler {
   /**
    * Cached git worktree/index mismatch for a tool call's effective project.
    *
-   * The "effective project" is what the request targets: an explicit
-   * `projectPath` arg, else the directory the server resolved its default
-   * project from (`defaultProjectHint`), else cwd. Memoized per start path —
-   * see `worktreeMismatchCache`. Best-effort: if the project can't be resolved
-   * (e.g. nothing initialized yet), it reports "no mismatch" so a tool is never
+   * The "effective project" is what the request targets: the `projectPath`
+   * arg, else (the CLI's handler, the only one with a default CodeGraph) cwd.
+   * Memoized per start path — see `worktreeMismatchCache`. Best-effort: if the
+   * project can't be resolved, it reports "no mismatch" so a tool is never
    * broken by this check.
    */
   private worktreeMismatchFor(projectPath?: string): WorktreeIndexMismatch | null {
-    const startPath = projectPath ?? this.defaultProjectHint ?? process.cwd();
+    const startPath = projectPath ?? process.cwd();
 
     // The verdict depends on BOTH the start path AND the index root it resolves
     // to, so the cache must be keyed on the pair. Resolve the index root first
@@ -3045,14 +2984,15 @@ export class ToolHandler {
     try {
       cg = this.getCodeGraph(projectPath);
     } catch {
-      return result; // no default project — leave as is
+      return result; // the project can't be resolved — leave as is
     }
 
     // A cross-project `projectPath` call's cached CodeGraph only has a watcher
     // when the engine owns its lifecycle (#1835) — the CLI's handler has none.
-    // When the cross-project path happens to be the same project as the
-    // default cg, prefer the default cg so the staleness signal still fires
-    // when an agent passes the explicit projectPath form of its own project.
+    // When the cross-project path happens to be the same project as the CLI
+    // handler's own instance, prefer that instance so the staleness signal
+    // still fires when an agent passes the explicit projectPath form of its own
+    // project.
     if (this.cg && cg !== this.cg) {
       try {
         const sameProject =
@@ -3135,17 +3075,38 @@ export class ToolHandler {
    * Execute a tool by name.
    *
    * `sessionState` is the CALLER's per-session explore history (CG-17). The
-   * daemon shares one ToolHandler across every connected session, so this state
+   * machine server shares one ToolHandler across every connected session, so this state
    * cannot live on the handler — each session owns one and hands it in, which is
-   * what keeps two sessions on one daemon from ever seeing each other's calls.
+   * what keeps two sessions on one server from ever seeing each other's calls.
    * Omit it (the CLI does) and explore behaves exactly as before, untracked.
+   *
+   * `options.admitIndexRoot` is the session's judgement of the index a call
+   * would be answered from (see {@link ExecuteOptions}). A handler that owns a
+   * project lifecycle (every MCP engine's) refuses a call that carries none;
+   * the CLI's handler has no lifecycle and passes none.
+   *
+   * The two refusals below come first, before the catch-up gate and before any
+   * project is seeded, opened or synced: a name that is no tool, and a call
+   * that skipped the admission check, must never cost an open or a write.
    */
   async execute(
     toolName: string,
     args: Record<string, unknown>,
     sessionState?: ExploreSessionState,
+    options?: ExecuteOptions,
   ): Promise<ToolResult> {
     if (this.closing) return this.textResult('This MCP session is closing; retry with a connected session.');
+    if (!isKnownTool(toolName)) return this.errorResult(`Unknown tool: ${toolName}`);
+    if (this.projectLifecycle && !options?.admitIndexRoot) {
+      // Success-shaped like every expected condition: this is a fault of the
+      // calling code (dispatchToolCall always passes the check), but an isError
+      // would teach the agent to abandon the tools.
+      return this.textResult(
+        'This codegraph call was not run: it did not pass the repository check every call on this server ' +
+        'must pass, so the server could not tell whether the project belongs to this session. ' +
+        'Retry the call; if it persists, restart the codegraph session.'
+      );
+    }
     this.activeCalls++;
     try {
       // Block the first tool call on the engine's post-open reconcile so we
@@ -3178,7 +3139,8 @@ export class ToolHandler {
       // serve it. Resolved on the main thread so the watcher lives here even
       // when dispatch is off-loaded to a worker.
       if (typeof pathCheck === 'string') {
-        await this.awaitProjectGate(pathCheck);
+        const refused = await this.awaitProjectGate(pathCheck, options?.admitIndexRoot);
+        if (refused) return refused;
       }
       // The `path` and `pattern` properties used by codegraph_files are
       // also path-shaped — apply the same cap.
@@ -3204,12 +3166,14 @@ export class ToolHandler {
       // here on the main thread before dispatch (pooled or not), so the answer
       // comes from the synced index. Never throws. The checkpoint (including a
       // passed bound or a sync error) is appended to a successful answer; an
-      // isError result or a stale-file refusal is returned without it.
-      const freshCp = args.fresh === true ? await waitForFresh(project) : undefined;
+      // isError result or a stale-file refusal is returned without it. A
+      // read-only handler only measures: its checkpoint says the pending files
+      // were not synced, because a sync takes the index's write lock and writes.
+      const freshCp = args.fresh === true ? await waitForFresh(project, { readOnly: this.readOnly }) : undefined;
 
       // codegraph_status reports watcher state (pending files, degraded mode,
       // worktree warning) and embeds its own sections — it must run on the MAIN
-      // thread against the watched default instance, so it is NEVER off-loaded to
+      // thread against the project's watched instance, so it is NEVER off-loaded to
       // a worker (whose read connection has no watcher). It also skips the
       // auto-banner wrapper to avoid duplicating its own pending-files section.
       if (toolName === 'codegraph_status') {
@@ -3237,11 +3201,11 @@ export class ToolHandler {
       // structured-clone boundary into a worker, where a closure or a handler
       // field could not follow.
       const dispatchArgs = this.withSessionView(toolName, args, sessionState);
-      // The default may have appeared after the workers started. Pass the
-      // main thread's current root explicitly; with no root or projectPath,
-      // keep the main handler's workspace-specific not-indexed guidance.
+      // Workers hold no default project: every pooled call names its project.
+      // (The MCP engine's handler has no default, and the session's guard in
+      // front of it requires `projectPath`; the CLI's handler never has a pool.)
       const pooled = !!(this.queryPool && this.queryPool.healthy && this.queryPool.ready);
-      const projectPath = pooled ? args.projectPath ?? this.cg?.getProjectRoot() : undefined;
+      const projectPath = pooled ? args.projectPath : undefined;
       const wasDegraded = project.isWatcherDegraded?.();
       const raw = (pooled && projectPath)
         ? await this.queryPool!.run(toolName, { ...dispatchArgs, projectPath })
@@ -8535,9 +8499,9 @@ export class ToolHandler {
   private async handleStatus(args: Record<string, unknown>): Promise<ToolResult> {
     let cg = this.getCodeGraph(args.projectPath as string | undefined);
     // Same trick as withStalenessNotice — when an explicit projectPath
-    // resolves to the same project as the default session cg, prefer the
-    // default so getPendingFiles() (only populated by the default's watcher)
-    // is non-empty when there are pending edits.
+    // resolves to the same project as the CLI handler's own instance, prefer
+    // that instance so getPendingFiles() (only populated by its watcher) is
+    // non-empty when there are pending edits.
     if (this.cg && cg !== this.cg) {
       try {
         if (resolvePath(this.cg.getProjectRoot()) === resolvePath(cg.getProjectRoot())) {

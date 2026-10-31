@@ -1,13 +1,14 @@
 /**
- * A daemon whose install was upgraded or deleted underneath it exits (#2335).
+ * A machine server whose install was upgraded or deleted underneath it exits
+ * (#2335).
  *
- * The daemon loads grammars (and the native kernel, and worker scripts) lazily
+ * The server loads grammars (and the native kernel, and worker scripts) lazily
  * from the directory it was started from. An upgrade replaces or deletes that
- * directory while the daemon keeps running, so every later load fails; the
+ * directory while the server keeps running, so every later load fails; the
  * 1.6.1 daemon in #2335 went on re-indexing files as empty for as long as it
- * lived. It now checks its own package.json periodically and makes way for a
- * daemon started from the current install. The check is pure and the Daemon's
- * reaction is tested with it injected; neither starts a real daemon.
+ * lived. The server checks its own package.json periodically and makes way for
+ * a server started from the current install. The check is pure and the Daemon's
+ * reaction is tested with it injected; neither starts a real server.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -54,10 +55,33 @@ describe('installChangedReason', () => {
 });
 
 describe('Daemon.checkInstall', () => {
-  // A Daemon is safe to construct (nothing binds until start()); stop() is
-  // replaced so a positive check can't tear down the test process.
+  // A Daemon is safe to construct: nothing binds until start(), and it only
+  // reads its socket and lock paths from the state dir, pointed at a throwaway
+  // one here. Its engine would start a query pool, so the pool is turned off and
+  // the engine stopped after each case. stop() is replaced so a positive check
+  // can't tear down the test process.
+  let stateDir: string;
+  const savedEnv = { state: process.env.CODEGRAPH_STATE_DIR, pool: process.env.CODEGRAPH_QUERY_POOL_SIZE };
+  const made: any[] = [];
+
+  beforeEach(() => {
+    stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-install-check-state-')));
+    process.env.CODEGRAPH_STATE_DIR = stateDir;
+    process.env.CODEGRAPH_QUERY_POOL_SIZE = '0';
+  });
+
+  afterEach(async () => {
+    for (const d of made.splice(0)) await d.engine.stop();
+    for (const [key, value] of [['CODEGRAPH_STATE_DIR', savedEnv.state], ['CODEGRAPH_QUERY_POOL_SIZE', savedEnv.pool]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
+
   const makeDaemon = () => {
-    const d = new Daemon('/tmp/codegraph-install-check-unit-test', { idleTimeoutMs: 0 }) as any;
+    const d = new Daemon() as any;
+    made.push(d);
     d.stop = vi.fn(async () => {});
     return d;
   };

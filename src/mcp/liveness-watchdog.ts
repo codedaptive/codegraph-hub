@@ -53,8 +53,8 @@
  *
  * **Every index the process writes counts (#2404).** An MCP server syncs on
  * its main thread too, and not only the project it was armed for: the shared
- * daemon writes every project a session names by `projectPath`, and a proxy's
- * in-process fallback writes its own. {@link addWatchdogProgressPaths} adds a
+ * daemon writes every project a session names by `projectPath`, and a direct
+ * session writes its own. {@link addWatchdogProgressPaths} adds a
  * project's index files the moment this process becomes its writer and drops
  * them when it lets go; each change re-arms the watchdog with a new child
  * whose argv carries the whole list. A new process gets its list the instant
@@ -136,7 +136,7 @@ const capMs = Number(process.argv[3]);
 const progressPaths = process.argv.slice(4);
 const secs = Math.round(timeoutMs / 1000);
 function kill(extra) {
-  // Timestamped so daemon.log kills can be correlated with anything (#1431) —
+  // Timestamped so server.log kills can be correlated with anything (#1431) —
   // computed here at kill time; this child process is never the wedged one.
   try { fs.writeSync(2, Buffer.from('[' + new Date().toISOString() + '] [CodeGraph] Main thread unresponsive for ~' + secs + 's' + (extra || '') + ' — killing the wedged process so a fresh one can start (#850). Disable with CODEGRAPH_NO_WATCHDOG=1.\\n')); } catch (e) {}
   try { process.kill(parentPid, 'SIGKILL'); } catch (e) {}
@@ -256,7 +256,7 @@ function spawnWatchdogChild(timeoutMs: number, checkMs: number, capMs: number, p
   try {
     // No execArgv inheritance (unlike Worker), so the child carries none of our
     // V8 flags — it runs no WASM and needs none. stderr inherits the parent's
-    // fd 2 so the kill notice lands wherever the parent logs (daemon.log).
+    // fd 2 so the kill notice lands wherever the parent logs (server.log).
     child = spawn(
       process.execPath,
       ['-e', CHILD_SOURCE, String(process.pid), String(timeoutMs), String(capMs), ...paths],

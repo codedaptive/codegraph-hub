@@ -5,9 +5,7 @@
  * Without it, a git worktree that got an index seeded from a sibling keeps
  * costing after `git worktree remove`: the MCP server's cached connection
  * (and each query-pool worker's) keeps the deleted database's blocks alive,
- * a server or daemon whose default project it was keeps it open, a dead
- * daemon's socket and daemon record stay, and the registry entry points at
- * nothing. When the worktree directory outlives the worktree (pruned but not
+ * and the registry entry points at nothing. When the worktree directory outlives the worktree (pruned but not
  * deleted), the seeded index stays on disk too.
  *
  * A registered root R is GONE only on positive evidence, either
@@ -37,18 +35,14 @@
  *
  * Tearing a gone root down, in order: release it in this process (the
  * caller's `release`: the tool handler's cache, then the query pool's
- * workers; for a server's default project, the server retires it); then,
+ * workers); then,
  * under the root's registry-record lock and only while the record is still
  * the one the sweep read before the release (a root registered again
  * meanwhile, say re-seeded or pinned, is left alone), judge the root AGAIN,
  * there and then: the verdict the release was based on is never acted on. A
  * root live or indeterminate now is kept and stays registered (live, it may
  * take a new common dir as above). Only a root still gone has, under that same
- * lock: the daemon record and socket a DEAD daemon left for it removed (a
- * socket is kept while the root's directory exists and its
- * `.codegraph/daemon.pid` names a live daemon, since the daemon registry is
- * best-effort and may hold no record of it); `<root>/.codegraph` deleted; and
- * its record removed. The index is deleted only when all of these hold: the
+ * lock: `<root>/.codegraph` deleted; and its record removed. The index is deleted only when all of these hold: the
  * root is registered SEEDED; its directory still exists; and the database
  * there holds the seed nonce the record holds (see project-registry.ts), i.e.
  * it is still the index CodeGraph made, not one the user built at that path
@@ -57,17 +51,16 @@
  * registered, so the next sweep tries again. Pinned roots are torn down too: a
  * pin keeps a live project open, it does not keep a removed one.
  *
- * A live daemon is never signalled or stopped. Each daemon runs this
- * housekeeping itself and retires its own default project once it is gone,
- * within one interval, then stays up idle until its own idle timeout ends
- * it. Stopping it from here would make its clients' proxies fall back to an
- * in-process server, whose writer-slot claim recreates the removed root's
- * `.codegraph/` (src/mcp/writer-lock.ts).
+ * The machine server is never signalled or stopped from here. It runs this
+ * housekeeping itself and releases a torn-down project within one interval;
+ * no per-project daemon, socket or pid file exists to clean up. Stopping the
+ * server would make its clients' proxies fall back to a read-only in-process
+ * engine until a new server starts.
  *
  * The first process to sweep a gone root unregisters it, so no other process
  * holding that root ever finds it in the registry. Each housekeeping pass
  * ({@link runHousekeepingPass}) therefore also releases the roots THIS process
- * holds open (`TeardownDeps.heldRoots`, its default project included) whose
+ * holds open (`TeardownDeps.heldRoots`) whose
  * directory or `codegraph.db` is gone, whoever unregistered them; that release
  * deletes nothing.
  *
@@ -85,9 +78,7 @@
 import { execFile, execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { canonicalProjectRoot, getCodeGraphDir } from '../../../directory';
-import { deregisterDaemon, isProcessAlive, listDaemons } from '../../../mcp/daemon-registry';
-import { decodeLockInfo, getDaemonPidPath, getDaemonSocketCandidates } from '../../../mcp/daemon-paths';
+import { getCodeGraphDir } from '../../../directory';
 import { canonicalGitPath, gitEnv } from './git';
 import {
   listRegisteredProjects,
@@ -100,14 +91,12 @@ import {
 
 export interface TeardownDeps {
   /**
-   * Close every handle this process holds on `root`; for a server's default
-   * project, retire it (the server then has no default project). Rejecting
+   * Close every handle this process holds on `root`. Rejecting
    * skips the root for this sweep (nothing is deleted or unregistered).
    */
   release(root: string): Promise<void>;
   /**
-   * The roots this process holds open, canonical, its default project
-   * included. After the sweep, each one whose directory or `codegraph.db` is
+   * The roots this process holds open, canonical. After the sweep, each one whose directory or `codegraph.db` is
    * gone is released, so a root another process tore down and unregistered,
    * or removed by hand, does not stay open here. Absent: the pass releases
    * nothing beyond what the sweep tears down.
@@ -402,43 +391,6 @@ function judgeNow(rec: RegisteredProject): Verdict {
 // ---------------------------------------------------------------------------
 
 /**
- * Whether `<root>/.codegraph/daemon.pid` names a live daemon of `root`. The
- * record is decoded against `root`, so a foreign one (copied in with a
- * `.codegraph/`, or one whose pid now names a process that started at another
- * time; see isForeignLockRecord in src/mcp/writer-lock.ts) reads as none.
- * A missing or unreadable file reads as none.
- */
-function pidFileNamesLiveDaemon(root: string): boolean {
-  let raw: string;
-  try { raw = fs.readFileSync(getDaemonPidPath(root), 'utf8'); } catch { return false; }
-  const info = decodeLockInfo(raw, root);
-  return info !== null && isProcessAlive(info.pid);
-}
-
-/**
- * Remove what a dead daemon left for `root`: its daemon record and, on POSIX,
- * its socket files (the tmpdir one outlives the directory; Windows named
- * pipes vanish with the process). A daemon whose registry record names a live
- * pid, this process included, is left exactly as it is: never signalled, its
- * record and socket kept (see the file comment). The registry is best-effort
- * (a daemon whose record write failed has none), so while the directory still
- * exists the sockets are also kept when `<root>/.codegraph/daemon.pid` names a
- * live daemon of `root`; only the dead registry record, if any, is removed.
- * When the directory is gone there is no daemon.pid to read, and the sockets
- * are removed.
- */
-function removeDeadDaemonFor(root: string): void {
-  const rec = listDaemons({ prune: false }).find((r) => canonicalProjectRoot(r.root) === root);
-  if (rec && isProcessAlive(rec.pid)) return;
-  if (process.platform !== 'win32' && !(isDirectory(root) && pidFileNamesLiveDaemon(root))) {
-    for (const candidate of getDaemonSocketCandidates(root)) {
-      try { fs.unlinkSync(candidate); } catch { /* gone */ }
-    }
-  }
-  deregisterDaemon(root);
-}
-
-/**
  * Whether the index at `rec.root` is the one CodeGraph made there: the
  * record carries a seed nonce and the database there holds the same one.
  * Read read-only; a database that cannot be read proves nothing.
@@ -474,7 +426,6 @@ async function tearDown(rec: RegisteredProject, deps: TeardownDeps): Promise<boo
       if (now.kind === 'live' && now.commonDir) return { action: 'update-common-dir', commonDir: now.commonDir };
       if (now.kind !== 'gone') return { action: 'keep' };
       const dirPresent = isDirectory(root);
-      removeDeadDaemonFor(root);
       // Only CodeGraph's own seeded index, still the very database it made: an
       // index the user built at this path since is never deleted.
       if (dirPresent && (rec.flags & PROJECT_FLAG_SEEDED) !== 0 && isRecordedSeed(rec)) {
