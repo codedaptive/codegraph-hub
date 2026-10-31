@@ -43,6 +43,9 @@ their own state directory. They never connect to, replace or write through the l
   calls standing [B14].
 - A closed, unpinned database is not watched; the next call opens it and queues a catch-up sync. (R-12)
 
+Index selection and admission stop at the call path's git root: a git clone nested under another checkout is its own
+repository, so it gets its own index root and is built, never answered from the outer checkout's index [B3].
+
 ### A worktree with no index [B11, B12]
 
 The lifecycle already on `ours` (`src/extensions/host/worktree-lifecycle/`), unchanged in intent:
