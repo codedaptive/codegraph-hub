@@ -117,7 +117,8 @@ On throwaway clones, never live team worktrees, and against a development server
 | Part | State |
 |---|---|
 | grep, blast, orphans, suspects, checkpoint/fresh, worktree lifecycle and pins, Swift/Rust resolution | shipped through sm.4 |
-| One server per computer; separate builder with queue; 10-minute close, no cap; repo anchor; focus; required `projectPath`; hook | to build (WP1, `lane/host`). Today sm.4 runs one daemon per project root (`src/mcp/daemon-paths.ts`), caps 8 cached projects (`src/mcp/tools.ts:2022`) with a 10-minute release, and syncs inside the server. |
+| Worktree hook (§5) | built and integrated (integration ff8e7d27); ships with sm.5 |
+| One server per computer; separate builder with queue; 10-minute close, no cap; repo anchor; focus; required `projectPath` | to build (WP1, `lane/host`). Today sm.4 runs one daemon per project root (`src/mcp/daemon-paths.ts`), caps 8 cached projects (`src/mcp/tools.ts:2022`) with a 10-minute release, and syncs inside the server. |
 
 ## 9. Out of scope (R-12)
 
