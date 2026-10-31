@@ -26,6 +26,9 @@ gives coding agents a code graph of any repository or directory on the computer 
 The first client starts the server; the server starts the builder; neither exits when idle (R-12). That keeps
 pinned databases open and current [B13].
 
+While no server answers, a session is served in-process, read-only: it never writes, seeds or builds an index, and
+it moves to the server as soon as one answers.
+
 **Development builds** (R-12) are built in an isolated directory and run on their own test socket (or port) with
 their own state directory. They never connect to, replace or write through the live server or builder.
 
@@ -118,7 +121,8 @@ On throwaway clones, never live team worktrees, and against a development server
 |---|---|
 | grep, blast, orphans, suspects, checkpoint/fresh, worktree lifecycle and pins, Swift/Rust resolution | shipped through sm.4 |
 | Worktree hook (§5) | built and integrated (integration ff8e7d27); ships with sm.5 |
-| One server per computer; separate builder with queue; 10-minute close, no cap; repo anchor; focus; required `projectPath` | to build (WP1, `lane/host`). Today sm.4 runs one daemon per project root (`src/mcp/daemon-paths.ts`), caps 8 cached projects (`src/mcp/tools.ts:2022`) with a 10-minute release, and syncs inside the server. |
+| One server per computer (never idles out, dev state dir), 10-minute close with no cap, repo anchor, required `projectPath` | built and integrated (integration 162d4bad, `machine-server`); ships with sm.5 |
+| Separate builder with queue; `--focus` | to build (`lane/host`, then `queries` for grep/blast focus) |
 
 ## 9. Out of scope (R-12)
 
