@@ -1270,6 +1270,76 @@ export const EXPLORE_FALLBACK_NOTES = {
 } as const;
 
 /**
+ * Where the final hard-ceiling cut of an explore answer aims, given what is appended to the answer after the cut.
+ *
+ * The cut runs on text that still holds the summary sentinel, and two things are added after it: the sentinel is
+ * replaced by the real summary line, which grows the text by at most `summaryGrowth` characters, and the out-of-focus
+ * block (`blockLength` characters, zero when there are none) is appended last. With a block, both must fit under
+ * `hardCeiling` too, and the cut reserves room for them (see the bullets below).
+ *
+ * - No block: `{ ceiling: hardCeiling, sliceLimit: hardCeiling }`, with nothing reserved for the summary growth or for
+ *   the truncation note. The render loop aims its text at `hardCeiling` less an epilogue floor that reserves the
+ *   summary line, so this cut runs only when that aim overshoots, and an answer it cuts can then exceed
+ *   `hardCeiling` by up to the note's length (about 210 characters) plus the growth.
+ * - A block: the cut aims at `hardCeiling` less the block and the growth, so the answer with both added stays within
+ *   `hardCeiling`. A section cut also appends its truncation note after slicing, so `sliceLimit` sits below the
+ *   ceiling by the longer of the two truncation notes: whichever wording is chosen, slice plus note fits the ceiling.
+ *
+ * `summaryGrowth` is the summary line's growth only, WITHOUT the block (the caller's `summaryReserve` includes the
+ * block, so the caller subtracts it): the block is subtracted here, and counting it twice would cut answers that fit.
+ */
+export function exploreCutLimits(
+  hardCeiling: number,
+  blockLength: number,
+  summaryGrowth: number,
+): { ceiling: number; sliceLimit: number } {
+  if (blockLength === 0) return { ceiling: hardCeiling, sliceLimit: hardCeiling };
+  const ceiling = hardCeiling - blockLength - summaryGrowth;
+  const longestTruncatedNote = Math.max(
+    EXPLORE_FALLBACK_NOTES.truncated.complete.length,
+    EXPLORE_FALLBACK_NOTES.truncated.trimmed.length,
+  );
+  return { ceiling, sliceLimit: ceiling - longestTruncatedNote };
+}
+
+/**
+ * The final hard-ceiling cut of an explore answer, at the limits `exploreCutLimits` gave.
+ *
+ * - Not over `ceiling`: the answer is returned as it is.
+ * - Over, and an epilogue-only cut exists whose text plus its cut note fits `ceiling`: that is used. The epilogue
+ *   costs less than a file section, so it goes first (CG-31); dropping a trailing section throws away source the
+ *   render loop had set that file's reservation aside for. An epilogue-only cut that fits only the hard ceiling and
+ *   not the smaller block ceiling is not used: the block and the summary growth would push it past the hard ceiling.
+ * - Otherwise: slice at `sliceLimit` and cut at a FILE-SECTION boundary (the last ``**` `` file header before it),
+ *   dropping whole trailing file sections rather than slicing through a method body, since a half-rendered method
+ *   forces the Read this tool exists to prevent. A line boundary is the fallback when no section header sits in the
+ *   back half of the slice (the degenerate single-giant-section case). The truncation note follows, in the wording
+ *   `trimmedIn` picks for the surviving text.
+ *
+ * `trimmedIn` says whether a section that was trimmed (see `elidedWantedSpans`) is still present in a text, which
+ * picks the `trimmed` or `complete` wording of the note.
+ */
+export function cutExploreToCeiling(input: {
+  output: string;
+  epilogueOnlyCut: string | null;
+  ceiling: number;
+  sliceLimit: number;
+  trimmedIn: (text: string) => boolean;
+}): string {
+  const { output, epilogueOnlyCut, ceiling, sliceLimit, trimmedIn } = input;
+  if (output.length <= ceiling) return output;
+  if (epilogueOnlyCut !== null) {
+    const cutNote = EXPLORE_FALLBACK_NOTES.cut[trimmedIn(epilogueOnlyCut) ? 'trimmed' : 'complete'];
+    if (epilogueOnlyCut.length + cutNote.length <= ceiling) return epilogueOnlyCut + cutNote;
+  }
+  const cut = output.slice(0, sliceLimit);
+  const lastSection = cut.lastIndexOf('\n' + FILE_SECTION_PREFIX);
+  const boundary = lastSection > sliceLimit * 0.5 ? lastSection : cut.lastIndexOf('\n');
+  const safe = boundary > 0 ? cut.slice(0, boundary) : cut;
+  return safe + EXPLORE_FALLBACK_NOTES.truncated[trimmedIn(safe) ? 'trimmed' : 'complete'];
+}
+
+/**
  * One symbol a file section set out to deliver: a cluster member, or a symbol
  * of the per-symbol (focused/skeleton) view. Completeness is judged against
  * these, not against the file — explore never promises whole files, only the
@@ -8571,28 +8641,19 @@ export class ToolHandler {
     const epilogueOnlyCut = epilogueStart < lines.length
       ? flow.text + lines.slice(0, epilogueStart).join('\n')
       : null;
-    const EPILOGUE_CUT_NOTE = EXPLORE_FALLBACK_NOTES.cut[
-      epilogueOnlyCut !== null && trimmedIn(epilogueOnlyCut) ? 'trimmed' : 'complete'];
-
-    if (output.length > hardCeiling
-        && epilogueOnlyCut !== null
-        && epilogueOnlyCut.length + EPILOGUE_CUT_NOTE.length <= hardCeiling) {
-      finalText = epilogueOnlyCut + EPILOGUE_CUT_NOTE;
-    } else if (output.length > hardCeiling) {
-      // Still over with the epilogue gone: cut at a FILE-SECTION boundary (the
-      // last ``**` `` file header before the ceiling) so we drop whole trailing
-      // file-sections rather than slicing
-      // through a method body — a half-rendered method just forces the Read this
-      // tool exists to prevent. Fall back to a line boundary only if no section
-      // header sits in the back half (degenerate single-giant-section case).
-      const cut = output.slice(0, hardCeiling);
-      const lastSection = cut.lastIndexOf('\n' + FILE_SECTION_PREFIX);
-      const boundary = lastSection > hardCeiling * 0.5 ? lastSection : cut.lastIndexOf('\n');
-      const safe = boundary > 0 ? cut.slice(0, boundary) : cut;
-      finalText = safe + EXPLORE_FALLBACK_NOTES.truncated[trimmedIn(safe) ? 'trimmed' : 'complete'];
-    } else {
-      finalText = output;
-    }
+    // The cut runs before the summary sentinel is filled in and before the out-of-focus block is appended, and both
+    // add length afterwards. With a block, `exploreCutLimits` sizes the cut for both: the hard ceiling less the block
+    // and the summary line's growth. Without one it cuts at the hard ceiling, and the render loop has already left
+    // room for the summary growth. `summaryReserve` includes the block, so the growth is taken without it.
+    const summaryGrowth = Math.max(0, summaryReserve - outOfFocusBlock.length - SUMMARY_SENTINEL.length);
+    const cutLimits = exploreCutLimits(hardCeiling, outOfFocusBlock.length, summaryGrowth);
+    finalText = cutExploreToCeiling({
+      output,
+      epilogueOnlyCut,
+      ceiling: cutLimits.ceiling,
+      sliceLimit: cutLimits.sliceLimit,
+      trimmedIn,
+    });
 
     // Curated header (#1046): substitute the sentinel with the count of files
     // whose source SURVIVES in the final text — not `subgraph`/`fileGroups` (the
@@ -8635,7 +8696,8 @@ export class ToolHandler {
     // accepts path matches, which could count a node as the token's definition when the index has none. Capped at
     // three so a wide query cannot turn the closing into a listing. Appended last, after the summary is in place,
     // so the diagnostic and the emission record below both measure it; the render loop leaves room for it in
-    // `summaryReserve`, and a response the final cut above had to trim gets no room for it. The answer's own
+    // `summaryReserve`, and the final cut above leaves room for the block, the summary growth and the cut's own
+    // note, so the answer with the block stays within `hardCeiling`. The answer's own
     // trailing newlines are dropped first (the rendered answer ends in a newline), so exactly one blank line sets
     // the block off. The early exits (nothing in focus, empty focus, no relevant code) never reach here.
     if (outOfFocusBlock.length > 0) finalText = finalText.replace(/\n+$/, '') + outOfFocusBlock;
