@@ -97,7 +97,8 @@ session names, so nothing is keyed on a project root.
 - **State dir.** `~/.codegraph`, or the absolute path in `CODEGRAPH_STATE_DIR`
   (`server/state-dir.ts`: `getStateDir()` creates nothing, `ensureStateDir()` makes it mode 0700; a
   relative value throws `InvalidStateDirError`). It holds `server.pid` and `server.log`, and
-  `server.sock` unless the path is too long or the filesystem cannot host a socket, plus the project
+  `server.sock` unless the path is too long or the filesystem cannot host a socket, `builder.pid` and
+  `builder.log` (the index builder's pid record and job log), plus the project
   registry (`projects/`). Read on every call, never cached.
 - **State dir identity.** `getStateDirIdentity()` is the directory's own identity (`dev:ino`; the
   lower-cased native realpath on Windows; null until the dir exists). The lock's `stateId`, the
@@ -109,7 +110,27 @@ session names, so nothing is keyed on a project root.
   one leaves the other.
 - **Control** (`src/mcp/server-control.ts`): `probeServer`, `stopServer` (identity verified by the
   server's socket hello before any signal), `requestProjectRelease` (what `codegraph index` calls
-  before it rebuilds a project's index). Paths and the lock record are in `src/mcp/daemon-paths.ts`.
+  before it rebuilds a project's index: the server closes its handle and the builder drops its hold,
+  and 'released' is answered after both). Paths and the lock record are in `src/mcp/daemon-paths.ts`.
+- **The index builder** (`builder/`, started by the server with itself, in direct mode by the direct
+  session). The server only reads: it opens every index read-only and never syncs, watches, seeds,
+  builds, recovers an index or takes `writer.pid`, `rebuild.pid` or `codegraph.lock`. Every index
+  write is a job on the builder, a child process of the server (`BuilderClient`, `builder/client.ts`),
+  one job at a time, a sync going ahead of any queued cold build (the one exception: the oversized-WAL
+  checkpoint a writable open starts, which its job does not await). The builder holds each root a call
+  names: an `open` job opens it writable (migrating it), then it recovers it (waiting at most a bounded
+  time), watches it and queues its catch-up. The server's `ensure` resolves once the builder opened and
+  migrated the index, or after a bounded wait (`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`, default 10 s) when
+  that open is queued behind a running job such as a cold build, or when the hold could not open it
+  (another live writer, an open failure); the server then opens read-only whatever is on disk.
+  A git worktree with no index gets one seeded
+  from an indexed sibling
+  or, when there is none, cold-built from the queue, and the calls meanwhile answer the building note.
+  It never exits on idle; it ends when its server does (its IPC channel closes), and the server restarts
+  it when it dies (`<state dir>/builder.pid`, `builder.log`). Which index answers a path is
+  `server/index-root.ts` `selectIndexRoot`, for both: a sub-project index inside a worktree does not
+  shadow the worktree's own. The proxy's in-process fallback (the server unreachable) has no builder
+  and stays read-only: a worktree with no index gets the not-indexed guidance there.
 
 ## Avoiding an import cycle
 
@@ -127,7 +148,7 @@ A standalone Claude Code hook command, not an extension module: `registry.ts` an
 
 `dist/extensions/host/worktree-hook/main.js` pins every codegraph MCP call to the git root of the
 agent's own cwd, so an agent in a linked worktree queries that worktree's own index, copied in from
-another checkout when it has none. Add it to Claude Code's `settings.json` (absolute path to the
+another checkout when it has none (or built there by the index builder when no checkout has one). Add it to Claude Code's `settings.json` (absolute path to the
 built file):
 
 ```json

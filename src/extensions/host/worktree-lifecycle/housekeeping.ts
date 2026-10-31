@@ -8,12 +8,16 @@
  * them in the engine first, then release every project the engine holds whose
  * directory or database is gone (the first process to sweep a root
  * unregisters it, so no other process's sweep sees it). A read-only engine
- * deletes nothing, so it skips the sweep and only releases. The timer is
+ * deletes nothing, so it skips the sweep and only releases: the machine
+ * server's engine is always read-only, and the index builder
+ * (src/extensions/host/builder/service.ts) is the one that sweeps, with its
+ * own hold set, through an engine adapter that is not read-only. The timer is
  * unref'd.
  *
- * The roots the engine holds are the tool handler's cache, the roots its
- * query-pool workers may still hold (recorded here as the engine opens them,
- * {@link EngineHousekeeping.notePoolOpenedRoot}).
+ * The roots a server's engine holds are the tool handler's cache, the roots
+ * its query-pool workers may still hold (recorded here as the engine opens
+ * them, {@link EngineHousekeeping.notePoolOpenedRoot}). The builder's are the
+ * roots it holds writable.
  */
 import { canonicalProjectRoot } from '../../../directory';
 import { runHousekeepingPass, startHousekeeping, type TeardownDeps } from './teardown';

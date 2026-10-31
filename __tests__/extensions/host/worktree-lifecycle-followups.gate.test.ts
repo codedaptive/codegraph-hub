@@ -1,32 +1,33 @@
 /**
- * Wave-1 follow-ups of request worktree-lifecycle (unit U4).
+ * Follow-ups to the worktree lifecycle gates.
  *
  * F2 cross-process release: the first process to sweep a gone worktree
  *    unregisters it, so every other process's sweep no longer sees it. Each
  *    engine's housekeeping tick therefore also releases its OWN cached
  *    roots whose directory or `.codegraph/codegraph.db` is gone,
  *    through MCPEngine.releaseProjectRoot.
- *    Two MCPEngines in one process stand in for two processes: they share one
- *    CodeGraph per root through project-lifecycle.ts's refcount, so engine A's
- *    release leaves the database open until engine B lets go too.
+ *    Two MCPEngines in one process stand in for two server processes: each
+ *    opens its own read-only handle on the root, so engine A's release leaves
+ *    B's database handle open until B's own tick lets go. Engine A has an
+ *    index builder; B has none, as the proxy's in-process fallback has none.
  *    The tick is `MCPEngine.runHousekeepingTick(): Promise<void>`: one
  *    housekeeping pass run now, whatever CODEGRAPH_HOUSEKEEPING_INTERVAL_MS
  *    says (the timers are off here so only the explicit calls act).
  * F3 a cold-built worktree is registered SEEDED with its git common dir and
- *    the seed nonce the child wrote into the index, so teardown reclaims it
+ *    the seed nonce the builder wrote into the index, so teardown reclaims it
  *    like a seeded one.
  * F4 a seeder killed mid-copy leaves `codegraph.db.seed-<pid>-<hex>.tmp`;
  *    the next seed of that worktree removes the ones whose pid is dead.
  * F5 a worktree whose own index is not 'complete' and whose rebuild.pid
  *    holder is dead (a killed cold build) is treated as unindexed: its partial
- *    `.codegraph` is discarded and it is seeded, or cold-built under R6, again.
- *    A cold build that died on a signal does not mark the root failed for the
- *    life of the server.
+ *    `.codegraph` is discarded and it is seeded, or cold-built, again. A cold
+ *    build the builder's death killed does not mark the root failed: the
+ *    restarted builder builds it again.
  *
  * Real git worktrees and real SQLite in mkdtemp dirs, driven through the
- * ToolHandler with the ProjectLifecycle MCPEngine wires (the shipped entry
- * point). The cold builds run the compiled child (dist/extensions/host/worktree-lifecycle/cold-build.js), so
- * dist/ must be rebuilt (`npm run build`) after a change to cold-build.ts.
+ * ToolHandler of an MCPEngine with a real index builder process (the shipped
+ * entry point). The builder is the compiled dist/extensions/host/builder/main.js,
+ * which the suite's global setup rebuilds when src/ changed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'child_process';
@@ -37,7 +38,8 @@ import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests, type ToolHandler } from '../../../src/mcp/tools';
 import { ADMIT_ALL } from '../../helpers/admit-all';
-import { buildingNote, isBuilding } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
 import {
   PROJECT_FLAG_SEEDED,
@@ -191,6 +193,7 @@ describe('F2: an engine releases its own cached roots another process tore down'
   let commonDir: string;
   let engineA: MCPEngine | undefined;
   let engineB: TickingEngine | undefined;
+  let builderA: BuilderClient | undefined;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
@@ -198,6 +201,7 @@ describe('F2: an engine releases its own cached roots another process tore down'
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-followup-release-')));
+    vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     main = path.join(workspace, 'main');
     makeRepo(main);
     commonDir = real(path.resolve(main, git(main, 'rev-parse', '--git-common-dir')));
@@ -207,8 +211,10 @@ describe('F2: an engine releases its own cached roots another process tore down'
   afterEach(async () => {
     await engineA?.stop();
     await engineB?.stop();
+    await builderA?.stop();
     engineA = undefined;
     engineB = undefined;
+    builderA = undefined;
     __setLoadCodeGraphForTests(null);
     vi.unstubAllEnvs();
     clearRegistry();
@@ -236,12 +242,14 @@ describe('F2: an engine releases its own cached roots another process tore down'
     registerProject(wt, { seeded: true, commonDir, seedNonce });
     expect(readSeedNonce(wt)).toBe(seedNonce);
 
-    engineA = new MCPEngine({ watch: true });
-    engineB = new MCPEngine({ watch: true }) as TickingEngine;
+    // A has the index builder (so it is the writer's server); B reads only, with no builder.
+    builderA = BuilderClient.start();
+    engineA = new MCPEngine({ builder: builderA });
+    engineB = new MCPEngine({}) as TickingEngine;
     await open(engineA.getToolHandler(), wt, 'alphaSymbol');
     await open(engineB.getToolHandler(), wt, 'alphaSymbol');
     await open(engineB.getToolHandler(), main, 'betaSymbol');
-    await vi.waitFor(() => expect(readWriterLock(wt)?.pid).toBe(process.pid), { timeout: 5000 });
+    await vi.waitFor(() => expect(readWriterLock(wt)?.pid).toBe(builderA!.pid()), { timeout: 5000 });
     return wt;
   }
 
@@ -258,7 +266,8 @@ describe('F2: an engine releases its own cached roots another process tore down'
     // B never saw the registry entry; only its own tick can let go.
     await engineB!.runHousekeepingTick?.();
     expect(cachedRoots(handlerB)).not.toContain(wt);
-    expect(readWriterLock(wt)?.pid).not.toBe(process.pid);
+    // A's release made the builder let go of the root's writer slot.
+    expect(readWriterLock(wt)).toBeNull();
     if (HAS_LSOF) expect(openFdCount([dbFile(wt), `${dbFile(wt)}-wal`])).toBe(0);
     // A live root B also holds stays open.
     expect(cachedRoots(handlerB)).toContain(main);
@@ -290,25 +299,25 @@ describe('F2: an engine releases its own cached roots another process tore down'
 // ---------------------------------------------------------------------------
 
 const ENV_KEYS = [
-  'CODEGRAPH_AUTO_INDEX',
   'CODEGRAPH_NO_AUTO_SEED',
   'CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS',
   'CODEGRAPH_HOUSEKEEPING_INTERVAL_MS',
   'CODEGRAPH_WATCH_DEBOUNCE_MS',
+  'CODEGRAPH_STATE_DIR',
 ] as const;
 
-// Every case builds an index, waits out a catch-up sync, or waits for a
-// detached cold build (node start + index); the bounds only catch a hang on a
-// loaded machine.
+// Every case builds an index, waits out a catch-up sync, or waits for a cold
+// build on the index builder (process start + index); the bounds only catch a
+// hang on a loaded machine.
 describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 }, () => {
   let workspace: string;
   let main: string;
   let engine: MCPEngine;
+  let builder: BuilderClient;
   let saved: Record<string, string | undefined>;
 
   beforeEach(async () => {
     saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-    delete process.env.CODEGRAPH_AUTO_INDEX;
     delete process.env.CODEGRAPH_NO_AUTO_SEED;
     process.env.CODEGRAPH_HOUSEKEEPING_INTERVAL_MS = '0';
     process.env.CODEGRAPH_WATCH_DEBOUNCE_MS = '100';
@@ -316,13 +325,17 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     // catch-up left behind (as worktree-seed.gate.test.ts does).
     process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '0';
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-followup-seed-')));
+    // The builder's own state dir; the builder inherits the environment set above.
+    process.env.CODEGRAPH_STATE_DIR = path.join(workspace, 'state');
     main = path.join(workspace, 'main');
     __setLoadCodeGraphForTests(CodeGraph);
-    engine = new MCPEngine({ watch: true });
+    builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
   }, 60_000);
 
   afterEach(async () => {
     await engine.stop();
+    await builder.stop();
     __setLoadCodeGraphForTests(null);
     for (const k of ENV_KEYS) {
       if (saved[k] === undefined) delete process.env[k];
@@ -350,10 +363,9 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(await waitUntil(() => !fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid')), 10_000)).toBe(true);
   }
 
-  // Waits for a detached cold build of three files: a few seconds under load.
+  // Waits for a cold build of three files: a few seconds under load.
   it('F3: a cold-built worktree is registered SEEDED with its common dir and seed nonce', async () => {
     makeRepo(main);
-    process.env.CODEGRAPH_AUTO_INDEX = '1';
     const wt = path.join(workspace, 'wt-cold');
     addWorktree(main, wt, 'cold');
     const first = await search(wt, 'alphaSymbol');
@@ -364,7 +376,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(rec).not.toBeNull();
     expect(rec!.flags & PROJECT_FLAG_SEEDED).not.toBe(0);
     expect(rec!.commonDir).toBe(real(path.join(main, '.git')));
-    // The child wrote a seed nonce into the index it built and recorded it.
+    // The builder wrote a seed nonce into the index it built and recorded it.
     expect(rec!.seedNonce).toMatch(/^[0-9a-f]{32}$/);
     expect(readSeedNonce(real(wt))).toBe(rec!.seedNonce);
   });
@@ -414,32 +426,34 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(getRegisteredProject(real(wt))!.flags & PROJECT_FLAG_SEEDED).not.toBe(0);
   });
 
-  // Two detached cold builds (the first killed), of 150 generated files so the
-  // first is still running when it is killed: well over 5 s under load.
-  it('F5: a cold build killed by SIGKILL is built again on the next call, not marked failed', async () => {
+  // Two cold builds (the first killed with its builder), of 150 generated
+  // files so the first is still running when it is killed: well over 5 s under load.
+  it('F5: a cold build killed with its builder by SIGKILL is built again by the restarted builder, not marked failed', async () => {
     makeRepo(main, 150);
-    process.env.CODEGRAPH_AUTO_INDEX = '1';
     const wt = path.join(workspace, 'wt-killed');
     addWorktree(main, wt, 'killed');
     const root = real(wt);
     const first = await search(wt, 'alphaSymbol');
     expect(first.text).toContain(buildingNote(root));
 
-    // The child takes rebuild.pid before it creates the database; kill it the
-    // moment it shows, long before 150 files are indexed.
+    // The builder takes rebuild.pid before it creates the database; kill it
+    // the moment it shows, long before 150 files are indexed.
     let pid: number | null = null;
     expect(await waitUntil(() => {
       pid = readWriterLock(root, 'rebuild.pid')?.pid ?? null;
       return pid !== null;
     }, 20_000, 5)).toBe(true);
-    process.kill(pid!, 'SIGKILL');
-    expect(await waitUntil(() => !pidAlive(pid!), 5000, 20)).toBe(true);
-    // Until the server sees the child exit it still reports the old build.
-    expect(await waitUntil(() => !isBuilding(root), 5000, 20)).toBe(true);
+    expect(pid).toBe(builder.pid());
+    const killed = pid!;
+    process.kill(killed, 'SIGKILL');
+    expect(await waitUntil(() => !pidAlive(killed), 5000, 20)).toBe(true);
+    // The server's client starts another builder, and a call during the restart
+    // waits for it: success-shaped, never the not-indexed text.
+    expect(await waitUntil(() => builder.pid() !== null && builder.pid() !== killed, 10_000, 20)).toBe(true);
 
     const again = await search(wt, 'alphaSymbol');
     expect(again.isError).toBe(false);
-    expect(again.text).toContain(buildingNote(root));
+    expect(again.text).not.toContain(NOT_INDEXED);
     await waitForAnswer(wt, 60_000);
     expect(indexState(wt)).toBe('complete');
   });

@@ -11,8 +11,8 @@
  *
  * This worker moves the heavy read-tool dispatch OFF the daemon's main loop.
  * Each worker owns its OWN read connection (node:sqlite WAL allows N concurrent
- * readers across connections — verified: a worker reader sees the main writer's
- * committed catch-up/watcher writes), so {@link QueryPool} runs N tool calls in
+ * readers across connections — verified: a worker reader sees the index
+ * builder's committed catch-up/watcher writes), so {@link QueryPool} runs N tool calls in
  * true parallel up to core count while the main loop stays free for the MCP
  * transport. The worker runs {@link ToolHandler.executeReadTool} — validation +
  * dispatch + error classification — and returns the raw {@link ToolResult}; the
@@ -87,15 +87,18 @@ if (parentPort) {
   // Each project is opened lazily on its first call by the ToolHandler's own
   // per-handler cache, and all of them are closed on retire. A worker started
   // with a root (a test that drives a worker directly) opens that one READ
-  // connection up front as its default. openSync does not start a watcher —
-  // workers are pure readers; the single watcher/writer stays on the server's
-  // main thread.
+  // connection up front as its default. Workers are pure readers: that default
+  // opens read-only, the handler is marked read-only so every project it opens
+  // is too (no migration, no index repair, no WAL maintenance), and nothing
+  // starts a watcher. Every index write is the index builder's, in its own
+  // process.
   let cg: ReturnType<typeof import('../index').default.openSync> | null = null;
   let handler: InstanceType<typeof import('./tools').ToolHandler> | null = null;
   let initError: string | null = null;
   try {
-    cg = root ? loadCodeGraph().openSync(root) : null;
+    cg = root ? loadCodeGraph().openSync(root, { readOnly: true }) : null;
     handler = new (loadToolHandler())(cg);
+    handler.setReadOnly(true);
   } catch (err) {
     initError = err instanceof Error ? err.message : String(err);
   }

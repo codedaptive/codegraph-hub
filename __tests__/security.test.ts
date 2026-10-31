@@ -645,9 +645,19 @@ describe('MCP projectPath in a sensitive folder', () => {
   const DIST = path.resolve(__dirname, '../dist');
   const { MCPEngine } = require(path.join(DIST, 'mcp', 'engine.js')) as typeof import('../src/mcp/engine');
   const TOKEN = 'FAKE-TOKEN-DEFAULT-ROOT';
+  const { BuilderClient } = require(path.join(DIST, 'extensions', 'host', 'builder', 'client.js')) as typeof import('../src/extensions/host/builder/client');
   type Engine = InstanceType<typeof MCPEngine>;
   type Reply = { isError?: boolean; content: Array<{ text: string }>; instructions?: string };
   const engines: Engine[] = [];
+  const builders: Array<InstanceType<typeof BuilderClient>> = [];
+  /** An engine with a real index builder behind it, the way the machine server runs one. */
+  const engineWithBuilder = (): { engine: Engine; builder: InstanceType<typeof BuilderClient> } => {
+    const builder = BuilderClient.start();
+    builders.push(builder);
+    const engine = new MCPEngine({ builder });
+    engines.push(engine);
+    return { engine, builder };
+  };
   const children: ChildProcessWithoutNullStreams[] = [];
   let config: string;
   let project: string;
@@ -680,6 +690,7 @@ describe('MCP projectPath in a sensitive folder', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await Promise.all(engines.splice(0).map((engine) => engine.stop()));
+    await Promise.all(builders.splice(0).map((builder) => builder.stop()));
     for (const child of children.splice(0)) {
       if (child.exitCode === null && child.signalCode === null) {
         const closed = once(child, 'close');
@@ -707,8 +718,8 @@ describe('MCP projectPath in a sensitive folder', () => {
     // The folder, one inside it, a missing one under it (the up-walk lands on
     // the folder's index), and a link to it.
     for (const searchFrom of [config, path.join(config, 'tool'), path.join(config, 'no-such-dir'), viaLink]) {
-      const engine = new MCPEngine({ watch: true });
-      engines.push(engine);
+      // A real builder behind the engine: the refusal must come before the builder is asked to hold the folder.
+      const { engine } = engineWithBuilder();
 
       // No projectPath: the engine has no default project to fall back to, so
       // the call is answered with the missing-argument text, never from the folder.
@@ -727,14 +738,13 @@ describe('MCP projectPath in a sensitive folder', () => {
       expect(text(named), searchFrom).toMatch(/sensitive directory/i);
       expect(text(named), searchFrom).not.toContain(TOKEN);
     }
-    // Nothing took the folder's writer slot or watched it.
+    // Nothing took the folder's writer slot or watched it: neither the engine nor its builder.
     expect(fs.existsSync(path.join(config, '.codegraph', 'writer.pid'))).toBe(false);
     expect(stderr).not.toContain('File watcher active');
   }, 60_000);
 
-  it('still opens, watches and syncs an ordinary project named by projectPath', async () => {
-    const engine = new MCPEngine({ watch: true });
-    engines.push(engine);
+  it('still opens an ordinary project named by projectPath, and has the builder hold it', async () => {
+    const { engine, builder } = engineWithBuilder();
     const result = await engine.getToolHandler().execute('codegraph_node', {
       symbol: 'serveApp',
       includeCode: true,
@@ -742,8 +752,10 @@ describe('MCP projectPath in a sensitive folder', () => {
     }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(text(result)).toContain('serveApp');
-    // The lifecycle the refused folder skips: this engine took the writer slot.
-    expect(fs.existsSync(path.join(project, '.codegraph', 'writer.pid'))).toBe(true);
+    // The hold the refused folder skips: the builder took the writer slot, not this process.
+    const writer = JSON.parse(fs.readFileSync(path.join(project, '.codegraph', 'writer.pid'), 'utf8')) as { pid: number };
+    expect(writer.pid).toBe(builder.pid());
+    expect(writer.pid).not.toBe(process.pid);
   }, 60_000);
 
   // The real `serve --mcp` with machine-server sharing on: a launch from a

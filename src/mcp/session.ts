@@ -2,9 +2,9 @@
  * MCP per-connection session — speaks the JSON-RPC protocol (initialize,
  * tools/list, tools/call) over a single {@link JsonRpcTransport}. It owns
  * per-client state only (the client's clientInfo and the repo anchor of its
- * launch directory); the heavyweight resources
- * (CodeGraph, watcher, ToolHandler) live in the shared {@link MCPEngine} so the
- * machine server collapses N inotify sets / DB handles to one.
+ * launch directory); the heavyweight resources (CodeGraph handles, ToolHandler)
+ * live in the shared {@link MCPEngine}, and the watchers live in the index
+ * builder, so the machine server holds one set of handles for all its sessions.
  *
  * A session has no default project: every tool call names its `projectPath`
  * and goes through {@link dispatchToolCall} (tool-name checks, required
@@ -234,7 +234,9 @@ export class MCPSession {
 
   /**
    * `codegraph/releaseProject {root}`: close the server's handle on one project
-   * so a CLI that wants to take its writer lock can. The root names a project
+   * and have the builder drop its hold (its watcher and writer lock), so a CLI
+   * that wants to take its writer lock can. 'released' is answered only after
+   * the builder has let go (`releaseProjectRoot` awaits it). The root names a project
    * the server may hold for any session, so it is not checked against this
    * session's anchor.
    */

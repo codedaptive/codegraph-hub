@@ -62,6 +62,7 @@ import {
 } from './daemon-paths';
 import { ensureStateDir } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
+import { BuilderClient } from '../extensions/host/builder/client';
 import { getTelemetry } from '../telemetry';
 import { checkForUpdateInBackground } from '../upgrade/update-check';
 import { EARLY_PPID } from './early-ppid';
@@ -93,17 +94,18 @@ const TAKEOVER_RETRY_DELAY_MS = 100;
 
 /**
  * The in-process fallback engine: it serves reads when the machine server cannot
- * be reached. Rootless and read-only (#1963): no watcher, no sync, no seeding
- * of a worktree's index, no cold build, no project-registry entry and no writer
- * or `codegraph.lock` (the engine's lifecycle is read-only, so the tool handler
- * skips the seed step too). A call at a worktree with no index of its own gets
- * the not-indexed guidance. So it can never conflict with a server (or another
- * session's fallback) that starts later. Say so on stderr: otherwise a session that
+ * be reached. Rootless and read-only (#1963), with no index builder: no watcher,
+ * no sync, no seeding of a worktree's index, no cold build, no project-registry
+ * entry and no writer or `codegraph.lock` (an engine without a builder makes the
+ * tool handler skip the seed step, and every project it opens is opened
+ * read-only). A call at a worktree with no index of its own gets the not-indexed
+ * guidance. So it can never conflict with a server (or another session's
+ * fallback) that starts later. Say so on stderr: otherwise a session that
  * quietly stopped syncing looks the same as a healthy one in the logs.
  */
 function makeFallbackEngine(): MCPEngine {
   process.stderr.write('[CodeGraph MCP] Serving reads in-process without auto-sync: the CodeGraph server is not reachable.\n');
-  return new MCPEngine({ readOnly: true });
+  return new MCPEngine();
 }
 
 /**
@@ -217,8 +219,8 @@ export function stampLogChunk(chunk: string | Uint8Array): string | Uint8Array {
 /**
  * Watchdog `progressPaths` for a process serving `root`'s index: the SQLite DB
  * + its WAL. Null (the machine server and the proxy have no root of their own;
- * the project lifecycle adds the files of every project this process writes,
- * #2404) gives none. With these, the #850 liveness watchdog only kills on heartbeat
+ * the index builder, a separate process, writes every index) gives none. With
+ * these, the #850 liveness watchdog only kills on heartbeat
  * silence when the DB files are NOT advancing — the same slow-disk deferral
  * the CLI `index`/`init` path got in #1231. Without it, one >timeout
  * synchronous statement on a big DB (multi-GB index behind Windows Defender)
@@ -367,6 +369,8 @@ export class MCPServer {
   // inside the Daemon class; in proxy mode there is no session at all.
   private session: MCPSession | null = null;
   private engine: MCPEngine | null = null;
+  // The index builder of a direct-mode session (null in the read-only fallback).
+  private builder: BuilderClient | null = null;
   private daemon: Daemon | null = null;
   private ppidWatchdog: ReturnType<typeof setInterval> | null = null;
   // Worker-thread liveness watchdog (#850). Long-lived modes only; SIGKILLs the
@@ -422,7 +426,7 @@ export class MCPServer {
     // Direct mode if the user opted out. Setting the env var is sufficient to
     // get the single-process behavior.
     if (daemonOptOutSet()) {
-      return this.startDirect('CODEGRAPH_NO_DAEMON set');
+      return this.startDirect('CODEGRAPH_NO_DAEMON set', true);
     }
 
     try {
@@ -436,10 +440,12 @@ export class MCPServer {
       return;
     } catch (err) {
       // Belt-and-braces: a throw during proxy SETUP (before the client was served)
-      // is still safe to recover from with a direct-mode session.
+      // is still safe to recover from with a direct-mode session. A read-only one:
+      // the setup failing says nothing about whether a server of this state
+      // directory is running, and a second writer would conflict with it.
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[CodeGraph MCP] Proxy path failed (${msg}); falling back to direct mode.\n`);
-      return this.startDirect('proxy path threw');
+      return this.startDirect('proxy path threw', false);
     }
   }
 
@@ -473,11 +479,19 @@ export class MCPServer {
       await this.engine.stop();
       this.engine = null;
     }
+    // After the engine, which tells the builder to let go of each project.
+    if (this.builder) {
+      await this.builder.stop();
+      this.builder = null;
+    }
     process.exit(0);
   }
 
-  /** Single-process stdio MCP session. */
-  private async startDirect(reason: string): Promise<void> {
+  /**
+   * Single-process stdio MCP session. `builder` says whether it runs the index
+   * builder (direct mode by choice) or is the read-only fallback with none.
+   */
+  private async startDirect(reason: string, builder: boolean): Promise<void> {
     if (reason && process.env.CODEGRAPH_MCP_DEBUG) {
       process.stderr.write(`[CodeGraph MCP] Direct mode: ${reason}.\n`);
     }
@@ -491,12 +505,23 @@ export class MCPServer {
     this.installPpidWatchdog();
 
     // The session answers for the repository this process was launched in. No
-    // writer slot is claimed here: the engine opens projects on demand and each
-    // takes the writer slot of its own index through the project lifecycle (a
-    // project another process writes is served read-only meanwhile).
+    // writer slot is claimed here: this process never writes an index. The
+    // engine opens projects on demand, read-only, and its builder (a child of
+    // this process, like the machine server's) holds each one, taking the
+    // writer slot of its index (a project another process writes is served
+    // read-only meanwhile). With no builder (the fallback after a proxy setup
+    // failure) the engine is the read-only in-process fallback, as when the
+    // server cannot be reached.
     const anchor = await resolveAnchor(resolveLaunchDir(this.projectPath));
 
-    this.engine = new MCPEngine({ queryPool: true, queryPoolDefaultMax: DIRECT_QUERY_POOL_MAX });
+    if (builder) {
+      this.builder = BuilderClient.start({
+        onLog: (line) => process.stderr.write(`[CodeGraph MCP] ${line}\n`),
+      });
+      this.engine = new MCPEngine({ builder: this.builder, queryPool: true, queryPoolDefaultMax: DIRECT_QUERY_POOL_MAX });
+    } else {
+      this.engine = makeFallbackEngine();
+    }
     const transport = new StdioTransport({ exitOnClose: false, onClose: () => { void this.stop(); } });
     this.session = new MCPSession(transport, this.engine, { anchor });
 
@@ -549,8 +574,8 @@ export class MCPServer {
         this.mode = 'daemon';
         // The detached server has no PPID watchdog or stdin lifeline, so a
         // wedged main thread would pin a core forever (#850). The liveness
-        // watchdog is its only recovery path. It has no root: the project
-        // lifecycle adds the index files of every project this process writes.
+        // watchdog is its only recovery path. It has no root, and no index
+        // files to count as progress: this process writes none (the builder does).
         this.livenessWatchdog = installMainThreadWatchdog();
         return; // the net.Server keeps the process alive
       }

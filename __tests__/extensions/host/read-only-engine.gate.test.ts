@@ -1,5 +1,5 @@
 /**
- * A read-only engine (`new MCPEngine({ readOnly: true })`, the proxy's in-process
+ * An engine with no index builder (`new MCPEngine()`, the proxy's in-process
  * fallback while the machine server is unreachable) never writes an index, on ANY
  * path a call can take: not through the tool it names, not through the `fresh`
  * argument, not through the status tool's change count, not through a worktree
@@ -24,9 +24,9 @@
  *   - no `codegraph.lock`, `writer.pid` or `rebuild.pid` was created at any
  *     moment of the call (a file watcher on the trees records every name, so a
  *     lock taken and released inside the call is seen too).
- * The control shows the same fixture IS written by a writable engine, so the
- * absence of a write is the read-only engine's doing and not a fixture that could
- * never write.
+ * The control shows the same fixture IS written when the engine has a builder (a
+ * real one, in its own process), so the absence of a write is the builderless
+ * engine's doing and not a fixture that could never write.
  *
  * A second class is pinned structurally: the handler's `execute` has exactly one
  * caller outside the CLI (the shared dispatch), so no front door can drop a rule.
@@ -43,6 +43,7 @@ import * as ts from 'typescript';
 import CodeGraph from '../../../src/index';
 import { FileLock } from '../../../src/utils';
 import { MCPEngine } from '../../../src/mcp/engine';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
 import { MCPSession } from '../../../src/mcp/session';
 import {
   ErrorCodes,
@@ -222,9 +223,8 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(async () => {
-    for (const k of ['CODEGRAPH_NO_AUTO_SEED', 'CODEGRAPH_AUTO_INDEX', 'CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS']) saved[k] = process.env[k];
+    for (const k of ['CODEGRAPH_NO_AUTO_SEED', 'CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS']) saved[k] = process.env[k];
     delete process.env.CODEGRAPH_NO_AUTO_SEED;
-    delete process.env.CODEGRAPH_AUTO_INDEX;
     process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '0';
     workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-readonly-')));
     main = path.join(workspace, 'main');
@@ -358,7 +358,7 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
       expect(textOf(bare.result!), `${label} without projectPath`).toBe(MISSING_PROJECT_PATH_TEXT);
     }
 
-    // Status measures the pending changes on a worker thread that used to open the index writable.
+    // Status measures the pending changes on a worker thread that opens the index read-only.
     for (const projectPath of [main, w2]) {
       for (const fresh of [false, true]) {
         const status = await callAndExpectUntouched(`${door} codegraph_status ${projectPath === main ? 'indexed' : 'seedable'} fresh=${fresh}`,
@@ -397,7 +397,7 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
   // Over 5 s by design: the matrix is ~50 calls, each followed by an 80 ms wait for the
   // file watcher's events (a lock taken and released inside a call is only seen there).
   it('matrix: every tool, fresh, status, unknown and missing names, through an MCPSession', async () => {
-    engine = new MCPEngine({ readOnly: true });
+    engine = new MCPEngine();
     const transport = new MemoryTransport();
     new MCPSession(transport, engine, { anchor: await resolveRepoAnchor(main) }).start();
     await runMatrix('session', (name, args) =>
@@ -430,7 +430,7 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
   });
 
   it('a handler that owns a lifecycle refuses a call that skipped the admission check, and a name that is no tool, before opening anything', async () => {
-    engine = new MCPEngine({ readOnly: true });
+    engine = new MCPEngine();
     const handler = engine.getToolHandler();
 
     const unadmitted = await callAndExpectUntouched('unadmitted call', (name, args) => handler.execute(name!, args).then((result) => ({ result })),
@@ -446,7 +446,7 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
   });
 
   it('leaves an unindexed sibling worktree untouched and answers the not-indexed guidance', async () => {
-    engine = new MCPEngine({ readOnly: true });
+    engine = new MCPEngine();
 
     const res = await engine.getToolHandler().execute('codegraph_explore', { query: 'alphaSymbol', projectPath: w2 }, undefined, ADMIT_ALL);
 
@@ -459,20 +459,27 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     expect(listRegisteredProjects().map((p) => p.root)).not.toContain(w2);
   });
 
-  it('control: a writable engine seeds the same worktree and syncs the same index (the fixture can be written)', async () => {
-    engine = new MCPEngine({ watch: false });
-    const before = diskState();
+  // Over 5 s by design: a real builder process starts, seeds a worktree, and syncs an index on an overloaded machine.
+  it('control: an engine with a builder has the same worktree seeded and the same index synced (the fixture can be written)', async () => {
+    const builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
+    try {
+      const before = diskState();
 
-    const res = await engine.getToolHandler().execute('codegraph_explore', { query: 'alphaSymbol', projectPath: w2 }, undefined, ADMIT_ALL);
-    expect(res.isError).toBeFalsy();
-    expect(textOf(res)).toContain('alpha-body-marker');
-    expect(fs.existsSync(path.join(w2, '.codegraph', 'codegraph.db'))).toBe(true);
-    expect(getRegisteredProject(w2)).not.toBeNull();
+      const res = await engine.getToolHandler().execute('codegraph_explore', { query: 'alphaSymbol', projectPath: w2 }, undefined, ADMIT_ALL);
+      expect(res.isError).toBeFalsy();
+      expect(textOf(res)).toContain('alpha-body-marker');
+      expect(fs.existsSync(path.join(w2, '.codegraph', 'codegraph.db'))).toBe(true);
+      expect(getRegisteredProject(w2)).not.toBeNull();
 
-    const synced = await engine.getToolHandler().execute('codegraph_explore', { query: 'betaSymbol', projectPath: main, fresh: true }, undefined, ADMIT_ALL);
-    expect(synced.isError).toBeFalsy();
-    expect(textOf(synced)).toContain('fresh=yes');
-    expect(diskState().dbHash, 'the writable engine wrote the index').not.toBe(before.dbHash);
+      const synced = await engine.getToolHandler().execute('codegraph_explore', { query: 'betaSymbol', projectPath: main, fresh: true }, undefined, ADMIT_ALL);
+      expect(synced.isError).toBeFalsy();
+      expect(textOf(synced)).toContain('fresh=yes');
+      expect(diskState().dbHash, 'the builder wrote the index').not.toBe(before.dbHash);
+    } finally {
+      await engine.stop();
+      await builder.stop();
+    }
   });
 });
 

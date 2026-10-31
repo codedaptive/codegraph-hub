@@ -10,6 +10,12 @@
  * every tool call names its own `projectPath` (the session's repo anchor decides
  * which repositories that session may ask about).
  *
+ * The server only reads. Every index write (cold builds, seeding a worktree's
+ * index, syncs, the file watchers) is done by the index builder, one child
+ * process of the server (src/extensions/host/builder/): the server starts it with
+ * itself, restarts it when it dies, never idles it out, and stops it when it
+ * stops. A builder that loses its server exits with the connection to it.
+ *
  * Lifecycle (see also `./index.ts` and `./proxy.ts`):
  *   - The server is spawned **detached** (its own session/process group, stdio
  *     decoupled, cwd = the state directory) by the first launcher that finds no
@@ -64,6 +70,7 @@ import { isProcessAlive } from './server-control';
 import { removeLockIfUnchanged, snapshotLock, writeExclusiveTemp } from './lock-takeover';
 import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
+import { BuilderClient } from '../extensions/host/builder/client';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -115,7 +122,7 @@ const DEFAULT_INSTALL_CHECK_MS = 30_000;
  * while it still does. An upgrade replaces or deletes the package directory
  * under a running daemon (npm reinstalling the package, the launcher pruning
  * an old bundle), and everything the daemon loads lazily from there afterwards
- * fails — grammars among them, so every file its watcher re-indexed came out
+ * fails — grammars among them, so every file its builder's watcher re-indexed came out
  * empty (#2335). Such a daemon should make way for one started from the
  * current install. Any other read failure, or a package.json caught mid-write,
  * answers null: the next check looks again. Exported for testing.
@@ -222,6 +229,11 @@ export class Daemon {
   private clientSweepTimer: NodeJS.Timeout | null = null;
   private installCheckTimer: NodeJS.Timeout | null = null;
   private engine: MCPEngine;
+  // The index builder: a child of this process that does every index write
+  // (cold builds, seeds, syncs, the watchers) for the engine's read-only
+  // projects. It lives as long as the server does and has no idle exit of its
+  // own; this process restarts it if it dies and stops it after the engine.
+  private builder: BuilderClient;
   private stopping = false;
   private socketPath: string;
   private pidPath: string;
@@ -229,12 +241,15 @@ export class Daemon {
   constructor() {
     this.socketPath = getServerSocketPath();
     this.pidPath = getServerPidPath();
+    this.builder = BuilderClient.start({
+      onLog: (line) => process.stderr.write(`[CodeGraph daemon] ${line}\n`),
+    });
     // The server serves many concurrent clients on one event loop, so off-load
     // read-tool dispatch to a worker pool — otherwise concurrent explores
     // serialize and starve the MCP transport (clients time out). Read tools run
     // on a worker pool; `CODEGRAPH_QUERY_POOL_SIZE=0` disables it. The engine is
     // rootless: no project is opened until a tool call names one.
-    this.engine = new MCPEngine({ queryPool: true });
+    this.engine = new MCPEngine({ queryPool: true, builder: this.builder });
   }
 
   /**
@@ -372,13 +387,17 @@ export class Daemon {
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
       this.server = null;
     }
+    // The engine first (it tells the builder to let go of each project it
+    // holds), then the builder itself.
     await this.engine.stop();
+    await this.builder.stop();
     this.cleanupLockfile();
     if (process.platform !== 'win32') {
       try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
     }
-    // POSIX exits here; Windows drains first (engine.stop() above began closing
-    // the file watchers, and exiting mid-teardown aborts the process). See
+    // POSIX exits here; Windows drains first (builder.stop() above waited for
+    // the builder's file watchers to close with its exit, and exiting
+    // mid-teardown aborts the process). See
     // finalizeDaemonExit / DAEMON_SHUTDOWN_BACKSTOP_MS.
     finalizeDaemonExit(process.platform, (code) => process.exit(code));
   }

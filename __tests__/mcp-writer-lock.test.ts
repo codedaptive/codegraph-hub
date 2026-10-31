@@ -1,13 +1,15 @@
 /**
  * The project writer lock under the machine server (#1740, #1963).
  *
- * At most one process writes a project's index: the one whose engine holds the
+ * At most one process writes a project's index: the one that holds the
  * project's `writer.pid`. With one machine server per state dir, every proxy of
- * that state dir reaches the same server, so the server alone claims the
- * project's writer slot (on the first call that names it) and the proxies claim
- * none. The proxy's in-process fallback engine is read-only: it answers from the
- * index as it is, with no watcher, no sync and no writer slot, so it can never
- * contend with the writer.
+ * that state dir reaches the same server, and the server's index builder (a
+ * child process of the server, src/extensions/host/builder/) alone claims the
+ * project's writer slot, on the first call that names the project; the server
+ * itself and the proxies claim none. An engine with a builder only asks it; an
+ * engine without one (the proxy's in-process fallback) is read-only: it answers
+ * from the index as it is, with no watcher, no sync and no writer slot, so it can
+ * never contend with the writer.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,6 +19,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
 import type { MCPEngine } from '../src/mcp/engine';
+import type { BuilderClient } from '../src/extensions/host/builder/client';
 
 import { createDatabase } from '../src/db/sqlite-adapter';
 import { getWriterPidPath, readWriterLock } from '../src/mcp/writer-lock';
@@ -75,7 +78,17 @@ async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
   expect(exited(), `Child ${child.pid} did not exit`).toBe(true);
 }
 
-describe('machine server — one writer per project (#1740)', () => {
+/** The builder pid the server's builder recorded in `<state dir>/builder.pid`, or null. */
+function readBuilderPid(stateDir: string): number | null {
+  try {
+    const pid = (JSON.parse(fs.readFileSync(path.join(stateDir, 'builder.pid'), 'utf8')) as { pid?: unknown }).pid;
+    return typeof pid === 'number' ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+describe('machine server — one writer per project, the builder (#1740)', () => {
   let tempDir: string;
   let realRoot: string;
   let stateDir: string;
@@ -149,7 +162,7 @@ describe('machine server — one writer per project (#1740)', () => {
   // Two launchers spawn the server, attach to it, and each makes a tool call
   // that opens the project there: a few seconds, so the 90s timeout is room for
   // a loaded machine, not the expected run.
-  it('two proxies share one server, which alone holds the project writer slot', async () => {
+  it('two proxies share one server, whose builder alone holds the project writer slot', async () => {
     const env = {
       CODEGRAPH_STATE_DIR: stateDir,
       CODEGRAPH_MCP_LOG_ATTACH: '1',
@@ -189,13 +202,18 @@ describe('machine server — one writer per project (#1740)', () => {
 
     const server = readServerLock();
     expect(server).not.toBeNull();
+    // The writer is the server's builder, a process of its own: never the
+    // server, never a proxy.
     const lockDeadline = Date.now() + 15000;
-    while (Date.now() < lockDeadline && readWriterLock(realRoot)?.pid !== server!.pid) {
+    while (Date.now() < lockDeadline && (readBuilderPid(stateDir) === null || readWriterLock(realRoot) === null)) {
       await sleep(50);
     }
+    const builderPid = readBuilderPid(stateDir);
+    expect(builderPid, a.getStderr() + b.getStderr()).not.toBeNull();
     const writer = readWriterLock(realRoot);
-    expect(writer?.pid).toBe(server!.pid);
-    expect(writer?.mode).toBe('fallback');
+    expect(writer?.pid).toBe(builderPid);
+    expect(writer?.mode).toBe('builder');
+    expect(writer?.pid).not.toBe(server!.pid);
     expect(writer?.pid).not.toBe(a.child.pid);
     expect(writer?.pid).not.toBe(b.child.pid);
     await sleep(1000);
@@ -204,7 +222,9 @@ describe('machine server — one writer per project (#1740)', () => {
 
     // This must catch a live writer even on POSIX, where unlinking its open
     // database would otherwise hide the leak that blocks removal on Windows.
+    // The builder ends with its server.
     await cleanup();
+    expect(isProcessAlive(builderPid!), `Builder ${builderPid} did not exit with its server`).toBe(false);
     expect(isProcessAlive(server!.pid)).toBe(false);
     expect(isProcessAlive(a.child.pid!)).toBe(false);
     expect(isProcessAlive(b.child.pid!)).toBe(false);
@@ -238,15 +258,15 @@ describe('the in-process fallback engine serves reads read-only (#1963)', () => 
     fs.writeFileSync(path.join(root, 'app.ts'), 'export function changedSymbol() { return 2; }\n');
     const { db } = createDatabase(path.join(root, '.codegraph', 'codegraph.db'), { readOnly: true });
     const version = db.pragma('data_version', { simple: true });
-    // readOnly overrides watching and pool workers, and the engine has no
+    // No builder: the fallback engine has no one to write for it, and no
     // default project: the call names the one it reads.
-    engine = new BuiltMCPEngine({ readOnly: true, watch: true, queryPool: true });
+    engine = new BuiltMCPEngine();
     try {
       const result = await engine.getToolHandler().execute('codegraph_search', { projectPath: root, query: 'originalSymbol' }, undefined, ADMIT_ALL);
       expect(result.isError).not.toBe(true);
       expect(result.content[0].text).toContain('originalSymbol');
       fs.writeFileSync(path.join(root, 'added.ts'), 'export function addedSymbol() {}\n');
-      // Longer than the project lifecycle's 1s ownership retry and the
+      // Longer than the builder's ownership retry (service.ts ownRetryMs, 1 s) and the
       // watcher's debounce: neither may run for a read-only engine.
       await sleep(2200);
       expect(db.pragma('data_version', { simple: true })).toBe(version);
@@ -255,5 +275,89 @@ describe('the in-process fallback engine serves reads read-only (#1963)', () => 
       expect(db.pragma('data_version', { simple: true })).toBe(version);
       expect(lockState()).toBe(expectedLock);
     } finally { db.close(); }
+  });
+});
+
+describe('an engine with a builder asks it and never takes a lock or writes itself', () => {
+  let root: string;
+  let engine: MCPEngine;
+
+  beforeEach(async () => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cgib-engine-')));
+    fs.writeFileSync(path.join(root, 'app.ts'), 'export function originalSymbol() { return 1; }\n');
+    const cg = await CodeGraph.init(root);
+    try { await cg.indexAll(); } finally { cg.close(); }
+  });
+
+  afterEach(async () => {
+    await engine?.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /**
+   * A builder that records what the engine asks of it and writes nothing (only its pid would ever be in a
+   * lock): it reports a root as held, with nothing pending, from its `ensure` until its `release`.
+   */
+  function stubBuilder() {
+    const calls: string[] = [];
+    const held = new Set<string>();
+    const builder = {
+      ensure: async (projectPath: string) => { calls.push(`ensure ${projectPath}`); held.add(fs.realpathSync(projectPath)); return { kind: 'ready' as const, root: projectPath }; },
+      caughtUp: async (r: string) => { calls.push(`caughtUp ${r}`); },
+      sync: async (r: string) => { calls.push(`sync ${r}`); return { filesChanged: 0 }; },
+      release: async (r: string) => { calls.push(`release ${r}`); held.delete(fs.realpathSync(r)); },
+      freshness: (r: string) => (held.has(fs.realpathSync(r))
+        ? { root: r, watching: true, degradedReason: null, recovering: false, pendingFiles: [] }
+        : null),
+    };
+    return { calls, builder: builder as unknown as BuilderClient };
+  }
+
+  it('answers from the index, has the builder hold it, and takes no writer.pid, rebuild.pid or codegraph.lock itself', async () => {
+    const { calls, builder } = stubBuilder();
+    const codegraphDir = path.join(root, '.codegraph');
+    const lockFiles = () => ['writer.pid', 'rebuild.pid', 'codegraph.lock'].filter((f) => fs.existsSync(path.join(codegraphDir, f)));
+    const { db } = createDatabase(path.join(codegraphDir, 'codegraph.db'), { readOnly: true });
+    const version = db.pragma('data_version', { simple: true });
+    engine = new BuiltMCPEngine({ builder, queryPool: true });
+    try {
+      const result = await engine.getToolHandler().execute('codegraph_search', { projectPath: root, query: 'originalSymbol' }, undefined, ADMIT_ALL);
+      expect(result.isError).not.toBe(true);
+      expect(result.content[0].text).toContain('originalSymbol');
+      // The builder was asked to hold the root before the engine opened it, and its catch-up awaited.
+      expect(calls[0]).toBe(`ensure ${root}`);
+      expect(calls).toContain(`caughtUp ${root}`);
+      // A second call on the held root costs no builder round trip: it asked once.
+      calls.length = 0;
+      await engine.getToolHandler().execute('codegraph_search', { projectPath: root, query: 'originalSymbol' }, undefined, ADMIT_ALL);
+      expect(calls.filter((c) => c.startsWith('ensure'))).toEqual([]);
+      // Edits and a wait past the builder's ownership retry (service.ts ownRetryMs, 1 s): the engine writes nothing.
+      fs.writeFileSync(path.join(root, 'added.ts'), 'export function addedSymbol() {}\n');
+      await sleep(2200);
+      expect(lockFiles()).toEqual([]);
+      expect(db.pragma('data_version', { simple: true })).toBe(version);
+      // Releasing the root is the builder's to complete: engine.releaseProjectRoot awaits it.
+      calls.length = 0;
+      await engine.releaseProjectRoot(root);
+      expect(calls).toContain(`release ${root}`);
+      expect(lockFiles()).toEqual([]);
+    } finally { db.close(); }
+  });
+
+  it('fresh: true syncs through the builder, never the engine', async () => {
+    const { calls, builder } = stubBuilder();
+    engine = new BuiltMCPEngine({ builder });
+    fs.writeFileSync(path.join(root, 'app.ts'), 'export function changedSymbol() { return 2; }\n');
+    // The stub's sync changes nothing, so the wait keeps asking until its bound; a short one ends it quickly.
+    const prior = process.env.CODEGRAPH_FRESH_TIMEOUT_MS;
+    process.env.CODEGRAPH_FRESH_TIMEOUT_MS = '400';
+    try {
+      const result = await engine.getToolHandler().execute('codegraph_search', { projectPath: root, query: 'originalSymbol', fresh: true }, undefined, ADMIT_ALL);
+      expect(result.isError).not.toBe(true);
+      expect(calls.some((c) => c === `sync ${root}`)).toBe(true);
+    } finally {
+      if (prior === undefined) delete process.env.CODEGRAPH_FRESH_TIMEOUT_MS;
+      else process.env.CODEGRAPH_FRESH_TIMEOUT_MS = prior;
+    }
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Project registry (request worktree-lifecycle, vector G9).
+ * Project registry.
  *
  * src/extensions/host/worktree-lifecycle/project-registry.ts keeps one JSON record per project root under
  * <state dir>/projects: ~/.codegraph (os.homedir(), so the home sandbox of
@@ -119,8 +119,6 @@ describe('project registry (G9)', () => {
 
     const roots = reg.listRegisteredProjects().map((p) => p.root).sort();
     expect(roots).toEqual([fs.realpathSync.native(alpha), fs.realpathSync.native(beta)].sort());
-    expect(reg.hasRegisteredRepository(commonDir)).toBe(true);
-    expect(reg.hasRegisteredRepository(path.join(tempDir, 'other.git'))).toBe(false);
 
     const unpinned = reg.unpinProject(alpha);
     expect(unpinned).not.toBeNull();
@@ -133,7 +131,6 @@ describe('project registry (G9)', () => {
     expect(reg.getRegisteredProject(alpha)).toBeNull();
     expect(reg.unpinProject(alpha)).toBeNull();
     expect(reg.isPinned(alpha)).toBe(false);
-    expect(reg.hasRegisteredRepository(commonDir)).toBe(false);
     expect(reg.listRegisteredProjects().map((p) => p.root)).toEqual([fs.realpathSync.native(beta)]);
   });
 

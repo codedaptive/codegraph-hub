@@ -8,8 +8,10 @@
  * stamping is independent of the machine server's state-scoped server.pid.
  *
  * Two isolated state directories give the source and copy genuinely distinct
- * live server processes, exercising the foreign-live-writer case even though
- * all projects sharing one state directory normally use one machine server.
+ * live server processes, each with an index builder of its own (the process
+ * that holds the writer locks), exercising the foreign-live-writer case even
+ * though all projects sharing one state directory normally use one machine
+ * server.
  * Spawns real `node dist/bin/codegraph.js serve --mcp` proxies and servers.
  */
 
@@ -150,6 +152,12 @@ function serverPid(stateDir: string): number | null {
   return rec && typeof rec.pid === 'number' ? rec.pid : null;
 }
 
+/** The pid the state dir's index builder recorded: the process that holds every writer lock of its server. */
+function builderPid(stateDir: string): number | null {
+  const rec = readJson(path.join(stateDir, 'builder.pid'));
+  return rec && typeof rec.pid === 'number' ? rec.pid : null;
+}
+
 function writerPid(root: string): number | null {
   const rec = readJson(path.join(getCodeGraphDir(root), 'writer.pid'));
   return rec && typeof rec.pid === 'number' ? rec.pid : null;
@@ -219,6 +227,8 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
     for (const { root, state } of fixtures) {
       const pid = serverPid(state);
       if (pid) pids.add(pid);
+      const builder = builderPid(state);
+      if (builder) pids.add(builder);
       for (const recorded of recordedPids(root)) pids.add(recorded);
     }
     pids.delete(process.pid);
@@ -248,10 +258,15 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
         const pid = serverPid(srcState);
         return pid && isAlive(pid) ? pid : null;
       }, 60_000, 50, "S's server.pid naming a live server");
+      // The writer is the server's index builder, a process of its own.
+      const srcBuilderPid = await waitFor(() => {
+        const pid = builderPid(srcState);
+        return pid && pid !== srcServerPid && isAlive(pid) ? pid : null;
+      }, 60_000, 50, "S's builder.pid naming a live builder");
       await waitFor(() => {
         const writer = readJson(path.join(srcReal, '.codegraph', 'writer.pid'));
-        return writer && writer.pid === srcServerPid && writer.ready === true;
-      }, 90_000, 50, "S's writer.pid ready:true for its server");
+        return writer && writer.pid === srcBuilderPid && writer.ready === true;
+      }, 90_000, 50, "S's writer.pid ready:true for its builder");
 
       // Copy the live source and plant the FileLock it would carry mid-sync.
       copyProject(srcDir, copyDir);
@@ -264,9 +279,9 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
       };
       fs.writeFileSync(
         path.join(copyReal, '.codegraph', 'codegraph.lock'),
-        `${srcServerPid}\n${JSON.stringify(srcStamp)}`,
+        `${srcBuilderPid}\n${JSON.stringify(srcStamp)}`,
       );
-      expect(writerPid(copyReal)).toBe(srcServerPid);
+      expect(writerPid(copyReal)).toBe(srcBuilderPid);
 
       const c = spawnServer(copyDir, copyState);
       servers.push(c);
@@ -277,9 +292,11 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
       const diagnostics = () =>
         `\n--- C proxy stderr ---\n${c.stderr.join('\n')}\n--- C server.log ---\n${readServerLog(copyState)}` +
         `\n--- C server.pid ---\n${JSON.stringify(readJson(path.join(copyState, 'server.pid')))}` +
+        `\n--- C builder.pid ---\n${JSON.stringify(readJson(path.join(copyState, 'builder.pid')))}` +
         `\n--- C writer.pid ---\n${JSON.stringify(readJson(path.join(copyReal, '.codegraph', 'writer.pid')))}`;
 
       let copyServerPid: number;
+      let copyBuilderPid: number;
       try {
         await openProject(c, copyReal);
         copyServerPid = await waitFor(() => {
@@ -287,10 +304,14 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
           const pid = rec && typeof rec.pid === 'number' ? rec.pid : null;
           return pid && pid !== srcServerPid && isAlive(pid) && rec!.stateDir === copyState ? pid : null;
         }, 60_000, 50, "C's isolated server.pid naming its own live server");
+        copyBuilderPid = await waitFor(() => {
+          const pid = builderPid(copyState);
+          return pid && pid !== srcBuilderPid && pid !== copyServerPid && isAlive(pid) ? pid : null;
+        }, 60_000, 50, "C's isolated builder.pid naming its own live builder");
         await waitFor(() => {
           const writer = readJson(path.join(copyReal, '.codegraph', 'writer.pid'));
-          return writer && writer.pid === copyServerPid && writer.mode === 'fallback' && writer.ready === true;
-        }, 90_000, 50, "C's writer.pid ready:true for C's server");
+          return writer && writer.pid === copyBuilderPid && writer.mode === 'builder' && writer.ready === true;
+        }, 90_000, 50, "C's writer.pid ready:true for C's builder");
       } catch (err) {
         throw new Error(`${(err as Error).message}${diagnostics()}`);
       }
@@ -320,10 +341,12 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
       }
 
       expect(c.stderr.some((line) => line.includes('Serving reads in-process without auto-sync'))).toBe(false);
-      expect(writerPid(copyReal)).toBe(copyServerPid);
+      expect(writerPid(copyReal)).toBe(copyBuilderPid);
       expect(isAlive(srcServerPid!)).toBe(true);
+      expect(isAlive(srcBuilderPid)).toBe(true);
       expect(serverPid(srcState)).toBe(srcServerPid);
-      expect(writerPid(srcReal)).toBe(srcServerPid);
+      expect(builderPid(srcState)).toBe(srcBuilderPid);
+      expect(writerPid(srcReal)).toBe(srcBuilderPid);
     },
     420_000,
   );

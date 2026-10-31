@@ -171,7 +171,7 @@ export interface LocalHandshakeDeps {
   getDaemonSocket(): Promise<net.Socket | null>;
   /** Lazily create an in-process engine — used only while the server is
    *  unreachable, preserving the "a broken server never wedges a session"
-   *  guarantee. It is rootless and read-only (`new MCPEngine({ readOnly: true })`):
+   *  guarantee. It is rootless, with no index builder, so read-only (`new MCPEngine()`):
    *  it never writes an index (no seed of a worktree's index, no cold build, no
    *  registry entry, no `codegraph.lock` or writer slot), so it holds no lock the
    *  server needs. Called again

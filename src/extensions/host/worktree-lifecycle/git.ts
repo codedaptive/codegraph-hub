@@ -2,8 +2,8 @@
  * Git helpers for the worktree lifecycle: list a repository's worktrees, count
  * the commits between two HEADs, and find a directory's working-tree root and
  * git common dir. The git calls are async and bounded, so the MCP server's
- * main thread can await them. The seeder (./seed.ts) uses them to copy a fresh
- * worktree's index from its nearest indexed sibling, and the cold-build child
+ * main thread (or the index builder's) can await them. The seeder (./seed.ts) uses them to copy a fresh
+ * worktree's index from its nearest indexed sibling, and the cold build
  * (./cold-build.ts) and `codegraph project pin` (./cli.ts) use them to record
  * a project's repository. `nearestExistingDirectory` and the git-free
  * pre-check `gitWorktreeRootMayBeBelow` (./seed-check.ts) are synchronous

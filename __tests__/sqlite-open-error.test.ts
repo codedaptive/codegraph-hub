@@ -248,7 +248,7 @@ describe('the MCP server', () => {
   it('answers a projectPath call with why that index could not be opened', async () => {
     const { root, dbPath } = await indexedProject();
     lockDatabase(dbPath);
-    const engine = new MCPEngine({ watch: false });
+    const engine = new MCPEngine();
     engines.push(engine);
     const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBe(true);
@@ -259,7 +259,7 @@ describe('the MCP server', () => {
   }, 60_000);
 
   it('answers a call without projectPath with the missing-argument text, not a database error', async () => {
-    const engine = new MCPEngine({ watch: false });
+    const engine = new MCPEngine();
     engines.push(engine);
     const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha' }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();

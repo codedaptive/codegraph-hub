@@ -4,8 +4,10 @@
  * while the index handle was dead.
  *
  * Background: the engine's catch-up sync (`MCPEngine.catchUpAfterReopen`, run
- * when a call reopens a replaced database) fires `cg.sync()` in the background.
- * Fire-and-forget, a tool call could race past it and return rows for files
+ * when a call reopens a replaced database) is a sync job on the index builder,
+ * started in the background (the tests below stand a `cg.sync()` promise in for
+ * it: what matters here is the handler's gate on a promise). Fire-and-forget,
+ * a tool call could race past it and return rows for files
  * that no longer exist on disk. The per-file staleness banner
  * (`withStalenessNotice`) couldn't help, because `getPendingFiles()` is
  * populated by the watcher, not by catch-up.

@@ -8,7 +8,7 @@
  * (2000ms) rather than throwing or silently capping a likely typo.
  */
 import { describe, it, expect } from 'vitest';
-import { parseDebounceEnv } from '../src/mcp/engine';
+import { parseDebounceEnv } from '../src/sync/watch-policy';
 
 describe('parseDebounceEnv', () => {
   it('returns undefined for unset / empty values', () => {

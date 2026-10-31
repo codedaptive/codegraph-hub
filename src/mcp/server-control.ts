@@ -105,7 +105,7 @@ export async function probeServer(): Promise<ServerLockInfo | null> {
  *   - `kept`: `onlyIfOlderThan` was given and the server is the same, a newer or
  *     an unknown release; it was not signalled.
  *   - `still-running`: signalled, but still alive after the wait. Never
- *     escalated to SIGKILL: the server holds open databases and writer locks.
+ *     escalated to SIGKILL: the server holds open databases, and its builder holds the writer locks.
  *   - `unverified`: a live process holds the lock but its hello did not name the
  *     lock's pid and version. It is not signalled: it may be a reused pid.
  */
@@ -202,9 +202,11 @@ function sweepStoppedServer(pidPath: string, stoppedRaw: string): void {
 const RELEASE_TIMEOUT_MS = 20_000;
 
 /**
- * Ask the running server to close the database and watcher it holds for
- * `root` (an absolute path), so the caller can rebuild the index. The server
- * keeps serving every other project and reopens this one on its next call.
+ * Ask the running server to close the database it holds for `root` (an
+ * absolute path) and to have its index builder drop its hold on it (the
+ * builder's watcher and writer lock), so the caller can rebuild the index. The
+ * server keeps serving every other project and reopens this one on its next
+ * call, when the builder holds it again.
  *
  * Protocol (src/mcp/daemon.ts): connect, read the server's hello line, send a
  * client-hello `{codegraph_client:1, pid, hostPid: null}` carrying no `launchDir` (this is not a
@@ -213,7 +215,7 @@ const RELEASE_TIMEOUT_MS = 20_000;
  * and wait for the reply with that id.
  *
  *   - `no-server`: nothing answers on any candidate socket (or the lock's own).
- *   - `released`: the server replied with a result: it holds nothing for `root`.
+ *   - `released`: the server replied with a result: neither it nor its builder holds anything for `root`.
  *   - `failed`: it answered something else, an error, or nothing in time. The
  *     caller must not rebuild under a server that may still hold the database.
  */

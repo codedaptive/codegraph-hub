@@ -6,9 +6,11 @@
 
 import type CodeGraph from '../index';
 import type { QueryPool } from './query-pool';
-import { canonicalProjectRoot, findNearestCodeGraphRoot, isSameIndexRoot } from '../directory';
+import { canonicalProjectRoot, isSameIndexRoot } from '../directory';
 import { isPinned } from '../extensions/host/worktree-lifecycle/project-registry';
 import { worktreeSeedMayApply } from '../extensions/host/worktree-lifecycle/seed-check';
+import { gitRootByStat, selectIndexRoot } from '../extensions/host/server/index-root';
+import type { BuilderClient, BuilderFreshness } from '../extensions/host/builder/client';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
 import { DatabaseOpenError, isDatabaseOpenFailure } from '../db/open-error';
 import type { NodeSqliteUnavailableError } from '../db/node-sqlite';
@@ -1660,17 +1662,18 @@ const projectPathProperty: PropertySchema = {
 
 /**
  * EVERY codegraph tool leaves the workspace files untouched: it answers from
- * the index under `.codegraph/` and never touches a source file. A tool writes
- * only index state, in two cases. `fresh: true` syncs an existing index before
- * answering. And a query may CREATE an index: a git worktree with no index of
- * its own is seeded from an indexed sibling worktree of the same repository
- * (or, when the user opted in with CODEGRAPH_AUTO_INDEX=1 or a registered
- * repository, built in the background), writing only that worktree's
- * `.codegraph/` and its record in the project registry (`<state dir>/projects/`, `~/.codegraph` by default;
- * see src/extensions/host/worktree-lifecycle/seed.ts). That is an index the
- * user already chose to have, not a change to the workspace, so readOnlyHint
- * (about the user's workspace) stays true. Advertising this read-only contract lets clients that gate on it
- * run the tools where a possibly-mutating tool would be blocked — most concretely,
+ * the index under `.codegraph/` and never touches a source file. An index
+ * changes in two cases, and the index builder writes it, not the tool. `fresh:
+ * true` syncs an existing index before answering. And a query may CREATE an
+ * index: a git worktree with no index of its own is seeded from an indexed
+ * sibling worktree of the same repository or, when no sibling is indexed, built
+ * from scratch in the background (queued on the builder, with no opt-in). Either
+ * way only that worktree's `.codegraph/` is written, and its record in the
+ * project registry (`<state dir>/projects/`, `~/.codegraph` by default; see
+ * src/extensions/host/worktree-lifecycle/seed.ts). That is an index a call
+ * asked for, not a change to the workspace, so readOnlyHint (about the user's
+ * workspace) stays true. Advertising this read-only contract lets clients that
+ * gate on it run the tools where a possibly-mutating tool would be blocked — most concretely,
  * Cursor's Ask mode, which rejects any MCP tool lacking `readOnlyHint: true`
  * (issue #1018). `idempotentHint`: a repeated call has no further effect (a
  * repeated `fresh` sync finds nothing pending).
@@ -2023,11 +2026,28 @@ function canonicalPath(p: string): string {
 }
 
 /**
+ * A pending file as the staleness banner and `codegraph_status` list it, from
+ * the bare project-relative path the builder pushes. "Edited N ms ago" is read
+ * from the file's own mtime (the moment of its last edit); a file that is gone
+ * (a pending removal) counts as edited now.
+ */
+function pendingFileOf(root: string, relPath: string): PendingFile {
+  let lastSeenMs = Date.now();
+  try {
+    lastSeenMs = statSync(resolvePath(root, relPath)).mtimeMs;
+  } catch {
+    /* removed since: keep "now" */
+  }
+  return { path: relPath, firstSeenMs: lastSeenMs, lastSeenMs, indexing: false };
+}
+
+/**
  * How long an explicit-`projectPath` project may go unused before the handler
- * releases it (#2087). Releasing frees its SQLite handle, its watcher and the
- * writer lock the engine may hold on that project — which otherwise stays held
- * for the whole life of the machine server, locking `codegraph index` out. The
- * next call reopens it and catches up. This idle close is the ONLY bound on
+ * releases it (#2087). Releasing frees its SQLite handle and, through the
+ * engine, the builder's hold on it (its watcher and writer lock) — which
+ * otherwise stays held for the whole life of the machine server, locking
+ * `codegraph index` out. The next call has the builder hold it again, and it
+ * catches up. This idle close is the ONLY bound on
  * how many projects stay open: there is no count cap (a repository with many
  * worktrees keeps all of them open while they are in use).
  * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases. A
@@ -2039,8 +2059,11 @@ function canonicalPath(p: string): string {
 const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
 
 /**
- * The worktree seeder (src/extensions/host/worktree-lifecycle/seed.ts), once a
- * tool call first needed it (see ToolHandler.seedWorktreeIndex).
+ * The wording of the building and not-yet-seeded answers
+ * (src/extensions/host/worktree-lifecycle/seed.ts), once a tool call first
+ * needed it (see ToolHandler.seedWorktreeIndex). Loaded lazily: seed.ts carries
+ * the writer-lock and SQLite dependencies, which stay off the startup path and
+ * off every call against an index of the tree's own.
  */
 let worktreeSeedModule: typeof import('../extensions/host/worktree-lifecycle/seed') | null = null;
 
@@ -2048,8 +2071,8 @@ let worktreeSeedModule: typeof import('../extensions/host/worktree-lifecycle/see
  * Bound on {@link ToolHandler}'s unseeded-worktree memo; past it the memo
  * starts over. The bound keeps a long-lived handler asked about many paths
  * from growing the memo without limit; 256 is ample because it holds only
- * paths inside git worktrees that could not be seeded or built yet, and the
- * seeding hook fills a cleared entry again on that path's next call.
+ * paths inside git worktrees that have no index yet (the builder could not
+ * seed or build one), and the next call on a path fills its cleared entry again.
  */
 const MAX_UNSEEDED_WORKTREES = 256;
 
@@ -2094,11 +2117,20 @@ export interface ExecuteOptions {
 }
 
 /**
+ * The part of the index builder (src/extensions/host/builder/client.ts) a
+ * ToolHandler uses: ask it to hold, seed or build the index a call names, sync
+ * a root for `fresh: true`, and read the freshness it pushed. The handler never
+ * writes an index itself, so the builder is its only route to a fresh one.
+ */
+export type HandlerBuilder = Pick<BuilderClient, 'ensure' | 'sync' | 'freshness'>;
+
+/**
  * Engine-side lifecycle for a project the ToolHandler opened for an explicit
- * `projectPath` (#1835). `activate` gives it a file watcher while it stays
- * open and a catch-up sync, and returns the catch-up promise, which the handler awaits (time-boxed) before
- * calls against that project. `release` runs after active calls drain, so the
- * engine can release shared ownership safely on idle release or shutdown.
+ * `projectPath` (#1835). `open` opens it (read-only, after the builder holds
+ * it), `activate` returns the promise of the builder's catch-up of it, which
+ * the handler awaits (time-boxed) before calls against that project. `release`
+ * runs after active calls drain, so the engine can close the handle and let go
+ * of the builder's hold safely on idle release or shutdown.
  */
 export interface ProjectLifecycle {
   open(root: string, open: () => CodeGraph): CodeGraph;
@@ -2121,19 +2153,23 @@ export class ToolHandler {
   // releases the oldest once it has been idle long enough (#2087).
   private projectUsedAt: Map<string, number> = new Map();
   private idleReleaseTimer: NodeJS.Timeout | null = null;
-  // Engine hook that watches + catches up an explicit project (null for the
-  // CLI and worker-thread handlers, which never own a watcher).
+  // Engine hook that opens, catches up and releases an explicit project (null
+  // for the CLI and worker-thread handlers).
   private projectLifecycle: ProjectLifecycle | null = null;
-  // True for a read-only engine's handler (setReadOnly). It is consulted at each
-  // place this handler could write an index, not by the callers: every project it
-  // opens is opened read-only (openProjectRoot), `fresh: true` never syncs
-  // (execute), and a worktree's index is never seeded, built or registered
-  // (seedWorktreeIndex).
+  // True for an engine's handler and a query worker's (setReadOnly). It is
+  // consulted at each place this handler could write an index, not by the
+  // callers: every project it opens is opened read-only (openProjectRoot) and
+  // `fresh: true` syncs only through the builder (execute).
   private readOnly = false;
+  // The index builder (setBuilder): the process that writes the indexes
+  // this handler reads. Null for the CLI, worker-thread and fallback handlers,
+  // which seed, build and sync nothing.
+  private builder: HandlerBuilder | null = null;
   // Every concurrent call shares its project's pending catch-up promise.
   private projectGates: Map<CodeGraph, Promise<void>> = new Map();
-  // projectPath → the git worktree it is in, for paths the seeding hook
-  // considered and could not seed or build yet; picks their not-indexed text.
+  // projectPath → the git worktree it is in, for paths the builder was asked
+  // about and could not give an index yet (seedWorktreeIndex); picks their
+  // not-indexed text.
   private unseededWorktrees: Map<string, string> = new Map();
   // releaseProjectRoot calls waiting for every in-flight tool call to finish.
   private idleCallWaiters: Array<() => void> = [];
@@ -2181,7 +2217,7 @@ export class ToolHandler {
   }
 
   /**
-   * Engine-only: own the lifecycle (watcher, catch-up, writer lock) of every
+   * Engine-only: own the lifecycle (open, builder catch-up, release) of every
    * project this handler opens for an explicit `projectPath` (#1835).
    */
   setProjectLifecycle(lifecycle: ProjectLifecycle | null): void {
@@ -2189,13 +2225,25 @@ export class ToolHandler {
   }
 
   /**
-   * Engine-only: mark this handler read-only (the read-only engine does). It
-   * then never writes an index: no seed, cold build or registry entry for a
-   * worktree, no sync for `fresh: true`, and every project opens read-only,
-   * through the same open closure a writable engine uses.
+   * Engine-only: mark this handler read-only (the engine and a query worker
+   * do). Every project then opens read-only, and the handler writes no index
+   * itself: no sync for `fresh: true` (unless a builder syncs it), no seed,
+   * cold build or registry entry for a worktree.
    */
   setReadOnly(readOnly: boolean): void {
     this.readOnly = readOnly;
+  }
+
+  /**
+   * Engine-only: the index builder that writes this handler's indexes. With
+   * one, a call ensures the builder holds the index it names before the handler
+   * opens it (a worktree with no index of its own is seeded or built there),
+   * `fresh: true` syncs through it, and the staleness banners and
+   * `codegraph_status` read the freshness it pushes, since the handler's own
+   * read-only handles never watch.
+   */
+  setBuilder(builder: HandlerBuilder | null): void {
+    this.builder = builder;
   }
 
   /**
@@ -2217,7 +2265,7 @@ export class ToolHandler {
   /**
    * Engine-only: called after a tool call's {@link freshen} reopened a database
    * that was replaced on disk (#1902). The engine decides whether a catch-up
-   * sync is its to run (only for a project it watches and writes).
+   * sync is its to run (only with a builder: the builder runs it).
    */
   setOnDatabaseReopened(fn: ((cg: CodeGraph) => void) | null): void {
     this.onDatabaseReopened = fn;
@@ -2372,6 +2420,30 @@ export class ToolHandler {
   }
 
   /**
+   * Refuse (throw {@link PathRefusalError}) a sensitive system directory,
+   * whether the call names it or the walk up from the path lands on an index
+   * there. Runs before anything is opened, and before the builder is asked to
+   * hold an index (it would otherwise take the folder's writer slot and watch
+   * it). `resolvedRoot` is the index root the path resolves to, null when none.
+   * Only a path that actually exists is validated by itself — a nested or
+   * not-yet-created sub-path of a real project must still be allowed to resolve
+   * UP to its .codegraph/ root (issue #238), so the existence-checking
+   * validator does not run on paths that are meant to walk up; the root the
+   * walk landed on gets the same refusal, so `~/.config/no-such-dir` cannot
+   * walk up into an index of `~/.config` (#1930).
+   */
+  private refuseSensitivePath(projectPath: string, resolvedRoot: string | null): void {
+    if (existsSync(projectPath)) {
+      const pathError = validateProjectPath(projectPath);
+      if (pathError) throw new PathRefusalError(pathError);
+    }
+    if (resolvedRoot !== null) {
+      const rootError = validateProjectPath(resolvedRoot);
+      if (rootError) throw new PathRefusalError(rootError);
+    }
+  }
+
+  /**
    * Get CodeGraph instance for a project
    *
    * If projectPath is provided, opens that project's CodeGraph (cached).
@@ -2389,18 +2461,6 @@ export class ToolHandler {
       return this.freshen(this.cg);
     }
 
-    // Reject sensitive system directories before opening. Only validate a
-    // path that actually exists — a nested or not-yet-created sub-path of a
-    // real project must still be allowed to resolve UP to its .codegraph/
-    // root below (issue #238), so we don't run the existence-checking
-    // validator on paths that are meant to walk up.
-    if (existsSync(projectPath)) {
-      const pathError = validateProjectPath(projectPath);
-      if (pathError) {
-        throw new PathRefusalError(pathError);
-      }
-    }
-
     // Always RE-RESOLVE the nearest .codegraph/ from the input path. The walk
     // is cheap (a few existsSync up the tree) and is the only thing that
     // notices a path whose index root CHANGED since it was first seen — most
@@ -2412,10 +2472,13 @@ export class ToolHandler {
     // (#926). The DB connection itself is still cached (by resolved root,
     // below), so re-resolving costs only the stat walk, never a reopen.
     const selected = this.selectIndex(projectPath);
+    this.refuseSensitivePath(projectPath, selected?.resolvedRoot ?? null);
 
     if (!selected) {
-      // A git worktree the seeding hook looked at but could not seed or build
-      // gets the seeder's guidance: a later call may still copy an index in.
+      // A git worktree the builder was asked about and could not seed or build
+      // (yet) gets the seeder's guidance, never the "don't call codegraph for it
+      // again" text below: a later call may still find an index (a sibling
+      // finishes, a build retries). seedWorktreeIndex memoizes such a path.
       const worktree = this.unseededWorktrees.get(projectPath);
       if (worktree && worktreeSeedModule) throw new NotIndexedError(worktreeSeedModule.unseededWorktreeNote(projectPath, worktree));
       throw new NotIndexedError(
@@ -2427,14 +2490,6 @@ export class ToolHandler {
     }
 
     const { resolvedRoot, canonicalRoot } = selected;
-
-    // The root the walk landed on gets the same refusal. A path that doesn't
-    // exist skips the check above, so `~/.config/no-such-dir` would otherwise
-    // walk up into an index of `~/.config` (#1930).
-    const rootError = validateProjectPath(resolvedRoot);
-    if (rootError) {
-      throw new PathRefusalError(rootError);
-    }
 
     const cg = this.openProjectRoot(resolvedRoot, canonicalRoot);
     // The walk above crosses git boundaries. A nested repository the ancestor
@@ -2459,13 +2514,16 @@ export class ToolHandler {
    * The index a call on `projectPath` is answered from: the nearest `.codegraph/`
    * at or above it, as the root the walk landed on and its canonical spelling
    * (two spellings of one root, a symlinked checkout or `/tmp` vs
-   * `/private/tmp`, must share one connection and one watcher, #1835). Null when
-   * no index is found. The ONE resolver: {@link getCodeGraph} opens what it
-   * returns, and a session's admission check ({@link ExecuteOptions}) judges
-   * the same root before anything is opened.
+   * `/private/tmp`, must share one connection and one watch, #1835). Null when
+   * no index is found. The rule is {@link selectIndexRoot}'s (the nearest
+   * `.codegraph/`, except that a sub-project index inside a git worktree does
+   * not shadow the worktree's own), the one the builder holds roots by. The
+   * ONE resolver: {@link getCodeGraph} opens what it returns, and a session's
+   * admission check ({@link ExecuteOptions}) judges the same root before
+   * anything is opened.
    */
   private selectIndex(projectPath: string): { resolvedRoot: string; canonicalRoot: string } | null {
-    const resolvedRoot = findNearestCodeGraphRoot(projectPath);
+    const resolvedRoot = selectIndexRoot(projectPath);
     if (!resolvedRoot) return null;
     return { resolvedRoot, canonicalRoot: canonicalPath(resolvedRoot) };
   }
@@ -2511,13 +2569,15 @@ export class ToolHandler {
       }
     }
 
-    // Indexes an interrupted bulk load dropped are rebuilt off this thread,
-    // before the project is served (awaitIndexRecovery, #1887). The ONE open
-    // path: a read-only handler passes `readOnly`, which leaves migrations,
-    // index repair and WAL maintenance to the writer, and the engine's
-    // lifecycle calls this closure for it like for any other open.
+    // The ONE open path: a read-only handler passes `readOnly`, which leaves
+    // migrations, index repair (the secondary indexes an interrupted bulk load
+    // dropped, #1887) and WAL maintenance to the builder when there is one: it
+    // runs them in the open job of its hold, which the call waited for at most
+    // a bounded time. With none (the read-only fallback) the
+    // index is served as it is. The engine's lifecycle calls this closure for
+    // it like for any other open.
     const readOnly = this.readOnly;
-    const open = () => loadCodeGraph().openSync(canonicalRoot, { deferIndexRecovery: true, readOnly });
+    const open = () => loadCodeGraph().openSync(canonicalRoot, { readOnly });
     const cg = this.projectLifecycle?.open(canonicalRoot, open) ?? open();
     this.projectCache.set(canonicalRoot, cg);
     this.projectUsedAt.set(canonicalRoot, Date.now());
@@ -2554,74 +2614,97 @@ export class ToolHandler {
   }
 
   /**
-   * Wait for a project to finish rebuilding, off this thread, the secondary
-   * indexes an interrupted bulk load dropped (#1887). Not time-boxed like the
-   * catch-up gate: without them a read scans whole tables, which on a large
-   * index stalls the thread the rebuild was moved off. Never throws: a failed
-   * rebuild leaves reads correct, and the next call tries again.
+   * Whether the builder must be asked about `projectPath` before the call
+   * opens its index. Yes for an index this handler has not opened (a first
+   * call, or one after an idle release: the builder's `ensure` resolves once it
+   * opened and migrated the index, or after a bounded wait, or when it could not
+   * open it, and this handler then opens read-only whatever is on disk), for one the builder no
+   * longer reports holding (its hold was dropped, or it restarted before
+   * re-holding), and for a path with a `.git` entry between it and its index or
+   * a `rebuild.pid` beside it (a worktree that may need a seed or a cold
+   * build). Yes for a path with no index only when it is in a git working
+   * tree; the builder has nothing to seed or build elsewhere. No otherwise: a
+   * call against an index already open and held costs a few stats, no IPC, so
+   * a builder busy with a long job never delays a read of another project.
    */
-  private async awaitIndexRecovery(cg: CodeGraph): Promise<void> {
-    if (!cg.hasPendingIndexRecovery?.()) return;
-    try {
-      await cg.recoverIndexes();
-    } catch (err) {
-      process.stderr.write(
-        `[CodeGraph MCP] Could not restore the indexes an interrupted indexing run left out of ${cg.getProjectRoot()}: ` +
-        `${err instanceof Error ? err.message : String(err)}. Queries still work, more slowly; the next call tries again.\n`
-      );
-    }
+  private needsBuilderEnsure(projectPath: string, builder: HandlerBuilder): boolean {
+    const root = selectIndexRoot(projectPath);
+    if (root === null) return worktreeSeedMayApply(projectPath);
+    const canonical = canonicalPath(root);
+    if (!this.projectCache.has(canonical)) return true;
+    if (builder.freshness(canonicalProjectRoot(canonical)) === null) return true;
+    return worktreeSeedMayApply(projectPath);
   }
 
   /**
-   * Give a git worktree with no index of its own one before the call resolves
-   * it (src/extensions/host/worktree-lifecycle/seed.ts): seeded from an
-   * indexed sibling worktree, or, when the user opted in, a background build,
-   * answered with the building note (success-shaped, through NotIndexedError)
-   * until it is done. Only on a writable handler that owns a project lifecycle:
-   * CLI and worker handlers never seed, and a read-only engine's handler
-   * returns here before it considers the path (no seed, no cold build, no
-   * registry entry, no lock; the call falls through to the plain not-indexed
-   * guidance, or to the index the worktree already has). The module is loaded lazily, keeping its
-   * writer-lock dependency off the startup path, and only once a path passes
-   * the git-free pre-check (`worktreeSeedMayApply`): a call against a finished
-   * index of the tree's own does not load it before it is needed, and never
-   * spawns git; once loaded, such a call costs a few stats.
+   * Have the builder hold the index a call names before the handler opens it:
+   * an indexed root is held (its writable open queued as a job, then its catch-up;
+   * the call waits for the open a bounded time),
+   * a git worktree with no index of its own is seeded from an indexed sibling
+   * worktree or cold-built from the queue, and a call that finds it still
+   * building is answered with the building note (success-shaped, through
+   * NotIndexedError) until it is done. Only on a handler that has a builder
+   * (the engine's; CLI, worker and fallback handlers never seed or build). A
+   * path in a git worktree the builder could not give an index (no sibling is
+   * complete yet, the copy failed, or the builder is not answering) is
+   * remembered, so that {@link getCodeGraph} answers it with the seeder's
+   * guidance, never the "don't call codegraph for it again" text. The wording
+   * module is loaded lazily, only for those two answers: a call against an
+   * index of the tree's own never loads it.
    */
   private async seedWorktreeIndex(projectPath: string): Promise<void> {
-    if (!this.projectLifecycle || this.readOnly) return;
-    if (!worktreeSeedModule) {
-      if (!worktreeSeedMayApply(projectPath)) return;
-      worktreeSeedModule = await import('../extensions/host/worktree-lifecycle/seed');
+    const builder = this.builder;
+    if (!builder || !this.projectLifecycle) return;
+    // A sensitive folder is refused before the builder is asked about it.
+    this.refuseSensitivePath(projectPath, selectIndexRoot(projectPath));
+    if (!this.needsBuilderEnsure(projectPath, builder)) return;
+    const outcome = await builder.ensure(projectPath);
+    if (outcome.kind === 'building') {
+      // A `codegraph index` rebuild of an index that exists is not a build the
+      // builder runs: the open's rebuild fence answers it ("a rebuild is in
+      // progress"), as it does for a call that reaches it without the builder.
+      const { readWriterLock } = await import('./writer-lock');
+      if (readWriterLock(outcome.root, 'rebuild.pid')?.mode === 'rebuild') return;
+      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
+      throw new NotIndexedError(worktreeSeedModule.buildingNote(outcome.root));
     }
-    const seed = worktreeSeedModule;
-    const outcome = await seed.ensureWorktreeIndex(projectPath);
-    if (outcome.kind === 'building') throw new NotIndexedError(seed.buildingNote(outcome.root));
-    if (outcome.kind === 'none' && outcome.worktree) {
+    const worktree = outcome.kind === 'none' ? (outcome.worktree ?? gitRootByStat(projectPath)) : null;
+    if (worktree) {
+      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
       if (this.unseededWorktrees.size >= MAX_UNSEEDED_WORKTREES) this.unseededWorktrees.clear();
-      this.unseededWorktrees.set(projectPath, outcome.worktree);
+      this.unseededWorktrees.set(projectPath, worktree);
     } else {
       this.unseededWorktrees.delete(projectPath);
     }
   }
 
   /**
-   * Seed (seedWorktreeIndex declines on a read-only or lifecycle-less handler),
-   * admit, then open the project a call names, and wait for its catch-up.
-   * Resolves to the refusal to answer with when the session's admission check
-   * turns the call's index down.
+   * Admit the index a call selects, have the builder hold (seed, build) it,
+   * admit it again if the builder changed which index that is, then open the
+   * project and wait for its catch-up. Resolves to the refusal to answer with
+   * when the session's admission check turns the call's index down.
    */
   private async awaitProjectGate(projectPath: string, admit?: IndexRootAdmission): Promise<ToolResult | null> {
-    await this.seedWorktreeIndex(projectPath);
     // The session's check of the index this call would be answered from: the
     // one `getCodeGraph` is about to open. An index outside the session's
-    // repository is never opened, watched or queried for it.
-    if (admit) {
+    // repository is never held, opened or queried for it, so the check runs
+    // before the builder is asked for an index that exists, and again for the
+    // index a seed or build just created.
+    let admitted: string | null = null;
+    const admitSelected = async (): Promise<ToolResult | null> => {
+      if (!admit) return null;
       const selected = this.selectIndex(projectPath);
-      if (selected) {
-        const refusal = await admit(selected.canonicalRoot);
-        if (refusal) return this.textResult(refusal);
-      }
-    }
+      if (!selected || selected.canonicalRoot === admitted) return null;
+      const refusal = await admit(selected.canonicalRoot);
+      if (refusal) return this.textResult(refusal);
+      admitted = selected.canonicalRoot;
+      return null;
+    };
+    const first = await admitSelected();
+    if (first) return first;
+    await this.seedWorktreeIndex(projectPath);
+    const second = await admitSelected();
+    if (second) return second;
     const cg = this.getCodeGraph(projectPath);
     if (!this.projectLifecycle || cg === this.cg) return null;
     let gate = this.projectGates.get(cg);
@@ -2742,8 +2825,10 @@ export class ToolHandler {
    * canonically against the cached roots, so any spelling of it works, and a
    * root whose directory is already gone still matches its realpath'd key. It
    * leaves the cache at once; a call that names the root meanwhile opens it
-   * again (through a lifecycle, possibly the same instance, on a lease of its
-   * own that this release leaves alone). The close waits for its catch-up and
+   * again, with a handle of its own that this release leaves alone (the
+   * engine's `releaseProjectRoot` drops the builder's hold
+   * after this resolves; the next call's ensure holds it again). The close
+   * waits for its catch-up and
    * every in-flight tool call to finish (the handler counts calls, not calls
    * per project), then goes through the lifecycle's release, or `close()`
    * without one. Pinned or not, it is released. A root that is not cached is
@@ -2977,6 +3062,85 @@ export class ToolHandler {
     return result;
   }
 
+  /**
+   * What watches `cg`'s project, as far as this handler can tell. With a
+   * builder, the builder watches (the handler's own handles are read-only and
+   * never do), so this is the freshness it last pushed for the root; a root it
+   * does not report is no known degradation and no pending file. Without one,
+   * `cg` is asked: the CLI handler's own instance, or a test's stub, which may
+   * lack the newer watcher methods, and each is read defensively. A pending
+   * list that cannot be read comes back null.
+   */
+  private watcherView(cg: CodeGraph): { degraded: boolean; recovering: boolean; reason: string | null; pending: PendingFile[] | null } {
+    if (this.builder && cg !== this.cg) {
+      let state: BuilderFreshness | null = null;
+      try {
+        state = this.builder.freshness(canonicalProjectRoot(cg.getProjectRoot()));
+      } catch {
+        state = null;
+      }
+      if (!state) return { degraded: false, recovering: false, reason: null, pending: [] };
+      return {
+        degraded: state.recovering || state.degradedReason !== null,
+        recovering: state.recovering,
+        reason: state.degradedReason,
+        pending: state.pendingFiles.map((file) => pendingFileOf(state.root, file)),
+      };
+    }
+    const degraded = this.isWatcherDegraded(cg);
+    let recovering = false;
+    let reason: string | null = null;
+    if (degraded) {
+      try {
+        recovering = cg.isWatcherRecovering?.() ?? false;
+      } catch {
+        recovering = false;
+      }
+      try {
+        reason = cg.getWatcherDegradedReason?.() ?? null;
+      } catch {
+        reason = null;
+      }
+    }
+    let pending: PendingFile[] | null;
+    try {
+      pending = cg.getPendingFiles?.() ?? [];
+    } catch {
+      pending = null;
+    }
+    return { degraded, recovering, reason, pending };
+  }
+
+  /**
+   * Whether live watching of `cg`'s project has stopped (whole-index
+   * degradation, #876; a watcher re-armed but not yet caught up counts): the
+   * builder's pushed state when there is a builder, else `cg`'s own.
+   */
+  private isWatcherDegraded(cg: CodeGraph): boolean {
+    try {
+      if (this.builder && cg !== this.cg) {
+        const state = this.builder.freshness(canonicalProjectRoot(cg.getProjectRoot()));
+        return state !== null && (state.recovering || state.degradedReason !== null);
+      }
+      return cg.isWatcherDegraded?.() ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The sync `fresh: true` runs on `project`: the builder's sync job for an
+   * engine's handler, the instance's own for a handler that is not read-only
+   * (the CLI's), none for a read-only handler without a builder (the proxy's
+   * fallback), which then only measures.
+   */
+  private freshSyncFor(project: CodeGraph): (() => Promise<unknown>) | undefined {
+    const builder = this.builder;
+    if (builder) return () => builder.sync(canonicalProjectRoot(project.getProjectRoot()));
+    if (this.readOnly) return undefined;
+    return () => project.sync();
+  }
+
   private withStalenessNotice(result: ToolResult, projectPath?: string): ToolResult {
     if (result.isError) return result;
 
@@ -2987,8 +3151,9 @@ export class ToolHandler {
       return result; // the project can't be resolved — leave as is
     }
 
-    // A cross-project `projectPath` call's cached CodeGraph only has a watcher
-    // when the engine owns its lifecycle (#1835) — the CLI's handler has none.
+    // A cross-project `projectPath` call's cached CodeGraph is opened read-only
+    // and has no watcher of its own (with a builder, the builder's pushed state
+    // stands in, see watcherView) — the CLI's handler has none either.
     // When the cross-project path happens to be the same project as the CLI
     // handler's own instance, prefer that instance so the staleness signal
     // still fires when an agent passes the explicit projectPath form of its own
@@ -3007,41 +3172,26 @@ export class ToolHandler {
     // stopped, getPendingFiles() is empty so the per-file banner below can't
     // fire — but the index is now FROZEN and silently drifting stale. Surface
     // one global notice instead, so the agent Reads for current content rather
-    // than trusting a response off a no-longer-updating index. (A cross-project
-    // instance without an engine-owned watcher reports false here — correct: we
-    // only know degraded state for a project we watch.)
-    let degraded = false;
-    try {
-      degraded = cg.isWatcherDegraded?.() ?? false;
-    } catch {
-      degraded = false;
-    }
-    if (degraded) {
+    // than trusting a response off a no-longer-updating index. (An instance
+    // nobody watches reports false here — correct: we only know degraded state
+    // for a project something watches. With a builder that is the builder, and
+    // its pushed state is what {@link watcherView} reads.)
+    const watcher = this.watcherView(cg);
+    if (watcher.degraded) {
       const [head, ...tail] = result.content;
       if (!head || head.type !== 'text') return result;
-      if (cg.isWatcherRecovering?.()) {
+      if (watcher.recovering) {
         const composed = `${formatRecoveringBanner()}\n\n${head.text}`;
         return { ...result, content: [{ type: 'text', text: composed }, ...tail] };
       }
-      let reason: string | null = null;
-      try {
-        reason = cg.getWatcherDegradedReason?.() ?? null;
-      } catch {
-        reason = null;
-      }
-      const composed = `${formatDegradedBanner(reason)}\n\n${head.text}`;
+      const composed = `${formatDegradedBanner(watcher.reason)}\n\n${head.text}`;
       return { ...result, content: [{ type: 'text', text: composed }, ...tail] };
     }
 
-    // Defensive: some test fakes inject a partial CodeGraph stub without the
-    // newer pending-files API. Treat missing/throwing as "no pending files."
-    let pending: PendingFile[] = [];
-    try {
-      pending = cg.getPendingFiles?.() ?? [];
-    } catch {
-      return result;
-    }
-    if (pending.length === 0) return result;
+    // A pending list that cannot be read (a throwing or partial test stub) is
+    // treated as "no pending files."
+    const pending = watcher.pending;
+    if (pending === null || pending.length === 0) return result;
 
     const [first, ...rest] = result.content;
     if (!first || first.type !== 'text') return result;
@@ -3136,8 +3286,8 @@ export class ToolHandler {
       }
       // An explicit project gets the same first-call guarantee as the default
       // (#1835): its post-open catch-up sync finishes (time-boxed) before we
-      // serve it. Resolved on the main thread so the watcher lives here even
-      // when dispatch is off-loaded to a worker.
+      // serve it. Resolved on the main thread so the gate and the freshness reads
+      // stay on the engine when dispatch is off-loaded to a worker.
       if (typeof pathCheck === 'string') {
         const refused = await this.awaitProjectGate(pathCheck, options?.admitIndexRoot);
         if (refused) return refused;
@@ -3154,10 +3304,11 @@ export class ToolHandler {
       }
 
       const project = await this.getCodeGraph(args.projectPath as string | undefined);
-      await this.awaitIndexRecovery(project);
-      // Recover a watcher disabled by prolonged lock contention on the next call.
-      // The stale banner remains until the watcher finishes its full scan;
-      // frequent calls cannot bypass its cooldown (#1959).
+      // Recover a watcher the handler owns (an instance that was asked to
+      // watch, not the read-only handles an engine opens: those never watch)
+      // that prolonged lock contention disabled, on the next call. The stale
+      // banner remains until the watcher finishes its full scan; frequent calls
+      // cannot bypass its cooldown (#1959).
       if (project.rearmWatcherAfterLockContention?.()) {
         process.stderr.write('[CodeGraph MCP] Re-armed file watcher; full catch-up pending.\n');
       }
@@ -3166,16 +3317,19 @@ export class ToolHandler {
       // here on the main thread before dispatch (pooled or not), so the answer
       // comes from the synced index. Never throws. The checkpoint (including a
       // passed bound or a sync error) is appended to a successful answer; an
-      // isError result or a stale-file refusal is returned without it. A
-      // read-only handler only measures: its checkpoint says the pending files
-      // were not synced, because a sync takes the index's write lock and writes.
-      const freshCp = args.fresh === true ? await waitForFresh(project, { readOnly: this.readOnly }) : undefined;
+      // isError result or a stale-file refusal is returned without it. The sync
+      // is the builder's (a sync job at sync priority, queued behind a running
+      // job); a read-only handler with no builder only measures: its checkpoint
+      // says the pending files were not synced, because it holds the index
+      // read-only. A handler that is not read-only (the CLI's) syncs its own.
+      const freshCp = args.fresh === true ? await waitForFresh(project, { sync: this.freshSyncFor(project) }) : undefined;
 
       // codegraph_status reports watcher state (pending files, degraded mode,
       // worktree warning) and embeds its own sections — it must run on the MAIN
-      // thread against the project's watched instance, so it is NEVER off-loaded to
-      // a worker (whose read connection has no watcher). It also skips the
-      // auto-banner wrapper to avoid duplicating its own pending-files section.
+      // thread against the project's own instance and the builder's freshness,
+      // so it is NEVER off-loaded to a worker (whose read connection has no
+      // watcher). It also skips the auto-banner wrapper to avoid duplicating its
+      // own pending-files section.
       if (toolName === 'codegraph_status') {
         return await appendCheckpointFooter(await this.handleStatus(args), args, project, freshCp);
       }
@@ -3192,8 +3346,8 @@ export class ToolHandler {
       // no pool or a degraded one, dispatch runs in-process
       // exactly as before. Either way the result flows through the
       // cross-cutting notices — worktree-index mismatch (#155) and per-file
-      // staleness (#403) — which need the watched MAIN instance and so are
-      // always applied here, never in the worker.
+      // staleness (#403) — which need the engine's own handler and the builder's
+      // pushed freshness, and so are always applied here, never in the worker.
       //
       // Explore also carries the session's own call history down (CG-17) and its
       // emission record back up. Both travel as plain properties — on the args
@@ -3206,13 +3360,13 @@ export class ToolHandler {
       // front of it requires `projectPath`; the CLI's handler never has a pool.)
       const pooled = !!(this.queryPool && this.queryPool.healthy && this.queryPool.ready);
       const projectPath = pooled ? args.projectPath : undefined;
-      const wasDegraded = project.isWatcherDegraded?.();
+      const wasDegraded = this.isWatcherDegraded(project);
       const raw = (pooled && projectPath)
         ? await this.queryPool!.run(toolName, { ...dispatchArgs, projectPath })
         : await this.executeReadTool(toolName, dispatchArgs);
       const answeredFrom = raw._cgAnswerFiles;
       delete raw._cgAnswerFiles;
-      if (!raw.isError && answeredFrom && (wasDegraded || project.isWatcherDegraded?.())) {
+      if (!raw.isError && answeredFrom && (wasDegraded || this.isWatcherDegraded(project))) {
         const validation = await validateAnswerFiles(project.getProjectRoot(), answeredFrom);
         if (validation.stale.length || validation.unchecked.length) {
           // Rejected source must not enter the session's emission history.
@@ -3332,8 +3486,8 @@ export class ToolHandler {
    *
    * This is the worker thread's entry point (see {@link ./query-worker}) and the
    * in-process fallback for {@link execute}. It deliberately does NOT run the
-   * catch-up gate or the staleness/worktree notices — those need the daemon's
-   * watched main instance and stay on the main thread. Cross-cutting allowlist +
+   * catch-up gate or the staleness/worktree notices — those need the main
+   * thread's handler state and stay on the main thread. Cross-cutting allowlist +
    * path validation already ran in {@link execute} before routing here.
    */
   async executeReadTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -8602,14 +8756,15 @@ export class ToolHandler {
     // stopped, getPendingFiles() is empty (so no "Pending sync" section below)
     // but the index is frozen — call that out explicitly here, the one place an
     // agent asks "is the index caught up?".
-    if (cg.isWatcherDegraded()) {
-      const recovering = cg.isWatcherRecovering();
+    // (With a builder, the state is the builder's: see watcherView.)
+    const watcher = this.watcherView(cg);
+    if (watcher.degraded) {
       lines.push(
         '',
-        recovering ? '**Auto-sync recovering:**' : '**Auto-sync disabled:**',
-        recovering
+        watcher.recovering ? '**Auto-sync recovering:**' : '**Auto-sync disabled:**',
+        watcher.recovering
           ? '- File watching restarted; full index catch-up has not completed.'
-          : `- ${cg.getWatcherDegradedReason() ?? 'live file watching stopped'}`,
+          : `- ${watcher.reason ?? 'live file watching stopped'}`,
         '- The index may be stale; Read files directly for current content.'
       );
     }
@@ -8618,7 +8773,7 @@ export class ToolHandler {
     // (issue #403). Surfacing it inside `status` gives the agent a single
     // place to ask "is the index caught up?" rather than inferring from
     // banners on other tool calls.
-    const pending = cg.getPendingFiles();
+    const pending = watcher.pending ?? [];
     if (pending.length > 0) {
       lines.push('', '**Pending sync:**');
       const now = Date.now();

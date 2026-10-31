@@ -52,7 +52,7 @@ import { createLockFile,removeLockIfUnchanged, snapshotLock, type LockSnapshot }
  *
  *   bit 0  PINNED  never idle-released from the MCP project cache
  *   bit 1  SEEDED  CodeGraph made an index at this root on its own: copied in
- *                  from a sibling worktree, or cold-built by the server.
+ *                  from a sibling worktree, or cold-built by the index builder.
  *                  Teardown may delete the index once the worktree is gone,
  *                  and only the one whose seed nonce the record holds.
  */
@@ -188,7 +188,7 @@ function isAlive(pid: number): boolean {
  * (registry calls are synchronous and never nest, so a lock naming this
  * process while it waits for one is a leftover of a release that failed; this
  * assumes no other thread of the process changes the registry, true today:
- * only the main thread of a server, the CLI and the cold-build child do); or
+ * only the main thread of the index builder and the CLI do); or
  * older than {@link RECORD_LOCK_STALE_MS}.
  */
 function isStaleRecordLock(lockPath: string, snap: LockSnapshot): boolean {
@@ -404,11 +404,6 @@ export function settleProjectIfUnchanged(
 export function isPinned(root: string): boolean {
   const rec = getRegisteredProject(root);
   return !!rec && (rec.flags & PROJECT_FLAG_PINNED) !== 0;
-}
-
-/** Whether any registered project recorded `commonDir` as its git common dir. */
-export function hasRegisteredRepository(commonDir: string): boolean {
-  return listRegisteredProjects().some((p) => p.commonDir !== null && p.commonDir === commonDir);
 }
 
 // ---------------------------------------------------------------------------

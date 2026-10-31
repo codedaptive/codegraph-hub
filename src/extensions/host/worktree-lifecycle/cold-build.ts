@@ -1,21 +1,18 @@
 /**
- * Child entry for the cold build of a git worktree's index, started by
- * `seed.ts`.
- *
- *   node --liftoff-only cold-build.js <worktree root>
- *
- * Spawned detached when a tool call names a worktree that has no index, no
- * indexed sibling to copy one from, and the user opted in to building it. It
- * holds the root's `rebuild.pid` from before the database exists until the
- * index is complete or removed, so no reader opens a half-built index: every
- * engine and daemon refuses to open a project while another live process holds
- * that lock (`assertNoRebuild`), and answers that refusal as guidance.
+ * The cold build of a git worktree's index: a job of the index builder
+ * (src/extensions/host/builder/), queued by `seed.ts` when a tool call names a
+ * worktree that has no index and no indexed sibling to copy one from.
+ * {@link runColdBuild} holds the root's `rebuild.pid` from before the database
+ * exists until the index is complete or removed, so no reader opens a
+ * half-built index: every engine and daemon refuses to open a project while
+ * another live process holds that lock (`assertNoRebuild`), and answers that
+ * refusal as guidance.
  *
  * `codegraph init` itself is not reused: it creates the schema before it marks
  * the index as being built and takes no `rebuild.pid`, so for a moment a
  * reader would see an initialized, empty index.
  *
- * A root this child built gets a fresh seed nonce written into its database
+ * A root this builds gets a fresh seed nonce written into its database
  * and is registered in the project registry SEEDED, with that nonce and its
  * git common dir (as ./git.ts spells it), before `rebuild.pid` is released: an index
  * CodeGraph built on its own is reclaimed by the housekeeping teardown once
@@ -23,13 +20,13 @@
  * database at the path is still that one (project-registry.ts). A root
  * someone else indexed meanwhile is not registered (that index is theirs).
  *
- * Exit status: 0 built (or already indexed by someone else), 1 failed (the
- * database it made is removed, so the root reads as not indexed again; an
- * index another initializer made meanwhile is left alone, see runColdBuild), 2
- * usage (no root given), 3 another live process holds `rebuild.pid`. A child
- * killed by a signal leaves its partial database and a `rebuild.pid` naming a
- * dead pid; the server discards both on a later call for that root that seeds
- * or rebuilds it (seed.ts).
+ * Return codes of {@link runColdBuild}: 0 built (or already indexed by someone
+ * else), 1 failed (the database it made is removed, so the root reads as not
+ * indexed again; an index another initializer made meanwhile is left alone,
+ * see runColdBuild), 3 another live process holds `rebuild.pid`. A builder
+ * killed mid-build leaves its partial database and a `rebuild.pid` naming a
+ * dead pid; the next builder discards both on a later call for that root that
+ * seeds or rebuilds it (seed.ts).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -44,7 +41,7 @@ export const COLD_BUILD_EXIT_FAILED = 1;
 export const COLD_BUILD_EXIT_BUSY = 3;
 
 /**
- * Write a fresh seed nonce into the database this child just built
+ * Write a fresh seed nonce into the database this build just made
  * (`dbFile`), then register the root as SEEDED with that nonce and its git
  * common dir (canonical, see ./git.ts; null outside a repository, when teardown can only
  * judge it by its directory). Best-effort: an unwritable registry leaves the
@@ -87,7 +84,7 @@ function isCreatedDatabase(dbFile: string, created: string | null): boolean {
  * and only while that same file is still the one at the path
  * ({@link isCreatedDatabase}). `rebuild.pid` fences readers, seeders and a
  * user's `codegraph index` (which takes it too, and so refuses to run while
- * this child holds it), but not a user's `codegraph init`, which takes no
+ * this build holds it), but not a user's `codegraph init`, which takes no
  * `rebuild.pid`: one may create the index after the check below and before
  * init's own check (init awaits the grammar load first), and init then
  * throws without creating anything. That index, or one that lands while init
@@ -106,6 +103,7 @@ export async function runColdBuild(root: string): Promise<number> {
   let initReturned = false;
   let created: string | null = null;
   try {
+    await coldBuildTestDelay();
     // A seed or a `codegraph init` may have landed between the decision and now.
     if (isInitialized(root)) {
       ok = true;
@@ -133,13 +131,16 @@ export async function runColdBuild(root: string): Promise<number> {
   }
 }
 
-if (require.main === module) {
-  const root = process.argv[2];
-  if (!root) {
-    process.stderr.write('usage: cold-build.js <worktree root>\n');
-    process.exit(2);
-  }
-  // indexAll has destroyed its parse-worker pool before it returns, so no
-  // worker thread is alive to be torn down by this exit (worker-teardown.ts).
-  void runColdBuild(root).then((code) => process.exit(code));
+/**
+ * Test knob, read here only: `CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS` makes a
+ * cold build wait that many milliseconds after it took `rebuild.pid` and
+ * before it creates the database. The gates (__tests__/extensions/host/
+ * index-builder.gate.test.ts) use it to hold a cold build open long enough to
+ * sample its locks, queue more work behind it, or kill the builder inside it.
+ * Unset, empty or not a positive number: no wait. Production never sets it.
+ */
+async function coldBuildTestDelay(): Promise<void> {
+  const ms = Number(process.env.CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS);
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
