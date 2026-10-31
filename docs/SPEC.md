@@ -82,6 +82,8 @@ directory, and the build waits its turn on the builder's serial queue. (index-bu
     the whole repository (a `scope: "repo"` argument). (R-12)
   - Impact tools (`callers`, `impact`, `blast`) always cover the whole repository and list results outside the
     focus in a separate section.
+  - A focused `explore` whose query names an identifier defined only outside the focus ends with one line saying
+    that name exists outside the session's focus and to pass `scope: "repo"`: the name only, no path or source (S-46).
   - Tools [B5] does not name (`node`, `callees`, `files`, `status`, `orphans`, `suspects`) ignore focus. (R-12)
 - codeteam passes `--focus` from `CODETEAM_ZONE`; CodeGraph knows nothing of zones [B14].
 
@@ -131,16 +133,19 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-10-31)
 
-Every item of the governing spec [B1]-[B14] is built and shipped in **1.6.2-sm.5** (ours 687fb5a6, installed
-globally 2026-10-31): one machine server and index builder, 10-minute close with no cap, pinned standing databases,
-repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree
-hook, building guidance, and the worktree lifecycle and tools carried from sm.4.
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.6** (ours b8a23dbc,
+2026-10-31).
+
+| Release | What it shipped |
+|---|---|
+| sm.5 (ours 687fb5a6) | one machine server and index builder, 10-minute close with no cap, pinned standing databases, repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree hook, building guidance; the worktree lifecycle and tools carried from sm.4 |
+| sm.6 (ours b8a23dbc) | CLI index writes go to a running builder (R-14); focused context recall filtered to the focus; the out-of-focus name note (S-46) |
 
 | Left | State |
 |---|---|
-| Three `explore`-under-focus defects (queries ledger `reports/focus-grep-blast-defects.md`) | scheduled after sm.5 (queries, then host) |
-| CLI write commands hand their work to a running builder (R-14) | to build (`host`) |
-| `uninit` releases through a running server; `unlock` refuses a live holder (R-15) | to build (`host`) |
+| `uninit` releases through a running server; `unlock` refuses a live holder (R-15) | host, for sm.7 |
+| Out-of-focus name note: ceiling fix | host, for sm.7 |
+| Focused `explore`: the flow is lost when a chain crosses the focus boundary; the no-result explanation names out-of-focus symbols (queries ledger `reports/focus-grep-blast-defects.md`, Defects 1 and 2) | queries, after sm.7 |
 
 ## 9. Out of scope (R-12)
 
