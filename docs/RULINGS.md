@@ -37,7 +37,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Date: 2026-10-30 / Bob
 - Ruling: install 1.6.2-sm.4, and sm.5 when WP1 lands, globally once each passes the release gate and the tarball check, by the R-1/R-3 procedure (telemetry off confirmed; rollback to the previous sm.N on a failed check).
 - Work implied: Orc-Codegraph installs each and reports the version and checks.
-- sm.4 done: 2026-10-30, Orc-Codegraph (#1033); global install reports 1.6.2-sm.4 (ours cc50cfa9), telemetry off, all 10 tools list and all 7 teams answered their probe. sm.5 open, waits on WP1.
+- sm.4 done: 2026-10-30, Orc-Codegraph (#1033); global install reports 1.6.2-sm.4 (ours cc50cfa9), telemetry off, all 10 tools list and all 7 teams answered their probe. sm.5 done: 2026-10-31, Orc-Codegraph (#1448); ours 687fb5a6, global install reports 1.6.2-sm.5, telemetry off, the ten tools list, all seven teams answered a codegraph_search through one machine server (state dir ~/.codegraph).
 
 ## R-7. Q-10: clear the graft leftovers
 - Date: 2026-10-30 / Bob

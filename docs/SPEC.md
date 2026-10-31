@@ -126,14 +126,15 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-10-31)
 
-| Part | State |
+Every item of the governing spec [B1]-[B14] is built and shipped in **1.6.2-sm.5** (ours 687fb5a6, installed
+globally 2026-10-31): one machine server and index builder, 10-minute close with no cap, pinned standing databases,
+repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree
+hook, building guidance, and the worktree lifecycle and tools carried from sm.4.
+
+| Left | State |
 |---|---|
-| grep, blast, orphans, suspects, checkpoint/fresh, worktree lifecycle and pins, Swift/Rust resolution | shipped through sm.4 |
-| Worktree hook (§5) | built and integrated (integration ff8e7d27); ships with sm.5 |
-| One server per computer (never idles out, dev state dir), 10-minute close with no cap, repo anchor, required `projectPath` | built and integrated (integration 162d4bad, `machine-server`); ships with sm.5 |
-| Separate builder with queue (no-sibling and non-git cold builds, no opt-in); session `--focus` with `scope: "repo"` | built and integrated (integration 47548e7c, `index-builder`, `session-focus`); ships with sm.5 |
-| `--focus` for `grep` and `blast` | built (`queries`, 8a034e74), in review |
-| Building guidance | in progress (`host`, `build-guidance`) |
+| Three `explore`-under-focus defects (queries ledger `reports/focus-grep-blast-defects.md`) | scheduled after sm.5 (queries, then host) |
+| Q-13: CLI `init`/`index`/`sync`/`checkpoint` write in their own process, against [B9]'s "every index write" | with Bob |
 
 ## 9. Out of scope (R-12)
 
