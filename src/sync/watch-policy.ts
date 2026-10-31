@@ -11,7 +11,9 @@
  * so the tools never appear. See issue #199.
  *
  * This module centralizes the on/off decision so the watcher, the MCP
- * server (for diagnostics), and the installer all agree.
+ * server (for diagnostics), and the installer all agree. It also parses the
+ * watcher's debounce override (`CODEGRAPH_WATCH_DEBOUNCE_MS`), so a process
+ * that only watches (the index builder) need not load the MCP server.
  */
 
 import * as fs from 'fs';
@@ -108,6 +110,27 @@ export function watchDisabledReason(projectRoot: string, probe: WatchProbe = {})
   }
 
   return null;
+}
+
+/**
+ * Parse the CODEGRAPH_WATCH_DEBOUNCE_MS env override.
+ *
+ * Issue #403: workspaces with bursty writes (formatter-on-save, multi-file
+ * refactors) sometimes want a longer quiet window before sync. Returns
+ * `undefined` for unset / empty / non-numeric / out-of-range values so the
+ * FileWatcher default (2000ms) takes over — never throws.
+ *
+ * Accepted range: 100ms (faster would mean a sync per keystroke) to 60s (longer
+ * and the watcher feels broken). Out-of-range values are treated as "ignore
+ * this misconfiguration" rather than capped, since silently capping a 0 or
+ * a typoed value would mask a real config bug.
+ */
+export function parseDebounceEnv(raw: string | undefined): number | undefined {
+  if (!raw || !raw.trim()) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return undefined;
+  if (n < 100 || n > 60000) return undefined;
+  return n;
 }
 
 /** Test-only: reset the cached WSL detection. */

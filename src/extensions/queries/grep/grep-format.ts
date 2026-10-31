@@ -5,9 +5,15 @@
  */
 import type { GrepGroup, GrepResult } from './grep-core';
 
+/** `N in-edges`, plus ` (Q questionable)` when some of them are questionable calls. */
+function inEdges(g: GrepGroup): string {
+  const q = g.questionableInDegree ?? 0;
+  return q > 0 ? `${g.inDegree} in-edges (${q} questionable)` : `${g.inDegree} in-edges`;
+}
+
 function groupHeader(g: GrepGroup): string {
-  if (g.symbol) return `${g.symbol.name} · ${g.symbol.kind} · ${g.symbol.path}:${g.symbol.span} · ${g.inDegree} in-edges`;
-  return `${g.path} (module level) · ${g.inDegree} in-edges`;
+  if (g.symbol) return `${g.symbol.name} · ${g.symbol.kind} · ${g.symbol.path}:${g.symbol.span} · ${inEdges(g)}`;
+  return `${g.path} (module level) · ${inEdges(g)}`;
 }
 
 function formatGroup(g: GrepGroup): string {
@@ -46,7 +52,10 @@ export function formatGrepResult(r: GrepResult): string {
 /**
  * The loud zero-hit note (never a bare empty result). It also names files
  * that could not be read, so a zero-hit answer on a stale index does not read
- * as "no matches anywhere".
+ * as "no matches anywhere". It is never given a focused result: a focused search
+ * with no hit answers the nothing-in-focus sentence or, when nothing matches
+ * anywhere, this note on the unfocused re-count (grep-mcp.ts). The note's "All
+ * indexed code was searched" is true only when the search had no `in` prefix.
  */
 export function zeroHitNote(r: GrepResult): string {
   const base =

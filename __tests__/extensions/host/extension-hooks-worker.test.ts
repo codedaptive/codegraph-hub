@@ -16,6 +16,7 @@ import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import type { MCPEngine } from '../../../src/mcp/engine';
 import type { QueryPool } from '../../../src/mcp/query-pool';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 
 const FIXTURE = path.resolve(__dirname, 'fixtures/test-extension.cjs');
 const BuiltEngine: typeof MCPEngine = require('../../../dist/mcp/engine').MCPEngine;
@@ -57,19 +58,18 @@ describe('extension hook: query-pool worker dispatch', () => {
     } finally { cg.close(); }
 
     engine = new BuiltEngine({ watch: false, queryPool: true });
-    await engine.ensureInitialized(root);
     pool = (engine as unknown as { queryPool: QueryPool | null }).queryPool;
     expect(pool).not.toBeNull();
     await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 15000 });
 
     const handler = engine.getToolHandler();
-    const pooled = await handler.execute('codegraph_ext_echo', { text: 'hi', projectPath: root });
+    const pooled = await handler.execute('codegraph_ext_echo', { text: 'hi', projectPath: root }, undefined, ADMIT_ALL);
     expect(pooled.content[0].text).toContain(`ext_echo:hi:${fileCount}`);
     expect(pooled.content[0].text).toContain('thread:worker');
     expect(pooled.isError).toBeFalsy();
 
     handler.setQueryPool(null);
-    const direct = await handler.execute('codegraph_ext_echo', { text: 'hi', projectPath: root });
+    const direct = await handler.execute('codegraph_ext_echo', { text: 'hi', projectPath: root }, undefined, ADMIT_ALL);
     handler.setQueryPool(pool);
     expect(direct.content[0].text).toContain(`ext_echo:hi:${fileCount}`);
     expect(direct.content[0].text).toContain('thread:main');

@@ -1,19 +1,18 @@
 /**
- * Worktree teardown and query-pool release (request worktree-lifecycle,
- * vectors G11 and G13).
+ * Worktree teardown and query-pool release.
  *
  * G11: src/extensions/host/worktree-lifecycle/teardown.ts `sweepWorktrees(deps)` finds registered
  * roots that are gone (directory missing, or no longer listed by
  * `git worktree list` of their repository, located from the root's `.git` file
  * or the recorded common dir) and tears each down: deps.release(root), then,
- * judged gone once more under the record lock, clear what a dead daemon left
- * for it, delete `<root>/.codegraph` only when the registry says it was
+ * judged gone once more under the record lock, delete `<root>/.codegraph` only when the registry says it was
  * SEEDED, the directory still exists, and the database there holds the seed
  * nonce the record holds, and unregister. deps.release here is
  * ToolHandler.releaseProjectRoot on a handler whose ProjectLifecycle is the one
- * MCPEngine installs (src/mcp/engine.ts constructor), so the test sees all
- * three effects of a release: the handler's cache, this process's writer.pid
- * and its open SQLite files.
+ * MCPEngine installs (src/mcp/engine.ts constructor), with a real index builder
+ * behind the engine, so the test sees all three effects of a release: the
+ * handler's cache, the builder's writer.pid and this process's open SQLite
+ * files.
  *
  * The seeded index is planted by hand, the way a seed leaves it: a tiny real
  * index built in the worktree, a seed nonce written into it by the product's
@@ -29,15 +28,16 @@
  * so dist/ must be rebuilt (`npm run build`) after the pool and worker change.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { execFileSync, spawn, spawnSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import { MCPEngine } from '../../../src/mcp/engine';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
-import { encodeLockInfo, getDaemonPidPath, getDaemonSocketCandidates } from '../../../src/mcp/daemon-paths';
 import type { QueryPool } from '../../../src/mcp/query-pool';
 import type { ToolHandler } from '../../../src/mcp/tools';
 
@@ -80,6 +80,7 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
   let main: string;
   let commonDir: string;
   let engine: MCPEngine | undefined;
+  let builder: BuilderClient | undefined;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
@@ -104,6 +105,8 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
   afterEach(async () => {
     await engine?.stop();
     engine = undefined;
+    await builder?.stop();
+    builder = undefined;
     __setLoadCodeGraphForTests(null);
     vi.unstubAllEnvs();
     fs.rmSync(path.join(os.homedir(), '.codegraph', 'projects'), { recursive: true, force: true });
@@ -125,13 +128,19 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(reg.readSeedNonce(wt)).toBe(seedNonce);
   }
 
-  /** Open `root` through the engine's handler and wait until this process is its writer. */
+  /** An engine with a real index builder behind it (stopped after the engine, in afterEach). */
+  function engineWithBuilder(): MCPEngine {
+    builder = BuilderClient.start();
+    return new MCPEngine({ builder });
+  }
+
+  /** Open `root` through the engine's handler and wait until the builder is its writer. */
   async function openThroughHandler(handler: ToolHandler, root: string): Promise<void> {
-    const res = await handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' });
+    const res = await handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' }, undefined, ADMIT_ALL);
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain('appSymbol');
     expect(cachedRoots(handler)).toContain(root);
-    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(process.pid), { timeout: 5000 });
+    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 5000 });
     if (HAS_LSOF) expect(openFdCount(dbFiles(root))).toBeGreaterThan(0);
   }
 
@@ -144,17 +153,20 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
 
   function expectReleased(handler: ToolHandler, root: string): void {
     expect(cachedRoots(handler)).not.toContain(root);
-    expect(readWriterLock(root)?.pid).not.toBe(process.pid);
+    // The builder let go of its hold: no writer.pid names anyone (the directory may be gone, or the index deleted).
+    expect(readWriterLock(root)).toBeNull();
     if (HAS_LSOF) expect(openFdCount(dbFiles(root))).toBe(0);
   }
 
-  it('releases and unregisters a seeded worktree removed with git worktree remove', async () => {
+  // 30 s timeout (1.5 s alone): a real index builder process starts and holds the worktree, which on a
+  // machine at load 16-29, with the host folder running beside it, takes more than the 5 s default.
+  it('releases and unregisters a seeded worktree removed with git worktree remove', { timeout: 30_000 }, async () => {
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
     const wt = await addIndexedWorktree('gone');
     registerSeeded(reg, wt);
 
-    engine = new MCPEngine({ watch: true });
+    engine = engineWithBuilder();
     const handler = engine.getToolHandler();
     await openThroughHandler(handler, wt);
 
@@ -168,13 +180,14 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(reg.getRegisteredProject(wt)).toBeNull();
   });
 
-  it('deletes the index of a seeded worktree pruned while its directory remains', async () => {
+  // 30 s timeout, for the same reason as the test above.
+  it('deletes the index of a seeded worktree pruned while its directory remains', { timeout: 30_000 }, async () => {
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
     const wt = await addIndexedWorktree('pruned');
     registerSeeded(reg, wt);
 
-    engine = new MCPEngine({ watch: true });
+    engine = engineWithBuilder();
     const handler = engine.getToolHandler();
     await openThroughHandler(handler, wt);
 
@@ -208,38 +221,34 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(reg.getRegisteredProject(main)).not.toBeNull();
   });
 
-  // The daemon registry is best-effort: a live daemon whose registry write
-  // failed has no record there, only its daemon.pid. Its sockets must survive.
-  it.runIf(process.platform !== 'win32')('keeps the sockets of a live daemon named only by daemon.pid', async () => {
+  // The machine server is one per state dir, not one per root: tearing a root
+  // down touches only that root's index and registry record, never the
+  // server's lock or socket (the server releases the root itself).
+  it('leaves the machine server\'s lock and socket alone, and keeps its registry under the state dir', async () => {
+    const stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-teardown-state-')));
+    vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
-    const wt = await addIndexedWorktree('live-daemon');
+    const wt = await addIndexedWorktree('server-files');
     reg.registerProject(wt, { commonDir });
+    expect(reg.registryDir()).toBe(path.join(stateDir, 'projects'));
 
-    // A live process named by a current-format record stamped with this root.
-    const holder = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' });
-    holder.unref();
-    const sockets = getDaemonSocketCandidates(wt);
+    // Plain files stand in for a live server's lock and bound socket.
+    const pidPath = path.join(stateDir, 'server.pid');
+    const socketPath = path.join(stateDir, 'server.sock');
     try {
-      expect(holder.pid).toBeGreaterThan(0);
-      fs.writeFileSync(getDaemonPidPath(wt), encodeLockInfo({
-        pid: holder.pid!,
-        version: '1.6.2',
-        socketPath: sockets[0]!,
-        startedAt: Date.now(),
-        root: wt,
-      }));
-      // Plain files stand in for the bound sockets: teardown only unlinks them.
-      for (const s of sockets) fs.writeFileSync(s, '');
+      fs.writeFileSync(pidPath, '{"pid":1}\n');
+      fs.writeFileSync(socketPath, '');
 
       pruneKeepingDir(wt);
 
       const torn = await sweepWorktrees({ release: async () => { /* nothing held */ } });
       expect(torn).toEqual([wt]);
-      for (const s of sockets) expect(fs.existsSync(s)).toBe(true);
+      expect(reg.getRegisteredProject(wt)).toBeNull();
+      expect(fs.readFileSync(pidPath, 'utf8')).toBe('{"pid":1}\n');
+      expect(fs.existsSync(socketPath)).toBe(true);
     } finally {
-      try { process.kill(holder.pid!, 'SIGKILL'); } catch { /* gone */ }
-      for (const s of sockets) fs.rmSync(s, { force: true });
+      fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });

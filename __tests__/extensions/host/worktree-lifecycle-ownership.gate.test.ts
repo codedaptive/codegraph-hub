@@ -1,11 +1,10 @@
 /**
- * Ownership and lifetime gates of request worktree-lifecycle (Adams post-flight,
- * level-2 rework). Each case drives the shipped entry point and asserts what is
+ * Ownership and lifetime gates. Each case drives the shipped entry point and asserts what is
  * left on disk or which handles are still held, not names or return values.
  *
- * O1 cold build (`runColdBuild`, the detached child's entry): a failed build
+ * O1 cold build (`runColdBuild`, the builder's cold-build job): a failed build
  *    deletes only a database this process created. An index another
- *    initializer made between the child's own check and `CodeGraph.init`'s
+ *    initializer made between the build's own check and `CodeGraph.init`'s
  *    (init awaits the grammar load before it checks again, so the window is
  *    real) survives with its rows, whether init then throws "already
  *    initialized" or fails before it creates anything.
@@ -15,18 +14,12 @@
  *    wrote a nonce into the index it installed and the registry recorded it;
  *    the user's index carries none, so the sweep unregisters the root and
  *    leaves that index, rows and all.
- * O3 engine explicit leases (`MCPEngine.releaseProjectRoot`): a call that
- *    reopens a root while its release waits for in-flight calls takes a
- *    second lease on the same CodeGraph; both leases are released, so the
- *    writer slot is freed once the root is released again.
+ * O3 engine release (`MCPEngine.releaseProjectRoot`, with an index builder): a
+ *    call that reopens a root while its release waits for in-flight calls
+ *    holds it again; once the root is released again the builder's writer
+ *    slot is freed and the engine's database handle is closed.
  * O4 query pool (`QueryPool.releaseProject`): the release does not resolve
  *    while a retiring worker, which may still hold the root, has not exited.
- * O5 engine default project (`MCPEngine.runHousekeepingTick`): a seeded
- *    worktree serving as the engine's default project is removed; one pass
- *    retires the default (its lease, watcher and database handles are let
- *    go) and unregisters the root. Afterwards the default-project search
- *    (`retryInitializeSync`, `ensureInitialized`) adopts only that same root
- *    once it has an index again, never the index of the checkout above it.
  *
  * Real git repositories and real SQLite in mkdtemp dirs; O4 uses fake pool
  * workers, so the retiring worker's exit is in the test's hands.
@@ -42,6 +35,7 @@ import { MCPEngine } from '../../../src/mcp/engine';
 import { QueryPool, type PoolWorker } from '../../../src/mcp/query-pool';
 import { __setLoadCodeGraphForTests, type ToolHandler, type ToolResult } from '../../../src/mcp/tools';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import {
   getRegisteredProject,
   listRegisteredProjects,
@@ -49,6 +43,9 @@ import {
   unregisterProject,
 } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
 import { ensureWorktreeIndex } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
+import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
+import { JobQueue } from '../../../src/extensions/host/builder/queue';
 import { sweepWorktrees } from '../../../src/extensions/host/worktree-lifecycle/teardown';
 
 // vite's resolver strips the `node:` prefix from an import of node:sqlite,
@@ -56,12 +53,6 @@ import { sweepWorktrees } from '../../../src/extensions/host/worktree-lifecycle/
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
 
 const HAS_LSOF = process.platform !== 'win32' && spawnSync('lsof', ['-v']).error === undefined;
-
-// The built engine (dist/ is rebuilt by the make-run global setup), for O5's
-// default-project open, as __tests__/index-recovery-off-thread.test.ts does.
-const DIST = path.resolve(__dirname, '../../../dist');
-const { MCPEngine: DistMCPEngine } = require(path.join(DIST, 'mcp', 'engine.js')) as typeof import('../../../src/mcp/engine');
-type DistEngine = InstanceType<typeof DistMCPEngine>;
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
@@ -149,7 +140,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
   });
 
   /**
-   * Hold CodeGraph.init (the child's own call) until another initializer has
+   * Hold CodeGraph.init (the build's own call) until another initializer has
    * built a complete index of the root, then let `after` decide what init
    * does: the real init, which now finds the index and throws, or a failure
    * of its own before it creates anything (a grammar load that fails).
@@ -174,7 +165,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     expect(fs.existsSync(dbFile(root))).toBe(true);
     expect(user.rows().nodes).toContain('appSymbol');
     expect(indexRows(root)).toEqual(user.rows());
-    // The child released its fence and registered nothing: the index is not its.
+    // The build released its fence and registered nothing: the index is not its.
     expect(fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid'))).toBe(false);
     expect(getRegisteredProject(root)).toBeNull();
   });
@@ -188,7 +179,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     expect(getRegisteredProject(root)).toBeNull();
   });
 
-  it('an index the child created and failed to fill is still removed', async () => {
+  it('an index the build created and failed to fill is still removed', async () => {
     vi.spyOn(CodeGraph.prototype, 'indexAll').mockResolvedValue({ success: false } as Awaited<ReturnType<CodeGraph['indexAll']>>);
     const code = await runColdBuild(root);
     expect(code).not.toBe(0);
@@ -220,7 +211,7 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
     // dir and the nonce the installed index carries. Without a recorded
     // nonce teardown would spare any index, so the cases below would prove
     // nothing: assert it is there and matches.
-    const outcome = await ensureWorktreeIndex(wt);
+    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue()));
     expect(outcome.kind).toBe('seeded');
     const rec = getRegisteredProject(wt);
     expect(rec?.seedNonce).toMatch(/^[0-9a-f]{32}$/);
@@ -279,19 +270,22 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
 });
 
 // ---------------------------------------------------------------------------
-// O3 and O5: engine leases and the default project
+// O3: engine release of a reopened root
 // ---------------------------------------------------------------------------
 
-describe('O3: a root reopened during its release keeps one lease per open', { timeout: 60_000 }, () => {
+describe('O3: a root reopened during its release is held until it is released again', { timeout: 60_000 }, () => {
   let workspace: string;
   let root: string;
   let engine: MCPEngine | undefined;
+  let builder: BuilderClient | undefined;
 
   beforeEach(async () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-own-lease-')));
+    // The builder's own state dir: its pid and job files stay out of the sandbox home.
+    vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     root = path.join(workspace, 'repo');
     makeRepo(root);
     await indexDir(root);
@@ -301,6 +295,8 @@ describe('O3: a root reopened during its release keeps one lease per open', { ti
   afterEach(async () => {
     await engine?.stop();
     engine = undefined;
+    await builder?.stop();
+    builder = undefined;
     __setLoadCodeGraphForTests(null);
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -308,15 +304,18 @@ describe('O3: a root reopened during its release keeps one lease per open', { ti
   }, 60_000);
 
   async function search(handler: ToolHandler): Promise<ToolResult> {
-    return handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' });
+    return handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' }, undefined, ADMIT_ALL);
   }
 
-  it('both leases are released: the writer slot and the database are freed on the second release', async () => {
-    engine = new MCPEngine({ watch: true });
+  it('the builder frees the writer slot and the engine closes its database on the second release', async () => {
+    builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
     const handler = engine.getToolHandler();
     const first = await search(handler);
     expect(first.isError).toBeFalsy();
-    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(process.pid), { timeout: 5000 });
+    // The writer is the builder, never this (server) process.
+    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 5000 });
+    expect(builder.pid()).not.toBe(process.pid);
 
     // Hold the next call in flight before it resolves its project, so the
     // release below waits for it (the handler counts calls, not calls per
@@ -342,125 +341,20 @@ describe('O3: a root reopened during its release keeps one lease per open', { ti
     expect(reopened.isError).toBeFalsy();
     expect(reopened.content[0].text).toContain('appSymbol');
     await firstRelease;
-    // The call that reopened it still holds it.
+    // The call that reopened it still holds it in the engine.
     expect(cachedRoots(handler)).toContain(root);
     vi.mocked(seedHook.seedWorktreeIndex).mockRestore();
 
     await engine.releaseProjectRoot(root);
     expect(cachedRoots(handler)).not.toContain(root);
-    expect(readWriterLock(root)?.pid).not.toBe(process.pid);
+    // The release resolves after the builder let go: no writer holds the slot.
+    expect(readWriterLock(root)).toBeNull();
     if (HAS_LSOF) expect(openFdCount([dbFile(root), `${dbFile(root)}-wal`])).toBe(0);
 
     // A later call opens a live graph, not the one the release closed.
     const again = await search(handler);
     expect(again.isError).toBeFalsy();
     expect(again.content[0].text).toContain('appSymbol');
-  });
-});
-
-describe('O5: a removed worktree serving as the default project is freed by one pass', { timeout: 60_000 }, () => {
-  let workspace: string;
-  let main: string;
-  let wt: string;
-  let engine: DistEngine | undefined;
-
-  beforeEach(async () => {
-    vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
-    vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-own-default-')));
-    main = path.join(workspace, 'main');
-    makeRepo(main);
-    await indexDir(main);
-    wt = path.join(workspace, 'feature');
-    git(main, 'worktree', 'add', '-q', '-b', 'feature', wt);
-    expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
-    // A server whose session started in the seeded worktree: its default
-    // project. The built engine, because the default open requires
-    // '../index', which vitest cannot resolve from src/mcp.
-    engine = new DistMCPEngine({ watch: true });
-    await engine.ensureInitialized(wt);
-    expect(engine.hasDefaultCodeGraph()).toBe(true);
-    await vi.waitFor(() => expect(readWriterLock(wt)?.pid).toBe(process.pid), { timeout: 5000 });
-  });
-
-  afterEach(async () => {
-    await engine?.stop();
-    engine = undefined;
-    vi.unstubAllEnvs();
-    clearRegistry();
-    fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
-
-  // The sweep's release of the default project retires it: the engine lets
-  // go of its lease (watcher, database, writer slot) and serves on with no
-  // default project. The server is opened in beforeEach, so a failure to
-  // open it fails the hook, never this case.
-  it('a server started in the seeded worktree releases it once it is removed', async () => {
-    const files = [dbFile(wt), `${dbFile(wt)}-wal`];
-    git(main, 'worktree', 'remove', '--force', wt);
-    expect(fs.existsSync(wt)).toBe(false);
-    await engine!.runHousekeepingTick();
-
-    expect(getRegisteredProject(wt)).toBeNull();
-    expect(engine!.hasDefaultCodeGraph()).toBe(false);
-    if (HAS_LSOF) expect(openFdCount(files)).toBe(0);
-    // Retiring the default recreated nothing at the removed path.
-    expect(fs.existsSync(wt)).toBe(false);
-  });
-});
-
-describe('O5: a retired default is re-adopted only as itself', { timeout: 60_000 }, () => {
-  let workspace: string;
-  let main: string;
-  let wt: string;
-  let engine: DistEngine | undefined;
-
-  beforeEach(async () => {
-    vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
-    vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-own-readopt-')));
-    main = path.join(workspace, 'main');
-    makeRepo(main);
-    await indexDir(main);
-    // Nested inside the indexed main checkout, as agent worktrees often are:
-    // a walk up from the removed worktree reaches main's index.
-    wt = path.join(main, '.worktrees', 'nested');
-    git(main, 'worktree', 'add', '-q', '-b', 'nested', wt);
-    expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
-    engine = new DistMCPEngine({ watch: true });
-    await engine.ensureInitialized(wt);
-    expect(engine.getProjectPath()).toBe(wt);
-    await vi.waitFor(() => expect(readWriterLock(wt)?.pid).toBe(process.pid), { timeout: 5000 });
-  });
-
-  afterEach(async () => {
-    await engine?.stop();
-    engine = undefined;
-    vi.unstubAllEnvs();
-    clearRegistry();
-    fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
-
-  it('the per-call retry never adopts the checkout above it, and adopts the same root once it is indexed again', async () => {
-    git(main, 'worktree', 'remove', '--force', wt);
-    await engine!.runHousekeepingTick();
-    expect(engine!.hasDefaultCodeGraph()).toBe(false);
-
-    // What each tool call without projectPath retries (session.ts): a walk up
-    // from the retired root would find main's index.
-    engine!.retryInitializeSync(wt);
-    expect(engine!.hasDefaultCodeGraph()).toBe(false);
-    await engine!.ensureInitialized(wt);
-    expect(engine!.hasDefaultCodeGraph()).toBe(false);
-    expect(readWriterLock(main)?.pid).not.toBe(process.pid);
-
-    // The same worktree back, with an index of its own: that is re-adopted.
-    git(main, 'worktree', 'add', '-q', wt, 'nested');
-    expect((await ensureWorktreeIndex(wt)).kind).toBe('seeded');
-    engine!.retryInitializeSync(wt);
-    expect(engine!.hasDefaultCodeGraph()).toBe(true);
-    expect(engine!.getProjectPath()).toBe(wt);
-    await vi.waitFor(() => expect(readWriterLock(wt)?.pid).toBe(process.pid), { timeout: 5000 });
   });
 });
 

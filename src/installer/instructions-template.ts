@@ -32,12 +32,12 @@ export const CODEGRAPH_SECTION_END = '<!-- CODEGRAPH_END -->';
 /**
  * The full block, markers included, exactly as written to disk.
  *
- * The wording is deliberately CONDITIONAL ("in repositories indexed by…"):
- * a global install writes this into a user-scope file (~/.claude/CLAUDE.md,
- * ~/.codex/AGENTS.md) that applies to every project the user opens —
- * including unindexed ones, where an unconditional "this repository is
- * indexed" claim would send subagents into failing codegraph calls (the
- * noise the unindexed-session policy exists to prevent).
+ * The opening line is CONDITIONAL ("in repositories indexed by…") because a
+ * global install writes this block into user-scope files (~/.claude/CLAUDE.md,
+ * ~/.codex/AGENTS.md) that apply to every project. The last line covers a
+ * project with no `.codegraph/`: `codegraph explore` never builds an index, so
+ * the line points an agent that has the MCP tool at that tool. What the tool
+ * does there is decided by the server; see `src/mcp/server-instructions.ts`.
  */
 export const CODEGRAPH_INSTRUCTIONS_BLOCK = `${CODEGRAPH_SECTION_START}
 ## CodeGraph
@@ -45,7 +45,7 @@ export const CODEGRAPH_INSTRUCTIONS_BLOCK = `${CODEGRAPH_SECTION_START}
 In repositories indexed by CodeGraph (a \`.codegraph/\` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
 
 - **MCP tool** (when available): \`codegraph_explore\` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
-- **Shell** (always works): \`codegraph explore "<symbol names or question>"\` prints the same output.
+- **Shell** (works without an MCP client): \`codegraph explore "<symbol names or question>"\` prints the same output.
 
-If there is no \`.codegraph/\` directory, skip CodeGraph entirely — indexing is the user's decision.
+If there is no \`.codegraph/\` directory yet, the shell command cannot build one; if you have the codegraph MCP tool, call \`codegraph_explore\` with that project's path.
 ${CODEGRAPH_SECTION_END}`;

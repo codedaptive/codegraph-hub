@@ -11,8 +11,8 @@
  *
  * This worker moves the heavy read-tool dispatch OFF the daemon's main loop.
  * Each worker owns its OWN read connection (node:sqlite WAL allows N concurrent
- * readers across connections — verified: a worker reader sees the main writer's
- * committed catch-up/watcher writes), so {@link QueryPool} runs N tool calls in
+ * readers across connections — verified: a worker reader sees the index
+ * builder's committed catch-up/watcher writes), so {@link QueryPool} runs N tool calls in
  * true parallel up to core count while the main loop stays free for the MCP
  * transport. The worker runs {@link ToolHandler.executeReadTool} — validation +
  * dispatch + error classification — and returns the raw {@link ToolResult}; the
@@ -45,12 +45,12 @@ interface WorkerInit {
  * flight; it is answered with `{ type: 'retired', closed }` and then exit code
  * 0. `closed` is the handler's cached projects when closeAll() resolves (none
  * of them if it rejects, even any it closed before rejecting), plus the
- * default project if its close succeeds. `release` closes one project in the
+ * default project if the worker has one and its close succeeds. `release` closes one project in the
  * handler's cache (ToolHandler.releaseProjectRoot: it waits for the
  * worker's in-flight calls to finish; a later call opens it again) and is
  * answered with `{ type: 'released', id, ok, error? }`; it is answered `ok` with nothing to
  * do when the worker never opened the project, is retiring, or failed to
- * start. The worker's default project is never released this way.
+ * start. A worker's default project, if it has one, is never released this way.
  */
 interface CallMessage {
   type: 'call';
@@ -82,17 +82,23 @@ if (parentPort) {
   const port = parentPort;
   const { root } = workerData as WorkerInit;
 
-  // Open the default project's READ connection once, if present. Other repos are
-  // opened lazily on first cross-project (projectPath) call by the ToolHandler's
-  // own per-handler cache. All of them are closed on retire. openSync does not
-  // start a watcher — workers are pure readers; the single watcher/writer stays
-  // on the daemon's main thread.
+  // The pool spawns workers with `root: null`: no project is open at spawn,
+  // because the server has no default project and every call names its own.
+  // Each project is opened lazily on its first call by the ToolHandler's own
+  // per-handler cache, and all of them are closed on retire. A worker started
+  // with a root (a test that drives a worker directly) opens that one READ
+  // connection up front as its default. Workers are pure readers: that default
+  // opens read-only, the handler is marked read-only so every project it opens
+  // is too (no migration, no index repair, no WAL maintenance), and nothing
+  // starts a watcher. Every index write is the index builder's, in its own
+  // process.
   let cg: ReturnType<typeof import('../index').default.openSync> | null = null;
   let handler: InstanceType<typeof import('./tools').ToolHandler> | null = null;
   let initError: string | null = null;
   try {
-    cg = root ? loadCodeGraph().openSync(root) : null;
+    cg = root ? loadCodeGraph().openSync(root, { readOnly: true }) : null;
     handler = new (loadToolHandler())(cg);
+    handler.setReadOnly(true);
   } catch (err) {
     initError = err instanceof Error ? err.message : String(err);
   }
@@ -122,11 +128,12 @@ if (parentPort) {
   // the handler's per-project cache (which also holds what extension tools
   // opened through it) and resolves at once here: a worker's handler has no
   // project lifecycle, and the pool never retires a worker with a call in
-  // flight. It never closes the default project, so that is closed here.
+  // flight. It never closes the default project (pool workers have none; only a
+  // worker started with a root does), so that is closed here.
   // `closed` is the cached projects, counted before closeAll() empties the
   // cache and added only if it resolves: if it rejects none of them counts,
   // even any it closed first (ToolHandler reports no per-project result).
-  // The default project adds one if its close succeeds.
+  // A default project, if the worker has one, adds one if its close succeeds.
   const retire = async (): Promise<void> => {
     let closed = 0;
     if (handler) {
@@ -190,8 +197,8 @@ if (parentPort) {
 }
 
 /**
- * How many projects the handler holds open besides the default: the ones
- * closeAll() closes. ToolHandler keeps them in a private cache and exposes no
+ * How many projects the handler holds open besides the default (none for a
+ * pool worker): the ones closeAll() closes. ToolHandler keeps them in a private cache and exposes no
  * count, so this reads the cache's size structurally (0 if it is not there).
  */
 function cachedProjectCount(handler: object): number {

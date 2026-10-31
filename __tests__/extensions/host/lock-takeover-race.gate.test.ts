@@ -18,7 +18,7 @@
  * guard busy, does not take the lock, and the count is 1.
  *
  * The spy intercepts `fs.unlinkSync(lockPath)` with the exact path string the
- * caller computes (getWriterPidPath / the FileLock path / getDaemonPidPath).
+ * caller computes (getWriterPidPath / the FileLock path / getServerPidPath).
  * That is the contract's requirement on src/mcp/lock-takeover.ts.
  *
  * Each case spawns one vite-node process (about 2 s on an idle machine, more
@@ -37,7 +37,7 @@ import { FileLock } from '../../../src/utils';
 import { getCodeGraphDir } from '../../../src/directory';
 import { tryAcquireWriterLock, getWriterPidPath, lockStamp, isForeignLockRecord } from '../../../src/mcp/writer-lock';
 import { clearStaleDaemonLock, tryAcquireDaemonLock } from '../../../src/mcp/daemon';
-import { encodeLockInfo, getDaemonPidPath, decodeLockInfo } from '../../../src/mcp/daemon-paths';
+import { encodeServerLock, getServerPidPath, getServerSocketPath, decodeServerLock } from '../../../src/mcp/daemon-paths';
 
 // A writable copy of the fs namespace, shared by this file and every src
 // module it loads, so vi.spyOn(fs, 'unlinkSync') reaches the code under test
@@ -115,6 +115,7 @@ function runCompetitor(kind: string, arg: string, pid: number): CompetitorResult
   const { file, args } = competitorLaunch(kind, arg, pid);
   const out = execFileSync(file, args, {
     cwd: REPO,
+    env: { ...process.env, CODEGRAPH_STATE_DIR: stateDir },
     encoding: 'utf8',
     timeout: COMPETITOR_TIMEOUT_MS,
     killSignal: 'SIGKILL',
@@ -151,25 +152,34 @@ function hookFirstUnlink(lockPath: string, kind: string, arg: string, pid: numbe
 }
 
 let root: string;
+let stateDir: string;
+let previousStateDir: string | undefined;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-lock-race-'));
+  stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-lock-race-state-'));
+  previousStateDir = process.env.CODEGRAPH_STATE_DIR;
+  process.env.CODEGRAPH_STATE_DIR = stateDir;
   fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (previousStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+  else process.env.CODEGRAPH_STATE_DIR = previousStateDir;
   fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
 describe('stale-lock takeover race (gate)', () => {
+  // May exceed 5 s: vite-node starts a separate competitor using the real writer-lock code.
   it('writer.pid: exactly one of two racing takers acquires via tryAcquireWriterLock', () => {
     const dead = deadPid();
     const pidPath = getWriterPidPath(root);
-    fs.writeFileSync(pidPath, JSON.stringify({ pid: dead, mode: 'serve', startedAt: 1 }));
+    fs.writeFileSync(pidPath, JSON.stringify({ pid: dead, mode: 'fallback', startedAt: 1 }));
 
     const hook = hookFirstUnlink(pidPath, 'writer', root, dead);
-    const b = tryAcquireWriterLock(root, 'taker-b');
+    const b = tryAcquireWriterLock(root, 'fallback');
 
     expect(hook.error).toBeNull();
     expect(hook.ran).toBe(true);
@@ -177,6 +187,7 @@ describe('stale-lock takeover race (gate)', () => {
     expect(acquisitions).toBe(1);
   }, TEST_TIMEOUT_MS);
 
+  // May exceed 5 s: a separate vite-node competitor runs inside the unlink hook.
   it('codegraph.lock: exactly one of two racing takers acquires via FileLock.acquire (no owner)', () => {
     const dead = deadPid();
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
@@ -197,6 +208,7 @@ describe('stale-lock takeover race (gate)', () => {
     expect(acquisitions).toBe(1);
   }, TEST_TIMEOUT_MS);
 
+  // May exceed 5 s: the competitor loads project-stamp-aware FileLock in another process.
   it('codegraph.lock: exactly one of two racing takers acquires via FileLock.acquire (with owner)', () => {
     const dead = deadPid();
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
@@ -218,17 +230,19 @@ describe('stale-lock takeover race (gate)', () => {
     expect(acquisitions).toBe(1);
   }, TEST_TIMEOUT_MS);
 
-  it("daemon.pid: competitor's fresh record survives clearStaleDaemonLock, exactly one acquires", () => {
+  // May exceed 5 s: the competitor loads the real MCP engine in a separate process.
+  it("server.pid: competitor's fresh record survives clearStaleDaemonLock, exactly one acquires", () => {
     const dead = deadPid();
-    const pidPath = getDaemonPidPath(root);
-    fs.writeFileSync(pidPath, encodeLockInfo({
+    const pidPath = getServerPidPath();
+    fs.writeFileSync(pidPath, encodeServerLock({
       pid: dead,
       version: '0.0.0',
-      socketPath: path.join(root, '.codegraph', 'daemon.sock'),
+      socketPath: getServerSocketPath(),
       startedAt: 1,
+      stateDir,
     }));
 
-    const hook = hookFirstUnlink(pidPath, 'daemon', root, dead);
+    const hook = hookFirstUnlink(pidPath, 'daemon', stateDir, dead);
     clearStaleDaemonLock(pidPath, dead);
 
     expect(hook.error).toBeNull();
@@ -237,9 +251,9 @@ describe('stale-lock takeover race (gate)', () => {
     if (a.acquired) {
       // A's fresh record must still be in place after B's clear.
       expect(fs.existsSync(pidPath)).toBe(true);
-      expect(decodeLockInfo(fs.readFileSync(pidPath, 'utf8'))?.pid).toBe(a.record!.pid);
+      expect(decodeServerLock(fs.readFileSync(pidPath, 'utf8'))?.pid).toBe(a.record!.pid);
     }
-    const b = tryAcquireDaemonLock(root);
+    const b = tryAcquireDaemonLock();
     const acquisitions = (a.acquired ? 1 : 0) + (b.kind === 'acquired' ? 1 : 0);
     expect(acquisitions).toBe(1);
   }, TEST_TIMEOUT_MS);
@@ -261,6 +275,7 @@ describe('stale-lock takeover race (harness)', () => {
    * `.bin` link resolves to that same `#!/usr/bin/env node` file), so it is
    * asserted here rather than gated to Windows. The launcher is then run for
    * real: the competitor, a separate process, takes a free lock through it.
+   * That vite-node startup can exceed 5 s under machine load.
    */
   it('launches the competitor as the running node binary on vite-node\'s JS entry, never a #! script', () => {
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
@@ -278,6 +293,7 @@ describe('stale-lock takeover race (harness)', () => {
     expect(Number(holder)).not.toBe(process.pid);
   }, TEST_TIMEOUT_MS);
 
+  // May exceed 5 s: this intentionally starts and observes a failing vite-node competitor.
   it('a competitor that hits an unexpected error is recorded as hook.error, with no result', () => {
     const dead = deadPid();
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');

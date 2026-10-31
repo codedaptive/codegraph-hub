@@ -2,9 +2,9 @@
  * Renderers for a `BlastReport`: terminal text, a PR-comment markdown body, and JSON.
  *
  * A port of graft 0.16 `dist/blast/render.js`. `textReport` is byte-compatible
- * with graft's for the same report; it has no "who to tag" block because this
- * port computes no reviewers. `markdownReport` keeps graft's headline, test
- * line, impact table, collapsed sections and caveats. One difference: the
+ * with graft's for a report with no questionable marks; it has no "who to
+ * tag" block because this port computes no reviewers. `markdownReport` keeps
+ * graft's headline, test line, impact table, collapsed sections and caveats. One difference: the
  * collapsed symbol list's "…N further symbols not listed" counts the rows it
  * left out and is omitted when none were. graft's count is one short when the
  * 60-row cap falls inside an area's list, and with exactly 60 rows graft prints
@@ -14,8 +14,22 @@
  * the tag line, the owner section, and the per-symbol evidence snippets
  * (graft's `evidence.js`, which reads the checkout). The markdown header is
  * "### blast radius" and the footer names `codegraph blast`.
+ *
+ * Added here (graft has no edge certainty): a dependent marked `questionable`
+ * says so on its line in text and markdown, and one caveat line counts the
+ * marked dependents. A report with no marks renders no questionable text.
+ *
+ * Under a session focus (`report.outsideFocus`, set by `splitReportByFocus` in
+ * `./focus.ts`) `modules` holds only the dependents inside it, so the headline,
+ * the impact table and the "All N dependent symbols" list count those alone. The
+ * test signal and the test-suite sections are not split. The "Outside focus"
+ * section prints only when it has dependents: in text after the in-focus module
+ * blocks, in markdown after the collapsed sections and before the caveats. json
+ * is the report itself, `outsideFocus` included. A report with no `outsideFocus`
+ * (the CLI, an unfocused session) has no focus section.
  */
-import type { BlastReport } from './blast';
+import { outsideFocusHeading } from '../shared/focus';
+import type { BlastReport, Module } from './blast';
 
 /** Table rows under the headline; the rest fold into one "smaller areas" row (graft's value). */
 const MAX_TABLE_ROWS = 6;
@@ -44,7 +58,7 @@ export function jsonReport(r: BlastReport): string {
   return JSON.stringify(r, null, 2);
 }
 
-/** The PR-comment body: headline, test line, one table, then everything else collapsed. */
+/** The PR-comment body: headline, test line, one table, then the collapsed sections; under a focus, an uncollapsed `## Outside focus (N)` section, then the caveat lines. */
 export function markdownReport(r: BlastReport): string {
   const out: string[] = [];
   const symbols = r.modules.reduce((n, m) => n + m.symbols.length, 0);
@@ -59,6 +73,15 @@ export function markdownReport(r: BlastReport): string {
   }
   out.push('');
   out.push(...detailSections(r, symbols));
+  const outside = r.outsideFocus;
+  if (outside && outside.count > 0) {
+    out.push('');
+    out.push(outsideFocusHeading(outside.count));
+    out.push('');
+    out.push(...symbolList(outside.modules, outside.count));
+    // symbolList ends each module with a blank line; the one below separates the next block.
+    out.pop();
+  }
   const caveats = caveatLines(r);
   if (caveats.length > 0) {
     out.push('');
@@ -71,6 +94,11 @@ export function markdownReport(r: BlastReport): string {
 
 function headline(r: BlastReport, symbols: number): string {
   const areas = plural(r.areas.length, 'area');
+  const outside = r.outsideFocus;
+  if (symbols === 0 && outside && outside.count > 0) {
+    return `**Nothing inside this session's focus (${outside.dirs}) depends on it.** ${areas} changed; ` +
+      `${plural(outside.count, 'dependent symbol')} outside it, listed under Outside focus.`;
+  }
   if (symbols === 0) {
     return `**Nothing outside this diff depends on it.** ${areas} changed; no indexed dependents at ${depthLabel(r.depth)}.`;
   }
@@ -104,7 +132,9 @@ function impactTable(r: BlastReport): string[] {
   const rows = ['| Can be affected | Symbols | Nearest hop | Reached from |', '| --- | --: | --- | --- |'];
   for (const mod of shown) {
     const nearest = mod.symbols[0];
-    const hop = nearest ? `\`${nearest.path}:${nearest.span}\` ${nearest.name} — ${nearest.relation}, depth ${nearest.depth}` : '—';
+    const hop = nearest
+      ? `\`${nearest.path}:${nearest.span}\` ${nearest.name} — ${nearest.relation}, depth ${nearest.depth}${nearest.questionable ? ', questionable' : ''}`
+      : '—';
     // Two names, then a count, so the column cannot outgrow the table.
     const names = [...new Set(mod.from.map((f) => areaOf.get(f) ?? f))];
     const from = names.length === 0 ? '—'
@@ -130,27 +160,7 @@ function detailSections(r: BlastReport, symbols: number): string[] {
     out.push('<details>');
     out.push(`<summary><strong>All ${plural(symbols, 'dependent symbol')}</strong>, grouped by area</summary>`);
     out.push('');
-    let listed = 0;
-    for (const mod of r.modules) {
-      out.push(`**${mod.label}** — ${plural(mod.symbols.length, 'symbol')} in ${plural(mod.files.length, 'file')}`);
-      out.push('');
-      for (const s of mod.symbols) {
-        if (listed >= MAX_SYMBOLS_LISTED) break;
-        out.push(`- \`${s.path}:${s.span}\` — ${s.name} (${s.relation}, depth ${s.depth})`);
-        listed++;
-      }
-      out.push('');
-      if (listed >= MAX_SYMBOLS_LISTED) {
-        // `listed` counts printed rows only, so `symbols - listed` is the rows not printed.
-        // graft increments before its cap check, so its count is one short when the cap
-        // falls inside an area's list, and with exactly 60 rows it prints "…0 further symbols".
-        if (symbols > listed) {
-          out.push(`…${plural(symbols - listed, 'further symbol')} not listed.`);
-          out.push('');
-        }
-        break;
-      }
-    }
+    out.push(...symbolList(r.modules, symbols));
     out.push('</details>');
   }
   if (r.areas.length > 0) {
@@ -199,7 +209,42 @@ function detailSections(r: BlastReport, symbols: number): string[] {
   return out;
 }
 
-/** What the report cannot see: deleted and unindexed files, so "no dependents" is not read as "safe". */
+/**
+ * Every dependent symbol of `modules` (`total` of them), grouped by module, up to
+ * MAX_SYMBOLS_LISTED rows, then a count of the rows left out. Each module's block
+ * ends with a blank line. Both the in-focus list and the "Outside focus" section
+ * use it, each with its own cap.
+ */
+function symbolList(modules: readonly Module[], total: number): string[] {
+  const out: string[] = [];
+  let listed = 0;
+  for (const mod of modules) {
+    out.push(`**${mod.label}** — ${plural(mod.symbols.length, 'symbol')} in ${plural(mod.files.length, 'file')}`);
+    out.push('');
+    for (const s of mod.symbols) {
+      if (listed >= MAX_SYMBOLS_LISTED) break;
+      out.push(`- \`${s.path}:${s.span}\` — ${s.name} (${s.relation}, depth ${s.depth}${s.questionable ? ', questionable' : ''})`);
+      listed++;
+    }
+    out.push('');
+    if (listed >= MAX_SYMBOLS_LISTED) {
+      // `listed` counts printed rows only, so `total - listed` is the rows not printed.
+      // graft increments before its cap check, so its count is one short when the cap
+      // falls inside an area's list, and with exactly 60 rows it prints "…0 further symbols".
+      if (total > listed) {
+        out.push(`…${plural(total - listed, 'further symbol')} not listed.`);
+        out.push('');
+      }
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * What the report cannot see or vouch for: deleted and unindexed files, so "no
+ * dependents" is not read as "safe", and dependents marked questionable.
+ */
 function caveatLines(r: BlastReport): string[] {
   const out: string[] = [];
   if (r.deleted.length > 0) {
@@ -210,10 +255,32 @@ function caveatLines(r: BlastReport): string[] {
     out.push(`⚠️ ${plural(r.unindexed.length, 'changed file')} not in the graph (${r.unindexed.slice(0, MAX_CAVEAT_PATHS).join(', ')}) — ` +
       'no parser claims the extension, or the index predates the file.');
   }
+  // Counts every marked dependent in `impacted`, including those inside changed
+  // files and test files, which the module lists leave out. Never set under strict.
+  const marked = r.impacted.filter((s) => s.questionable).length;
+  if (marked > 0) {
+    out.push(`${plural(marked, 'dependent')} reached only through name-matched calls ${marked === 1 ? 'is' : 'are'} ` +
+      `marked questionable; strict (\`--strict\`, or \`strict: true\` over MCP) leaves ${marked === 1 ? 'it' : 'them'} out.`);
+  }
   return out;
 }
 
-/** Terminal report: same content as the markdown, no markdown scaffolding. */
+/** The text report's module blocks: a header and up to MAX_TEXT_SYMBOLS dependents each, a blank line after every block. */
+function textModules(modules: readonly Module[]): string[] {
+  const lines: string[] = [];
+  for (const mod of modules) {
+    lines.push(`${mod.label} — ${plural(mod.symbols.length, 'symbol')} in ${plural(mod.files.length, 'file')}`);
+    for (const s of mod.symbols.slice(0, MAX_TEXT_SYMBOLS)) {
+      lines.push(`  ${s.relation} ← ${s.name} (${s.path}:${s.span}) [depth ${s.depth}]${s.questionable ? ' [questionable]' : ''}`);
+    }
+    const hidden = mod.symbols.length - MAX_TEXT_SYMBOLS;
+    if (hidden > 0) lines.push(`  …${plural(hidden, 'more symbol')}`);
+    lines.push('');
+  }
+  return lines;
+}
+
+/** Terminal report: same content as the markdown, without the table and the collapsed sections. Its `## Outside focus (N)` line is the one markdown token it keeps. */
 export function textReport(r: BlastReport): string {
   const symbols = r.modules.reduce((n, m) => n + m.symbols.length, 0);
   const lines = [
@@ -226,16 +293,16 @@ export function textReport(r: BlastReport): string {
     lines.push(`${TEST_GLYPH[a.tests]} ${a.label} — ${plural(a.files.length, 'changed file')}, ${a.reached}/${a.behavioural} reached by a test`);
   }
   if (r.areas.length > 0) lines.push('');
-  for (const mod of r.modules) {
-    lines.push(`${mod.label} — ${plural(mod.symbols.length, 'symbol')} in ${plural(mod.files.length, 'file')}`);
-    for (const s of mod.symbols.slice(0, MAX_TEXT_SYMBOLS)) {
-      lines.push(`  ${s.relation} ← ${s.name} (${s.path}:${s.span}) [depth ${s.depth}]`);
-    }
-    const hidden = mod.symbols.length - MAX_TEXT_SYMBOLS;
-    if (hidden > 0) lines.push(`  …${plural(hidden, 'more symbol')}`);
-    lines.push('');
+  lines.push(...textModules(r.modules));
+  const outside = r.outsideFocus;
+  if (symbols === 0) {
+    lines.push(outside && outside.count > 0
+      ? `no indexed dependents inside this session's focus (${outside.dirs})`
+      : 'no indexed dependents outside the changed files themselves', '');
   }
-  if (symbols === 0) lines.push('no indexed dependents outside the changed files themselves', '');
+  if (outside && outside.count > 0) {
+    lines.push(outsideFocusHeading(outside.count), '', ...textModules(outside.modules));
+  }
   if (r.testModules.length > 0) {
     const files = new Set(r.testModules.flatMap((m) => m.files));
     lines.push(`${plural(files.size, 'test suite')} also ${files.size === 1 ? 'references' : 'reference'} this code (not listed)`, '');

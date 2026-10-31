@@ -4,7 +4,9 @@
  * Reached through ./extension.ts: the CLI `codegraph suspects` and the MCP tool `codegraph_suspects`.
  *
  * CANDIDATE EDGE. kind = 'calls', `metadata.resolvedBy` present, and name-only:
- *   resolvedBy IN ('exact-match', 'fuzzy')  OR  (resolvedBy = 'instance-method' AND confidence < 0.9).
+ *   resolvedBy = 'fuzzy'
+ *   OR (resolvedBy = 'exact-match' AND the caller and target are not in the same file)
+ *   OR (resolvedBy = 'instance-method' AND confidence < 0.9).
  * Why: this is the complement of the DECLARED predicate in `aggregateModuleGraph`
  * (src/db/queries.ts: import, qualified-name, or instance-method at >= 0.9, i.e. a receiver
  * whose type was declared), minus 'framework', 'file-path' and 'function-ref' — framework
@@ -14,6 +16,18 @@
  * inherited type, a single trait or impl in scope, or a single owner of the name (0.85 or
  * 0.8), or a weaker guess (0.7 or 0.65). Every such edge is a candidate. Synthesized edges carry no
  * resolvedBy and are excluded. A missing confidence counts as 1.
+ * Same-file exception: an exact-match edge whose caller and target lie in one file is
+ * certain, not a candidate. Within one file the extractor and resolver see the definition the
+ * name binds to in the caller's own scope, so a same-file exact name match is the local
+ * definition, not a guess. Every ordinary local TypeScript call resolves as exact-match, so
+ * counting same-file matches as candidates would mark most correct local calls questionable,
+ * and a strict mode that drops questionable edges would drop real ones ("silent beats wrong").
+ * A fuzzy edge stays a candidate even within one file. An unknown file (missing node, null
+ * path) on either end is not the same file, so the edge stays a candidate.
+ * The predicate has two forms, `candidateEdgeSql` (SQL over an `edges` row) and
+ * `isCandidateEdge` (JS over its fields), which agree edge for edge. findSuspectsInDb uses the
+ * SQL form. Both are exported as the one questionable-edge rule, for the queries
+ * lane's grep, blast and orphans to import, so that every check flags the same edges.
  *
  * FLAGS (on each edge; a target's flags are the union, in SuspectFlag order):
  *   std-collision        the target's name is a standard-library method name in its language
@@ -91,7 +105,7 @@ const FLAG_WEIGHT: Readonly<Record<SuspectFlag, number>> = {
 };
 
 /** Below this an instance-method edge was bound without a declared receiver type; at or above it the type was declared. */
-const DECLARED_INSTANCE_CONFIDENCE = 0.9;
+export const DECLARED_INSTANCE_CONFIDENCE = 0.9;
 /** Below this a candidate edge is flagged low-confidence. */
 const LOW_CONFIDENCE = 0.8;
 const DEFAULT_MAX_EDGES_PER_TARGET = 5;
@@ -167,7 +181,58 @@ interface CandidateRow {
   targetLanguage: string;
 }
 
-/** The candidate predicate from the header, as SQL over `edges e`. */
+/**
+ * The CANDIDATE EDGE predicate (see the header) as an SQL boolean expression over the `edges`
+ * row named `alias` (a table name or alias with `kind`, `metadata`, `source` and `target`
+ * columns). Self-contained: the caller and target files come from correlated subqueries on
+ * `nodes` by primary key, so the caller needs no join and can use it in a WHERE or inside
+ * `SUM(CASE WHEN ... END)`. A missing node or null file_path makes the comparison NULL, which
+ * COALESCE turns into "not the same file", so such an edge stays a candidate.
+ * Evaluates to 1 or 0 (never NULL). `alias` is interpolated into the SQL: pass only a literal
+ * identifier, never input.
+ */
+export function candidateEdgeSql(alias: string): string {
+  const by = `json_extract(${alias}.metadata, '$.resolvedBy')`;
+  const sameFile =
+    `COALESCE((SELECT file_path FROM nodes WHERE id = ${alias}.source)` +
+    ` = (SELECT file_path FROM nodes WHERE id = ${alias}.target), 0)`;
+  return (
+    `(${alias}.kind = 'calls' AND ${by} IS NOT NULL AND (${by} = 'fuzzy'` +
+    ` OR (${by} = 'exact-match' AND NOT ${sameFile})` +
+    ` OR (${by} = 'instance-method'` +
+    ` AND COALESCE(json_extract(${alias}.metadata, '$.confidence'), 1) < ${DECLARED_INSTANCE_CONFIDENCE})))`
+  );
+}
+
+/**
+ * The CANDIDATE EDGE predicate over an edge's kind, parsed metadata (null when the edge has
+ * none) and its caller's and target's file paths. Same file only when both paths are strings
+ * and equal, as in the SQL form. The confidence is read as the SQL form's
+ * `COALESCE(json_extract(...), 1) < 0.9` reads it, so the two never disagree: a number is
+ * itself; a JSON boolean is 1 (true) or 0 (false), as json_extract returns it; anything else
+ * (null, absent, a string, an object) counts as 1. A string is not parsed: json_extract keeps
+ * it TEXT, and SQLite orders TEXT above every number, so '0.5' is not below 0.9.
+ */
+export function isCandidateEdge(
+  kind: string,
+  metadata: Record<string, unknown> | null | undefined,
+  sourceFile: string | null | undefined,
+  targetFile: string | null | undefined,
+): boolean {
+  if (kind !== 'calls' || !metadata) return false;
+  const by = metadata.resolvedBy;
+  if (by === 'fuzzy') return true;
+  if (by === 'exact-match') {
+    const sameFile = typeof sourceFile === 'string' && typeof targetFile === 'string' && sourceFile === targetFile;
+    return !sameFile;
+  }
+  if (by !== 'instance-method') return false;
+  const c = metadata.confidence;
+  const confidence = typeof c === 'number' ? c : typeof c === 'boolean' ? (c ? 1 : 0) : 1;
+  return confidence < DECLARED_INSTANCE_CONFIDENCE;
+}
+
+/** The candidate rows: every edge `candidateEdgeSql('e')` accepts, with its caller and target. */
 const CANDIDATE_SQL = `
   SELECT s.id AS callerId, s.name AS callerName, s.file_path AS callerFile, s.language AS callerLanguage,
          e.line AS line,
@@ -180,11 +245,7 @@ const CANDIDATE_SQL = `
     FROM edges e
     JOIN nodes s ON s.id = e.source
     JOIN nodes t ON t.id = e.target
-   WHERE e.kind = 'calls'
-     AND json_extract(e.metadata, '$.resolvedBy') IS NOT NULL
-     AND (json_extract(e.metadata, '$.resolvedBy') IN ('exact-match', 'fuzzy')
-          OR (json_extract(e.metadata, '$.resolvedBy') = 'instance-method'
-              AND COALESCE(json_extract(e.metadata, '$.confidence'), 1) < ${DECLARED_INSTANCE_CONFIDENCE}))`;
+   WHERE ${candidateEdgeSql('e')}`;
 
 /** A workspace member: its directory (no trailing '/', '' for the root) and its crate name. */
 interface CargoMember {

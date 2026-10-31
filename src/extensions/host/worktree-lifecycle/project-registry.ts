@@ -1,11 +1,13 @@
 /**
  * Global project registry: the roots CodeGraph manages beyond "an index the
- * user built by hand", under `~/.codegraph/projects/`.
+ * user built by hand", under `<state dir>/projects/` (`CODEGRAPH_STATE_DIR`,
+ * else `~/.codegraph`; see server/state-dir.ts).
  *
  * A root lands here in two ways: an index CodeGraph gave a git worktree on its
- * own, seeded from a sibling worktree or cold-built (registered SEEDED, with
- * the repository's git common dir and the seed nonce written into that
- * index), and `codegraph project pin <path>` (registered PINNED). The
+ * own (seeded from a sibling worktree or cold-built), or a directory outside
+ * git on its own (cold-built). Each is registered SEEDED, with the repository's
+ * git common dir (null outside git) and the seed nonce written into that index.
+ * The other way is `codegraph project pin <path>` (registered PINNED). The
  * registry is what lets the housekeeping sweep (`teardown.ts`) find
  * a seeded worktree after it is removed and reclaim its index, and what keeps
  * a pinned root open in the MCP server's project cache.
@@ -20,13 +22,12 @@
  * recorded nonce ({@link readSeedNonce}), never deletes it. A nonce rather than
  * the file's inode: filesystems reuse inode numbers, and Windows reports none.
  *
- * Shape follows the daemon registry (`src/mcp/daemon-registry.ts`): one small JSON
- * record per root, named by a hash of {@link canonicalProjectRoot} so every
- * spelling of a directory lands on one record. Writes are atomic (temp file +
- * rename), so a reader never sees a half-written record. Unlike the daemon
- * registry this one IS a source of truth (whether an index was seeded, and
- * which, decides whether teardown may delete it), so writes throw rather than
- * swallow errors; reads skip a record that does not parse.
+ * Shape: one small JSON record per root, named by a hash of
+ * {@link canonicalProjectRoot} so every spelling of a directory lands on one
+ * record. Writes are atomic (temp file + rename), so a reader never sees a
+ * half-written record. The registry is a source of truth (whether an index was
+ * seeded, and which, decides whether teardown may delete it), so writes throw
+ * rather than swallow errors; reads skip a record that does not parse.
  *
  * Every change to a record (register, pin, unpin, unregister, the sweep's
  * settle) is one read-modify-write under that record's lock,
@@ -39,20 +40,20 @@
  * change to the record's shape, and the date is ISO8601 text.
  */
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { canonicalProjectRoot, getCodeGraphDir } from '../../../directory';
 import { loadNodeSqlite } from '../../../db/node-sqlite';
-import { createLockFile, removeLockIfUnchanged, snapshotLock, type LockSnapshot } from '../../../mcp/lock-takeover';
+import { getStateDir } from '../server/state-dir';
+import { createLockFile,removeLockIfUnchanged, snapshotLock, type LockSnapshot } from '../../../mcp/lock-takeover';
 
 /**
  * Bitmap assignments for {@link RegisteredProject.flags}. Never reuse or
  * renumber a bit; records on disk carry these values.
  *
- *   bit 0  PINNED  never idle-released or LRU-evicted from the MCP project cache
+ *   bit 0  PINNED  never idle-released from the MCP project cache
  *   bit 1  SEEDED  CodeGraph made an index at this root on its own: copied in
- *                  from a sibling worktree, or cold-built by the server.
+ *                  from a sibling worktree, or cold-built by the index builder.
  *                  Teardown may delete the index once the worktree is gone,
  *                  and only the one whose seed nonce the record holds.
  */
@@ -83,9 +84,9 @@ export interface RegisteredProject {
   seedNonce?: string;
 }
 
-/** `~/.codegraph/projects`: global, like the daemon registry. */
+/** `<state dir>/projects`: machine-wide, shared by the server and every CLI command of one state dir. */
 export function registryDir(): string {
-  return path.join(os.homedir(), '.codegraph', 'projects');
+  return path.join(getStateDir(), 'projects');
 }
 
 function recordPath(canonicalRoot: string): string {
@@ -135,8 +136,8 @@ function writeRecord(rec: RegisteredProject): void {
  * Age past which a record lock is taken over whatever pid it names. A holder
  * keeps it for one read and one rename, except the teardown's settle, which
  * under it also judges the root once more (one `git worktree list`, bounded at
- * 5 s by teardown.ts), removes a dead daemon's record and sockets and
- * recursively deletes `<root>/.codegraph`: well under a second on a loaded
+ * 5 s by teardown.ts), judges the root again and recursively deletes
+ * `<root>/.codegraph`: well under a second on a loaded
  * machine unless git hangs, and below this age even when git takes its whole
  * bound (the age counts from the create that took the lock, not from the wait
  * before it). So a lock this old was left by a process killed inside one
@@ -188,7 +189,7 @@ function isAlive(pid: number): boolean {
  * (registry calls are synchronous and never nest, so a lock naming this
  * process while it waits for one is a leftover of a release that failed; this
  * assumes no other thread of the process changes the registry, true today:
- * only the main thread of a server, the CLI and the cold-build child do); or
+ * only the main thread of the index builder and the CLI do); or
  * older than {@link RECORD_LOCK_STALE_MS}.
  */
 function isStaleRecordLock(lockPath: string, snap: LockSnapshot): boolean {
@@ -404,11 +405,6 @@ export function settleProjectIfUnchanged(
 export function isPinned(root: string): boolean {
   const rec = getRegisteredProject(root);
   return !!rec && (rec.flags & PROJECT_FLAG_PINNED) !== 0;
-}
-
-/** Whether any registered project recorded `commonDir` as its git common dir. */
-export function hasRegisteredRepository(commonDir: string): boolean {
-  return listRegisteredProjects().some((p) => p.commonDir !== null && p.commonDir === commonDir);
 }
 
 // ---------------------------------------------------------------------------

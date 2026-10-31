@@ -22,6 +22,7 @@ interface GrepCliOptions {
   in?: string;
   fixed?: boolean;
   ignoreCase?: boolean;
+  strict?: boolean;
   json?: boolean;
   path?: string;
 }
@@ -36,6 +37,7 @@ export function grepArgv(pattern: string, opts: GrepCliOptions): string[] {
   if (opts.in !== undefined) argv.push('--in', opts.in);
   if (opts.fixed) argv.push('--fixed');
   if (opts.ignoreCase) argv.push('--ignore-case');
+  if (opts.strict) argv.push('--strict');
   if (opts.json) argv.push('--json');
   if (opts.path !== undefined) argv.push('--path', opts.path);
   argv.push('--', pattern);
@@ -50,6 +52,7 @@ function registerGrepCommand(program: Command): void {
     .option('--in <path>', 'repo-relative path prefix to search under, e.g. src/db')
     .option('--fixed', 'treat the pattern as a literal string, not a regex')
     .option('-i, --ignore-case', 'case-insensitive match')
+    .option('--strict', 'Leave name-matched (questionable) incoming calls out of the in-edge counts and ranking')
     .option('--json', 'print the structured result as JSON')
     .option('-p, --path <path>', 'project path (default: the nearest indexed project at or above the current directory)')
     .action(async (pattern: string, opts: GrepCliOptions) => {
@@ -84,14 +87,16 @@ const extension: CodegraphExtension = {
        * (executeReadTool turns its NotIndexedError into success-shaped
        * guidance and its PathRefusalError into isError), then searches that
        * project's root. handleGrepTool checks the root with
-       * validateProjectPath again before searching.
+       * validateProjectPath again before searching. It also gets the session's
+       * focus (ctx.focus, `[]` when the context has none), which narrows the
+       * search unless the call passes `scope: "repo"`.
        */
       async handle(args, ctx) {
         const projectPath = typeof args.projectPath === 'string' && args.projectPath !== '' ? args.projectPath : undefined;
         const root = ctx.getCodeGraph(projectPath).getProjectRoot();
         const { handleGrepTool } = await import('./grep/grep-mcp');
         const { projectPath: _resolved, ...rest } = args;
-        return handleGrepTool(rest, root);
+        return handleGrepTool(rest, root, ctx.focus ?? []);
       },
     },
     blastTool,

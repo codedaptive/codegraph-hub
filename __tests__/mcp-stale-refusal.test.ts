@@ -105,20 +105,22 @@ describe('a degraded index refuses answers from changed files (#1959)', () => {
   });
   it.each([false, true])('preserves spaces and Unicode through provenance (pooled=%s)', async pooled => {
     if (pooled) {
-      pool = new QueryPool({ root, size: 1, createWorker: () => new Worker(
+      pool = new QueryPool({ size: 1, createWorker: () => new Worker(
         path.resolve(__dirname, '../dist/mcp/query-worker.js'), { workerData: { root } },
       ) });
       handler.setQueryPool(pool);
       await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 15000 });
     }
     const relative = 'folder with spaces/目录 🦀.ts';
-    const initial = await handler.execute('codegraph_search', { query: 'unicodeSymbol' });
+    // Pooled calls name their project (workers hold no default of their own), so
+    // the pooled variant really dispatches through the pool.
+    const initial = await handler.execute('codegraph_search', { query: 'unicodeSymbol', projectPath: root });
     expect(initial.content[0].text).toContain(relative);
     expect(initial).not.toHaveProperty('_cgAnswerFiles');
     const before = fs.statSync(path.join(root, relative));
     fs.writeFileSync(path.join(root, relative), 'export function unicodeSymbol() { return 9; }\n');
     fs.utimesSync(path.join(root, relative), before.atime, before.mtime);
-    const result = await handler.execute('codegraph_search', { query: 'unicodeSymbol' });
+    const result = await handler.execute('codegraph_search', { query: 'unicodeSymbol', projectPath: root });
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain('cannot answer from this index');
     expect(result.content[0].text).toContain(`- ${relative}`);

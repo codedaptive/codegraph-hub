@@ -8,12 +8,16 @@
  * them in the engine first, then release every project the engine holds whose
  * directory or database is gone (the first process to sweep a root
  * unregisters it, so no other process's sweep sees it). A read-only engine
- * deletes nothing, so it skips the sweep and only releases. The timer is
+ * deletes nothing, so it skips the sweep and only releases: the machine
+ * server's engine is always read-only, and the index builder
+ * (src/extensions/host/builder/service.ts) is the one that sweeps, with its
+ * own hold set, through an engine adapter that is not read-only. The timer is
  * unref'd.
  *
- * The roots the engine holds are the tool handler's cache, the roots its
- * query-pool workers may still hold (recorded here as the engine opens them,
- * {@link EngineHousekeeping.notePoolOpenedRoot}), and its open default project.
+ * The roots a server's engine holds are the tool handler's cache, the roots
+ * its query-pool workers may still hold (recorded here as the engine opens
+ * them, {@link EngineHousekeeping.notePoolOpenedRoot}). The builder's are the
+ * roots it holds writable.
  */
 import { canonicalProjectRoot } from '../../../directory';
 import { runHousekeepingPass, startHousekeeping, type TeardownDeps } from './teardown';
@@ -31,24 +35,22 @@ const MAX_POOL_OPENED_ROOTS = 256;
 /** What the housekeeping needs from its engine. */
 export interface HousekeepingEngine {
   /**
-   * Close every handle the engine holds on `root` (for its default project,
-   * its retirement). The pass calls it before the sweep deletes a removed
-   * worktree's index, and for each held root whose directory or database is gone.
+   * Close every handle the engine holds on `root`. The pass calls it before
+   * the sweep deletes a removed worktree's index, and for each held root whose
+   * directory or database is gone.
    */
   releaseProjectRoot(root: string): Promise<void>;
-  /** The roots of the explicit projects the tool handler holds open now. */
+  /** The roots of the projects the tool handler holds open now. */
   cachedProjectRoots(): string[];
-  /** The canonical root of the engine's open default project; null while none is open. */
-  openDefaultRoot(): string | null;
   /** A read-only engine only releases; it never sweeps the registry. */
   readOnly: boolean;
 }
 
 export class EngineHousekeeping {
-  // Canonical explicit roots the main handler opened while a query pool may
-  // run. A worker opens a root only after the main handler did (calls are
-  // gated on the main thread first), so this covers every root a worker may
-  // still hold after the main cache dropped it (LRU or idle release).
+  // Canonical roots the main handler opened while a query pool may run. A
+  // worker opens a root only after the main handler did (calls are gated on
+  // the main thread first), so this covers every root a worker may still hold
+  // after the main cache dropped it (idle release).
   private poolOpenedRoots = new Set<string>();
   private readonly deps: TeardownDeps;
   private stopTimer: (() => void) | null = null;
@@ -93,14 +95,11 @@ export class EngineHousekeeping {
 
   /**
    * Roots the engine may hold, canonical: the handler's cache, the roots
-   * query-pool workers may still hold, and the open default project (whose
-   * release retires it).
+   * query-pool workers may still hold.
    */
   private heldRoots(): string[] {
     const roots = new Set<string>(this.engine.cachedProjectRoots().map((r) => canonicalProjectRoot(r)));
     for (const r of this.poolOpenedRoots) roots.add(r);
-    const defaultRoot = this.engine.openDefaultRoot();
-    if (defaultRoot) roots.add(defaultRoot);
     return [...roots];
   }
 }

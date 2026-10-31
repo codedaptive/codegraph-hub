@@ -30,6 +30,7 @@ import { WslSharedIndexError, isSqliteIoError, toWslSharedIndexError } from '../
 import { codeGraphDirNameFor, findNearestCodeGraphRoot, getCodeGraphDir, isInitialized } from '../src/directory';
 import { __setWslWindowsDriveForTests, isWslWindowsDrive } from '../src/sync/watch-policy';
 import { ToolHandler } from '../src/mcp/tools';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 // Engine default-project opens use its lazy CommonJS loader, so the engine
 // cases drive the built modules (and set the built module's override).
@@ -287,29 +288,16 @@ describe.runIf(process.platform !== 'win32')('a real SQLite I/O error on open', 
       expect(result.content[0]!.text).not.toContain('No CodeGraph project is loaded');
     };
 
-    it('answers a default-project call with the fix, not "no project loaded"', async () => {
-      engine = new BuiltMCPEngine({ watch: false });
-      await engine.ensureInitialized(root);
-      expectGuidance(await engine.getToolHandler().execute('codegraph_explore', { query: 'parseToken' }));
-    });
-
-    it('keeps the fix on the per-call retry path', async () => {
-      engine = new BuiltMCPEngine({ watch: false });
-      engine.retryInitializeSync(root);
-      expectGuidance(await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken' }));
-    });
-
     it('answers an explicit projectPath with the fix', async () => {
-      engine = new BuiltMCPEngine({ watch: false });
-      expectGuidance(await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }));
+      engine = new BuiltMCPEngine();
+      expectGuidance(await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }, undefined, ADMIT_ALL));
     });
 
     it('serves normally once the index opens again', async () => {
-      engine = new BuiltMCPEngine({ watch: false });
-      engine.retryInitializeSync(root);
+      engine = new BuiltMCPEngine();
+      expectGuidance(await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }, undefined, ADMIT_ALL));
       fs.rmSync(`${dbPath}-shm`, { force: true });
-      engine.retryInitializeSync(root);
-      const result = await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken' });
+      const result = await engine.getToolHandler().execute('codegraph_search', { query: 'parseToken', projectPath: root }, undefined, ADMIT_ALL);
       expect(result.isError).not.toBe(true);
       expect(result.content[0]!.text).toContain('parseToken');
     });
@@ -349,16 +337,5 @@ describe('ToolHandler answers the shared-index error success-shaped', () => {
     cg.searchNodes = () => { throw new Error('disk I/O error'); };
     const result = await new ToolHandler(cg).execute('codegraph_search', { query: 'parseToken' });
     expect(result.isError).toBe(true);
-  });
-
-  it('forgets a recorded open failure once a default project loads', async () => {
-    const handler = new ToolHandler(null);
-    handler.setDefaultOpenFailure(sharedIndexError());
-    expect((await handler.execute('codegraph_search', { query: 'parseToken' })).content[0]!.text)
-      .toContain('CODEGRAPH_DIR=.codegraph-wsl');
-    handler.setDefaultCodeGraph(cg);
-    const result = await handler.execute('codegraph_search', { query: 'parseToken' });
-    expect(result.content[0]!.text).not.toContain('CODEGRAPH_DIR');
-    expect(result.content[0]!.text).toContain('parseToken');
   });
 });

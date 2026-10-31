@@ -1,8 +1,7 @@
 /**
  * Unit vectors for src/mcp/lock-takeover.ts:
- * compare-and-remove / compare-and-replace of a lock file under a
- * `${lockPath}.takeover` guard, and the callers' behaviour when the guard is
- * held or the lock cannot be read.
+ * compare-and-remove of a lock file under a `${lockPath}.takeover` guard, and
+ * the callers' behaviour when the guard is held or the lock cannot be read.
  *
  * "Unchanged" means the same bytes AND (off Windows) the same inode and
  * device, so a lock removed and rewritten with identical bytes is a new lock.
@@ -20,13 +19,12 @@ import * as path from 'path';
 import {
   createLockFile,
   removeLockIfUnchanged,
-  replaceLockIfUnchanged,
   snapshotLock,
   withTakeoverGuard,
 } from '../../../src/mcp/lock-takeover';
 import { getWriterPidPath, markWriterReady, tryAcquireWriterLock } from '../../../src/mcp/writer-lock';
 import { refreshDaemonLock, tryAcquireDaemonLock } from '../../../src/mcp/daemon';
-import { encodeLockInfo, getDaemonPidPath } from '../../../src/mcp/daemon-paths';
+import { encodeServerLock, getServerPidPath } from '../../../src/mcp/daemon-paths';
 import { FileLock } from '../../../src/utils';
 
 // Writable copies of the builtin namespaces, shared by this file and every src
@@ -49,14 +47,19 @@ function deadPid(): number {
 let dir: string;
 let lock: string;
 let guard: string;
+let previousStateDir: string | undefined;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-lock-takeover-'));
+  previousStateDir = process.env.CODEGRAPH_STATE_DIR;
+  process.env.CODEGRAPH_STATE_DIR = dir;
   lock = path.join(dir, 'test.lock');
   guard = `${lock}.takeover`;
 });
 
 afterEach(() => {
+  if (previousStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+  else process.env.CODEGRAPH_STATE_DIR = previousStateDir;
   try { fs.chmodSync(lock, 0o600); } catch { /* not there */ }
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -142,118 +145,6 @@ describe('removeLockIfUnchanged', () => {
   });
 });
 
-describe('replaceLockIfUnchanged', () => {
-  function leftovers(): string[] {
-    return fs.readdirSync(dir).filter((f) => f !== path.basename(lock));
-  }
-
-  it("returns 'replaced' and writes the body when the lock is the judged file", () => {
-    fs.writeFileSync(lock, 'old');
-    const judged = snapshotLock(lock)!;
-    expect(replaceLockIfUnchanged(lock, judged, 'new')).toBe('replaced');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('new');
-    expect(leftovers()).toEqual([]);
-  });
-
-  it("returns 'changed' and keeps the lock when its content differs", () => {
-    fs.writeFileSync(lock, 'old');
-    const judged = snapshotLock(lock)!;
-    fs.writeFileSync(lock, 'other');
-    expect(replaceLockIfUnchanged(lock, judged, 'new')).toBe('changed');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('other');
-    expect(leftovers()).toEqual([]);
-  });
-
-  it.runIf(!isWin)("returns 'changed' for the same bytes in a different inode (POSIX)", () => {
-    fs.writeFileSync(lock, 'old');
-    const judged = snapshotLock(lock)!;
-    rewriteSameBytesNewInode(lock);
-    expect(replaceLockIfUnchanged(lock, judged, 'new')).toBe('changed');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('old');
-    expect(leftovers()).toEqual([]);
-  });
-
-  it("returns 'changed' when the judged lock has since disappeared", () => {
-    fs.writeFileSync(lock, 'old');
-    const judged = snapshotLock(lock)!;
-    fs.unlinkSync(lock);
-    expect(replaceLockIfUnchanged(lock, judged, 'new')).toBe('changed');
-    expect(fs.existsSync(lock)).toBe(false);
-    expect(fs.readdirSync(dir)).toEqual([]);
-  });
-
-  it("judged null: returns 'replaced' and creates the lock when it is still absent", () => {
-    expect(replaceLockIfUnchanged(lock, null, 'new')).toBe('replaced');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('new');
-    expect(leftovers()).toEqual([]);
-  });
-
-  it("judged null: returns 'changed' and keeps the lock when one has appeared", () => {
-    fs.writeFileSync(lock, 'appeared');
-    expect(replaceLockIfUnchanged(lock, null, 'new')).toBe('changed');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('appeared');
-    expect(leftovers()).toEqual([]);
-  });
-
-  /**
-   * An exclusive creator ({@link createLockFile}, as FileLock.acquire and
-   * tryAcquireWriterLock use) does not take the `.takeover` guard, so holding
-   * the guard does not keep it out. Here it creates the lock at the moment the
-   * judged-absent replace publishes: the first rename, link or write-open whose
-   * target is exactly the lock path runs the creator to completion before the
-   * real call proceeds. The creator was first, so its lock must survive with
-   * its bytes, and the replace must report 'changed', not 'replaced': two
-   * callers both told they hold the lock is the bug.
-   */
-  it("judged null: a creator that publishes between the compare and the publish keeps its lock; the replace returns 'changed'", () => {
-    const realRename = fs.renameSync.bind(fs);
-    const realLink = fs.linkSync.bind(fs);
-    const realOpen = fs.openSync.bind(fs);
-    let ran = false;
-    let competitorCreated: boolean | null = null;
-    const competeAt = (target: fs.PathLike): void => {
-      if (ran || String(target) !== lock) return;
-      ran = true;
-      competitorCreated = createLockFile(lock, 'competitor');
-    };
-    vi.spyOn(fs, 'renameSync').mockImplementation((from: fs.PathLike, to: fs.PathLike) => {
-      competeAt(to);
-      realRename(from, to);
-    });
-    vi.spyOn(fs, 'linkSync').mockImplementation((existing: fs.PathLike, newPath: fs.PathLike) => {
-      competeAt(newPath);
-      realLink(existing, newPath);
-    });
-    vi.spyOn(fs, 'openSync').mockImplementation(((p: fs.PathLike, flags?: fs.OpenMode, mode?: fs.Mode) => {
-      if (flags !== undefined && flags !== 'r') competeAt(p);
-      return realOpen(p, flags, mode);
-    }) as typeof fs.openSync);
-
-    let result: string | undefined;
-    try {
-      result = replaceLockIfUnchanged(lock, null, 'replacer');
-    } finally {
-      vi.restoreAllMocks();
-    }
-
-    expect(ran).toBe(true);
-    expect(competitorCreated).toBe(true);
-    expect(result).toBe('changed');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('competitor');
-    // No temp file and no guard left behind: the lock is the only entry.
-    expect(fs.readdirSync(dir)).toEqual([path.basename(lock)]);
-  });
-
-  it("returns 'busy' and keeps the lock while the guard names another live pid", () => {
-    fs.writeFileSync(lock, 'old');
-    const judged = snapshotLock(lock)!;
-    fs.writeFileSync(guard, String(process.ppid));
-    expect(replaceLockIfUnchanged(lock, judged, 'new')).toBe('busy');
-    expect(fs.readFileSync(lock, 'utf8')).toBe('old');
-    expect(fs.readFileSync(guard, 'utf8')).toBe(String(process.ppid));
-  });
-});
-
 describe('createLockFile', () => {
   it('creates the lock with the body, then refuses (EEXIST) without touching it, leaving no tmp file', () => {
     expect(createLockFile(lock, 'first')).toBe(true);
@@ -296,11 +187,11 @@ describe('callers honour the guard and fail closed', () => {
     const root = path.join(dir, 'proj');
     fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
     const pidPath = getWriterPidPath(root);
-    const record = JSON.stringify({ pid: deadPid(), mode: 'serve', startedAt: 1 });
+    const record = JSON.stringify({ pid: deadPid(), mode: 'fallback', startedAt: 1 });
     fs.writeFileSync(pidPath, record);
     fs.writeFileSync(`${pidPath}.takeover`, String(process.ppid));
 
-    const r = tryAcquireWriterLock(root, 'taker');
+    const r = tryAcquireWriterLock(root, 'fallback');
     expect(r.kind).toBe('taken');
     expect(fs.readFileSync(pidPath, 'utf8')).toBe(record);
   });
@@ -417,19 +308,15 @@ describe.runIf(!isWin)('lock temp files: random name, exclusive create, never fo
     expectExclusiveTempOpens(lock);
   });
 
-  it('replaceLockIfUnchanged: the guard and the replace temp both draw past planted names', () => {
-    plantBeside(lock);
+  it('withTakeoverGuard: the guard draws past planted names, and is removed after', () => {
     plantBeside(guard);
     forceRandomNames();
 
-    expect(replaceLockIfUnchanged(lock, null, 'x')).toBe('replaced');
+    expect(withTakeoverGuard(lock, () => 'x')).toEqual({ kind: 'ran', value: 'x' });
 
     expectNothingFollowedOrLeft(dir);
-    expect(fs.lstatSync(lock).isFile()).toBe(true);
-    expect(fs.readFileSync(lock, 'utf8')).toBe('x');
     expect(fs.existsSync(guard)).toBe(false);
     expectExclusiveTempOpens(guard);
-    expectExclusiveTempOpens(lock);
   });
 
   it('FileLock.acquire on codegraph.lock: the lock holds this pid, nothing planted is touched', () => {
@@ -452,7 +339,7 @@ describe.runIf(!isWin)('lock temp files: random name, exclusive create, never fo
   it('markWriterReady on writer.pid: the ready record replaces the lock, nothing planted is touched', () => {
     const root = path.join(dir, 'proj');
     fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
-    expect(tryAcquireWriterLock(root, 'serve').kind).toBe('acquired');
+    expect(tryAcquireWriterLock(root, 'fallback').kind).toBe('acquired');
     const pidPath = getWriterPidPath(root);
     plantBeside(pidPath);
     forceRandomNames();
@@ -467,28 +354,26 @@ describe.runIf(!isWin)('lock temp files: random name, exclusive create, never fo
     expectExclusiveTempOpens(pidPath);
   });
 
-  it('tryAcquireDaemonLock then refreshDaemonLock on daemon.pid: both temps draw past planted names', () => {
-    const root = path.join(dir, 'proj');
-    fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
-    const pidPath = getDaemonPidPath(root);
+  it('tryAcquireDaemonLock then refreshDaemonLock on server.pid: both temps draw past planted names', () => {
+    const pidPath = getServerPidPath();
     plantBeside(pidPath);
     forceRandomNames();
 
-    const r = tryAcquireDaemonLock(root);
+    const r = tryAcquireDaemonLock();
     expectNothingFollowedOrLeft(path.dirname(pidPath));
     expect(r.kind).toBe('acquired');
     if (r.kind !== 'acquired') return;
     expect(fs.lstatSync(pidPath).isFile()).toBe(true);
     const initial = fs.readFileSync(pidPath, 'utf8');
-    expect(initial).toBe(encodeLockInfo(r.info));
+    expect(initial).toBe(encodeServerLock(r.info));
 
-    const bound = { ...r.info, socketPath: path.join(root, 'bound.sock') };
+    const bound = { ...r.info, socketPath: path.join(dir, 'bound.sock') };
     const forcedOpensBefore = opens.filter((o) => o.path === forcedName(pidPath)).length;
     refreshDaemonLock(pidPath, initial, bound);
 
     expectNothingFollowedOrLeft(path.dirname(pidPath));
     expect(fs.lstatSync(pidPath).isFile()).toBe(true);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(encodeLockInfo(bound));
+    expect(fs.readFileSync(pidPath, 'utf8')).toBe(encodeServerLock(bound));
     expect(opens.filter((o) => o.path === forcedName(pidPath)).length).toBeGreaterThan(forcedOpensBefore);
     expectExclusiveTempOpens(pidPath);
   });

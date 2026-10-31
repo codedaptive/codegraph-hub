@@ -53,7 +53,7 @@ try {
 import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs';
-import { getCodeGraphDir, isInitialized, hasSchemalessDb, hasForeignDbFile, unsafeIndexRootReason, findNearestCodeGraphRoot, planFrontload, isTaskNotification, isAgentMessage, isCrossSessionMessage, stripSystemReminders, hasStructuralKeyword, extractCodeTokens, capPromptHookInjection, codeGraphDirName, DEFAULT_CODEGRAPH_DIR } from '../directory';
+import { getCodeGraphDir, isInitialized, hasSchemalessDb, hasForeignDbFile, unsafeIndexRootReason, planFrontload, isTaskNotification, isAgentMessage, isCrossSessionMessage, stripSystemReminders, hasStructuralKeyword, extractCodeTokens, capPromptHookInjection, codeGraphDirName, DEFAULT_CODEGRAPH_DIR } from '../directory';
 import { extractProseCandidates } from '../search/identifier-segments';
 import { detectWorktreeIndexMismatch, worktreeMismatchWarning } from '../sync/worktree';
 import { createShimmerProgress } from '../ui/shimmer-progress';
@@ -130,7 +130,7 @@ relaunchWithWasmRuntimeFlagsIfNeeded(__filename);
 
 // Last-resort fatal handlers: log a bounded line and exit non-zero. A fault
 // that reaches here escaped every boundary, so the process is in an undefined
-// state — keeping it alive is what let the detached MCP daemon orphan and pin a
+// state — keeping it alive is what let the detached MCP server orphan and pin a
 // CPU core with no recovery (#799, #850). Installed before the command branch
 // so it also covers a synchronous throw during startup. See ./fatal-handler.
 installFatalHandlers();
@@ -236,7 +236,7 @@ program
 const TELEMETRY_FLUSH_COMMANDS = new Set(['init', 'uninit', 'index', 'sync', 'upgrade']);
 program.hook('preAction', (_thisCommand, actionCommand) => {
   try {
-    // The detached daemon re-invokes `serve --mcp` internally — not a user action.
+    // The detached server re-invokes `serve --mcp` internally — not a user action.
     if (process.env.CODEGRAPH_DAEMON_INTERNAL) return;
     const name = actionCommand.name();
     if (name === 'telemetry') return; // managing telemetry is not usage
@@ -922,18 +922,24 @@ program
       const rebuild = tryAcquireWriterLock(projectPath, 'rebuild', 'rebuild.pid');
       if (rebuild.kind === 'taken') throw new Error('Another index rebuild is already in progress.');
       try {
-        // A live MCP daemon keeps SQLite handles open. Verify it by its socket
-        // before stopping it so a stale pidfile can never signal another process.
-        // A lock left naming a process that isn't CodeGraph is cleared (#2770).
-        const { stopDaemonAt, daemonStopFailureMessage } = await import('../mcp/daemon-registry');
+        // The machine server keeps SQLite handles open on every project it has
+        // answered for. Ask it to release this one (it keeps serving every other
+        // project and reopens this one on its next call); never stop it. No server
+        // running, or one that released the project, goes on to the writer lock. A
+        // server that did not confirm may still hold the database, so the rebuild
+        // would delete files under it: refuse instead.
+        const { requestProjectRelease } = await import('../mcp/server-control');
         const realRoot = fs.realpathSync(projectPath);
-        const daemonStop = await stopDaemonAt(realRoot, { preserveUnverified: true });
-        if (daemonStop.outcome === 'unverified' || daemonStop.outcome === 'still-running') {
-          throw new Error(await daemonStopFailureMessage(realRoot, daemonStop));
+        const released = await requestProjectRelease(realRoot);
+        if (released === 'failed') {
+          throw new Error(
+            `The CodeGraph server did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
+            'Stop it with `codegraph daemon --stop` (clients reconnect and start a fresh one), then retry `codegraph index`.'
+          );
         }
 
         // Keep the writer slot through recreation AND indexing. A reconnecting
-        // proxy/daemon must not open the replacement database halfway through.
+        // proxy/server must not open the replacement database halfway through.
         const writer = tryAcquireWriterLock(projectPath, 'rebuild');
         if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
         try {
@@ -2043,51 +2049,53 @@ function printFileTree(
 }
 
 /**
- * codegraph daemon — interactive manager for the background daemons. Arrow keys
- * to pick one (the current project's daemon floats to the top, auto-selected),
- * enter to stop it. Falls back to a plain list when output isn't a TTY.
+ * codegraph daemon [--stop] — the one machine server of this state dir
+ * (`~/.codegraph`, or `CODEGRAPH_STATE_DIR`): show its pid, version, uptime,
+ * socket and state dir, or stop it. Non-interactive: there is one server, so
+ * there is nothing to pick.
  */
 program
   .command('daemon')
   .aliases(['daemons'])
-  .description('Manage running CodeGraph background daemons — pick one and press enter to stop it')
-  .action(async () => {
-    const { listVerifiedDaemons, stopDaemonAt, stopAllDaemons } = await import('../mcp/daemon-registry');
-    const { runDaemonPicker } = await import('../mcp/daemon-manager');
+  .description('Show the running CodeGraph MCP server (one per machine) and optionally stop it')
+  .option('--stop', 'Stop the server (clients reconnect and start a fresh one)')
+  .action(async (options: { stop?: boolean }) => {
+    try {
+      const { probeServer, stopServer } = await import('../mcp/server-control');
 
-    const daemons = await listVerifiedDaemons();
-    if (daemons.length === 0) {
-      info('No CodeGraph daemons running.');
-      return;
-    }
-
-    // No TTY (piped / CI / non-interactive) — can't do arrow-key selection, so
-    // just print what's running instead of crashing on a prompt with no input.
-    if (!process.stdout.isTTY || !process.stdin.isTTY) {
-      for (const d of daemons) {
-        console.log(`pid ${d.pid}  v${d.version}  up ${formatDuration(Date.now() - d.startedAt)}  ${d.root}`);
+      if (options.stop) {
+        const stop = await stopServer();
+        if (stop.outcome === 'stopped') {
+          success(`Stopped the CodeGraph server (pid ${stop.pid}, v${stop.version}).`);
+        } else if (stop.outcome === 'not-running') {
+          info('No CodeGraph server running.');
+        } else if (stop.outcome === 'still-running') {
+          const kill = process.platform === 'win32' ? `taskkill /PID ${stop.pid} /F` : `kill -9 ${stop.pid}`;
+          error(`The CodeGraph server (pid ${stop.pid}) did not exit when asked to stop. Stop it with \`${kill}\`.`);
+          process.exit(1);
+        } else {
+          // 'unverified'; 'kept' is only returned for `onlyIfOlderThan`, which this command never passes.
+          error(
+            `Process ${stop.pid} holds the server lock but did not answer as the CodeGraph server, so it was left running. ` +
+            'If it is not a CodeGraph server, delete the stale server.pid in the state dir.'
+          );
+          process.exit(1);
+        }
+        return;
       }
-      return;
+
+      const server = await probeServer();
+      if (!server) {
+        info('No CodeGraph server running.');
+        return;
+      }
+      console.log(`pid ${server.pid}  v${server.version}  up ${formatDuration(Date.now() - server.startedAt)}`);
+      console.log(`socket: ${server.socketPath}`);
+      console.log(`state dir: ${server.stateDir}`);
+    } catch (err) {
+      error(`Failed to reach the CodeGraph server: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
-
-    // The current project's daemon floats to the top and is pre-selected.
-    let cwdRoot: string | null = null;
-    const found = findNearestCodeGraphRoot(process.cwd());
-    if (found) { try { cwdRoot = fs.realpathSync(found); } catch { cwdRoot = found; } }
-
-    const clack = await importESM('@clack/prompts');
-    clack.intro('CodeGraph daemons');
-    await runDaemonPicker({
-      list: listVerifiedDaemons,
-      stop: stopDaemonAt,
-      stopAll: stopAllDaemons,
-      cwdRoot,
-      now: () => Date.now(),
-      select: (opts) => clack.select(opts),
-      isCancel: (v) => clack.isCancel(v),
-      note: (m) => clack.log.success(m),
-      done: (m) => clack.outro(m),
-    });
   });
 
 /**
@@ -2290,11 +2298,32 @@ program
   // guard below, which explains this to anyone who runs it by hand.
   .command('serve', { hidden: true })
   .description('Start CodeGraph as an MCP server for AI assistants')
-  .option('-p, --path <path>', 'Project path (optional for MCP mode, uses rootUri from client)')
+  .option('-p, --path <path>', "The session's launch directory, which fixes the repository it answers for (default: the current directory)")
   .option('--mcp', 'Run as MCP server (stdio transport)')
+  .option(
+    '--focus <dir>',
+    "A directory, relative to the repository root, that this session's search and explore results stay inside (repeatable; callers and impact list the rest after the in-focus results)",
+    (dir: string, previous: string[]) => [...previous, dir],
+    [] as string[],
+  )
   .option('--no-watch', 'Disable the file watcher (no auto-sync; useful on slow filesystems like WSL2 /mnt drives)')
-  .action(async (options: { path?: string; mcp?: boolean; watch?: boolean }) => {
-    const projectPath = options.path ? resolveProjectPath(options.path) : undefined;
+  .action(async (options: { path?: string; mcp?: boolean; watch?: boolean; focus: string[] }) => {
+    // The launch directory (repo anchor), taken as given: not walked up to an
+    // initialized parent as `resolveProjectPath` does for the other commands,
+    // since the server answers for the whole repository the directory is in.
+    const projectPath = options.path ? path.resolve(options.path) : undefined;
+
+    // The session's focus, checked before anything starts: an absolute directory
+    // or one that leaves the repository root is refused here with the bad value
+    // named, so no server is spawned for a session that could not use it.
+    let focus: string[];
+    try {
+      const { normaliseFocusArgs } = await import('../extensions/host/server/session-scope');
+      focus = normaliseFocusArgs(options.focus);
+    } catch (err) {
+      error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
 
     // Commander sets watch=false when --no-watch is passed. Route it through
     // the same env-var chokepoint the watcher and MCP server already honor.
@@ -2308,7 +2337,7 @@ program
         // not a command to run by hand. A human in a terminal would otherwise
         // see it hang waiting for JSON-RPC on stdin, which reads as broken. If
         // stdin is an interactive TTY, explain instead of hanging. The agent's
-        // pipe and the detached daemon both have a non-TTY stdin, so this only
+        // pipe and the detached server both have a non-TTY stdin, so this only
         // ever fires for a person who typed it.
         if (process.stdin.isTTY && !process.env.CODEGRAPH_DAEMON_INTERNAL) {
           console.error(chalk.bold('\nCodeGraph MCP server\n'));
@@ -2316,13 +2345,14 @@ program
           console.error("starts automatically — you don't run it yourself.");
           console.error(`\nIt's already wired up by ${chalk.cyan('codegraph install')}. To check on things:`);
           console.error(`  ${chalk.cyan('codegraph status')}   ${chalk.dim('— is this project indexed and healthy?')}`);
-          console.error(`  ${chalk.cyan('codegraph daemon')}   ${chalk.dim('— list or stop background MCP servers')}`);
+          console.error(`  ${chalk.cyan('codegraph daemon')}   ${chalk.dim('— show or stop the background MCP server')}`);
           console.error(chalk.dim('\n(Running it directly only does something when an MCP client drives it over stdin.)'));
           return;
         }
-        // Start MCP server - it handles initialization lazily based on rootUri from client
+        // Start MCP server: the launcher proxies to the machine server (starting
+        // it when none runs), sending the launch directory as the session's anchor.
         const { MCPServer } = await import('../mcp/index');
-        const server = new MCPServer(projectPath);
+        const server = new MCPServer(projectPath, focus);
         await server.start();
         // Server will run until terminated
       } else {
@@ -2378,8 +2408,6 @@ program
         fs.unlinkSync(lockPath);
         removed = true;
       }
-      const { clearStaleDaemonArtifacts } = await import('../mcp/daemon-registry');
-      removed = await clearStaleDaemonArtifacts(projectPath) || removed;
       if (removed) success('Removed stale lock artifacts. You can now run indexing again.');
       else info(`No stale lock files found ${getGlyphs().dash} nothing to do`);
     } catch (err) {

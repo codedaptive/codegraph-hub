@@ -1,141 +1,69 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { execFile, execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
-import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
-import { getDaemonPidPath, getDaemonSocketPath } from '../src/mcp/daemon-paths';
-import { CodeGraphPackageVersion } from '../src/mcp/version';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
-function runCodegraph(args: string[], cwd: string): string {
-  return execFileSync(process.execPath, [BIN, ...args], {
-    cwd,
-    encoding: 'utf8',
-    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
-function runCodegraphAsync(args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [BIN, ...args],
-      { cwd, encoding: 'utf8', env: { ...process.env, CODEGRAPH_NO_DAEMON: '1' } },
-      (error, stdout, stderr) => {
-        if (error) reject(new Error(`${error.message}\n${stderr}`));
-        else resolve(stdout);
-      },
-    );
-  });
-}
-
-describe('codegraph unlock — daemon artifact recovery (#1553)', () => {
+describe('codegraph unlock: indexing lock recovery', () => {
   let tempDir: string;
+  let stateDir: string;
+
+  /** Every run gets its own state dir, so nothing here can reach the live server of `~/.codegraph`. */
+  function runCodegraph(args: string[]): string {
+    return execFileSync(process.execPath, [BIN, ...args], {
+      cwd: tempDir,
+      encoding: 'utf8',
+      env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_STATE_DIR: stateDir },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unlock-'));
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unlock-state-'));
     const cg = CodeGraph.initSync(tempDir);
     cg.close();
   });
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it('removes indexing and phantom-daemon artifacts, then permits indexing', () => {
-    const graphDir = path.join(tempDir, '.codegraph');
-    const pidPath = getDaemonPidPath(tempDir);
-    const socketPath = getDaemonSocketPath(tempDir);
-    fs.writeFileSync(path.join(graphDir, 'codegraph.lock'), 'stale\n');
-    fs.writeFileSync(pidPath, JSON.stringify({
-      pid: process.pid,
-      version: CodeGraphPackageVersion,
-      socketPath,
-      startedAt: Date.now() - 60_000,
-    }));
-    if (process.platform !== 'win32') fs.writeFileSync(socketPath, 'stale\n');
+  it('removes the stale indexing lock, then permits indexing', () => {
+    const lockPath = path.join(tempDir, '.codegraph', 'codegraph.lock');
+    fs.writeFileSync(lockPath, 'stale\n');
 
-    const output = runCodegraph(['unlock', tempDir], tempDir);
+    const output = runCodegraph(['unlock', tempDir]);
 
     expect(output).toContain('Removed stale lock artifacts');
-    expect(fs.existsSync(path.join(graphDir, 'codegraph.lock'))).toBe(false);
-    expect(fs.existsSync(pidPath)).toBe(false);
-    if (process.platform !== 'win32') expect(fs.existsSync(socketPath)).toBe(false);
-    expect(() => process.kill(process.pid, 0)).not.toThrow();
-    expect(() => runCodegraph(['index', '--quiet', tempDir], tempDir)).not.toThrow();
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(() => runCodegraph(['index', '--quiet', tempDir])).not.toThrow();
   });
 
-  it('preserves artifacts when the recorded live daemon answers the socket hello', async () => {
-    const pidPath = getDaemonPidPath(tempDir);
-    const socketPath = getDaemonSocketPath(tempDir);
-    const server = net.createServer((socket) => {
-      socket.end(JSON.stringify({
-        codegraph: CodeGraphPackageVersion,
-        pid: process.pid,
-        socketPath,
-        protocol: 1,
-      }) + '\n');
-    });
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(socketPath, resolve);
-    });
-    fs.writeFileSync(pidPath, JSON.stringify({
-      pid: process.pid,
-      version: CodeGraphPackageVersion,
-      socketPath,
-      startedAt: Date.now(),
-    }));
-
-    try {
-      const output = await runCodegraphAsync(['unlock', tempDir], tempDir);
-      expect(output).toContain('No stale lock files found');
-      expect(fs.existsSync(pidPath)).toBe(true);
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-
-  it('preserves a live legacy lock whose daemon identity cannot be probed', () => {
-    // The holder's command line reads like a CodeGraph MCP server's, so it may
-    // be the daemon. One that is plainly another program leaves a stale lock,
-    // which unlock clears (#2770).
-    const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'codegraph.js', 'serve', '--mcp'], { stdio: 'ignore' });
-    try {
-      const pidPath = getDaemonPidPath(tempDir);
-      fs.writeFileSync(pidPath, `${holder.pid}\n`);
-
-      const output = runCodegraph(['unlock', tempDir], tempDir);
-
-      expect(output).toContain('No stale lock files found');
-      expect(fs.readFileSync(pidPath, 'utf8')).toBe(`${holder.pid}\n`);
-      expect(() => process.kill(holder.pid!, 0)).not.toThrow();
-    } finally {
-      holder.kill('SIGKILL');
-    }
-  });
-
-  it('removes a legacy lock whose PID is dead', () => {
-    const pidPath = getDaemonPidPath(tempDir);
-    fs.writeFileSync(pidPath, '999999\n');
-
-    const output = runCodegraph(['unlock', tempDir], tempDir);
-
-    expect(output).toContain('Removed stale lock artifacts');
-    expect(fs.existsSync(pidPath)).toBe(false);
-  });
-
-  it('removes a malformed daemon lock', () => {
-    const pidPath = getDaemonPidPath(tempDir);
+  it('never touches the machine server\'s lock or socket', () => {
+    // The server belongs to the whole machine, not to one project: unlock
+    // clears the project's indexing lock and leaves the server's files alone,
+    // whatever they hold. (`codegraph daemon --stop` is how a server is stopped.)
+    const pidPath = path.join(stateDir, 'server.pid');
+    const socketPath = path.join(stateDir, 'server.sock');
+    fs.writeFileSync(path.join(tempDir, '.codegraph', 'codegraph.lock'), 'stale\n');
     fs.writeFileSync(pidPath, 'not-a-lock\n');
+    fs.writeFileSync(socketPath, 'stale\n');
 
-    const output = runCodegraph(['unlock', tempDir], tempDir);
+    const output = runCodegraph(['unlock', tempDir]);
 
     expect(output).toContain('Removed stale lock artifacts');
-    expect(fs.existsSync(pidPath)).toBe(false);
+    expect(fs.readFileSync(pidPath, 'utf8')).toBe('not-a-lock\n');
+    expect(fs.readFileSync(socketPath, 'utf8')).toBe('stale\n');
+  });
+
+  it('reports nothing to do when no indexing lock exists', () => {
+    const output = runCodegraph(['unlock', tempDir]);
+
+    expect(output).toContain('No stale lock files found');
   });
 });

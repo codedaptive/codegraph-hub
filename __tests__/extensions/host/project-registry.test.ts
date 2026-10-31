@@ -1,9 +1,9 @@
 /**
- * Project registry (request worktree-lifecycle, vector G9).
+ * Project registry.
  *
  * src/extensions/host/worktree-lifecycle/project-registry.ts keeps one JSON record per project root under
- * ~/.codegraph/projects (os.homedir(), so the home sandbox of
- * __tests__/setup-home-sandbox.ts isolates it). A record carries the canonical
+ * <state dir>/projects: ~/.codegraph (os.homedir(), so the home sandbox of
+ * __tests__/setup-home-sandbox.ts isolates it) unless CODEGRAPH_STATE_DIR names another. A record carries the canonical
  * root, the git common dir recorded at registration, a flags bitmap
  * (bit 0 pinned, bit 1 seeded), an ISO8601 registeredAt and, for a seeded
  * root, the seed nonce its index carries. Registering is idempotent and never
@@ -37,8 +37,13 @@ describe('project registry (G9)', () => {
   let tempDir: string;
   let alpha: string;
   let beta: string;
+  let savedStateDir: string | undefined;
 
   beforeEach(() => {
+    // The default state dir is what most tests here measure: a developer's own
+    // CODEGRAPH_STATE_DIR must not move it.
+    savedStateDir = process.env.CODEGRAPH_STATE_DIR;
+    delete process.env.CODEGRAPH_STATE_DIR;
     // Not realpath'd on purpose: on macOS os.tmpdir() is under /var, a symlink
     // to /private/var, so the registry must store the canonical spelling.
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-project-registry-'));
@@ -49,6 +54,8 @@ describe('project registry (G9)', () => {
   });
 
   afterEach(() => {
+    if (savedStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+    else process.env.CODEGRAPH_STATE_DIR = savedStateDir;
     fs.rmSync(path.join(os.homedir(), '.codegraph', 'projects'), { recursive: true, force: true });
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -58,6 +65,23 @@ describe('project registry (G9)', () => {
     expect(reg.PROJECT_FLAG_PINNED).toBe(1);
     expect(reg.PROJECT_FLAG_SEEDED).toBe(2);
     expect(reg.registryDir()).toBe(path.join(os.homedir(), '.codegraph', 'projects'));
+  });
+
+  it('keeps records under CODEGRAPH_STATE_DIR/projects when it is set, read on every call', async () => {
+    const reg = await loadRegistry();
+    const stateDir = path.join(tempDir, 'state');
+    process.env.CODEGRAPH_STATE_DIR = stateDir;
+    // Canonical: tempDir is deliberately not realpath'd here, and the state dir is spelled through its real path.
+    expect(reg.registryDir()).toBe(path.join(fs.realpathSync(tempDir), 'state', 'projects'));
+    reg.registerProject(alpha);
+    expect(fs.readdirSync(path.join(stateDir, 'projects'))).toHaveLength(1);
+    expect(reg.getRegisteredProject(alpha)).not.toBeNull();
+    // Another state dir has its own registry: it does not see the record.
+    process.env.CODEGRAPH_STATE_DIR = path.join(tempDir, 'other-state');
+    expect(reg.getRegisteredProject(alpha)).toBeNull();
+    // A relative value is refused, never resolved against the working directory.
+    process.env.CODEGRAPH_STATE_DIR = 'relative/state';
+    expect(() => reg.registryDir()).toThrow(/absolute/);
   });
 
   it('registers a root under its canonical spelling with an empty bitmap and an ISO8601 date', async () => {
@@ -95,8 +119,6 @@ describe('project registry (G9)', () => {
 
     const roots = reg.listRegisteredProjects().map((p) => p.root).sort();
     expect(roots).toEqual([fs.realpathSync.native(alpha), fs.realpathSync.native(beta)].sort());
-    expect(reg.hasRegisteredRepository(commonDir)).toBe(true);
-    expect(reg.hasRegisteredRepository(path.join(tempDir, 'other.git'))).toBe(false);
 
     const unpinned = reg.unpinProject(alpha);
     expect(unpinned).not.toBeNull();
@@ -109,7 +131,6 @@ describe('project registry (G9)', () => {
     expect(reg.getRegisteredProject(alpha)).toBeNull();
     expect(reg.unpinProject(alpha)).toBeNull();
     expect(reg.isPinned(alpha)).toBe(false);
-    expect(reg.hasRegisteredRepository(commonDir)).toBe(false);
     expect(reg.listRegisteredProjects().map((p) => p.root)).toEqual([fs.realpathSync.native(beta)]);
   });
 

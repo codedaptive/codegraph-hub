@@ -106,7 +106,7 @@ async function freshBeforeAnswer(
     return { syncError: syncErrorText(err), finish: NOTHING_TO_FINISH };
   }
   try {
-    const { checkpoint, settled } = await waitForFreshTracked(writer);
+    const { checkpoint, settled } = await waitForFreshTracked(writer, { sync: () => writer.sync() });
     let finishing: Promise<void> | undefined;
     const finish: FreshFinish = (exitCode) => (finishing ??= finishFreshWait(writer, settled, exitCode));
     return { checkpoint, finish };

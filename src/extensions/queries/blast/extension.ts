@@ -11,6 +11,9 @@
  * with `await import()` inside the command's action and the tool's handler, as
  * grep's are in `../extension.ts`; `await import()` of a `.ts` module works
  * under vitest, where a lazy `require` would not.
+ *
+ * The CLI command has no session, so it never sees a focus; the tool's handler
+ * passes the session's (`ctx.focus`) to `blastToolHandler`.
  */
 import * as path from 'path';
 import type { Command } from 'commander';
@@ -22,6 +25,7 @@ interface BlastCommandOptions {
   depth?: string;
   format?: string;
   path?: string;
+  strict?: boolean;
 }
 
 /**
@@ -43,6 +47,7 @@ export function registerBlastCommand(program: Command): void {
     .option('-d, --depth <n|all>', 'How many dependent hops to walk, or "all" (default: 2)')
     .option('-f, --format <text|json|markdown>', 'Output format (default: text)')
     .option('-p, --path <path>', 'Project path')
+    .option('--strict', 'Leave out dependents reached only through name-matched (questionable) call edges')
     .action(async (opts: BlastCommandOptions) => {
       const start = path.resolve(opts.path ?? process.cwd());
       const { findNearestCodeGraphRoot } = await import('../../../directory');
@@ -50,7 +55,7 @@ export function registerBlastCommand(program: Command): void {
       const { isUncoveredNestedRepo } = await import('../shared/nested-repo');
       const found = findNearestCodeGraphRoot(start);
       const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
-      const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format });
+      const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format, strict: opts.strict });
       if (r.output) process.stdout.write(r.output);
       if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
       // Not process.exit(): exiting here can cut off stdout that is still
@@ -79,7 +84,11 @@ export const blastTool: ExtensionTool = {
       'walked through the call/reference graph and grouped by directory. Use it to see what a branch or ' +
       'working-tree change can affect before reviewing or testing it. Returns, per directory area, each ' +
       'dependent with its file:line span, relation and depth; text lists up to 25 per area, and dependents in ' +
-      'test files are counted, not listed. json also lists every changed file and changed symbol.',
+      'test files are counted, not listed. json also lists every changed file and changed symbol. A dependent ' +
+      'reached only through name-matched calls (the resolver matched the name, not a declared target) is marked ' +
+      'questionable; strict: true leaves those dependents out. In a session started with --focus it still ' +
+      'covers the whole repository and lists the dependents outside the focus under "Outside focus (N)" ' +
+      '(json: outsideFocus), after the ones inside it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -104,6 +113,11 @@ export const blastTool: ExtensionTool = {
           description: 'Output format. Default text.',
           enum: ['text', 'json', 'markdown'],
         },
+        strict: {
+          type: 'boolean',
+          description: 'Leave out dependents reached only through name-matched (questionable) call edges ' +
+            'instead of marking them. Default false.',
+        },
       },
     },
   },
@@ -114,6 +128,7 @@ export const blastTool: ExtensionTool = {
     const base = absent(args.base);
     const depth = absent(args.depth);
     const format = absent(args.format);
+    const strict = absent(args.strict);
     if (projectPath !== undefined && typeof projectPath !== 'string') {
       return guidance('✗ projectPath must be a string path to the project.');
     }
@@ -126,12 +141,17 @@ export const blastTool: ExtensionTool = {
     if (format !== undefined && typeof format !== 'string') {
       return guidance('✗ format must be text, markdown or json.');
     }
+    if (strict !== undefined && typeof strict !== 'boolean') {
+      return guidance('✗ strict must be true or false.');
+    }
     // getCodeGraph resolves a subdirectory to its project, and throws
     // NotIndexedError and the rest, which the ToolHandler shapes.
     const root = ctx.getCodeGraph(projectPath).getProjectRoot();
     // When not on a query-pool worker this runs on the main thread, and git plus the
     // graph walk block it for as long as the diff takes.
     const { blastToolHandler } = await import('./index');
-    return blastToolHandler({ projectPath: root, base, depth, format });
+    // The session focus (`serve --mcp --focus`) does not limit the walk: blast covers the
+    // whole repository, and the dependents outside the focus go under "Outside focus".
+    return blastToolHandler({ projectPath: root, base, depth, format, strict, sessionFocus: ctx.focus ?? [] });
   },
 };

@@ -1,22 +1,21 @@
 /**
- * Worktree seeding through the tool-call entry point (request
- * worktree-lifecycle, unit U1).
+ * Worktree seeding through the tool-call entry point.
  *
  * An agent working in a fresh git worktree passes that worktree as
  * `projectPath`. When another worktree of the same repository already has an
  * index, the first call seeds the new worktree's index from it and answers,
  * instead of telling the agent the project is not indexed. A worktree with no
- * indexed sibling keeps the not-indexed guidance unless the user opted in to
- * a cold build. `CODEGRAPH_NO_AUTO_SEED=1` restores the old behaviour. A
- * pinned project is never released by the handler's idle timer or its LRU
- * bound.
+ * indexed sibling is cold-built by the index builder with no opt-in and no
+ * registration: the first call answers the building note, a later one answers
+ * from the worktree's own index. `CODEGRAPH_NO_AUTO_SEED=1` turns seeding and
+ * cold builds off. A pinned project is never released by the handler's idle
+ * timer; no cap on how many projects stay open bounds the cache.
  *
  * G2/G3/G7/G8 drive a real MCPEngine (the ToolHandler with the
- * ProjectLifecycle the engine wires) against real git worktrees and real
- * SQLite. G10 drives a ToolHandler whose lifecycle hands out stand-ins, as
- * mcp-idle-release-order.test.ts does, so only the cache policy is under test.
- *
- * Vectors (contract.md): G2, G3, G7, G8, the pinned half of G10.
+ * ProjectLifecycle the engine wires) and a real index builder process against
+ * real git worktrees and real SQLite. The pinned-projects case drives a ToolHandler whose lifecycle
+ * hands out stand-ins, as mcp-idle-release-order.test.ts does, so only the
+ * cache policy is under test.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -25,9 +24,11 @@ import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
-import { ToolHandler, MAX_CACHED_PROJECTS, __setLoadCodeGraphForTests, type ProjectLifecycle } from '../../../src/mcp/tools';
+import { ToolHandler, __setLoadCodeGraphForTests, type ProjectLifecycle } from '../../../src/mcp/tools';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
-import { pinProject, registerProject, unregisterProject, listRegisteredProjects } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
+import { BuilderClient } from '../../../src/extensions/host/builder/client';
+import { pinProject, unregisterProject, listRegisteredProjects } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
 
 // vite's resolver strips the `node:` prefix from an import of node:sqlite,
 // so it is loaded with require (as the upstream suites do).
@@ -76,11 +77,11 @@ async function waitUntil(check: () => boolean, timeoutMs: number): Promise<boole
 }
 
 const ENV_KEYS = [
-  'CODEGRAPH_AUTO_INDEX',
   'CODEGRAPH_NO_AUTO_SEED',
   'CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS',
   'CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS',
   'CODEGRAPH_WATCH_DEBOUNCE_MS',
+  'CODEGRAPH_STATE_DIR',
 ] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
@@ -104,30 +105,30 @@ describe('worktree seeding at the tool-call entry point', { timeout: 60_000 }, (
   let workspace: string;
   let main: string;
   let engine: MCPEngine;
+  let builder: BuilderClient;
   let saved: Record<string, string | undefined>;
 
   beforeEach(async () => {
     saved = snapshotEnv();
-    delete process.env.CODEGRAPH_AUTO_INDEX;
     delete process.env.CODEGRAPH_NO_AUTO_SEED;
     process.env.CODEGRAPH_WATCH_DEBOUNCE_MS = '100';
     // Wait for each explicit project's catch-up sync instead of the gate's
     // serve-anyway deadline, so a case sees what the catch-up left behind.
     process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '0';
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-seed-gate-')));
+    // The builder's own state dir; the builder inherits this environment.
+    process.env.CODEGRAPH_STATE_DIR = path.join(workspace, 'state');
     main = path.join(workspace, 'main');
     makeRepo(main);
     __setLoadCodeGraphForTests(CodeGraph);
-    engine = new MCPEngine({ watch: true });
-    // A root with nothing indexed at or below it: no default project, so every
-    // call goes through the explicit-projectPath path.
-    const emptyRoot = path.join(workspace, 'empty-root');
-    fs.mkdirSync(emptyRoot);
-    await engine.ensureInitialized(emptyRoot);
+    // The engine has no default project: every call goes through projectPath.
+    builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
   }, 60_000);
 
   afterEach(async () => {
     await engine.stop();
+    await builder.stop();
     __setLoadCodeGraphForTests(null);
     restoreEnv(saved);
     clearRegistry();
@@ -135,7 +136,7 @@ describe('worktree seeding at the tool-call entry point', { timeout: 60_000 }, (
   }, 60_000);
 
   async function search(projectPath: string, query: string): Promise<{ text: string; isError: boolean }> {
-    const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath });
+    const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath }, undefined, ADMIT_ALL);
     return { text: res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n'), isError: Boolean(res.isError) };
   }
 
@@ -199,17 +200,11 @@ describe('worktree seeding at the tool-call entry point', { timeout: 60_000 }, (
     expect(unchanged(seeded.nodes)).toEqual(unchanged(source.nodes));
   });
 
-  // G7. The opt-in half waits for a detached cold build of three files (node
-  // start + index, a few seconds on a loaded machine), polling every 100 ms.
-  it('G7: no indexed sibling keeps the not-indexed guidance; CODEGRAPH_AUTO_INDEX=1 builds, answering "building" meanwhile', async () => {
-    const plainWt = path.join(workspace, 'wt-plain');
-    addWorktree(main, plainWt, 'plain');
-    const without = await search(plainWt, 'alphaSymbol');
-    expect(without.isError).toBe(false);
-    expect(without.text).toContain(NOT_INDEXED);
-    expect(fs.existsSync(path.join(plainWt, '.codegraph'))).toBe(false);
-
-    process.env.CODEGRAPH_AUTO_INDEX = '1';
+  // G7. Waits for a cold build of three files on the builder (process start +
+  // index, a few seconds on a loaded machine), polling every 100 ms. No indexed
+  // sibling and no registry entry: the build starts anyway.
+  it('G7: no indexed sibling, no opt-in and no registration: the first call answers "building", then the worktree\'s own index', async () => {
+    expect(listRegisteredProjects()).toEqual([]);
     const wt = path.join(workspace, 'wt-cold');
     addWorktree(main, wt, 'cold');
     const note = buildingNote(real(wt));
@@ -237,35 +232,26 @@ describe('worktree seeding at the tool-call entry point', { timeout: 60_000 }, (
     expect(answered).toBe(true);
     // The builder held rebuild.pid for the whole build; it is gone once done.
     expect(await waitUntil(() => !fs.existsSync(path.join(wt, '.codegraph', 'rebuild.pid')), 10_000)).toBe(true);
-    const cg = CodeGraph.openSync(wt);
+    const cg = CodeGraph.openSync(wt, { readOnly: true });
     try {
       expect(cg.getIndexState()).toBe('complete');
     } finally {
       cg.close();
     }
-  });
-
-  // G7 (R6, second trigger): a repository the registry already holds counts
-  // as the user's opt-in for a cold build of its other worktrees.
-  it('G7: a registered repository with no indexed sibling builds the new worktree', async () => {
-    registerProject(real(main), { commonDir: real(path.join(main, '.git')) });
-    const wt = path.join(workspace, 'wt-registered');
-    addWorktree(main, wt, 'registered');
-    const first = await search(wt, 'alphaSymbol');
-    expect(first.isError).toBe(false);
-    expect(first.text).toContain(buildingNote(real(wt)));
-    // Let the detached build finish before the workspace is removed.
-    expect(await waitUntil(() => {
-      const db = path.join(wt, '.codegraph', 'codegraph.db');
-      return fs.existsSync(db) && !fs.existsSync(path.join(wt, '.codegraph', 'rebuild.pid'));
-    }, 45_000)).toBe(true);
+    // The build registered the worktree, so teardown can reclaim it later.
+    expect(listRegisteredProjects().map((p) => p.root)).toContain(real(wt));
   });
 
   // G8. Indexes the sibling once; ~2 s.
-  it('G8: CODEGRAPH_NO_AUTO_SEED=1 keeps the old not-indexed answer and creates no index', async () => {
+  it('CODEGRAPH_NO_AUTO_SEED=1 answers not-indexed and creates no index', async () => {
     await indexDir(main);
+    // The kill switch covers seeds and cold builds. The builder reads it from
+    // its own environment, which it got when it was forked: start a new one with it set.
+    await engine.stop();
+    await builder.stop();
     process.env.CODEGRAPH_NO_AUTO_SEED = '1';
-    process.env.CODEGRAPH_AUTO_INDEX = '1'; // the kill switch also wins over the cold-build opt-in
+    builder = BuilderClient.start();
+    engine = new MCPEngine({ builder });
     const wt = path.join(workspace, 'wt-off');
     addWorktree(main, wt, 'off');
 
@@ -322,7 +308,7 @@ describe('pinned projects and the handler cache (G10, pinned half)', () => {
   }
 
   async function touch(dir: string): Promise<void> {
-    const res = await handler.execute('codegraph_files', { projectPath: dir, path: OVERSIZED_PATH });
+    const res = await handler.execute('codegraph_files', { projectPath: dir, path: OVERSIZED_PATH }, undefined, ADMIT_ALL);
     expect(res.content[0]!.text).toContain('path exceeds maximum length');
   }
 
@@ -338,20 +324,5 @@ describe('pinned projects and the handler cache (G10, pinned half)', () => {
     expect(await waitUntil(() => released.includes('peer'), 4000)).toBe(true);
     await new Promise((r) => setTimeout(r, 300));
     expect(released).toEqual(['peer']);
-  });
-
-  it('G10: a pinned root survives LRU eviction and does not count toward MAX_CACHED_PROJECTS', async () => {
-    process.env.CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS = '0'; // only the LRU bound releases
-    const pinned = project('pinned');
-    pinProject(real(pinned));
-    await touch(pinned); // least recently used from here on
-
-    for (let i = 0; i < MAX_CACHED_PROJECTS; i++) await touch(project(`u${i}`));
-    // The pinned root plus MAX_CACHED_PROJECTS unpinned ones: within the bound.
-    expect(released).toEqual([]);
-
-    await touch(project(`u${MAX_CACHED_PROJECTS}`));
-    // One over: the oldest UNPINNED root goes, the pinned one stays.
-    expect(released).toEqual(['u0']);
   });
 });

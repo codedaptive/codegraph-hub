@@ -1,8 +1,14 @@
 /**
  * grep-by-symbol core: a ripgrep search over exactly the files the index has
- * (those whose real location is inside the project; see searchablePaths), with
+ * (those whose real location is inside the project; see searchablePaths), cut
+ * to the session focus when the caller passes one (`GrepOptions.focus`), with
  * every hit attributed to its innermost enclosing symbol and the groups ranked
  * by in-degree (incoming calls/references/imports/implements/extends).
+ * Questionable incoming calls (bound by name only: resolution's candidate edge,
+ * candidateEdgeSql in src/extensions/resolution/suspects.ts; a same-file
+ * exact-match call is certain, not questionable)
+ * stay in the in-degree and are also reported as `questionableInDegree`; under
+ * `strict` they are left out of the in-degree, and so of the ranking.
  *
  * Reproduces graft 0.16 `graft grep` (dist/search/grep.js) on codegraph's
  * SQLite index. Where graft loads the whole graph and scans each file's nodes
@@ -20,6 +26,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
+import { inFocus } from '../../host/server/session-scope';
+import { candidateEdgeSql } from '../../resolution/suspects';
 
 /** graft's DEFAULT_MAX_HITS. */
 export const DEFAULT_MAX_HITS = 300;
@@ -58,8 +66,14 @@ const ENCLOSING_SQL = `
     AND kind NOT IN (${sqlList(NON_ENCLOSING_KINDS)})
   ORDER BY start_line DESC, end_line ASC, id ASC
   LIMIT 1`;
-/** Served by idx_edges_target_kind (target, kind). */
-const IN_DEGREE_SQL = `SELECT COUNT(*) AS n FROM edges WHERE target = ? AND kind IN (${sqlList(IN_DEGREE_EDGE_KINDS)})`;
+/**
+ * Served by idx_edges_target_kind (target, kind). `n` counts every in-degree
+ * edge; `q` counts those that are questionable calls (candidateEdgeSql),
+ * so one statement gives both the full and the strict count.
+ */
+const IN_DEGREE_SQL =
+  `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ${candidateEdgeSql('edges')} THEN 1 ELSE 0 END), 0) AS q ` +
+  `FROM edges WHERE target = ? AND kind IN (${sqlList(IN_DEGREE_EDGE_KINDS)})`;
 const FILE_SIZE_SQL = 'SELECT size FROM files WHERE path = ?';
 const ALL_FILES_SQL = 'SELECT path FROM files';
 
@@ -85,6 +99,24 @@ export interface GrepOptions {
    * exceeds it (batchPaths). Default 200 KB.
    */
   batchBytes?: number;
+  /**
+   * Leave questionable incoming calls (bound by name only) out of each group's
+   * inDegree, and so out of the ranking. Without it they are counted in
+   * inDegree and also reported as questionableInDegree.
+   */
+  strict?: boolean;
+  /**
+   * The session focus as index-relative prefixes, as `focusPrefixesOfTool`
+   * (../shared/focus.ts) returns them: only indexed files that are one of the
+   * prefixes or sit under one (host's `inFocus`) are searched, and
+   * `filesSearched` counts those. `null` or absent filters nothing, and `[]`
+   * leaves nothing to search. It applies after the `in` scope check, so an `in`
+   * that names indexed files outside the focus is not a GrepScopeError: it
+   * finds nothing. The filter runs before ranking and before the `maxHits` cap,
+   * so a hit outside the focus never takes a cap slot. In-edge counts stay
+   * whole-index: they are a ranking signal, not part of what is searched.
+   */
+  focus?: readonly string[] | null;
 }
 
 export interface GrepSymbolRef {
@@ -98,7 +130,15 @@ export interface GrepSymbolRef {
   span: string;
 }
 export interface GrepHit { line: number; text: string }
-export interface GrepGroup { symbol: GrepSymbolRef | null; path: string; inDegree: number; hits: GrepHit[] }
+export interface GrepGroup {
+  symbol: GrepSymbolRef | null;
+  path: string;
+  /** In-degree edges into the symbol; under `strict`, without the questionable calls. */
+  inDegree: number;
+  hits: GrepHit[];
+  /** How many of inDegree are questionable calls. Set only when > 0, and never under `strict`. */
+  questionableInDegree?: number;
+}
 export interface GrepResult {
   pattern: string;
   filesSearched: number;
@@ -117,6 +157,8 @@ export interface GrepResult {
    * `files.size` byte count. The key is absent when no group path has a size.
    */
   saved?: { files: number; baselineChars: number };
+  /** Present (true) only when the search ran with `strict`. */
+  strict?: true;
 }
 
 /** The pattern is not a valid regex (JS RegExp or ripgrep refused it). */
@@ -306,9 +348,9 @@ function runRgBatch(
 }
 
 /**
- * Search the indexed files under `opts.in` for `pattern` and group the hits
- * by innermost enclosing symbol. The database is opened read-only and closed
- * on every path.
+ * Search the indexed files under `opts.in` (and inside `opts.focus`, when
+ * given) for `pattern` and group the hits by innermost enclosing symbol. The
+ * database is opened read-only and closed on every path.
  */
 export async function grepIndex(projectRoot: string, pattern: string, opts: GrepOptions = {}): Promise<GrepResult> {
   const maxHits = opts.maxHits ?? DEFAULT_MAX_HITS;
@@ -328,13 +370,16 @@ export async function grepIndex(projectRoot: string, pattern: string, opts: Grep
   try {
     const db = conn.getDb();
     const prefix = opts.in ? normalizeGrepPrefix(opts.in) : '';
-    const files: string[] = [];
+    const scoped: string[] = [];
     for (const row of db.prepare(ALL_FILES_SQL).iterate() as IterableIterator<{ path: string }>) {
-      if (pathUnderPrefix(row.path, prefix)) files.push(row.path);
+      if (pathUnderPrefix(row.path, prefix)) scoped.push(row.path);
     }
-    if (prefix !== '' && files.length === 0) {
+    if (prefix !== '' && scoped.length === 0) {
       throw new GrepScopeError(`nothing indexed under "${prefix}/" (or any path prefix)`);
     }
+    // After the scope check: an `in` that holds indexed files, all outside the focus, leaves nothing to search.
+    const focus = opts.focus ?? null;
+    const files = focus === null ? scoped : scoped.filter((f) => inFocus(f, focus));
 
     const ranks = rankPaths(files);
     const capped = new CappedHits(ranks, maxHits);
@@ -349,8 +394,9 @@ export async function grepIndex(projectRoot: string, pattern: string, opts: Grep
     const unreadable = searchable.skipped + results.reduce((n, r) => n + r.unreadable, 0);
 
     const kept = capped.kept();
-    const groups = groupHits(db, kept);
-    // Stable: equal in-degree and equal path rank keep creation (sorted-hit) order.
+    const strict = opts.strict === true;
+    const groups = groupHits(db, kept, strict);
+    // Stable (under strict, inDegree is already the strict count): equal in-degree and equal path rank keep creation (sorted-hit) order.
     groups.sort((a, b) => b.inDegree - a.inDegree || (ranks.get(a.path) ?? 0) - (ranks.get(b.path) ?? 0));
     assignIds(groups);
 
@@ -363,6 +409,7 @@ export async function grepIndex(projectRoot: string, pattern: string, opts: Grep
     };
     const saved = savedFor(db, groups);
     if (saved) result.saved = saved;
+    if (strict) result.strict = true;
     return result;
   } finally {
     conn.close();
@@ -565,8 +612,13 @@ export class CappedHits {
 
 interface NodeRow { id: string; kind: string; qualified_name: string; file_path: string; start_line: number; end_line: number }
 
-/** Group kept hits by enclosing node (or `file:<path>`), groups created in hit order. */
-function groupHits(db: SqliteDatabase, kept: RawHit[]): GrepGroup[] {
+/**
+ * Group kept hits by enclosing node (or `file:<path>`), groups created in hit
+ * order. Under `strict` a group's inDegree leaves out questionable calls;
+ * otherwise it counts them and, when there are any, says how many in
+ * questionableInDegree (set after `hits`, so the existing JSON key order holds).
+ */
+function groupHits(db: SqliteDatabase, kept: RawHit[], strict: boolean): GrepGroup[] {
   const enclosing = db.prepare(ENCLOSING_SQL);
   const inDegree = db.prepare(IN_DEGREE_SQL);
   const groups = new Map<string, GrepGroup>();
@@ -576,14 +628,18 @@ function groupHits(db: SqliteDatabase, kept: RawHit[]): GrepGroup[] {
     let group = groups.get(key);
     if (!group) {
       const name = node ? node.qualified_name.split('::').join('.') : '';
+      const counts = node ? (inDegree.get(node.id) as { n: number | bigint; q: number | bigint }) : undefined;
+      const all = counts ? Number(counts.n) : 0;
+      const questionable = counts ? Number(counts.q) : 0;
       group = {
         symbol: node
           ? { id: `${node.file_path}#${name}`, name, kind: node.kind, path: node.file_path, span: `L${node.start_line}-L${node.end_line}` }
           : null,
         path: h.path,
-        inDegree: node ? Number((inDegree.get(node.id) as { n: number | bigint }).n) : 0,
+        inDegree: strict ? all - questionable : all,
         hits: [],
       };
+      if (!strict && questionable > 0) group.questionableInDegree = questionable;
       groups.set(key, group);
     }
     group.hits.push({ line: h.line, text: h.text });

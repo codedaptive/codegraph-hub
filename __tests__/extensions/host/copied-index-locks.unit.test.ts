@@ -1,10 +1,11 @@
 /**
  * Lock records carry the identity of the physical index they were written
- * for: writer.pid, rebuild.pid, daemon.pid and codegraph.lock.
+ * for: writer.pid, rebuild.pid and codegraph.lock. The machine server's
+ * server.pid lives separately in its state dir and carries no project stamp.
  *
  * A project copied with its `.codegraph/` (cp -R, rsync, a template checkout)
- * carries the ORIGINAL's lock records: daemon.pid, writer.pid, rebuild.pid and
- * codegraph.lock all name the original's live daemon. Every record carries a
+ * carries the ORIGINAL's writer.pid, rebuild.pid and codegraph.lock, all
+ * naming the original's live writer. Each of these project records carries a
  * lock stamp: the writer's canonical project root and the `dev:ino` of the
  * `.codegraph` directory and of `codegraph.db` it had open. A record is
  * foreign, and stale exactly like a dead pid, when its recorded root is
@@ -28,9 +29,8 @@
  * platform and never ours, so liveness alone says "held".
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { execFileSync, spawn, type ChildProcess } from 'child_process';
-import * as net from 'net';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -44,13 +44,11 @@ import {
   markWriterReady,
   readWriterLock,
   releaseWriterLock,
-  swapWriterLock,
   tryAcquireWriterLock,
 } from '../../../src/mcp/writer-lock';
-import { decodeLockInfo, encodeLockInfo, getDaemonPidPath, getDaemonSocketPath } from '../../../src/mcp/daemon-paths';
-import { Daemon, clearStaleDaemonLock, tryAcquireDaemonLock } from '../../../src/mcp/daemon';
-import { getRegistryDir, isProcessAlive, stopOlderDaemon } from '../../../src/mcp/daemon-registry';
-import { MCPEngine } from '../../../src/mcp/engine';
+import { getStateDirIdentity } from '../../../src/extensions/host/server/state-dir';
+import { decodeServerLock, encodeServerLock, getServerPidPath, getServerSocketPath } from '../../../src/mcp/daemon-paths';
+import { clearStaleDaemonLock, tryAcquireDaemonLock } from '../../../src/mcp/daemon';
 import { CodeGraphPackageVersion } from '../../../src/mcp/version';
 import { FileLock } from '../../../src/utils';
 import { processStartTime } from '../../../src/mcp/process-identity';
@@ -126,7 +124,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
 
   /** The record a live writer on `root` wrote: `pid` and `root`'s lock stamp as it is now. */
   function writerRecord(pid: number, root?: string): Record<string, unknown> {
-    return { pid, mode: 'daemon', startedAt: Date.now(), ready: true, ...(root !== undefined ? stampAs(pid, root) : {}) };
+    return { pid, mode: 'fallback', startedAt: Date.now(), ready: true, ...(root !== undefined ? stampAs(pid, root) : {}) };
   }
 
   /** Copy a project with its index, as cp -R does: new directory and database inodes. */
@@ -202,7 +200,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const b = copyProject(a, 'b');
 
     expect(readWriterLock(b)).toBeNull();
-    const r = tryAcquireWriterLock(b, 'daemon');
+    const r = tryAcquireWriterLock(b, 'fallback');
     expect(r.kind).toBe('acquired');
     const onDisk = decodeWriterLockInfo(fs.readFileSync(getWriterPidPath(b), 'utf8'));
     expect(onDisk?.pid).toBe(process.pid);
@@ -224,7 +222,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const a = makeProject('a');
     const h = liveOtherPid();
     plantWriter(a, writerRecord(h, a));
-    const r = tryAcquireWriterLock(a, 'daemon');
+    const r = tryAcquireWriterLock(a, 'fallback');
     expect(r.kind).toBe('taken');
     if (r.kind === 'taken') expect(r.existing?.pid).toBe(h);
   });
@@ -233,7 +231,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const a = makeProject('a');
     const h = liveOtherPid();
     plantWriter(a, writerRecord(h));
-    const r = tryAcquireWriterLock(a, 'daemon');
+    const r = tryAcquireWriterLock(a, 'fallback');
     expect(r.kind).toBe('taken');
     expect(readWriterLock(a)?.pid).toBe(h);
   });
@@ -242,8 +240,8 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const a = makeProject('a');
     const b = makeProject('b');
     const h = liveOtherPid();
-    plantWriter(a, { pid: h, mode: 'daemon', startedAt: Date.now(), ready: true, root: canonicalProjectRoot(b) });
-    const r = tryAcquireWriterLock(a, 'daemon');
+    plantWriter(a, { pid: h, mode: 'fallback', startedAt: Date.now(), ready: true, root: canonicalProjectRoot(b) });
+    const r = tryAcquireWriterLock(a, 'fallback');
     expect(r.kind).toBe('taken');
     expect(readWriterLock(a)?.pid).toBe(h);
   });
@@ -256,7 +254,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     fs.renameSync(a, b);
     makeIndexAt(a);
 
-    const r = tryAcquireWriterLock(b, 'daemon');
+    const r = tryAcquireWriterLock(b, 'fallback');
     expect(r.kind).toBe('taken');
     if (r.kind === 'taken') expect(r.existing?.pid).toBe(h);
     expect(readWriterLock(b)?.pid).toBe(h);
@@ -272,7 +270,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     plantWriter(a, writerRecord(h, a));
     fs.copyFileSync(getWriterPidPath(a), getWriterPidPath(b));
 
-    const r = tryAcquireWriterLock(b, 'daemon');
+    const r = tryAcquireWriterLock(b, 'fallback');
     expect(r.kind).toBe('taken');
     if (r.kind === 'taken') expect(r.existing?.pid).toBe(h);
   });
@@ -288,15 +286,15 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     fs.renameSync(`${db}.new`, db);
     if (posix) expect(lockStamp(a).dbId).not.toBe(before);
 
-    const r = tryAcquireWriterLock(a, 'daemon');
+    const r = tryAcquireWriterLock(a, 'fallback');
     expect(r.kind).toBe('taken');
     if (r.kind === 'taken') expect(r.existing?.pid).toBe(h);
   });
 
-  it('the acquired writer.pid records the stamp, markWriterReady keeps it, and swapWriterLock writes its record verbatim', () => {
+  it('the acquired writer.pid records the stamp and markWriterReady keeps it', () => {
     const a = makeProject('a');
     const want = lockStamp(a);
-    expect(tryAcquireWriterLock(a, 'daemon').kind).toBe('acquired');
+    expect(tryAcquireWriterLock(a, 'fallback').kind).toBe('acquired');
     const readRaw = () => JSON.parse(fs.readFileSync(getWriterPidPath(a), 'utf8')) as Record<string, unknown>;
     expect(readRaw()).toMatchObject(want);
 
@@ -304,111 +302,16 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     expect(readRaw().ready).toBe(true);
     expect(readRaw()).toMatchObject(want);
 
-    // A hand-back restores the previous holder's record exactly, so the swap
-    // adds nothing: an unstamped record stays unstamped, a stamped one keeps its stamp.
-    const unstamped = { pid: process.pid, mode: 'daemon', startedAt: 1, ready: true };
-    expect(swapWriterLock(a, process.pid, unstamped)).toBe(true);
-    expect(readRaw()).toEqual(unstamped);
-    const stamped = { pid: process.pid, mode: 'daemon', startedAt: 2, ready: false, ...want };
-    expect(swapWriterLock(a, process.pid, stamped)).toBe(true);
-    expect(readRaw()).toEqual(stamped);
   });
 
   it.runIf(posix)('a copied rebuild.pid is not a rebuild in progress; one of this index is', () => {
     const a = makeProject('a');
     const h = liveOtherPid();
-    plantWriter(a, { ...writerRecord(h, a), mode: 'rebuild' }, 'rebuild.pid');
+    plantWriter(a, { ...writerRecord(h, a), mode: 'cold-build' }, 'rebuild.pid');
     expect(isRebuildInProgress(a)).toBe(true);
 
     const b = copyProject(a, 'b');
     expect(isRebuildInProgress(b)).toBe(false);
-  });
-
-  // -------------------------------------------------------------- daemon.pid
-
-  /** The daemon.pid a live daemon serving `root` wrote, stamped for `stampRoot` (none when undefined). */
-  function daemonRecord(pid: number, root: string, stampRoot?: string): string {
-    return encodeLockInfo({
-      pid,
-      version: CodeGraphPackageVersion,
-      socketPath: getDaemonSocketPath(root),
-      startedAt: Date.now(),
-      ...(stampRoot !== undefined ? stampAs(pid, stampRoot) : {}),
-    });
-  }
-
-  it.runIf(posix)('decodeLockInfo is null for a copied daemon.pid when given the copy, and passes the stamp through without it', () => {
-    const a = makeProject('a');
-    const h = liveOtherPid();
-    const raw = daemonRecord(h, a, a);
-    fs.writeFileSync(getDaemonPidPath(a), raw);
-    const b = copyProject(a, 'b');
-
-    expect(decodeLockInfo(raw, b)).toBeNull();
-    expect(decodeLockInfo(raw)).toMatchObject(stampAs(h, a));
-    expect(decodeLockInfo(raw, a)?.pid).toBe(h);
-  });
-
-  it.runIf(posix)('clearStaleDaemonLock with projectRoot clears a copied daemon.pid even though its pid is alive', () => {
-    const a = makeProject('a');
-    const h = liveOtherPid();
-    const raw = daemonRecord(h, a, a);
-    fs.writeFileSync(getDaemonPidPath(a), raw);
-    const b = copyProject(a, 'b');
-    const pidPath = getDaemonPidPath(b);
-
-    expect(clearStaleDaemonLock(pidPath, undefined, { expectedLockContents: raw, projectRoot: b })).toBe(true);
-    expect(fs.existsSync(pidPath)).toBe(false);
-    expect(fs.readFileSync(getDaemonPidPath(a), 'utf8')).toBe(raw);
-  });
-
-  it('clearStaleDaemonLock keeps a live daemon.pid written for this index', () => {
-    const a = makeProject('a');
-    const h = liveOtherPid();
-    const raw = daemonRecord(h, a, a);
-    const pidPath = getDaemonPidPath(a);
-    fs.writeFileSync(pidPath, raw);
-
-    expect(clearStaleDaemonLock(pidPath, undefined, { expectedLockContents: raw, projectRoot: a })).toBe(false);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(raw);
-  });
-
-  it('clearStaleDaemonLock keeps a live old-format daemon.pid with no stamp', () => {
-    const a = makeProject('a');
-    const b = makeProject('b');
-    const h = liveOtherPid();
-    const raw = daemonRecord(h, b);
-    const pidPath = getDaemonPidPath(a);
-    fs.writeFileSync(pidPath, raw);
-
-    expect(clearStaleDaemonLock(pidPath, undefined, { expectedLockContents: raw, projectRoot: a })).toBe(false);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(raw);
-  });
-
-  it.runIf(posix)('a copy whose original was then moved never reads the original\'s live daemon as its own', () => {
-    const a = makeProject('a');
-    const h = liveOtherPid();
-    const raw = daemonRecord(h, a, a);
-    fs.writeFileSync(getDaemonPidPath(a), raw);
-    const b = copyProject(a, 'b');
-    const c = freshPath('c');
-    fs.renameSync(a, c);
-    const pidPath = getDaemonPidPath(b);
-
-    expect(decodeLockInfo(fs.readFileSync(pidPath, 'utf8'), b)).toBeNull();
-    expect(clearStaleDaemonLock(pidPath, undefined, { projectRoot: b })).toBe(true);
-    expect(fs.existsSync(pidPath)).toBe(false);
-    // The moved original still owns its record.
-    expect(decodeLockInfo(fs.readFileSync(getDaemonPidPath(c), 'utf8'), c)?.pid).toBe(h);
-  });
-
-  it('tryAcquireDaemonLock on a fresh project records the lock stamp', () => {
-    const a = makeProject('a');
-    const r = tryAcquireDaemonLock(a);
-    expect(r.kind).toBe('acquired');
-    const onDisk = JSON.parse(fs.readFileSync(getDaemonPidPath(a), 'utf8')) as Record<string, unknown>;
-    expect(onDisk.pid).toBe(process.pid);
-    expect(onDisk).toMatchObject(lockStamp(a));
   });
 
   // ---------------------------------------------------------- codegraph.lock
@@ -534,27 +437,14 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     const p = makeProject('p');
     const h = liveOtherPid();
     plantWriter(p, writerRecord(h, p));
-    plantWriter(p, { ...writerRecord(h, p), mode: 'rebuild' }, 'rebuild.pid');
+    plantWriter(p, { ...writerRecord(h, p), mode: 'cold-build' }, 'rebuild.pid');
     restoreInPlace(p);
 
-    const r = tryAcquireWriterLock(p, 'daemon');
+    const r = tryAcquireWriterLock(p, 'fallback');
     expect(r.kind).toBe('taken');
     if (r.kind === 'taken') expect(r.existing?.pid).toBe(h);
     expect(readWriterLock(p)?.pid).toBe(h);
     expect(isRebuildInProgress(p)).toBe(true);
-  });
-
-  it('a live daemon.pid restored to the same path still names this project\'s daemon', () => {
-    const p = makeProject('p');
-    const h = liveOtherPid();
-    const raw = daemonRecord(h, p, p);
-    const pidPath = getDaemonPidPath(p);
-    fs.writeFileSync(pidPath, raw);
-    restoreInPlace(p);
-
-    expect(decodeLockInfo(fs.readFileSync(pidPath, 'utf8'), p)?.pid).toBe(h);
-    expect(clearStaleDaemonLock(pidPath, undefined, { expectedLockContents: raw, projectRoot: p })).toBe(false);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(raw);
   });
 
   it('a live codegraph.lock restored to the same path still refuses', () => {
@@ -586,7 +476,7 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     fs.linkSync(path.join(a, '.codegraph', 'codegraph.db'), dbB);
     fs.copyFileSync(getWriterPidPath(a), getWriterPidPath(b));
 
-    const r = tryAcquireWriterLock(b, 'daemon');
+    const r = tryAcquireWriterLock(b, 'fallback');
     expect(r.kind).toBe('taken');
     if (r.kind === 'taken') expect(r.existing?.pid).toBe(h);
     expect(readWriterLock(b)?.pid).toBe(h);
@@ -608,137 +498,55 @@ describe('copied-index-locks: lock records carry the identity of their index', (
   });
 });
 
-/**
- * The launcher's handover claim (stopOlderDaemon taking the writer slot
- * from an older daemon before it signals it) carries this project's lock
- * stamp, so a copy of this index that inherits the claim reads it as foreign.
- * The claim is built with its stamp at the claim site; swapWriterLock writes
- * records verbatim. Harness copied from daemon-older-version.test.ts: a
- * detached stand-in process, a socket answering the older daemon's hello, and
- * its daemon.pid.
- */
-describe('copied-index-locks: the handover claim carries its lock stamp', () => {
-  let root: string;
-  let server: net.Server | null;
-  let pids: number[];
+/** The machine-server lock is state-scoped, not part of a copied project's index. */
+describe('copied-index-locks: server lock identity is separate from project stamps', () => {
+  let stateDir: string;
+  let previousStateDir: string | undefined;
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-copied-handover-'));
-    makeIndexAt(root);
-    server = null;
-    pids = [];
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-copied-server-state-'));
+    previousStateDir = process.env.CODEGRAPH_STATE_DIR;
+    process.env.CODEGRAPH_STATE_DIR = stateDir;
   });
 
-  afterEach(async () => {
-    vi.restoreAllMocks();
-    for (const pid of pids) if (isProcessAlive(pid)) process.kill(pid, 'SIGKILL');
-    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
-    fs.rmSync(root, { recursive: true, force: true });
+  afterEach(() => {
+    if (previousStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+    else process.env.CODEGRAPH_STATE_DIR = previousStateDir;
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
-  /** A live process to stand in for a daemon; signals reach it, never the test. */
-  function startDetachedProcess(): number {
-    const source = [
-      "const { spawn } = require('child_process');",
-      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });",
-      'child.unref();',
-      'console.log(child.pid);',
-    ].join(' ');
-    const pid = Number(execFileSync(process.execPath, ['-e', source], { encoding: 'utf8' }).trim());
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error('could not start daemon fixture');
-    return pid;
-  }
-
-  /** A daemon of `version`: its daemon.pid, and a socket answering the hello as it. */
-  async function fakeDaemon(version: string): Promise<number> {
-    const pid = startDetachedProcess();
-    pids.push(pid);
-    const socketPath = getDaemonSocketPath(root);
-    server = net.createServer((socket) => {
-      socket.end(JSON.stringify({ protocol: 1, codegraph: version, pid, socketPath }) + '\n');
+  it('clearStaleDaemonLock keeps an exact live server.pid record', () => {
+    const raw = encodeServerLock({
+      pid: process.pid,
+      version: CodeGraphPackageVersion,
+      socketPath: getServerSocketPath(),
+      startedAt: Date.now(),
+      stateDir,
+      stateId: getStateDirIdentity()!,
     });
-    await new Promise<void>((resolve, reject) => {
-      server!.once('error', reject);
-      server!.listen(socketPath, resolve);
+    const pidPath = getServerPidPath();
+    fs.writeFileSync(pidPath, raw);
+
+    expect(clearStaleDaemonLock(pidPath, undefined, { expectedLockContents: raw })).toBe(false);
+    expect(fs.readFileSync(pidPath, 'utf8')).toBe(raw);
+  });
+
+  it('tryAcquireDaemonLock writes only the machine-server identity fields in the state dir', () => {
+    const acquired = tryAcquireDaemonLock();
+    expect(acquired.kind).toBe('acquired');
+    if (acquired.kind !== 'acquired') throw new Error('expected the fresh server lock');
+    expect(acquired.pidPath).toBe(path.join(stateDir, 'server.pid'));
+    const onDisk = JSON.parse(fs.readFileSync(acquired.pidPath, 'utf8')) as Record<string, unknown>;
+    expect(Object.keys(onDisk).sort()).toEqual(['pid', 'socketPath', 'startedAt', 'stateDir', 'stateId', 'version']);
+    expect(decodeServerLock(encodeServerLock(acquired.info))).toEqual(acquired.info);
+    expect(onDisk).toEqual({
+      pid: process.pid,
+      version: CodeGraphPackageVersion,
+      socketPath: getServerSocketPath(),
+      startedAt: expect.any(Number),
+      stateDir,
+      stateId: getStateDirIdentity(),
     });
-    fs.writeFileSync(getDaemonPidPath(root), encodeLockInfo({ pid, version, socketPath, startedAt: Date.now() }));
-    return pid;
-  }
-
-  const writerRecord = (): any => {
-    try { return JSON.parse(fs.readFileSync(getWriterPidPath(root), 'utf8')); } catch { return null; }
-  };
-
-  it('the writer.pid at SIGTERM time is a handover claim carrying lockStamp(root)', async () => {
-    const pid = await fakeDaemon('1.6.1');
-    // The older daemon's own record is unstamped (the older format), so the
-    // claim's stamp can only come from the claim site.
-    fs.writeFileSync(getWriterPidPath(root), JSON.stringify({ pid, mode: 'daemon', startedAt: 1, ready: true }) + '\n');
-    let atSignal: any = null;
-    const originalKill = process.kill.bind(process);
-    vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
-      if (target === pid && signal === 'SIGTERM') atSignal = writerRecord();
-      return originalKill(target, signal);
-    });
-    expect(await stopOlderDaemon(root, '1.6.2')).toMatchObject({ pid, outcome: 'term' });
-    expect(atSignal).toMatchObject({ pid: process.pid, mode: 'handover', ...lockStamp(root) });
-    expect(atSignal.root).toBe(canonicalProjectRoot(root));
-  }, 15000);
-});
-
-/**
- * The discovery entry a daemon files in the registry (`codegraph list`,
- * `stop --all`) names the root the daemon was started with, and carries no
- * lock stamp: the stamp's canonical `root` (realpath'd, lowercased on Windows)
- * must not replace it, and `dirId` / `dbId` belong to the pidfile only.
- *
- * Runs a Daemon in this process with its engine stubbed, so no index is
- * opened, and `process.exit` stubbed for `stop()`. POSIX only: on Windows
- * `stop()` arms a real exit backstop that fires after the stubs are restored.
- * The daemon is given the project through a symlink, so its canonical root
- * (the stamp's) differs from the root it was started with.
- */
-describe('copied-index-locks: the registry entry keeps the root the daemon was started with', () => {
-  it.runIf(posix)('Daemon.start registers { root, pid, version, socketPath, startedAt } and no stamp', async () => {
-    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-copied-registry-'));
-    makeIndexAt(real);
-    const root = `${real}-link`;
-    fs.symlinkSync(real, root, 'dir');
-    expect(canonicalProjectRoot(root)).not.toBe(root);
-    vi.spyOn(MCPEngine.prototype, 'ensureInitialized').mockResolvedValue(undefined);
-    vi.spyOn(MCPEngine.prototype, 'stop').mockResolvedValue(undefined);
-    vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    const signals = ['SIGINT', 'SIGTERM'] as const;
-    const before = new Map(signals.map((s) => [s, process.listeners(s)]));
-
-    expect(tryAcquireDaemonLock(root).kind).toBe('acquired');
-    const daemon = new Daemon(root, { idleTimeoutMs: 0 });
-    try {
-      const started = await daemon.start();
-      const entries = fs.readdirSync(getRegistryDir())
-        .filter((f) => f.endsWith('.json'))
-        .map((f) => JSON.parse(fs.readFileSync(path.join(getRegistryDir(), f), 'utf8')) as Record<string, unknown>)
-        .filter((e) => e.pid === process.pid && e.socketPath === started.socketPath);
-      expect(entries).toHaveLength(1);
-      const [entry] = entries;
-      expect(Object.keys(entry)).toEqual(['root', 'pid', 'version', 'socketPath', 'startedAt']);
-      expect(entry).toEqual({
-        root,
-        pid: process.pid,
-        version: CodeGraphPackageVersion,
-        socketPath: started.socketPath,
-        startedAt: started.lock.startedAt,
-      });
-      // The pidfile, unlike the registry entry, carries the stamp.
-      expect(started.lock).toMatchObject(lockStamp(root));
-    } finally {
-      await daemon.stop('test');
-      for (const s of signals) {
-        for (const l of process.listeners(s)) if (!before.get(s)!.includes(l)) process.removeListener(s, l);
-      }
-      vi.restoreAllMocks();
-      fs.rmSync(root, { force: true });
-      fs.rmSync(real, { recursive: true, force: true });
-    }
+    expect(getStateDirIdentity()).not.toBeNull();
   });
 });

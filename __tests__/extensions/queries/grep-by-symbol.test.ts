@@ -6,10 +6,11 @@
  *
  * One fixture repo is indexed once in beforeAll. Its line numbers, spans and
  * edges were checked against the real indexer: Worker::run is L5-L7, helper is
- * called by callerOne and callerTwo, farAway by longOne, and notes.txt is not
- * indexed. Paths sort as src/a/... < src/ab/... < src/B.ts under localeCompare
- * (code-unit order would put src/B.ts first), so the cap and ranking vectors
- * also pin the localeCompare rule.
+ * called by callerOne and callerTwo, farAway by longOne (each an exact-match
+ * call from the target's own file, so certain, not questionable), and
+ * notes.txt is not indexed. Paths sort as src/a/... < src/ab/... < src/B.ts
+ * under localeCompare (code-unit order would put src/B.ts first), so the cap
+ * and ranking vectors also pin the localeCompare rule.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -486,7 +487,7 @@ describe('MCP tool', () => {
     expect(schema.type).toBe('object');
     expect(schema.required).toEqual(['pattern']);
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ['fixed', 'ignore_case', 'in', 'json', 'pattern', 'projectPath'].sort(),
+      ['fixed', 'ignore_case', 'in', 'json', 'pattern', 'projectPath', 'scope', 'strict'].sort(),
     );
   });
 

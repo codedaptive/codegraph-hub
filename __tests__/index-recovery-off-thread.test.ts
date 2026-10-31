@@ -19,12 +19,14 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 const DIST = path.resolve(__dirname, '../dist');
 const CodeGraph = (require(path.join(DIST, 'index.js')) as typeof import('../src/index')).default;
 const { DatabaseConnection, getDatabasePath } = require(path.join(DIST, 'db', 'index.js')) as typeof import('../src/db');
 const { createDatabase } = require(path.join(DIST, 'db', 'sqlite-adapter.js')) as typeof import('../src/db/sqlite-adapter');
 const { MCPEngine } = require(path.join(DIST, 'mcp', 'engine.js')) as typeof import('../src/mcp/engine');
+const { BuilderClient } = require(path.join(DIST, 'extensions', 'host', 'builder', 'client.js')) as typeof import('../src/extensions/host/builder/client');
 
 beforeAll(() => {
   if (!fs.existsSync(path.join(DIST, 'index.js'))) throw new Error('Build the project first (npm run build).');
@@ -168,66 +170,31 @@ describe('recovering an interrupted bulk load off the event loop (#1887)', () =>
     expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
   }, 30_000);
 
-  it('serves a projectPath call once the indexes are back, without rebuilding on the server thread', async () => {
+  it('leaves the repair of a project\'s indexes to the writer: an engine with no builder serves it as it is', async () => {
     const { root, dbPath } = interruptedProject(SMALL);
-    const engine = new MCPEngine({ watch: false });
+    const engine = new MCPEngine();
     engines.push(engine);
     const seen = spyOnIndexDdl();
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root });
+    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
-    expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
+    // Reads stay correct, only slower; no index was rebuilt, here or anywhere.
+    expect(presentWindowIndexes(dbPath)).toEqual([]);
     expect(seen).toEqual([]);
   }, 30_000);
 
-  it('rebuilds before a watched projectPath project is caught up and served', async () => {
+  it('serves a projectPath call once the builder has the indexes back, without rebuilding on the server thread', async () => {
     const { root, dbPath } = interruptedProject(SMALL);
-    const engine = new MCPEngine({ watch: true });
-    engines.push(engine);
+    const builder = BuilderClient.start();
+    const engine = new MCPEngine({ builder });
+    engines.push(engine, { stop: () => builder.stop() });
     const seen = spyOnIndexDdl();
-    // The catch-up sync writes through the main connection; started during the
-    // rebuild it would wait out the rebuild's write lock with this thread blocked.
-    const events: string[] = [];
-    const recover = CodeGraph.prototype.recoverIndexes;
-    vi.spyOn(CodeGraph.prototype, 'recoverIndexes').mockImplementation(function (this: InstanceType<typeof CodeGraph>) {
-      const pending = this.hasPendingIndexRecovery();
-      return recover.call(this).then(() => { if (pending) events.push('rebuilt'); });
-    });
-    const sync = CodeGraph.prototype.sync;
-    vi.spyOn(CodeGraph.prototype, 'sync').mockImplementation(function (this: InstanceType<typeof CodeGraph>, ...args) {
-      events.push('sync');
-      return sync.apply(this, args);
-    });
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root });
+    // The builder's hold recovers the indexes (a `recover` job, off its main thread) before the engine opens
+    // the project read-only; the rebuild is not done by this process at all.
+    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
     expect(seen).toEqual([]);
-    expect(events[0]).toBe('rebuilt');
-    expect(events).toContain('sync');
-  }, 30_000);
-
-  it('opens the default project at once on the retry path and serves it rebuilt', async () => {
-    const { root, dbPath } = interruptedProject(SMALL);
-    const engine = new MCPEngine({ watch: false });
-    engines.push(engine);
-    const seen = spyOnIndexDdl();
-    engine.retryInitializeSync(root);
-    expect(engine.hasDefaultCodeGraph()).toBe(true);
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'fn_1' });
-    expect(result.isError).toBeFalsy();
-    expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
-    expect(seen).toEqual([]);
-  }, 30_000);
-
-  it('opens the default project with the indexes back on the startup path', async () => {
-    const { root, dbPath } = interruptedProject(SMALL);
-    const engine = new MCPEngine({ watch: false });
-    engines.push(engine);
-    const seen = spyOnIndexDdl();
-    await engine.ensureInitialized(root);
-    expect(engine.hasDefaultCodeGraph()).toBe(true);
-    expect(presentWindowIndexes(dbPath)).toEqual(WINDOW_INDEXES);
-    expect(seen).toEqual([]);
-  }, 30_000);
+  }, 60_000);
 
   /**
    * End to end with the real liveness watchdog, armed for heartbeats only and

@@ -53,10 +53,15 @@ export interface OrphanNode {
   language: string;
 }
 
-/** One incoming edge with its source node's position and the edge's resolution metadata. */
+/** One incoming edge with its source node's position, its target node's file and the edge's resolution metadata. */
 export interface IncomingUse {
   source: string;
   target: string;
+  /**
+   * The target node's file. A type's counted uses span its same-name group, so
+   * the guess rule reads this, not the candidate's own file.
+   */
+  targetPath: string;
   kind: string;
   /** The edge's own line, or the source node's start line when the edge has none. */
   line: number;
@@ -75,7 +80,7 @@ export interface OrphansStore {
   nodesByIds(ids: readonly string[]): BlastNode[];
   /** `nodes.language` per id. */
   languages(ids: readonly string[]): Map<string, string>;
-  /** Every edge pointing at any of `targetIds` except `contains` and `exports`, with its source node. */
+  /** Every edge pointing at any of `targetIds` except `contains` and `exports`, with its source node and its target's file. */
   incomingUses(targetIds: readonly string[]): IncomingUse[];
   /** Per child id, the ids of the nodes that hold it by a `contains` edge. */
   parents(childIds: readonly string[]): Map<string, string[]>;
@@ -182,19 +187,21 @@ function storeOn(conn: DatabaseConnection): OrphansStore {
     incomingUses(targetIds) {
       interface Row {
         source: string; target: string; kind: string; line: number | null; metadata: string | null;
-        sname: string; spath: string; sstart: number; send: number;
+        sname: string; spath: string; sstart: number; send: number; tpath: string;
       }
       const rows = perChunk<Row>(
         targetIds,
         (n) => `SELECT e.source AS source, e.target AS target, e.kind AS kind, e.line AS line, e.metadata AS metadata,
-                       s.name AS sname, s.file_path AS spath, s.start_line AS sstart, s.end_line AS send
-                FROM edges e JOIN nodes s ON s.id = e.source
+                       s.name AS sname, s.file_path AS spath, s.start_line AS sstart, s.end_line AS send,
+                       t.file_path AS tpath
+                FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
                 WHERE e.target IN (${placeholders(n)}) AND e.kind NOT IN (${placeholders(NOT_A_USE.length)})`,
         NOT_A_USE,
       );
       return rows.map((r) => ({
         source: r.source,
         target: r.target,
+        targetPath: r.tpath,
         kind: r.kind,
         line: r.line === null ? Number(r.sstart) : Number(r.line),
         metadata: parseMetadata(r.metadata),

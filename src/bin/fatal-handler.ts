@@ -16,7 +16,7 @@
  *     forced V8 to lazily format the Error's `.stack`, which entered a
  *     non-terminating source-position walk and pinned a core. Because the
  *     handler kept the process alive, the detached daemon was left wedged: its
- *     PPID watchdog and idle-timer (both `setInterval`s) could no longer fire,
+ *     timers (both `setInterval`s) could no longer fire,
  *     and nothing respawned it — unrecoverable without a manual `kill`.
  *
  * The fix restores the safe default: log a BOUNDED, hang-proof line, then exit

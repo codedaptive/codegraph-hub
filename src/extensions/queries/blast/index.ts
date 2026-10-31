@@ -1,14 +1,23 @@
 /**
  * Entry points for `codegraph blast`: `runBlast` (the command), `blastToolHandler`
- * (the MCP-shaped handler) and `parseBlastArgv` (the CLI flag parser).
+ * (the MCP-shaped handler) and `parseBlastArgv` (an argv parser for the same
+ * flags; the real CLI parses with commander, in `./extension.ts`).
  *
  * A port of graft 0.16 `dist/blast/blast-cli.js`: the same depth and format
  * grammar (`resolveDepth`, `resolveFormat`) and graft's order of checks after
  * a flag parse error, which fails first, with graft's `process.exit(1)` turned
  * into a returned exit code so the chain stays testable without a subprocess.
- * The error wording is graft's except three: a flag parse error's ("needs a
- * value") is this port's own, the no-index message points at `codegraph init`,
- * and the format list has no `mermaid`.
+ * The error wording is graft's except four: a flag parse error's ("needs a
+ * value") and a value given to `--strict` ("takes no value") are this port's
+ * own, the no-index message points at `codegraph init`, and the format list
+ * has no `mermaid`. `--strict` is this port's own (graft has no edge
+ * certainty): it leaves out dependents reached only through questionable call
+ * edges.
+ *
+ * Under an MCP session started with `--focus`, `blastToolHandler` gives `runBlast`
+ * the focus (`BlastArgs.focus`), and the report lists the dependents outside it
+ * apart (`splitReportByFocus`, `./focus.ts`); the CLI has no session, never sets
+ * it, and prints the unsplit report.
  *
  * Deliberately left out: `--format mermaid`, `--name`, owners and
  * `--pr-author`, `--export-viz`/`--title`, and graft's `--global-dir`.
@@ -18,6 +27,8 @@ import * as path from 'path';
 import { getDatabasePath } from '../../../db';
 import { blastRadius } from './blast';
 import { changedFiles, refExists } from './diff';
+import { focusDirsText, focusPrefixesOfTool } from '../shared/focus';
+import { splitReportByFocus } from './focus';
 import { jsonReport, markdownReport, textReport } from './render';
 import { openBlastStore } from './store';
 
@@ -25,9 +36,21 @@ export interface BlastArgs {
   base?: string;
   depth?: string | number;
   format?: string;
+  /** Leave out dependents reached only through questionable (name-matched) call edges. */
+  strict?: boolean;
   /**
-   * Set by `parseBlastArgv` when a flag has no value. `runBlast` fails with it
-   * before any other check, so a dropped value never runs the default comparison.
+   * The session's active focus, as `blastToolHandler` resolves it for this index
+   * (`focusPrefixesOfTool`, `focusDirsText`). Set only for an MCP call from a session
+   * that has a focus; the CLI and an unfocused session leave it absent, and their
+   * report carries no `outsideFocus`. `prefixes` is the membership rule: `null` when
+   * the focus holds the whole index (nothing is outside it, the report still carries an
+   * empty `outsideFocus`), otherwise the dependents outside the prefixes are listed apart.
+   */
+  focus?: { prefixes: readonly string[] | null; dirs: string };
+  /**
+   * Set by `parseBlastArgv` when a flag has no value or the `--strict` switch is
+   * given one. `runBlast` fails with it before any other check, so a malformed
+   * flag never runs the default comparison.
    */
   error?: string;
 }
@@ -91,7 +114,8 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
 
   const store = openBlastStore(absRoot);
   try {
-    const report = blastRadius(store, diff.files, diff.basis, depth);
+    const whole = blastRadius(store, diff.files, diff.basis, depth, { strict: args.strict === true });
+    const report = args.focus ? splitReportByFocus(whole, args.focus.prefixes, args.focus.dirs) : whole;
     // graft prints JSON with console.log, hence the trailing newline; text and
     // markdown already end in one.
     const output = format === 'json' ? `${jsonReport(report)}\n`
@@ -107,15 +131,29 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
  * MCP-shaped handler. Expected failures (no index, unknown ref, bad flag, not a
  * git repo) come back as ordinary text guidance and never set `isError`: an
  * agent that sees an error early stops calling the tool (AGENTS.md, "Errors
- * teach abandonment").
+ * teach abandonment"). `sessionFocus` is the calling session's focus directories
+ * (`ExtensionToolContext.focus`); absent or empty, the answer is the CLI's.
+ * Blast covers the whole repository whatever the focus: a focus only moves the
+ * dependents outside it under "Outside focus".
  */
 export function blastToolHandler(params: {
   projectPath: string;
   base?: string;
   depth?: string | number;
   format?: string;
+  strict?: boolean;
+  sessionFocus?: readonly string[];
 }): { content: [{ type: 'text'; text: string }] } {
-  const r = runBlast(params.projectPath, { base: params.base, depth: params.depth, format: params.format });
+  const absRoot = path.resolve(params.projectPath);
+  const prefixes = focusPrefixesOfTool(absRoot, params.sessionFocus);
+  // A session with a focus keeps it active even when the focus holds the whole index
+  // (prefixes null): json then carries an empty `outsideFocus`. No session focus, no key.
+  const focus = (params.sessionFocus ?? []).length === 0
+    ? undefined
+    : { prefixes, dirs: focusDirsText(absRoot, params.sessionFocus, prefixes ?? []) };
+  const r = runBlast(params.projectPath, {
+    base: params.base, depth: params.depth, format: params.format, strict: params.strict, focus,
+  });
   const text = r.exitCode === 0 ? r.output : (r.stderr ?? r.output);
   return { content: [{ type: 'text', text }] };
 }
@@ -130,6 +168,15 @@ const FLAGS = new Map<string, 'base' | 'depth' | 'format'>([
   ['--format', 'format'], ['-f', 'format'],
 ]);
 
+/** The value-less flags `parseBlastArgv` reads, and the field each sets to true. */
+const SWITCHES = new Map<string, 'strict'>([['--strict', 'strict']]);
+
+/** True when `token` is a flag or switch `parseBlastArgv` reads, so it cannot be another flag's value. */
+function isKnownFlag(token: string): boolean {
+  const flag = flagPart(token);
+  return FLAGS.has(flag) || SWITCHES.has(flag);
+}
+
 /** `token` up to its first `=`, or all of it when it has none. */
 function flagPart(token: string): string {
   const eq = token.indexOf('=');
@@ -138,11 +185,13 @@ function flagPart(token: string): string {
 
 /**
  * Parse `--base X`/`-b X`, `--depth N|all`/`-d N`, `--format F`/`-f F`, each
- * also as `flag=value` (`--base=origin/main`). Only flags present are set; a
+ * also as `flag=value` (`--base=origin/main`), and the switch `--strict`, which
+ * sets `strict: true` (absent, the key is absent). Only flags present are set; a
  * repeated flag keeps its last value; unknown tokens are ignored; validation
  * of the values is `runBlast`'s. A flag with no value — the last token, an
- * empty `flag=`, or followed by another known flag (`--base --depth 3`) — sets
- * `error` and stops parsing, and `runBlast` exits 1 with it. Any other next
+ * empty `flag=`, or followed by another known flag or switch (`--base --depth 3`,
+ * `--base --strict`) — sets `error` and stops parsing, and `runBlast` exits 1
+ * with it; so does a value given to the switch (`--strict=yes`). Any other next
  * token is taken as the value, so `--depth -1` reaches `runBlast` and is
  * rejected there.
  */
@@ -152,6 +201,15 @@ export function parseBlastArgv(argv: string[]): BlastArgs {
     // `?? ''` only satisfies noUncheckedIndexedAccess; `i` is always in range.
     const token = argv[i] ?? '';
     const flag = flagPart(token);
+    const toggle = SWITCHES.get(flag);
+    if (toggle !== undefined) {
+      if (flag !== token) {
+        out.error = `✗ ${flag} takes no value`;
+        return out;
+      }
+      out[toggle] = true;
+      continue;
+    }
     const field = FLAGS.get(flag);
     if (field === undefined) continue;
     let value: string | undefined;
@@ -159,7 +217,7 @@ export function parseBlastArgv(argv: string[]): BlastArgs {
       value = token.slice(flag.length + 1);
     } else {
       value = argv[i + 1];
-      if (value !== undefined && !FLAGS.has(flagPart(value))) i++;
+      if (value !== undefined && !isKnownFlag(value)) i++;
       else value = undefined;
     }
     if (value === undefined || value === '') {

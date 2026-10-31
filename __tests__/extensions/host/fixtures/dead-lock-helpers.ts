@@ -131,7 +131,7 @@ export function killStarted(): void {
 /**
  * Model OS pid reuse on a leftover lock record: replace the pid `from` with
  * `to` and keep every other byte's meaning. JSON records (writer.pid,
- * rebuild.pid, daemon.pid) have their `pid` key replaced; codegraph.lock has
+ * rebuild.pid, the state dir's server.pid) have their `pid` key replaced; codegraph.lock has
  * its first line (the bare pid) replaced, and its second-line record's `pid`
  * key too if the code records one there. Nothing else changes: the recorded
  * start time stays the dead holder's.

@@ -14,15 +14,14 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { once } from 'events';
-import { pathToFileURL } from 'url';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { FileLock, validateProjectPath, validatePathWithinRoot, lexicalPathWithinRoot } from '../src/utils';
 import CodeGraph from '../src/index';
-import { resolveServerRoot } from '../src/directory';
 import { ToolHandler, tools, __setLoadCodeGraphForTests } from '../src/mcp/tools';
 import { scanDirectory, isSourceFile } from '../src/extraction';
 import { DatabaseConnection, getDatabasePath } from '../src/db';
 import { QueryBuilder } from '../src/db/queries';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 function createTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-security-test-'));
@@ -633,26 +632,36 @@ describe('MCP projectPath into a sensitive folder (#1930)', () => {
   });
 });
 
-// The MCP server's default project comes from the client (initialize's rootUri
-// or workspaceFolders, or roots/list), the launch cwd, or --path. It gets the
-// refusal an agent's projectPath gets: a sensitive folder is not opened,
-// watched or synced, and the session runs with no default project.
-describe('MCP default project in a sensitive folder', () => {
+// The MCP server has no default project: a project is opened only by a call's
+// projectPath, and that path gets the same refusal whoever sent it. A sensitive
+// folder is not opened, watched or synced, however the call reaches it (the
+// folder, one inside it, a missing path under it, a link to it), and a server
+// launched from a sensitive directory writes nothing there.
+describe('MCP projectPath in a sensitive folder', () => {
   const { state, link } = sensitiveFixture();
-  // The built engine and session. Under vitest the src engine can't load the
-  // CodeGraph chain it opens a default project with, so it would open none at
-  // all and pass these tests with the guard missing.
+  // The built engine: under vitest the src engine can't load the CodeGraph
+  // chain it opens a project with, so it would open none at all and pass these
+  // tests with the guard missing.
   const DIST = path.resolve(__dirname, '../dist');
   const { MCPEngine } = require(path.join(DIST, 'mcp', 'engine.js')) as typeof import('../src/mcp/engine');
-  const { MCPSession } = require(path.join(DIST, 'mcp', 'session.js')) as typeof import('../src/mcp/session');
   const TOKEN = 'FAKE-TOKEN-DEFAULT-ROOT';
-  const NO_DEFAULT_INSTRUCTIONS = 'per-project; pass projectPath';
+  const { BuilderClient } = require(path.join(DIST, 'extensions', 'host', 'builder', 'client.js')) as typeof import('../src/extensions/host/builder/client');
   type Engine = InstanceType<typeof MCPEngine>;
   type Reply = { isError?: boolean; content: Array<{ text: string }>; instructions?: string };
   const engines: Engine[] = [];
+  const builders: Array<InstanceType<typeof BuilderClient>> = [];
+  /** An engine with a real index builder behind it, the way the machine server runs one. */
+  const engineWithBuilder = (): { engine: Engine; builder: InstanceType<typeof BuilderClient> } => {
+    const builder = BuilderClient.start();
+    builders.push(builder);
+    const engine = new MCPEngine({ builder });
+    engines.push(engine);
+    return { engine, builder };
+  };
   const children: ChildProcessWithoutNullStreams[] = [];
   let config: string;
   let project: string;
+  let stateDir: string;
   let stderr: string;
 
   const text = (reply: Reply): string => reply.content.map((c) => c.text).join('\n');
@@ -668,6 +677,9 @@ describe('MCP default project in a sensitive folder', () => {
     project = path.join(state.tmp, 'project');
     fs.writeFileSync(path.join(project, 'app.ts'), 'export function serveApp(): number { return 1; }\n');
     (await CodeGraph.init(project, { index: true })).close();
+    // A launched server keeps its lock, socket and log here, never in ~/.codegraph.
+    stateDir = path.join(state.tmp, 'state');
+    fs.mkdirSync(stateDir);
     stderr = '';
     vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
       stderr += String(chunk);
@@ -678,6 +690,7 @@ describe('MCP default project in a sensitive folder', () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await Promise.all(engines.splice(0).map((engine) => engine.stop()));
+    await Promise.all(builders.splice(0).map((builder) => builder.stop()));
     for (const child of children.splice(0)) {
       if (child.exitCode === null && child.signalCode === null) {
         const closed = once(child, 'close');
@@ -685,190 +698,72 @@ describe('MCP default project in a sensitive folder', () => {
         await closed;
       }
     }
-    // A daemon a launcher started for the folder holds it open (only ever
-    // without the guard): stop it before the folder is removed.
-    let daemonPid = 0;
+    // The machine server a launcher started outlives its client: stop it
+    // before the folders around it are removed.
+    let serverPid = 0;
     try {
-      daemonPid = JSON.parse(fs.readFileSync(path.join(config, '.codegraph', 'daemon.pid'), 'utf8')).pid;
-    } catch { /* no daemon */ }
-    if (daemonPid > 0) {
-      try { process.kill(daemonPid, 'SIGKILL'); } catch { /* already gone */ }
+      serverPid = JSON.parse(fs.readFileSync(path.join(stateDir, 'server.pid'), 'utf8')).pid;
+    } catch { /* no server started */ }
+    if (serverPid > 0) {
+      try { process.kill(serverPid, 'SIGKILL'); } catch { /* already gone */ }
       for (let i = 0; i < 200; i++) {
-        try { process.kill(daemonPid, 0); } catch { break; }
+        try { process.kill(serverPid, 0); } catch { break; }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
   }, 60_000);
 
-  /** An MCP client in this process, on a new session of `engine`; roots/list answers `roots`. */
-  function connect(engine: Engine, roots: string[] = []) {
-    let deliver: ((message: object) => Promise<void>) | null = null;
-    const replies = new Map<number, Reply>();
-    const asked: string[] = [];
-    const transport = {
-      start: (handler: (message: object) => Promise<void>) => { deliver = handler; },
-      stop: () => {},
-      send: () => {},
-      notify: () => {},
-      request: async (method: string) => {
-        asked.push(method);
-        return method === 'roots/list'
-          ? { roots: roots.map((root) => ({ uri: pathToFileURL(root).href, name: path.basename(root) })) }
-          : {};
-      },
-      sendResult: (id: number, result: Reply) => { replies.set(id, result); },
-      sendError: (id: number, _code: number, message: string) => {
-        replies.set(id, { isError: true, content: [{ text: message }] });
-      },
-    };
-    new MCPSession(transport as never, engine).start();
-    let nextId = 0;
-    const call = async (method: string, params: object): Promise<Reply> => {
-      const id = nextId++;
-      await deliver!({ jsonrpc: '2.0', id, method, params });
-      return replies.get(id)!;
-    };
-    const initialize = (params: object = {}) =>
-      call('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '0' }, ...params });
-    const node = (symbol: string) =>
-      call('tools/call', { name: 'codegraph_node', arguments: { symbol, includeCode: true } });
-    return { call, initialize, node, asked };
-  }
-
-  it('does not open, watch or sync a sensitive folder as the default project', async () => {
+  it('does not open, watch or sync a sensitive folder, however the projectPath reaches it', async () => {
     const viaLink = link(config, path.join(state.tmp, 'elsewhere', 'config'));
     // The folder, one inside it, a missing one under it (the up-walk lands on
     // the folder's index), and a link to it.
     for (const searchFrom of [config, path.join(config, 'tool'), path.join(config, 'no-such-dir'), viaLink]) {
-      const engine = new MCPEngine({ watch: true });
-      engines.push(engine);
-      await engine.ensureInitialized(searchFrom);
-      engine.retryInitializeSync(searchFrom); // what each tool call retries
-      expect(engine.hasDefaultCodeGraph(), searchFrom).toBe(false);
+      // A real builder behind the engine: the refusal must come before the builder is asked to hold the folder.
+      const { engine } = engineWithBuilder();
 
-      // The no-default-project guidance: success-shaped, never isError.
-      const bare = await engine.getToolHandler().execute('codegraph_node', { symbol: 'readToken', includeCode: true });
+      // No projectPath: the engine has no default project to fall back to, so
+      // the call is answered with the missing-argument text, never from the folder.
+      const bare = await engine.getToolHandler().execute('codegraph_node', { symbol: 'readToken', includeCode: true }, undefined, ADMIT_ALL);
       expect(bare.isError, searchFrom).toBeFalsy();
-      expect(text(bare), searchFrom).toContain('No CodeGraph project is loaded');
-      expect(text(bare), searchFrom).toMatch(/sensitive directory/i);
-      expect(text(bare), searchFrom).toContain('projectPath');
+      expect(text(bare), searchFrom).toBe('missing argument: root path to the code you wish to query');
       expect(text(bare), searchFrom).not.toContain(TOKEN);
 
-      // Naming the folder is refused as before.
+      // Naming the folder is refused: a hard error, no retry encouragement.
       const named = await engine.getToolHandler().execute('codegraph_node', {
         symbol: 'readToken',
         includeCode: true,
-        projectPath: config,
-      });
+        projectPath: searchFrom,
+      }, undefined, ADMIT_ALL);
       expect(named.isError, searchFrom).toBe(true);
       expect(text(named), searchFrom).toMatch(/sensitive directory/i);
       expect(text(named), searchFrom).not.toContain(TOKEN);
     }
-    // Nothing took the folder's writer slot or watched it, and the log says why.
+    // Nothing took the folder's writer slot or watched it: neither the engine nor its builder.
     expect(fs.existsSync(path.join(config, '.codegraph', 'writer.pid'))).toBe(false);
     expect(stderr).not.toContain('File watcher active');
-    expect(stderr).toMatch(/sensitive directory.*no default project/i);
   }, 60_000);
 
-  it('still opens, watches and syncs an ordinary project as the default project', async () => {
-    const engine = new MCPEngine({ watch: true });
-    engines.push(engine);
-    await engine.ensureInitialized(project);
-    expect(engine.hasDefaultCodeGraph()).toBe(true);
-    const result = await engine.getToolHandler().execute('codegraph_node', { symbol: 'serveApp', includeCode: true });
+  it('still opens an ordinary project named by projectPath, and has the builder hold it', async () => {
+    const { engine, builder } = engineWithBuilder();
+    const result = await engine.getToolHandler().execute('codegraph_node', {
+      symbol: 'serveApp',
+      includeCode: true,
+      projectPath: project,
+    }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(text(result)).toContain('serveApp');
-    // The lifecycle the refused folder skips: this engine took the writer slot.
-    expect(fs.existsSync(path.join(project, '.codegraph', 'writer.pid'))).toBe(true);
+    // The hold the refused folder skips: the builder took the writer slot, not this process.
+    const writer = JSON.parse(fs.readFileSync(path.join(project, '.codegraph', 'writer.pid'), 'utf8')) as { pid: number };
+    expect(writer.pid).toBe(builder.pid());
+    expect(writer.pid).not.toBe(process.pid);
   }, 60_000);
 
-  it('sends the no-default-project instructions for a sensitive rootUri, workspaceFolders or cwd', async () => {
-    const uri = pathToFileURL(config).href;
-    const cases: Array<[string, object, string]> = [
-      ['rootUri', { rootUri: uri }, path.join(state.tmp, 'elsewhere')],
-      ['workspaceFolders', { workspaceFolders: [{ uri, name: 'config' }] }, path.join(state.tmp, 'elsewhere')],
-      ['cwd', {}, config],
-    ];
-    for (const [source, params, cwd] of cases) {
-      const restoreCwd = vi.spyOn(process, 'cwd').mockReturnValue(cwd);
-      try {
-        const engine = new MCPEngine({ watch: true });
-        engines.push(engine);
-        const client = connect(engine);
-        const init = await client.initialize(params);
-        expect(init.instructions, source).toContain(NO_DEFAULT_INSTRUCTIONS);
-        const result = await client.node('readToken');
-        expect(result.isError, source).toBeFalsy();
-        expect(text(result), source).toContain('No CodeGraph project is loaded');
-        expect(text(result), source).not.toContain(TOKEN);
-        expect(engine.hasDefaultCodeGraph(), source).toBe(false);
-      } finally {
-        restoreCwd.mockRestore();
-      }
-    }
-    // A client naming an ordinary project still gets it as the default.
-    const engine = new MCPEngine({ watch: true });
-    engines.push(engine);
-    const client = connect(engine);
-    const init = await client.initialize({ rootUri: pathToFileURL(project).href });
-    expect(init.instructions).not.toContain(NO_DEFAULT_INSTRUCTIONS);
-    expect(text(await client.node('serveApp'))).toContain('serveApp');
-  }, 60_000);
-
-  it('does not adopt a sensitive folder that roots/list names', async () => {
-    // The fallback after roots/list is the cwd: keep it off any real index.
-    const restoreCwd = vi.spyOn(process, 'cwd').mockReturnValue(path.join(state.tmp, 'elsewhere'));
-    try {
-      const engine = new MCPEngine({ watch: true });
-      engines.push(engine);
-      const client = connect(engine, [config]);
-      await client.initialize({ capabilities: { roots: {} } });
-      const result = await client.node('readToken');
-      expect(client.asked).toContain('roots/list');
-      expect(result.isError).toBeFalsy();
-      expect(text(result)).toContain('No CodeGraph project is loaded');
-      expect(text(result)).not.toContain(TOKEN);
-      expect(engine.hasDefaultCodeGraph()).toBe(false);
-
-      // roots/list naming an ordinary project still makes it the default.
-      const ordinary = new MCPEngine({ watch: true });
-      engines.push(ordinary);
-      const other = connect(ordinary, [project]);
-      await other.initialize({ capabilities: { roots: {} } });
-      expect(text(await other.node('serveApp'))).toContain('serveApp');
-      expect(ordinary.hasDefaultCodeGraph()).toBe(true);
-    } finally {
-      restoreCwd.mockRestore();
-    }
-  }, 60_000);
-
-  it('neither adopts nor lists the indexed sub-projects of a sensitive folder', async () => {
-    /** A workspace (it has a .git) whose indexes live in its sub-folders. */
-    const workspace = async (base: string, children: string[]): Promise<string> => {
-      fs.mkdirSync(path.join(base, '.git'), { recursive: true });
-      for (const child of children) {
-        fs.mkdirSync(path.join(base, child));
-        fs.writeFileSync(path.join(base, child, 'a.ts'), 'export const a = 1;\n');
-        (await CodeGraph.init(path.join(base, child))).close();
-      }
-      return base;
-    };
-    // Nothing indexed at or above these, so the down-scan below them decides.
-    const one = await workspace(path.join(state.home, '.aws', 'one'), ['only']);
-    const two = await workspace(path.join(state.home, '.aws', 'two'), ['a', 'b']);
-    expect(resolveServerRoot(one)).toMatchObject({ root: null, candidates: [], refusal: expect.stringMatching(/sensitive directory/i) });
-    expect(resolveServerRoot(two)).toMatchObject({ root: null, candidates: [] });
-
-    // The same workspaces elsewhere: the single sub-project is adopted, two are listed.
-    const okOne = await workspace(path.join(state.tmp, 'elsewhere', 'one'), ['only']);
-    const okTwo = await workspace(path.join(state.tmp, 'elsewhere', 'two'), ['a', 'b']);
-    expect(resolveServerRoot(okOne)).toMatchObject({ root: path.join(okOne, 'only'), viaSubScan: true, refusal: null });
-    expect(resolveServerRoot(okTwo).candidates).toHaveLength(2);
-  }, 60_000);
-
-  // The launcher keys its shared daemon on the root it resolves from the cwd or
-  // --path, so this runs the real `serve --mcp` with daemon sharing on.
-  it('starts no daemon for a launch from a sensitive cwd or --path, and serves no default project', async () => {
+  // The real `serve --mcp` with machine-server sharing on: a launch from a
+  // sensitive cwd or --path is served by the machine server like any other, and
+  // writes nothing in the sensitive folder. A call into the folder gets the
+  // path refusal (the folder is its own anchor, so the guard lets it through to
+  // the refusal), not an answer from its index.
+  it('serves a launch from a sensitive cwd or --path through the machine server and writes nothing there', async () => {
     const elsewhere = path.join(state.tmp, 'elsewhere');
     const launches: Array<[string, string, string[]]> = [
       ['cwd', config, []],
@@ -879,8 +774,7 @@ describe('MCP default project in a sensitive folder', () => {
         ...process.env,
         CODEGRAPH_WASM_RELAUNCHED: '1',
         CODEGRAPH_NO_UPDATE_CHECK: '1',
-        // Should a daemon start anyway, it leaves soon after its client does.
-        CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS: '1000',
+        CODEGRAPH_STATE_DIR: stateDir,
       };
       delete env.CODEGRAPH_NO_DAEMON;
       delete env.CODEGRAPH_DAEMON_INTERNAL;
@@ -921,19 +815,29 @@ describe('MCP default project in a sensitive folder', () => {
       send({ jsonrpc: '2.0', method: 'notifications/initialized' });
       send({
         jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name: 'codegraph_node', arguments: { symbol: 'readToken', includeCode: true, projectPath: config } },
+      });
+      send({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
         params: { name: 'codegraph_node', arguments: { symbol: 'readToken', includeCode: true } },
       });
       const init = await reply(0);
-      const result = await reply(1);
+      const refused = await reply(1);
+      const bare = await reply(2);
 
-      expect(init.instructions, source).toContain(NO_DEFAULT_INSTRUCTIONS);
-      expect(result.isError, source).toBeFalsy();
-      expect(text(result), source).toContain('No CodeGraph project is loaded');
-      expect(text(result), source).not.toContain(TOKEN);
-      // No daemon lock, no writer slot: nothing was set up in the folder.
-      expect(fs.existsSync(path.join(config, '.codegraph', 'daemon.pid')), source).toBe(false);
+      expect(init.instructions, source).toContain('projectPath');
+      // The path refusal, as an agent's projectPath always got it.
+      expect(refused.isError, source).toBe(true);
+      expect(text(refused), source).toMatch(/sensitive directory/i);
+      expect(text(refused), source).not.toContain(TOKEN);
+      // No projectPath: the missing-argument answer, not the folder's index.
+      expect(bare.isError, source).toBeFalsy();
+      expect(text(bare), source).toBe('missing argument: root path to the code you wish to query');
+      // The machine server answered: its lock is in the state dir. Nothing was
+      // set up in the sensitive folder: no writer slot, no lock or socket.
+      expect(fs.existsSync(path.join(stateDir, 'server.pid')), source).toBe(true);
+      expect(fs.existsSync(path.join(config, '.codegraph', 'server.pid')), source).toBe(false);
       expect(fs.existsSync(path.join(config, '.codegraph', 'writer.pid')), source).toBe(false);
-      expect(err, source).toMatch(/sensitive directory/i);
 
       const closed = once(child, 'close');
       child.kill('SIGKILL');

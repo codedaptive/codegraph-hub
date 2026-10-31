@@ -21,6 +21,7 @@ import * as os from 'os';
 import CodeGraph from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 import { MCPSession } from '../src/mcp/session';
+import { resolveRepoAnchor } from '../src/extensions/host/server/repo-anchor';
 import type { MCPEngine } from '../src/mcp/engine';
 import type { JsonRpcTransport, JsonRpcRequest, JsonRpcNotification } from '../src/mcp/transport';
 import {
@@ -406,7 +407,7 @@ describe('explore records what it actually served', () => {
   }, 90_000);
 });
 
-describe('sessions sharing a daemon', () => {
+describe('sessions sharing the machine server', () => {
   /** Minimal transport: captures the message handler so a test can drive it. */
   function fakeTransport(): JsonRpcTransport & { deliver: (m: JsonRpcRequest) => Promise<void>; results: unknown[] } {
     let handle: ((m: JsonRpcRequest | JsonRpcNotification) => Promise<void>) | null = null;
@@ -437,17 +438,15 @@ describe('sessions sharing a daemon', () => {
       },
     };
     const engine = {
-      ensureInitialized: async () => { /* already open */ },
-      hasDefaultCodeGraph: () => true,
-      getProjectPath: () => '/repo/shared',
-      retryInitializeSync: () => { /* nothing to retry */ },
       getToolHandler: () => handler,
     } as unknown as MCPEngine;
 
+    // Sessions in the repository the calls name: the guard lets the path through.
+    const anchor = await resolveRepoAnchor(process.cwd());
     const transportA = fakeTransport();
     const transportB = fakeTransport();
-    const sessionA = new MCPSession(transportA, engine);
-    const sessionB = new MCPSession(transportB, engine);
+    const sessionA = new MCPSession(transportA, engine, { anchor });
+    const sessionB = new MCPSession(transportB, engine, { anchor });
     sessionA.start();
     sessionB.start();
 
@@ -455,7 +454,7 @@ describe('sessions sharing a daemon', () => {
 
     const call = (id: number): JsonRpcRequest => ({
       jsonrpc: '2.0', id, method: 'tools/call',
-      params: { name: 'codegraph_explore', arguments: { query: 'q' } },
+      params: { name: 'codegraph_explore', arguments: { query: 'q', projectPath: anchor.root } },
     });
     await transportA.deliver(call(1));
     await transportA.deliver(call(2));

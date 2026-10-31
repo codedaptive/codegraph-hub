@@ -113,6 +113,22 @@ describe('queries extension, in process', () => {
     expect(res.content).toEqual([{ type: 'text', text: formatGrepResult(await grepIndex(root, 'TOKEN')) }]);
   });
 
+  it('handle passes ctx.focus to the search: a focus dir narrows it, scope "repo" widens it, a context with no focus searches everything', async () => {
+    const focusCtx = { getCodeGraph: () => cg, focus: [path.join(root, 'lib')] };
+    const narrow = await findExtensionTool('codegraph_grep')!.handle({ pattern: 'TOKEN' }, focusCtx);
+    expect(narrow.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN', { focus: ['lib'] })));
+    expect(narrow.content[0]!.text).not.toContain('src/app.ts');
+    const wide = await findExtensionTool('codegraph_grep')!.handle({ pattern: 'TOKEN', scope: 'repo' }, focusCtx);
+    expect(wide.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN')));
+    const none = await findExtensionTool('codegraph_grep')!.handle({ pattern: 'TOKEN' }, { getCodeGraph: () => cg });
+    expect(none.content[0]!.text).toBe(wide.content[0]!.text);
+  });
+
+  it("GREP_TOOL's scope property takes focus or repo", () => {
+    const schema = GREP_TOOL.inputSchema as { properties: Record<string, { type?: string; enum?: string[] }> };
+    expect(schema.properties.scope).toMatchObject({ type: 'string', enum: ['focus', 'repo'] });
+  });
+
   it('handle with no projectPath uses the session default from ctx.getCodeGraph()', async () => {
     const asked: Array<string | undefined> = [];
     const ctx = { getCodeGraph: (p?: string) => { asked.push(p); return cg; } };
@@ -293,7 +309,23 @@ describe('queries extension, built binary (dist discovery)', () => {
   });
 });
 
-/** Send a JSON-RPC request and resolve with the response matching its id. */
+/** The child's stderr, collected so a failed request can say which stage the child stopped at. */
+const childStderr = new WeakMap<ChildProcessWithoutNullStreams, { text: string }>();
+
+/** Start collecting `child`'s stderr; `request` quotes its tail on a timeout or an early exit. */
+function captureStderr(child: ChildProcessWithoutNullStreams): void {
+  const box = { text: '' };
+  childStderr.set(child, box);
+  child.stderr.on('data', (chunk: Buffer) => { box.text += chunk.toString(); });
+}
+
+const stderrTail = (child: ChildProcessWithoutNullStreams) => (childStderr.get(child)?.text ?? '').slice(-2000);
+
+/**
+ * Send a JSON-RPC request and resolve with the response matching its id.
+ * Rejects on timeout, or as soon as the child exits without answering, with
+ * the exit code/signal and the tail of its stderr.
+ */
 function request(
   child: ChildProcessWithoutNullStreams,
   msg: { id: number; method: string; params?: unknown },
@@ -301,10 +333,19 @@ function request(
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let buf = '';
-    const timer = setTimeout(() => {
+    const cleanup = () => {
+      clearTimeout(timer);
       child.stdout.off('data', onData);
-      reject(new Error(`timeout waiting for response id=${msg.id}`));
+      child.off('exit', onExit);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`timeout waiting for response id=${msg.id} (${msg.method}); stderr tail:\n${stderrTail(child)}`));
     }, timeoutMs);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(new Error(`child exited (code ${code}, signal ${signal}) before answering id=${msg.id} (${msg.method}); stderr tail:\n${stderrTail(child)}`));
+    };
     const onData = (chunk: Buffer) => {
       buf += chunk.toString();
       let idx: number;
@@ -315,8 +356,7 @@ function request(
         try {
           const parsed = JSON.parse(line) as Record<string, unknown>;
           if (parsed.id === msg.id) {
-            clearTimeout(timer);
-            child.stdout.off('data', onData);
+            cleanup();
             resolve(parsed);
             return;
           }
@@ -325,10 +365,37 @@ function request(
         }
       }
     };
+    // Every listener and the timer are declared above, so cleanup() is safe to call from here on.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      onExit(child.exitCode, child.signalCode);
+      return;
+    }
+    child.once('exit', onExit);
     child.stdout.on('data', onData);
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
   });
 }
+
+describe('request() against a child that has already exited', () => {
+  it('rejects with the exit code, the method and the stderr tail', async () => {
+    const child = spawn(process.execPath, ['-e', "process.stderr.write('boom'); process.exit(3)"], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    }) as ChildProcessWithoutNullStreams;
+    captureStderr(child);
+    // 'close' rather than 'exit': it fires once stderr has drained, so 'boom' is in the buffer.
+    await new Promise<void>((resolve) => child.once('close', () => resolve()));
+    expect(child.exitCode).toBe(3);
+    const err = await request(child, { id: 9, method: 'initialize' }).then(
+      () => { throw new Error('request() resolved against an exited child'); },
+      (e: unknown) => e as Error,
+    );
+    expect(err).not.toBeInstanceOf(ReferenceError);
+    expect(err.message).toContain('code 3');
+    expect(err.message).toContain('initialize');
+    expect(err.message).toContain('boom');
+  });
+});
 
 describe('queries extension, built binary MCP session', () => {
   let child: ChildProcessWithoutNullStreams | null = null;
@@ -346,12 +413,16 @@ describe('queries extension, built binary MCP session', () => {
     }
   });
 
+  // Over 5 s by design: this spawns the built binary, whose cold start alone
+  // measured 7.78 s wall (0.45 s CPU) at load 60-100. Three requests at
+  // request()'s 15 s each, plus slack, is 60 s.
   it('allowlisted as grep, codegraph_grep is listed and a tools/call answers', async () => {
     child = spawn(process.execPath, [BIN, 'serve', '--mcp'], {
       cwd: root,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: childEnv({ CODEGRAPH_MCP_TOOLS: 'explore,grep' }),
     }) as ChildProcessWithoutNullStreams;
+    captureStderr(child);
 
     await request(child, {
       id: 0,
@@ -377,5 +448,5 @@ describe('queries extension, built binary MCP session', () => {
     const result = res.result as { content: Array<{ text: string }>; isError?: boolean };
     expect(result.isError).toBeFalsy();
     expect(result.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN')));
-  });
+  }, 60_000);
 });
