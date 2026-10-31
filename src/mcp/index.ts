@@ -63,6 +63,7 @@ import {
 import { ensureStateDir } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { BuilderClient } from '../extensions/host/builder/client';
+import { parseToolAllowlist, resolveSessionFocus } from '../extensions/host/server/session-scope';
 import { getTelemetry } from '../telemetry';
 import { checkForUpdateInBackground } from '../upgrade/update-check';
 import { EARLY_PPID } from './early-ppid';
@@ -360,8 +361,10 @@ async function replaceOlderServer(answered: boolean): Promise<'stopped' | 'none'
  *
  * Backwards-compatible constructor and `start()` signature: callers continue to do
  * `new MCPServer(path).start()`, where `path` is the launch directory (the
- * session's repo anchor is taken from it; the cwd when absent). Internally we
- * pick from direct / proxy / server at start time.
+ * session's repo anchor is taken from it; the cwd when absent). `focus` is the
+ * session's `--focus` directories, already validated and normalised by
+ * `normaliseFocusArgs` (relative to the repository root; none when omitted).
+ * Internally we pick from direct / proxy / server at start time.
  */
 export class MCPServer {
   private projectPath: string | null;
@@ -385,8 +388,11 @@ export class MCPServer {
   private stopped = false;
   private mode: 'unstarted' | 'direct' | 'proxy' | 'daemon' = 'unstarted';
 
-  constructor(projectPath?: string) {
+  private focus: readonly string[];
+
+  constructor(projectPath?: string, focus: readonly string[] = []) {
     this.projectPath = projectPath || null;
+    this.focus = focus;
   }
 
   /**
@@ -523,7 +529,13 @@ export class MCPServer {
       this.engine = makeFallbackEngine();
     }
     const transport = new StdioTransport({ exitOnClose: false, onClose: () => { void this.stop(); } });
-    this.session = new MCPSession(transport, this.engine, { anchor });
+    // This process IS the one client, so its own focus and CODEGRAPH_MCP_TOOLS are
+    // the session's, exactly as the machine server takes them from a client hello.
+    this.session = new MCPSession(transport, this.engine, {
+      anchor,
+      focus: resolveSessionFocus(anchor, this.focus),
+      toolAllowlist: parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? ''),
+    });
 
     this.session.start();
 
@@ -630,7 +642,8 @@ export class MCPServer {
    * ~600ms on it. Runs until the host disconnects; the proxy falls back to a
    * read-only in-process engine if the server never binds, so this never wedges
    * a session. `launchDir` travels in the client hello and fixes the session's
-   * repo anchor.
+   * repo anchor; the session's focus travels in the same hello, with this
+   * process's CODEGRAPH_MCP_TOOLS.
    */
   private async runProxyWithLocalHandshake(launchDir: string): Promise<void> {
     // The server may relocate its socket past a state dir on a filesystem that
@@ -651,7 +664,7 @@ export class MCPServer {
     const connectAnyCandidate = (deadline?: number) => connectAnyDaemonCandidate(
       candidates(),
       deadline,
-      (socketPath, version, helloTimeoutMs) => connectWithHello(socketPath, version, helloTimeoutMs, launchDir),
+      (socketPath, version, helloTimeoutMs) => connectWithHello(socketPath, version, helloTimeoutMs, launchDir, this.focus),
     );
     const getDaemonSocket = async () => {
       // Fast path: a server may already be listening (on either candidate).
@@ -670,7 +683,7 @@ export class MCPServer {
       spawnDetachedDaemon();
       return await pollForDaemon(connectAnyCandidate);
     };
-    await runLocalHandshakeProxy({ getDaemonSocket, makeEngine: makeFallbackEngine, launchDir });
+    await runLocalHandshakeProxy({ getDaemonSocket, makeEngine: makeFallbackEngine, launchDir, focus: this.focus });
   }
 
   /** Standard SIGINT/SIGTERM handlers that route to our `stop()` (direct mode). */

@@ -20,6 +20,16 @@ export interface ExtensionToolContext {
    * `ToolHandler.executeReadTool` turns them into the usual responses.
    */
   getCodeGraph(projectPath?: string): CodeGraph;
+  /**
+   * The calling session's focus: the absolute canonical directories its
+   * `--focus` named, `[]` when the session has none (the whole repository).
+   * It is the session's own, set by the server for every call; an argument a
+   * client sends cannot set it, and the tool's `args` never carry the internal
+   * keys that transport it. A tool that narrows its results to the focus
+   * compares an index against it with `focusPrefixesFor` / `inFocus`
+   * (`./server/session-scope`).
+   */
+  readonly focus: readonly string[];
 }
 
 /** One MCP tool contributed by an extension. */
@@ -51,6 +61,10 @@ export interface CodegraphExtension {
   name: string;
   /** Synchronous; adds `program.command(...)` entries to the CLI. */
   registerCommands?(program: Command): void;
-  /** MCP tools. Off by default: listed only when CODEGRAPH_MCP_TOOLS names them. */
+  /**
+   * MCP tools. Off by default: a session LISTS one only when its own
+   * CODEGRAPH_MCP_TOOLS (the one its launcher was started with) names it. With no
+   * allowlist, a call by name is still served, as it is for a built-in.
+   */
   tools?: ExtensionTool[];
 }

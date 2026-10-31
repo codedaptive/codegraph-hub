@@ -72,8 +72,9 @@ extension's commands after it are skipped.
   `openWorldHint: false`, handed in from `src/mcp/tools.ts`), in `tools/list` and wherever the tool
   is looked up. An extension's own `annotations` are replaced, so an extension does not set them.
 - **Off by default.** No extension tool is on the default surface (`codegraph_explore` alone). An
-  operator enables one by short name in `CODEGRAPH_MCP_TOOLS`, e.g. `explore,my_tool`. As with
-  built-ins, with no allowlist a call to it is still served; with one, only listed tools are.
+  operator enables one by short name in `CODEGRAPH_MCP_TOOLS` of the session's own launcher, e.g.
+  `explore,my_tool`. As with built-ins, with no allowlist a call to it is still served; with one,
+  only listed tools are.
 - The tiny-repo gate (CLI only) keeps explore, search, node and extension tools: an operator who
   named a tool meant it.
 - **Runs in a worker or on the main thread.** `handle` runs inside a query-pool worker only when the
@@ -83,10 +84,18 @@ extension's commands after it are skipped.
   only from `args` and `ctx`. `ctx.getCodeGraph(projectPath)` returns that project and throws the same errors the built-in handlers get (`NotIndexedError`,
   `PathRefusalError`, the WSL-shared-index and database-open failures); `executeReadTool` turns them
   into the usual responses.
-- **The machine server's env decides what can be called.** Behind the proxy, `tools/list` comes from
-  the client process's env and extensions (`getStaticTools`), `tools/call` from the server's. The one
-  machine server has the env of whichever client started it, so its `CODEGRAPH_EXTENSION_MODULES` and
-  `CODEGRAPH_MCP_TOOLS` decide what can be called, even if the client lists something else.
+- **`ctx.focus` is the session's focus.** The absolute canonical directories the calling session's
+  `serve --mcp --focus <dir>` named (each `<dir>` is relative to the repository root), `[]` when it
+  has none. The server sets it for every call; a client's argument cannot (`dispatchToolCall` strips
+  the internal keys that carry it and the extension's `args` never contain them). A tool that narrows
+  its answer compares an index with `focusPrefixesFor` and `inFocus` (`server/session-scope.ts`).
+- **A session's own env decides what it lists and may call; the server's decides what is loaded.**
+  Each client's launcher sends its raw `CODEGRAPH_MCP_TOOLS` (and its focus) in its client hello, so
+  `tools/list` and the `tools/call` refusal use that session's list, in whichever order the sessions
+  started. The one machine server has the env of whichever client started it, so its
+  `CODEGRAPH_EXTENSION_MODULES` still decides which extensions are loaded at all, even if a later
+  client's env names others; a client whose hello carries no `tools` (an older launcher) is gated by
+  the server's own `CODEGRAPH_MCP_TOOLS`.
 
 ## The machine server and its state dir
 

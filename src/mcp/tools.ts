@@ -66,6 +66,7 @@ import {
   findAllSymbols,
   resolveNamedSymbolFlow,
   type FlowStep,
+  type NamedSymbolFlow,
 } from '../graph/named-symbol-flow';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { measurePendingChanges } from './index-freshness';
@@ -147,9 +148,18 @@ function wslSharedIndexGuidance(err: WslSharedIndexError): string {
 export { PathRefusalError } from '../errors';
 import { PathRefusalError } from '../errors';
 import { indexedHashInput } from '../file-limits';
-import { resolve as resolvePath } from 'path';
+import { relative as relativePath, resolve as resolvePath } from 'path';
 import { MISSING_PROJECT_PATH_TEXT } from '../extensions/host/server/repo-anchor';
 import { extensionTools, findExtensionTool, isExtensionTool, setBuiltins } from '../extensions/host/registry';
+import {
+  focusPrefixesFor,
+  inFocus,
+  parseToolAllowlist,
+  sessionFocusFromArgs,
+  sessionToolsFromArgs,
+  withoutSessionArgs,
+  type SessionToolList,
+} from '../extensions/host/server/session-scope';
 
 /** Maximum output length to prevent context bloat (characters) */
 const MAX_OUTPUT_LENGTH = 15000;
@@ -1661,6 +1671,53 @@ const projectPathProperty: PropertySchema = {
 };
 
 /**
+ * The `scope` property of `codegraph_search` and `codegraph_explore`: whether a session started with
+ * `--focus <dir>` keeps their results inside those directories (the default) or lets one call search the
+ * whole repository. The handlers read it through `focusPrefixesOfCall`; a session with no focus ignores it.
+ */
+const scopeProperty: PropertySchema = {
+  type: 'string',
+  description: 'Results stay inside the directories this session was started with (--focus). Pass "repo" to search the whole repository for this call. Has no effect when the session has no focus.',
+  enum: ['focus', 'repo'],
+};
+
+/**
+ * How the session's focus applies to this call, in the index the call resolved to (`focusPrefixesFor`):
+ * `null` filters nothing, `[]` means no file of this index is in focus, otherwise the index-relative
+ * directories a file must sit under.
+ *
+ * The focus comes from the internal `SESSION_FOCUS_ARG` the one dispatch sets (never from the wire). `scopable`
+ * is true for the tools that take `scope` (search, explore): `scope: "repo"` lifts the filter for that call and
+ * any other value keeps it. Callers and impact pass false: they cover the whole repository, and for them the
+ * focus decides which results are counted and listed first and which go under `## Outside focus`.
+ */
+function focusPrefixesOfCall(cg: CodeGraph, args: Record<string, unknown>, scopable: boolean): string[] | null {
+  if (scopable && args.scope === 'repo') return null;
+  return focusPrefixesFor(cg.getProjectRoot(), sessionFocusFromArgs(args));
+}
+
+/**
+ * The answer for a search or explore whose focus left nothing: a success-shaped sentence (never an error, so
+ * the agent keeps using the tool) that names the focus and how to widen the call. `prefixes` is non-null.
+ * The directories are index-relative (the repository root for the usual one-index repository); when no
+ * focus directory lies inside this index they are the session's focus directories relative to its root.
+ */
+function nothingInFocusText(cg: CodeGraph, args: Record<string, unknown>, prefixes: readonly string[]): string {
+  return `No results inside this session's focus (${focusDirsText(cg, args, prefixes)}). Pass scope: "repo" to search the whole repository.`;
+}
+
+/**
+ * The focus directories as the agent reads them in a sentence: the index-relative `prefixes`, or, when no focus
+ * directory lies inside this index, the session's focus directories relative to the index root.
+ */
+function focusDirsText(cg: CodeGraph, args: Record<string, unknown>, prefixes: readonly string[]): string {
+  const dirs = prefixes.length > 0
+    ? [...prefixes]
+    : sessionFocusFromArgs(args).map((d) => relativePath(cg.getProjectRoot(), d).split('\\').join('/') || '.');
+  return dirs.join(', ');
+}
+
+/**
  * EVERY codegraph tool leaves the workspace files untouched: it answers from
  * the index under `.codegraph/` and never touches a source file. An index
  * changes in two cases, and the index builder writes it, not the tool. `fresh:
@@ -1720,6 +1777,7 @@ export const tools: ToolDefinition[] = [
           description: 'Maximum results (default: 10)',
           default: 10,
         },
+        scope: scopeProperty,
         projectPath: projectPathProperty,
       },
       required: ['query'],
@@ -1857,6 +1915,7 @@ export const tools: ToolDefinition[] = [
           type: 'number',
           description: 'Maximum number of files to return source from, 1–20. Omit it to use a default sized to the project (4 files below 150 indexed files, 5 below 500, 8 otherwise). Total output is also capped by characters (about 13K–24K by project size), so a higher maxFiles spreads that budget over more files rather than returning more text.',
         },
+        scope: scopeProperty,
         projectPath: projectPathProperty,
       },
       required: ['query'],
@@ -1980,6 +2039,16 @@ function withRequiredProjectPath(defs: ToolDefinition[]): ToolDefinition[] {
  * of its own): `projectPath` is required on every tool, and the dynamic per-repo
  * budget note in a description is a CLI-handler-only addition.
  * Extension tools are listed only when CODEGRAPH_MCP_TOOLS names them.
+ *
+ * The allowlist is read from THIS process's environment, and the proxy that
+ * calls it is the client's own launcher, so each client already lists its own
+ * tools. The server's session-side list (`MCPSession` -> `getTools`) and its
+ * call gate read the same client value, carried in the client hello and parsed
+ * by `parseToolAllowlist`. The two readings differ on a value with no names in
+ * it, such as `,` or a bare `codegraph_`: this function finds no names and lists
+ * every built-in, while `parseToolAllowlist` finds none and gives no allowlist,
+ * so the session gets the default surface. On every value with a name in it they
+ * agree.
  */
 export function getStaticTools(): ToolDefinition[] {
   const all = allToolDefinitions();
@@ -2114,6 +2183,14 @@ export interface ExecuteOptions {
    * passes none.
    */
   admitIndexRoot?: IndexRootAdmission;
+  /**
+   * The calling session's tool allowlist ({@link SessionToolList}): an array of
+   * short names, null for a session told it has none, undefined for a caller
+   * never told one (the CLI, a legacy client), which falls back to this
+   * process's CODEGRAPH_MCP_TOOLS. The call is refused when a non-null list does
+   * not name its tool.
+   */
+  toolAllowlist?: SessionToolList;
 }
 
 /**
@@ -2309,25 +2386,30 @@ export class ToolHandler {
   }
 
   /**
-   * Optional allowlist of exposed tools, parsed from the CODEGRAPH_MCP_TOOLS
-   * env var (comma-separated short names, e.g. "trace,search,node,context").
-   * Unset/empty → every tool is exposed. Lets an operator (or an A/B harness)
-   * trim the tool surface without rebuilding the client config; the ablated
-   * tool is then truly absent from ListTools rather than merely denied on call.
-   * Matching is on the short form, so "node" and "codegraph_node" both work.
-   * Extension tools are named here like built-ins, e.g. "explore,my_tool".
+   * The allowlist of exposed tools, as a set of short names ("node" and
+   * "codegraph_node" both work), or null for no allowlist: the default surface
+   * is listed and every defined tool may be called. Lets an operator (or an A/B
+   * harness) trim the tool surface without rebuilding the client config; the
+   * ablated tool is then truly absent from ListTools rather than merely denied
+   * on call. Extension tools are named here like built-ins, e.g. "explore,my_tool".
+   *
+   * `session` is the calling session's own list ({@link SessionToolList}): the
+   * machine server's process environment belongs to whichever client started
+   * it, so a session's list is its launcher's CODEGRAPH_MCP_TOOLS carried in
+   * the client hello, not this process's. An array is that list; null means
+   * the session was told it has none. Only undefined (a caller that was never
+   * told one: the CLI, a legacy client) reads this process's CODEGRAPH_MCP_TOOLS.
    */
-  private toolAllowlist(): Set<string> | null {
-    const raw = process.env.CODEGRAPH_MCP_TOOLS;
-    if (!raw || !raw.trim()) return null;
-    const short = (s: string) => s.trim().replace(/^codegraph_/, '');
-    const set = new Set(raw.split(',').map(short).filter(Boolean));
-    return set.size ? set : null;
+  private toolAllowlist(session?: SessionToolList): Set<string> | null {
+    const names = session === undefined
+      ? parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? '')
+      : session;
+    return names && names.length > 0 ? new Set(names) : null;
   }
 
-  /** Whether a tool name passes the CODEGRAPH_MCP_TOOLS allowlist (if any). */
-  private isToolAllowed(name: string): boolean {
-    const allow = this.toolAllowlist();
+  /** Whether a tool name passes the allowlist (the session's, else CODEGRAPH_MCP_TOOLS), if any. */
+  private isToolAllowed(name: string, session?: SessionToolList): boolean {
+    const allow = this.toolAllowlist(session);
     return !allow || allow.has(name.replace(/^codegraph_/, ''));
   }
 
@@ -2336,23 +2418,28 @@ export class ToolHandler {
    * is set, the default surface otherwise. Not the same question as
    * `isToolAllowed` (with no allowlist, every defined tool may still be
    * called). Explore names a follow-up tool only when the agent can see it:
-   * `codegraph_node` is not on the default surface (#2486).
+   * `codegraph_node` is not on the default surface. `session` is the
+   * calling session's list (see {@link toolAllowlist}); a handler gets it from
+   * its call's arguments with `sessionToolsFromArgs`, which also holds inside a
+   * query-pool worker.
    */
-  private isToolServed(name: string): boolean {
+  private isToolServed(name: string, session?: SessionToolList): boolean {
     const short = name.replace(/^codegraph_/, '');
-    const allow = this.toolAllowlist();
+    const allow = this.toolAllowlist(session);
     return allow ? allow.has(short) : DEFAULT_MCP_TOOLS.has(short);
   }
 
   /**
    * Get tool definitions with dynamic descriptions based on project size.
    * The codegraph_explore tool description includes a budget recommendation
-   * scaled to the number of indexed files. Honors the CODEGRAPH_MCP_TOOLS
-   * allowlist so a trimmed surface is reflected in ListTools.
+   * scaled to the number of indexed files. Honors the allowlist so a trimmed
+   * surface is reflected in ListTools: `options.allowlist` is the calling
+   * session's list ({@link SessionToolList}, see {@link toolAllowlist}),
+   * CODEGRAPH_MCP_TOOLS of this process when it is undefined.
    * Extension tools are candidates too, listed only when the allowlist names them.
    */
-  getTools(): ToolDefinition[] {
-    const allow = this.toolAllowlist();
+  getTools(options?: { allowlist?: SessionToolList }): ToolDefinition[] {
+    const allow = this.toolAllowlist(options?.allowlist);
     const all = allToolDefinitions();
     // No explicit allowlist → the default surface: `codegraph_explore` alone (see
     // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
@@ -3271,10 +3358,17 @@ export class ToolHandler {
         const gate = this.catchUpGate;
         await this.awaitCatchUpGate(gate);
       }
-      // Honor the optional tool allowlist (CODEGRAPH_MCP_TOOLS): a trimmed
-      // surface rejects ablated tools defensively even if a client cached them.
-      if (!this.isToolAllowed(toolName)) {
-        return this.errorResult(`Tool ${toolName} is disabled via CODEGRAPH_MCP_TOOLS`);
+      // Honor the tool allowlist: a trimmed surface rejects ablated tools
+      // defensively even if a client cached them. The session's own list decides
+      // (its launcher's CODEGRAPH_MCP_TOOLS: this server's environment is
+      // whichever client started it); only a call that carries none reads this
+      // process's CODEGRAPH_MCP_TOOLS.
+      if (!this.isToolAllowed(toolName, options?.toolAllowlist)) {
+        return this.errorResult(
+          options?.toolAllowlist === undefined
+            ? `Tool ${toolName} is disabled via CODEGRAPH_MCP_TOOLS`
+            : `Tool ${toolName} is not enabled for this session (CODEGRAPH_MCP_TOOLS)`,
+        );
       }
       // Cross-cutting input validation. All tools accept an optional
       // `projectPath` and most accept either `query`, `task`, or
@@ -3532,7 +3626,15 @@ export class ToolHandler {
       case 'codegraph_files': return await this.handleFiles(args);
       default: {
         const ext = findExtensionTool(toolName);
-        if (ext) return await ext.handle(args, { getCodeGraph: (p?: string) => this.getCodeGraph(p) });
+        if (ext) {
+          // The extension gets the session's focus in its context and never the
+          // internal keys: a tool that echoed or forwarded its args could not
+          // leak or replay them.
+          return await ext.handle(withoutSessionArgs(args), {
+            getCodeGraph: (p?: string) => this.getCodeGraph(p),
+            focus: sessionFocusFromArgs(args),
+          });
+        }
         return this.errorResult(`Unknown tool: ${toolName}`);
       }
     }
@@ -3554,13 +3656,28 @@ export class ToolHandler {
     const rawLimit = Number(args.limit) || 10;
     const limit = clamp(rawLimit, 1, 100);
 
-    const results = cg.searchNodes(query, {
-      limit,
+    // The search applies its limit inside the query layer, before any focus filter could see a file path, so a
+    // focused session over-fetches and cuts to `limit` after filtering: out-of-focus hits ranked above an
+    // in-focus one must not use up the slots. Capped, so a focus holding few of many matches can return fewer
+    // than `limit`; `scope: "repo"` is the way to see the rest.
+    const prefixes = focusPrefixesOfCall(cg, args, true);
+    const SEARCH_OVERFETCH = 5;
+    const SEARCH_FETCH_CAP = 500;
+    const found = cg.searchNodes(query, {
+      limit: prefixes === null ? limit : Math.min(limit * SEARCH_OVERFETCH, SEARCH_FETCH_CAP),
       kinds: kind ? [kind as NodeKind] : undefined,
     });
+    const results = prefixes === null
+      ? found
+      : found.filter((r) => inFocus(r.node.filePath, prefixes)).slice(0, limit);
 
     if (results.length === 0) {
-      return this.textResult(`No results found for "${query}"`);
+      // Hits that all sat outside the focus are a different answer from no hits at all: say which, and how to widen.
+      return this.textResult(
+        prefixes !== null && found.length > 0
+          ? nothingInFocusText(cg, args, prefixes)
+          : `No results found for "${query}"`,
+      );
     }
 
     // Down-rank generated files within the FTS-returned set so a search
@@ -3608,6 +3725,8 @@ export class ToolHandler {
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const limit = clamp((args.limit as number) || 20, 1, 100);
     const fileFilter = typeof args.file === 'string' ? args.file : undefined;
+    // Callers cover the whole repository; the focus only decides which are listed first (see `splitByFocus`).
+    const prefixes = focusPrefixesOfCall(cg, args, false);
 
     const allMatches = this.findAllSymbols(cg, symbol);
     if (allMatches.nodes.length === 0) {
@@ -3647,12 +3766,16 @@ export class ToolHandler {
       // A successful `file` narrowing makes the multi-symbol aggregation note
       // stale — suppress it.
       const note = fileFilter && !filteredOut ? '' : allMatches.note;
+      // The listing and its counts cover the in-focus callers; the rest follow under "Outside focus". With no
+      // focus every caller is "inside", so the output is exactly the unfocused listing.
+      const { inside, outside } = this.splitByFocus(callers, prefixes);
       // Say when the cap cut the list (#1639, #1674): a truncated answer with
       // no marker reads as the complete set, and an agent under-counts from it.
-      const cut = callers.length > limit
-        ? `\n\n> Showing ${limit} of ${callers.length} callers; pass \`limit\` (up to 100) to widen.`
+      const cut = inside.length > limit
+        ? `\n\n> Showing ${limit} of ${inside.length} callers; pass \`limit\` (up to 100) to widen.`
         : '';
-      const formatted = this.formatNodeList(callers.slice(0, limit), `Callers of ${symbol}`, labels) + cut + note + filterNote;
+      const outsideBlock = outside.length > 0 ? `\n\n${this.outsideFocusLines(outside, labels, limit).join('\n')}` : '';
+      const formatted = this.formatNodeList(inside.slice(0, limit), `Callers of ${symbol}`, labels) + cut + outsideBlock + note + filterNote;
       return this.answerResult(cg, this.truncateOutput(formatted), answerPaths);
     }
 
@@ -3669,16 +3792,47 @@ export class ToolHandler {
         lines.push('- (no callers)');
         continue;
       }
-      for (const node of callers.slice(0, limit)) {
+      const { inside, outside } = this.splitByFocus(callers, prefixes);
+      if (inside.length === 0) lines.push('- (no callers inside the focus)');
+      for (const node of inside.slice(0, limit)) {
         const location = node.startLine ? `:${node.startLine}` : '';
         const label = labels.get(node.id);
         lines.push(`- ${node.name} (${node.kind}) - ${node.filePath}${location}${label ? ` — via ${label}` : ''}`);
       }
-      if (callers.length > limit) {
-        lines.push(`- … +${callers.length - limit} more (pass \`limit\` to widen)`);
+      if (inside.length > limit) {
+        lines.push(`- … +${inside.length - limit} more (pass \`limit\` to widen)`);
       }
+      if (outside.length > 0) lines.push('', ...this.outsideFocusLines(outside, labels, limit));
     }
     return this.answerResult(cg, this.truncateOutput(lines.join('\n') + filterNote), answerPaths);
+  }
+
+  /**
+   * Split a callers/impact result by the session's focus: the nodes whose file is in focus, then the rest,
+   * each in its original order. `prefixes` null (no focus) puts everything inside, so an unfocused session
+   * gets the plain listing with no `## Outside focus` section.
+   */
+  private splitByFocus(nodes: readonly Node[], prefixes: readonly string[] | null): { inside: Node[]; outside: Node[] } {
+    if (prefixes === null) return { inside: [...nodes], outside: [] };
+    const inside: Node[] = [];
+    const outside: Node[] = [];
+    for (const node of nodes) (inFocus(node.filePath, prefixes) ? inside : outside).push(node);
+    return { inside, outside };
+  }
+
+  /**
+   * The `## Outside focus (N)` section of a callers listing: every result the focus held back, one line each
+   * in the same shape as the in-focus lines, capped at `limit` like them. N counts all of them.
+   */
+  private outsideFocusLines(nodes: readonly Node[], labels: Map<string, string>, limit: number): string[] {
+    const lines = [`## Outside focus (${nodes.length})`, ''];
+    for (const node of nodes.slice(0, limit)) {
+      const location = node.startLine ? `:${node.startLine}` : '';
+      const label = labels.get(node.id);
+      lines.push(`- ${node.name} (${node.kind}) - ${node.filePath}${location}${label ? ` — via ${label}` : ''}`);
+    }
+    if (nodes.length > limit) lines.push(`- … +${nodes.length - limit} more (pass \`limit\` to widen)`);
+    return lines;
   }
 
   /**
@@ -3771,6 +3925,8 @@ export class ToolHandler {
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const depth = clamp((args.depth as number) || 2, 1, 10);
     const fileFilter = typeof args.file === 'string' ? args.file : undefined;
+    // Impact covers the whole repository; the focus only splits the affected symbols (see `formatImpact`).
+    const prefixes = focusPrefixesOfCall(cg, args, false);
 
     const allMatches = this.findAllSymbols(cg, symbol);
     if (allMatches.nodes.length === 0) {
@@ -3806,7 +3962,7 @@ export class ToolHandler {
 
     // Single definition (or same-file overloads): the familiar merged report.
     if (groups.length === 1) {
-      const formatted = this.formatImpact(symbol, impactOf(groups[0]!)) + (fileFilter && !filteredOut ? "" : allMatches.note) + filterNote;
+      const formatted = this.formatImpact(symbol, impactOf(groups[0]!), prefixes) + (fileFilter && !filteredOut ? "" : allMatches.note) + filterNote;
       return this.answerResult(cg, this.truncateOutput(formatted), answerPaths);
     }
 
@@ -3821,7 +3977,7 @@ export class ToolHandler {
       const line = head.startLine ? `:${head.startLine}` : '';
       sections.push(
         '',
-        this.formatImpact(`${head.qualifiedName} (${head.filePath}${line})`, impactOf(group))
+        this.formatImpact(`${head.qualifiedName} (${head.filePath}${line})`, impactOf(group), prefixes)
       );
     }
     return this.answerResult(cg, this.truncateOutput(sections.join('\n') + filterNote), answerPaths);
@@ -3857,10 +4013,50 @@ export class ToolHandler {
    * for an ordinary static edge. The wording is `graph/synthesized-hop.ts`'s,
    * shared with ContextBuilder's call paths.
    */
-  private synthEdgeNote(edge: Edge | null): string | null {
+  private synthEdgeNote(edge: Edge | null, prefixes: readonly string[] | null = null): string | null {
     const hop = describeSynthesizedHop(edge);
     if (!hop) return null;
-    return `dynamic: ${hop.summary}${hop.registeredAt ? ` @${hop.registeredAt}` : ''}`;
+    return `dynamic: ${hop.summary}${hop.registeredAt && this.wiringSiteInFocus(hop.registeredAt, prefixes) ? ` @${hop.registeredAt}` : ''}`;
+  }
+
+  /**
+   * Whether a synthesized hop's wiring site (`registeredAt`, spelled `path:line`) is in the session focus.
+   * `prefixes` null (no focus) is always in. A site outside it is left off the hop, so the Flow never prints a
+   * path the focus excludes; the hop itself still reads as dynamic.
+   */
+  private wiringSiteInFocus(registeredAt: string, prefixes: readonly string[] | null): boolean {
+    if (prefixes === null) return true;
+    const colon = registeredAt.lastIndexOf(':');
+    return inFocus(colon > 0 ? registeredAt.slice(0, colon) : registeredAt, prefixes);
+  }
+
+  /**
+   * Hold a resolved named-symbol flow to the session focus (`prefixes` null: returned as it is).
+   *
+   * The flow search itself (`resolveNamedSymbolFlow`) takes no node filter, so the resolution runs over the
+   * whole index and this keeps what is inside the focus: the named symbols, their token lists and families,
+   * and the chain only when EVERY step of it is inside (a chain that passes through a file outside the focus is
+   * dropped whole, never cut, because a shortened chain would claim a call path the graph does not have).
+   * Limitation: a flow whose route crosses the focus boundary loses its Flow strip for a focused session; the
+   * named symbols inside still render.
+   */
+  private focusNamedFlow(flow: NamedSymbolFlow, prefixes: readonly string[] | null): NamedSymbolFlow {
+    if (prefixes === null) return flow;
+    const keepNodes = (nodes: Map<string, Node>): Map<string, Node> =>
+      new Map([...nodes].filter(([, n]) => inFocus(n.filePath, prefixes)));
+    const named = keepNodes(flow.named);
+    const dynNamed = keepNodes(flow.dynNamed);
+    const live = (id: string): boolean => named.has(id) || dynNamed.has(id);
+    return {
+      tokens: flow.tokens,
+      named,
+      dynNamed,
+      tokenNodes: new Map([...flow.tokenNodes].map(([token, ids]) => [token, ids.filter(live)])),
+      tokenFamily: new Map([...flow.tokenFamily].map(([token, family]) => [token, family.filter((n) => inFocus(n.filePath, prefixes))])),
+      uniqueNamedNodeIds: new Set([...flow.uniqueNamedNodeIds].filter(live)),
+      preciseNamedIds: new Set([...flow.preciseNamedIds].filter(live)),
+      chains: flow.chains.filter((chain) => chain.steps.every((step) => inFocus(step.node.filePath, prefixes))),
+    };
   }
 
   /**
@@ -3876,8 +4072,16 @@ export class ToolHandler {
    * CO-NAMING: the agent names the class too, so we keep only `list` candidates
    * whose qualifiedName contains another named token (`PmsProductServiceImpl::list`),
    * dropping unrelated `OmsOrderService::list`.
+   *
+   * `sessionTools` is the calling session's tool list: it decides whether the
+   * dynamic-boundary note names `codegraph_node` as a follow-up
+   * (`buildDynamicBoundaries`).
+   *
+   * `prefixes` is the session's focus in this index (`focusPrefixesOfCall`; null for none): the Flow is built
+   * from the named symbols inside it only, and nothing it prints (a hop, a link, a boundary, a candidate)
+   * comes from a file outside it. See `focusNamedFlow` for how the chain search is held to it.
    */
-  private buildFlowFromNamedSymbols(cg: CodeGraph, query: string): { text: string; pathNodeIds: Set<string>; namedNodeIds: Set<string>; uniqueNamedNodeIds: Set<string>; spineCallSites: Map<string, number> } {
+  private buildFlowFromNamedSymbols(cg: CodeGraph, query: string, sessionTools: SessionToolList, prefixes: readonly string[] | null): { text: string; pathNodeIds: Set<string>; namedNodeIds: Set<string>; uniqueNamedNodeIds: Set<string>; spineCallSites: Map<string, number> } {
     // spineCallSites: for each spine node, the line where it CALLS the next hop —
     // lets the source assembler window an oversize spine method (e.g. n8n's 962-line
     // processRunExecutionData) to the call site instead of dumping the whole body.
@@ -3886,7 +4090,7 @@ export class ToolHandler {
       // Token resolution — parsing, overload disambiguation, the CONSTANT/
       // VARIABLE synth endpoints — is shared with `/api/flow`, so a name written
       // in the viewer's search box resolves to the same nodes it does here.
-      const flow = resolveNamedSymbolFlow(cg, query);
+      const flow = this.focusNamedFlow(resolveNamedSymbolFlow(cg, query), prefixes);
       const { named, dynNamed, tokenNodes, tokenFamily, uniqueNamedNodeIds, preciseNamedIds } =
         flow;
       if (flow.tokens.length < 2) return EMPTY;
@@ -3934,7 +4138,7 @@ export class ToolHandler {
             seen.add(key);
             if (onChain.has(edge.source) && onChain.has(edge.target)) continue;
             const other = named.get(otherId) ?? dynNamed.get(otherId) ?? cg.getNode(otherId);
-            if (!other) continue;
+            if (!other || !inFocus(other.filePath, prefixes)) continue;
             const lowValue = weight(otherId) === 0 && isLowValue(other.filePath);
             const linkWeight = weight(n.id) + weight(otherId);
             const rank = `${n.id}|${lowValue}|${linkWeight}`;
@@ -3955,7 +4159,7 @@ export class ToolHandler {
           // `TrySet → TrySet` says neither which interface nor which implementation:
           // a same-name link names each end by its owner, as the agent would write it.
           const same = src.name === tgt.name;
-          return `- ${same ? followUpName(src) : src.name} → ${same ? followUpName(tgt) : tgt.name}   [${this.synthEdgeNote(edge) ?? edge.kind}]`;
+          return `- ${same ? followUpName(src) : src.name} → ${same ? followUpName(tgt) : tgt.name}   [${this.synthEdgeNote(edge, prefixes) ?? edge.kind}]`;
         };
         // Distinct links can still read the same, and one line says it: gin declares
         // `Binding` once per build tag, so both declarations' `Bind` link to formBinding's,
@@ -4013,7 +4217,7 @@ export class ToolHandler {
         // whole chain; (2) the one resolved callable's body may hold the
         // dynamic-dispatch site that EXPLAINS a half-connected flow.
         const synthLines = collectSynthLinks(null);
-        const boundaries = named.size === 0 ? '' : (this.buildDynamicBoundaries(cg, [...named.values()], named) || '');
+        const boundaries = named.size === 0 ? '' : (this.buildDynamicBoundaries(cg, [...named.values()], named, sessionTools, prefixes) || '');
         if (synthLines.length === 0 && !boundaries) return identityOnly();
         const out: string[] = [];
         if (synthLines.length) out.push(
@@ -4061,7 +4265,7 @@ export class ToolHandler {
           if (hasMain) scanList.push(best![best!.length - 1]!.node);
           scanList.push(...uncovered.sort((a, b) =>
             (uniqueNamedNodeIds.has(b.id) ? 1 : 0) - (uniqueNamedNodeIds.has(a.id) ? 1 : 0)));
-          boundaryText = this.buildDynamicBoundaries(cg, scanList, named);
+          boundaryText = this.buildDynamicBoundaries(cg, scanList, named, sessionTools, prefixes);
         }
       }
 
@@ -4084,7 +4288,9 @@ export class ToolHandler {
           if (ids.some((id) => pathIds.has(id))) continue; // covered by the flow — silent
           polyCands.push({ token: t, family: fam });
         }
-        if (polyCands.length) polyText = this.buildPolymorphicBoundaries(cg, polyCands, named);
+        // Skipped under a focus: the announcement counts every implementer of the supertype (`countImplementers`,
+        // the same N the viewer shows), and that count would include implementers outside the focus.
+        if (polyCands.length && prefixes === null) polyText = this.buildPolymorphicBoundaries(cg, polyCands, named);
       }
 
       // Supplementary: dynamic-dispatch (synthesized) edges incident to a named
@@ -4104,7 +4310,7 @@ export class ToolHandler {
           const step = best![i]!;
           if (step.edge) {
             const when = i > 0 ? this.whenLabel(cg, best![i - 1]!.node, step.edge) : '';
-            out.push(`   ↓ ${this.synthEdgeNote(step.edge) ?? step.edge.kind}${when ? ` (when ${when})` : ''}`);
+            out.push(`   ↓ ${this.synthEdgeNote(step.edge, prefixes) ?? step.edge.kind}${when ? ` (when ${when})` : ''}`);
           }
           out.push(`${i + 1}. ${step.node.name} (${step.node.filePath}:${step.node.startLine})`);
         }
@@ -4142,9 +4348,12 @@ export class ToolHandler {
    * instead of guessing edges. The answer to "how does A reach B" when no
    * static path exists IS the dispatch site: that's where the flow continues
    * at runtime. Query-time, deterministic, zero graph mutation; a fully
-   * connected flow never reaches this method.
+   * connected flow never reaches this method. `sessionTools` is the calling
+   * session's tool list: the closing line names `codegraph_node` only when that
+   * session is served it. `prefixes` is the session's focus in this index (null
+   * for none): candidate targets outside it are not listed.
    */
-  private buildDynamicBoundaries(cg: CodeGraph, scanList: Node[], named: Map<string, Node>): string {
+  private buildDynamicBoundaries(cg: CodeGraph, scanList: Node[], named: Map<string, Node>, sessionTools: SessionToolList, prefixes: readonly string[] | null): string {
     const MAX_NOTES = 4; // boundary bullets per explore
     // The verdict is not derived here — `findDynamicBoundaries` produces it and
     // the viewer's end cap renders the same object, so the two can never
@@ -4159,7 +4368,7 @@ export class ToolHandler {
           ? ` (+${site.moreSites} more such site${site.moreSites > 1 ? 's' : ''} in this body)`
           : '';
         notes.push(`- \`${report.node.name}\` (${report.node.filePath}:${site.line}) — ${site.label}: \`${site.snippet}\`${more}`);
-        const cand = this.boundaryCandidates(site);
+        const cand = this.boundaryCandidates(site, prefixes);
         if (cand) notes.push(`  ${cand}`);
       }
     }
@@ -4169,7 +4378,7 @@ export class ToolHandler {
       '',
       ...notes,
       '',
-      `> These sites choose their call target at runtime (registry / bus / reflection) — the site shown IS where the flow continues. To follow it, run codegraph_explore${this.isToolServed('node') ? ' or codegraph_node' : ''} on a candidate; source for the sites above is included below.`,
+      `> These sites choose their call target at runtime (registry / bus / reflection) — the site shown IS where the flow continues. To follow it, run codegraph_explore${this.isToolServed('node', sessionTools) ? ' or codegraph_node' : ''} on a candidate; source for the sites above is included below.`,
       '',
     ].join('\n');
   }
@@ -4325,11 +4534,15 @@ export class ToolHandler {
    * `../graph/dynamic-boundary-report` — shared with the viewer's end cap, so
    * "candidates for key `save`" names the same symbols in both places. Symbols
    * the agent already named are marked: that is the "you were right, here's the
-   * wiring" case.
+   * wiring" case. `prefixes` is the session's focus in this index (null for none).
    */
-  private boundaryCandidates(site: BoundarySite): string {
+  private boundaryCandidates(site: BoundarySite, prefixes: readonly string[] | null): string {
     if (site.candidates.length === 0) return site.candidateNote ?? '';
-    const list = site.candidates.map((c) =>
+    // Candidates outside the session focus are left out; a shortlist the focus empties says nothing rather
+    // than a note about a shortlist that is no longer shown.
+    const inside = site.candidates.filter((c) => inFocus(c.node.filePath, prefixes));
+    if (inside.length === 0) return '';
+    const list = inside.map((c) =>
       `\`${c.display}\` (${c.node.filePath}:${c.node.startLine})${c.named ? ' ← you named this' : ''}`
     );
     return `candidates for key \`${site.key}\`: ${list.join(', ')}`;
@@ -4352,7 +4565,12 @@ export class ToolHandler {
      * query for `SQLCompiler.as_sql` headlined `SQLInsertCompiler.as_sql` — and
      * the agent took that as the tool having found the wrong method.
      */
-    leadingIds: Iterable<string> = [],
+    leadingIds: Iterable<string>,
+    /**
+     * The session's focus (`focusPrefixesOfCall`; null for none). Only callers inside it are counted and
+     * their files listed, so the section never names a file the focus excludes.
+     */
+    prefixes: readonly string[] | null,
   ): string {
     const ROOT_CAP = 5; // only the symbols the query actually targeted
     const FILE_CAP = 4; // caller files listed per symbol before "+N more"
@@ -4376,7 +4594,7 @@ export class ToolHandler {
       const seen = new Set<string>();
       const uniq: Node[] = [];
       for (const c of callers) {
-        if (c?.node && !seen.has(c.node.id)) { seen.add(c.node.id); uniq.push(c.node); }
+        if (c?.node && !seen.has(c.node.id) && inFocus(c.node.filePath, prefixes)) { seen.add(c.node.id); uniq.push(c.node); }
       }
       if (uniq.length === 0) continue; // no blast radius → nothing to flag
 
@@ -4389,7 +4607,7 @@ export class ToolHandler {
       const where = nonTest.length > 0 ? ` in ${shown}${more}` : '';
       const tests = testFiles.length > 0
         ? `; tests: ${testFiles.slice(0, FILE_CAP).map((f) => `\`${f}\``).join(', ')}${testFiles.length > FILE_CAP ? ` +${testFiles.length - FILE_CAP}` : ''}`
-        : this.indirectTestNote(cg, uniq, rel);
+        : this.indirectTestNote(cg, uniq, rel, prefixes);
 
       entries.push(
         `- \`${root.name}\` (${rel(root.filePath)}:${root.startLine}) — ${uniq.length} caller${uniq.length === 1 ? '' : 's'}${where}${tests}`,
@@ -4452,7 +4670,7 @@ export class ToolHandler {
    * symbols had a test within 2-3 hops), so walk up to 2 more hops before
    * claiming anything — and even then claim only what was measured.
    */
-  private indirectTestNote(cg: CodeGraph, directCallers: Node[], rel: (p: string) => string): string {
+  private indirectTestNote(cg: CodeGraph, directCallers: Node[], rel: (p: string) => string, prefixes: readonly string[] | null): string {
     const MAX_HOPS = 3; // direct callers are hop 1
     const BUDGET = 64;  // getCallers lookups per entry — bounds god-fan-in symbols
     const FILE_CAP = 2;
@@ -4468,7 +4686,10 @@ export class ToolHandler {
         try { callers = cg.getCallers(node.id) as Array<{ node: Node }>; } catch { continue; }
         for (const c of callers) {
           const n = c?.node;
-          if (!n || visited.has(n.id)) continue;
+          // The walk stays inside the session focus: a test file outside it is not named. With a focus, the claim
+          // made below ("no tests found") is about the focus, the part of the repository the session sees, and
+          // says so; unfocused, it is about the whole index.
+          if (!n || visited.has(n.id) || !inFocus(n.filePath, prefixes)) continue;
           visited.add(n.id);
           const f = rel(n.filePath);
           if (isTestFile(f)) found.add(f);
@@ -4485,8 +4706,10 @@ export class ToolHandler {
     }
     // Budget exhaustion means hops 2-3 weren't fully searched — fall back to
     // the weaker claim that IS established by the direct-caller check.
+    // A focused walk searched only the focus, so its "no tests found" says "in focus".
+    const scope = prefixes === null ? '' : ' in focus';
     return budget > 0
-      ? `; no tests found within ${MAX_HOPS} caller hops`
+      ? `; no tests found within ${MAX_HOPS} caller hops${scope}`
       : '; no test calls this directly';
   }
 
@@ -4582,6 +4805,21 @@ export class ToolHandler {
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const projectRoot = cg.getProjectRoot();
 
+    // Session focus. `prefixes` null means nothing below filters and the answer is what an unfocused session gets.
+    // Otherwise only files under a prefix contribute anything the answer prints (source, file lists, counts,
+    // pins, the Flow strip, the blast-radius callers): the candidate gather is cut to in-focus nodes once, right
+    // after it is complete (see "Session focus cut" below), and every stage that reaches the index on its own
+    // (named-symbol seeding, the change-surface rescue, the copybook list, the blast radius, the Flow) asks
+    // `inFocus` itself. Two kinds of read still take the whole index, and the focus does not cut them: the
+    // candidate names behind the empty-result explanation (`getExploreMissDiagnostics`), and the ranking probes,
+    // which are the overload tier counts (every definition of a name, `getNodesByName` / `findAllSymbols`), the
+    // weak-kind isolation probe (`getIncomingEdges`, full graph) and the interface-owned-method check (also
+    // `getIncomingEdges`). `focusDropped` records that something outside the focus was left out, which decides
+    // between the "nothing inside the focus" answer and the one-sentence note that closes the summary.
+    const prefixes = focusPrefixesOfCall(cg, args, true);
+    const inScope = (filePath: string): boolean => inFocus(filePath, prefixes);
+    let focusDropped = false;
+
     // Resolve adaptive output budget from project size. Falls back to the
     // largest-tier defaults if stats aren't available, which preserves
     // pre-#185 behavior for callers that hit the rare stats failure.
@@ -4631,6 +4869,17 @@ export class ToolHandler {
         }
       } catch { /* path pinning must never fail an explore call */ }
     }
+    // A path the query named inside the focus pins as usual. One outside it pins nothing, anchors nothing and
+    // is not named in the set-aside note (that note would otherwise print an out-of-focus path).
+    if (prefixes !== null) {
+      const pinnedInside = pinnedFiles.filter(inScope);
+      if (pinnedInside.length < pinnedFiles.length) focusDropped = true;
+      pinnedFiles = pinnedInside;
+      lineAnchors = lineAnchors.filter((a) => inScope(a.file));
+      setAsideMatches = setAsideMatches
+        .map((m) => ({ ...m, files: m.files.filter(inScope) }))
+        .filter((m) => m.files.length > 0);
+    }
     // A COBOL copybook the query names (`CVACT01Y`) names its FILE as surely as
     // `app/cpy/CVACT01Y.cpy` would (#2342), so it is pinned the same way: the
     // copybook's own source is admitted, ranked first and funded first. Looked
@@ -4641,6 +4890,19 @@ export class ToolHandler {
     try {
       namedCopybooks = cg.findNamedCopybooks(matchQuery);
     } catch { /* copybook pinning must never fail an explore call */ }
+    if (prefixes !== null) {
+      // A copybook is listed with its source file and its include sites. It is kept while each side that has
+      // entries still has an in-focus entry, and both lists are then cut to the in-focus entries.
+      namedCopybooks = namedCopybooks.flatMap((cb) => {
+        const files = cb.files.filter((n) => inScope(n.filePath));
+        const includes = cb.includes.filter((n) => inScope(n.filePath));
+        if (files.length === cb.files.length && includes.length === cb.includes.length) return [cb];
+        focusDropped = true;
+        const keepsSource = cb.files.length === 0 || files.length > 0;
+        const keepsIncludes = cb.includes.length === 0 || includes.length > 0;
+        return keepsSource && keepsIncludes ? [{ ...cb, files, includes }] : [];
+      });
+    }
     for (const copybook of namedCopybooks) {
       for (const file of copybook.files) {
         if (pinnedFiles.length >= maxFiles) break;
@@ -4772,7 +5034,26 @@ export class ToolHandler {
       anchorSpans.set(anchor.file, spans);
     }
 
-    if (subgraph.nodes.size === 0) {
+    // Session focus cut: the gather is complete here (search hits and their traversal, the pinned files'
+    // symbols, the anchored callables), so this is the one place that leaves out-of-focus nodes out of it. Their
+    // roots and every edge touching them go too, so no later ranking stage (the entry set, the usage degree,
+    // the random walk) is steered by code the answer will not show. The stages that add nodes after this one
+    // add only in-focus ones, see `inScope` below. The entry set and the usage degree come from in-focus code
+    // only; the weak-kind isolation probe, the overload tier counts and the interface-owned-method check still
+    // read the whole index (see `inScope` and the stages themselves). Seeding and glue still run on an emptied
+    // gather: an in-focus symbol the query names exactly is found by the seeding, not by the search that came back empty here.
+    if (prefixes !== null) {
+      const outside = new Set<string>();
+      for (const [id, n] of subgraph.nodes) if (!inScope(n.filePath)) outside.add(id);
+      if (outside.size > 0) {
+        focusDropped = true;
+        for (const id of outside) subgraph.nodes.delete(id);
+        subgraph.roots = subgraph.roots.filter((id) => !outside.has(id));
+        subgraph.edges = subgraph.edges.filter((e) => !outside.has(e.source) && !outside.has(e.target));
+      }
+    }
+
+    if (subgraph.nodes.size === 0 && !focusDropped) {
       diag?.finishEmpty('no relevant code found — empty subgraph');
       const missNote = unresolvedPathSpans.length > 0
         ? ` (no indexed file uniquely matches ${unresolvedPathSpans.map((s) => `\`${s}\``).join(', ')})`
@@ -4978,7 +5259,11 @@ export class ToolHandler {
         // type-token bias below couldn't pick the harness.rs one. (Same fix as
         // codegraph_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
         const isQual = /[.\/]|::/.test(t);
-        const raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        // Every definition the index has (`rawAll`) decides whether the name is known at all; only the ones in
+        // focus (`raw`) can seed, so a name defined only outside the focus is not reported as "not in the
+        // index" and never earns an out-of-focus seed.
+        const rawAll = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        const raw = prefixes === null ? rawAll : rawAll.filter((n) => inScope(n.filePath));
         // A query that NAMES a declared type is a question ABOUT that type, and
         // must still reach its declaration file at full weight — so record the
         // files those declarations live in and exempt them from the
@@ -5014,7 +5299,7 @@ export class ToolHandler {
               kinds: ['function', 'method', 'component', 'variable', 'constant'],
               limit: 60,
             })
-            .filter((n) => SEEDABLE.has(n.kind) && !isTestPath(n.filePath))
+            .filter((n) => SEEDABLE.has(n.kind) && !isTestPath(n.filePath) && inScope(n.filePath))
             .filter((n) => {
               const idx = n.name.toLowerCase().indexOf(lcToken);
               if (idx < 0) return false;
@@ -5024,7 +5309,7 @@ export class ToolHandler {
             .sort((a, b) => a.name.length - b.name.length)
             .slice(0, 3);
         }
-        if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
+        if (rawAll.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
         // (see the NL-stopword guard above). Filtering CANDS (not picks) applies
         // the guard uniformly to both branches below, including the >3-def
@@ -5087,6 +5372,16 @@ export class ToolHandler {
           if (!isInterfaceOwnedMethod(n)) tierSeedIds.add(n.id);
         }
       }
+    }
+
+    // Nothing the focus lets through: the answer is the one sentence, success-shaped (an error here would teach
+    // the agent to stop calling), and it never points at a file the focus excludes.
+    if (prefixes !== null && subgraph.nodes.size === 0) {
+      diag?.finishEmpty('nothing inside the session focus');
+      const outsideFocus = nothingInFocusText(cg, args, prefixes);
+      return { ...this.textResult(outsideFocus), [EXPLORE_EMISSION_KEY]: {
+        projectRoot, query, files: [], sourceBytes: 0, responseBytes: outsideFocus.length,
+      } };
     }
 
     // Step 2: Group nodes by file, score by relevance
@@ -5188,6 +5483,7 @@ export class ToolHandler {
         if (!SIG_EDGE.has(e.kind)) continue;
         const tgt = cg.getNode(e.target);
         if (!tgt || !TYPE_KINDS.has(tgt.kind) || namedSeedIds.has(tgt.id)) continue;
+        if (!inScope(tgt.filePath)) continue;
         if (seenChangeSurface.has(tgt.id)) continue;
         seenChangeSurface.add(tgt.id);
         changeSurfaceCandidates.push(tgt);
@@ -5619,7 +5915,7 @@ export class ToolHandler {
     // Blast radius (always-on, compact): for the entry symbols, who depends on
     // them + which tests cover them — locations only, no source — so the agent
     // knows what to update/verify before editing without a separate call.
-    const blastRadius = this.buildBlastRadiusSection(cg, subgraph, exactNodeIds);
+    const blastRadius = this.buildBlastRadiusSection(cg, subgraph, exactNodeIds, prefixes);
     if (blastRadius) lines.push(blastRadius);
 
     // Relationship map — show how symbols connect
@@ -5664,7 +5960,7 @@ export class ToolHandler {
     // The Flow section labels each hop with its branch conditions; that read
     // is synchronous, so the grammars it needs are loaded here, once.
     await warmBranchGuardGrammars();
-    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
+    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery, sessionToolsFromArgs(args), prefixes);
 
     // The symbols the question is about: exact targets, the named ones, the spine.
     const questionIds = new Set([...exactNodeIds, ...flow.pathNodeIds, ...flow.namedNodeIds]);
@@ -5849,7 +6145,13 @@ export class ToolHandler {
     // Reserved at its worst case: the gather's symbol and file counts bound the
     // shown ones from above.
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    // What the summary says when the focus left something out, reserved like the rest of it. Names the focus
+    // directories and the way to widen the call, and carries no count and no path of what was left out.
+    const focusNote = focusDropped && prefixes !== null
+      ? ` Results outside this session's focus (${focusDirsText(cg, args, prefixes)}) are left out; pass scope: "repo" to include them.`
+      : '';
     const summaryReserve = `Found ${plural(subgraph.nodes.size, 'symbol')} across ${plural(fileGroups.size, 'file')}.`.length
+      + focusNote.length
       + (pinnedFiles.length > 0 ? ` ${plural(pinnedFiles.length, 'file')} pinned from the query.`.length : 0)
       + (unresolvedPathSpans.length > 0
         ? ` No indexed file uniquely matches ${unresolvedPathSpans.map((sp) => `\`${sp}\``).join(', ')}.`.length
@@ -8046,7 +8348,7 @@ export class ToolHandler {
       ? exploreCompletenessNotes(filesIncluded, trimmedShown, [...renderedFilePaths, ...fileGroups.keys()])
         .map((note) => ['', '---', note])
       : anyFileTrimmed || trimmedShown.length > 0
-        ? [['', `> Some file sections were trimmed for size. Elided symbols are named inside gap markers as \`name (file:line)\` and preferred in the file header — run another \`codegraph_explore\`${this.isToolServed('node') ? ' (or `codegraph_node`)' : ''} with those exact names for their source.`]]
+        ? [['', `> Some file sections were trimmed for size. Elided symbols are named inside gap markers as \`name (file:line)\` and preferred in the file header — run another \`codegraph_explore\`${this.isToolServed('node', sessionToolsFromArgs(args)) ? ' (or `codegraph_node`)' : ''} with those exact names for their source.`]]
         : [];
     /** Whether a trimmed section survives in `text` — picks a fallback note's wording after a cut. */
     const trimmedIn = (text: string): boolean =>
@@ -8175,6 +8477,7 @@ export class ToolHandler {
       summaryLine += ` No indexed file uniquely matches ${unresolvedPathSpans.map((s) => `\`${s}\``).join(', ')}.`;
     }
     summaryLine += setAsideNote;
+    summaryLine += focusNote;
     finalText = finalText.replace(SUMMARY_SENTINEL, summaryLine);
 
     // Emit the allocation diagnostic from the FINAL text, so per-file bytes and
@@ -9106,29 +9409,41 @@ export class ToolHandler {
     return edge.kind;
   }
 
-  private formatImpact(symbol: string, impact: Subgraph): string {
-    const nodeCount = impact.nodes.size;
+  /**
+   * The blast-radius report for one symbol, affected symbols grouped by file. With a session focus the
+   * header count and the listing cover the in-focus symbols, and the others follow under
+   * `## Outside focus (N)` in the same per-file shape. `prefixes` null (no focus) lists every symbol with no
+   * extra section, the same as an unfocused session's output.
+   */
+  private formatImpact(symbol: string, impact: Subgraph, prefixes: readonly string[] | null): string {
+    const { inside, outside } = this.splitByFocus([...impact.nodes.values()], prefixes);
 
     // Compact format: just list affected symbols grouped by file
     const lines: string[] = [
-      `**Impact: "${symbol}" affects ${nodeCount} symbols**`,
+      `**Impact: "${symbol}" affects ${inside.length} symbols**`,
       '',
     ];
 
-    // Group by file
-    const byFile = new Map<string, Node[]>();
-    for (const node of impact.nodes.values()) {
-      const existing = byFile.get(node.filePath) || [];
-      existing.push(node);
-      byFile.set(node.filePath, existing);
-    }
+    const listByFile = (nodes: readonly Node[]): void => {
+      const byFile = new Map<string, Node[]>();
+      for (const node of nodes) {
+        const existing = byFile.get(node.filePath) || [];
+        existing.push(node);
+        byFile.set(node.filePath, existing);
+      }
+      for (const [file, fileNodes] of byFile) {
+        lines.push(`**${file}:**`);
+        // Compact: inline list
+        const nodeList = fileNodes.map(n => `${n.name}:${n.startLine}`).join(', ');
+        lines.push(nodeList);
+        lines.push('');
+      }
+    };
 
-    for (const [file, nodes] of byFile) {
-      lines.push(`**${file}:**`);
-      // Compact: inline list
-      const nodeList = nodes.map(n => `${n.name}:${n.startLine}`).join(', ');
-      lines.push(nodeList);
-      lines.push('');
+    listByFile(inside);
+    if (outside.length > 0) {
+      lines.push(`## Outside focus (${outside.length})`, '');
+      listByFile(outside);
     }
 
     return lines.join('\n');

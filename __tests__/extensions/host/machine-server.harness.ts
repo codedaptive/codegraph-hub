@@ -228,6 +228,8 @@ export interface SessionOptions {
   stateDir: string;
   /** Extra environment for this session only. */
   env?: Record<string, string>;
+  /** Arguments appended after `serve --mcp`, e.g. `['--focus', 'src/app']`. Omitted: none. */
+  args?: string[];
 }
 
 /**
@@ -251,7 +253,7 @@ export class McpSession {
     this.cwd = opts.cwd;
     this.stateDir = opts.stateDir;
     this.spawnLog = path.join(path.dirname(opts.stateDir), 'spawns.log');
-    this.child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, '--require', SPAWN_RECORDER, BIN, 'serve', '--mcp'], {
+    this.child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, '--require', SPAWN_RECORDER, BIN, 'serve', '--mcp', ...(opts.args ?? [])], {
       cwd: opts.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: gateEnv(opts.stateDir, { CODEGRAPH_MCP_LOG_ATTACH: '1', CG_TEST_SPAWN_LOG: this.spawnLog, ...opts.env }),
@@ -346,6 +348,14 @@ export class McpSession {
     const result = (res.result ?? {}) as { content?: Array<{ text?: unknown }>; isError?: unknown };
     const first = result.content?.[0]?.text;
     return { text: typeof first === 'string' ? first : '', isError: result.isError === true, rpcError: null };
+  }
+
+  /** The names in this session's tools/list answer, in the order the server gave them. */
+  async listTools(): Promise<string[]> {
+    const res = await this.request('tools/list', {}, 60_000);
+    if (res.error !== undefined) throw new Error(`tools/list failed: ${JSON.stringify(res.error)}`);
+    const result = (res.result ?? {}) as { tools?: Array<{ name?: unknown }> };
+    return (result.tools ?? []).map((tool) => String(tool.name));
   }
 
   /** Every server pid named in this session's attach log lines, in order. */
