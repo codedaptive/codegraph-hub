@@ -824,6 +824,12 @@ program
 
 /**
  * codegraph uninit [path]
+ *
+ * With a machine server running, the server and its index builder let go of the index before it is deleted, so
+ * neither keeps a handle on the deleted database (src/extensions/host/uninit.ts: the routed release, or the
+ * in-process guard of `index` when no builder serves it). The output is the same either way, and so are the files
+ * removed. The routed delete opens the index read-only; an unrouted one can refuse when a running server does not
+ * confirm the release (src/extensions/host/uninit.ts).
  */
 program
   .command('uninit [path]')
@@ -857,8 +863,10 @@ program
       }
 
       const { default: CodeGraph } = await loadCodeGraph();
-      const cg = CodeGraph.openSync(projectPath);
-      cg.uninitialize();
+      const { removeIndexReleased } = await import('../extensions/host/uninit');
+      await removeIndexReleased(projectPath, (readOnly) => {
+        CodeGraph.openSync(projectPath, { readOnly }).uninitialize();
+      });
 
       // Clean up any git sync hooks we installed (no-op if none / not a repo).
       try {
@@ -2421,6 +2429,10 @@ program
 
 /**
  * codegraph unlock [path]
+ *
+ * Takes out `.codegraph/codegraph.lock` when it is stale: its first line is not a live pid, or its owner record is
+ * foreign to this project (src/extensions/host/lock-repair.ts).
+ * A lock held by a live process is left as it is: the error names the pid and the command exits 1.
  */
 program
   .command('unlock [path]')
@@ -2434,13 +2446,13 @@ program
         return;
       }
 
-      const lockPath = path.join(getCodeGraphDir(projectPath), 'codegraph.lock');
-      let removed = false;
-      if (fs.existsSync(lockPath)) {
-        fs.unlinkSync(lockPath);
-        removed = true;
+      const { repairLock } = await import('../extensions/host/lock-repair');
+      const repaired = repairLock(projectPath);
+      if (repaired.kind === 'held' || repaired.kind === 'contended') {
+        error(repaired.message);
+        process.exit(1);
       }
-      if (removed) success('Removed stale lock artifacts. You can now run indexing again.');
+      if (repaired.kind === 'removed') success('Removed stale lock artifacts. You can now run indexing again.');
       else info(`No stale lock files found ${getGlyphs().dash} nothing to do`);
     } catch (err) {
       error(`Failed to remove lock: ${err instanceof Error ? err.message : String(err)}`);

@@ -847,12 +847,14 @@ export interface SeedHost {
    */
   queueColdBuild(root: string, approval: ColdBuildApproval): void;
   /**
-   * Run `copy` (the seed of `root`) as a job on the queue. `done: false` when
-   * it did not finish within the host's wait, because a long job was ahead of
+   * Run `copy` (the seed of `root`, which reads the index of `source`) as a job on the queue. The job counts as
+   * a job of `source` as well as of `root` while it is queued or running, and a host that fences roots for their
+   * removal fails it when it starts if `source` or `root` is being removed, before `copy` opens anything.
+   * `done: false` when it did not finish within the host's wait, because a long job was ahead of
    * it: the job stays queued, and {@link buildingRootFor} names `root` until
    * it ends. Rejects with the copy's error when it ran and failed.
    */
-  runSeed<T>(root: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }>;
+  runSeed<T>(root: string, source: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }>;
 }
 
 /**
@@ -1064,7 +1066,7 @@ async function seedOrBuild(
     try {
       // The copy is a job on the builder's queue; one that waits behind a long
       // job past the host's bound keeps its place, and the call answers 'building'.
-      const run = await host.runSeed(worktree, async () => {
+      const run = await host.runSeed(worktree, source, async () => {
         const { method, nonce } = await seedFromSibling(worktree, source);
         registerProject(worktree, { seeded: true, commonDir, seedNonce: nonce });
         process.stderr.write(`[CodeGraph MCP] Seeded the index of ${worktree} from ${source} (${method}).\n`);
@@ -1081,7 +1083,9 @@ async function seedOrBuild(
       // copy that failed (W's index locked by another process past the
       // retries, the copy itself failing) answers the not-indexed guidance,
       // and the next call tries the copy again. W has no index now (an
-      // abandoned one was discarded above), so the worktree is named either way.
+      // abandoned one was discarded above), so the worktree is named either way. A seed refused because its
+      // source (or W) is being removed by `codegraph uninit` ends here too: the caller reads the not-indexed
+      // guidance and stderr says "the index of <root> is being removed".
       return { kind: 'none', worktree };
     }
   }

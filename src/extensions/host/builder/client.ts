@@ -8,7 +8,7 @@
  * exits for any reason but {@link BuilderClient.stop} is started again after a short backoff, and every root
  * this client still holds, or has been told is being built, is sent to it again so the new builder holds it
  * as the old one did. A request while the builder is down waits for the next one (bounded) and then answers
- * as if it had failed: `ensure` answers `none`, `caughtUp` and `release` return, `unfence` returns, and
+ * as if it had failed: `ensure` answers `none`, `caughtUp` and `release` return, `unfence` and `drain` return, and
  * `sync`, `fence`, `cliIndex` and `cliSync` reject. A request in flight when the builder exits rejects
  * ('the index builder exited'); a rebuild lease does not outlive its builder (its locks name a dead pid).
  *
@@ -23,6 +23,7 @@ import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm
 import { LockUnavailableError } from '../../../sync/watcher';
 import type { IndexResult, SyncResult } from '../../../extraction';
 import type { IndexWriteEvent } from './cli-wire';
+import type { FenceKind } from './fences';
 import { isReply, type BuilderReply, type BuilderRequest, type BuilderToServer, type CliIndexMode } from './protocol';
 
 export interface BuilderFreshness {
@@ -171,12 +172,31 @@ export class BuilderClient {
   }
 
   /**
-   * Take the rebuild lease of `root` (a `codegraph index` run through the server): the builder keeps its
+   * Take the rebuild lease of `root` (a `codegraph index` run through the server, or with `kind` `release` a
+   * `codegraph uninit`'s fence under which no builder job opens the root): the builder keeps its
    * `rebuild.pid` until {@link unfence}. Rejects with the builder's refusal (message kept, `.name` set from its
    * class name) when a rebuild already holds the root. No timeout.
    */
-  async fence(root: string): Promise<void> {
-    await this.rpc({ op: 'fence', root });
+  async fence(root: string, kind: FenceKind = 'index'): Promise<void> {
+    await this.rpc(kind === 'index' ? { op: 'fence', root } : { op: 'fence', root, kind });
+  }
+
+  /**
+   * Resolves once no job of `root` runs or waits on the builder's queue, one that reads `root` as its seed
+   * source included (at once when none does); jobs of other roots are not waited for. Never rejects, and answers
+   * at once when the builder is down (it runs no job). Any failure of the request is taken as the builder having
+   * exited (the builder's refusal of the root is not told apart from it), and a builder restarted after a
+   * `release` fence was taken does not have that fence: a residual of the lease not outliving its builder.
+   * No timeout: a running index is waited for. A `release` fence ({@link fence}) taken first keeps new jobs
+   * of the root from starting, so this ends.
+   */
+  async drain(root: string): Promise<void> {
+    if (!this.up) return;
+    try {
+      await this.rpc({ op: 'drain', root });
+    } catch {
+      /* the builder went away: its jobs went with it */
+    }
   }
 
   /**

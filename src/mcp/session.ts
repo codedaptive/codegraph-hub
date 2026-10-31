@@ -152,8 +152,8 @@ export class MCPSession {
   }
 
   /**
-   * Let go of the index leases this connection holds (a `codegraph/indexWrite` `index` that was not ended
-   * by `codegraph/indexWriteEnd`). The daemon calls it when the connection's client is dropped, on a peer
+   * Let go of the index leases this connection holds (a `codegraph/indexWrite` `index` or `release` that was
+   * not ended by `codegraph/indexWriteEnd`). The daemon calls it when the connection's client is dropped, on a peer
    * close and on the reaper's stop; the transport's own stop skips close handlers, so the close handler
    * alone is not enough. Fire-and-forget: the builder answers once the lease's jobs have settled. Never
    * throws.
@@ -317,7 +317,9 @@ export class MCPSession {
    * the builder has let go (`releaseProjectRoot` awaits it). The root names a project
    * the server may hold for any session, so it is not checked against this
    * session's anchor. An in-process `codegraph index` sends it when no builder
-   * serves the write; with a builder, `codegraph/indexWrite` is the route.
+   * serves the write; with a builder, `codegraph/indexWrite` is the route. The in-process `codegraph uninit`
+   * sends it for the same reason, before it deletes the index (with a builder, the `release` op of
+   * `codegraph/indexWrite` is its route).
    */
   private async handleReleaseProject(request: JsonRpcRequest): Promise<void> {
     const root = (request.params as { root?: unknown } | undefined)?.root;

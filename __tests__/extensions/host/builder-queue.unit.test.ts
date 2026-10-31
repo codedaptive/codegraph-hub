@@ -177,6 +177,24 @@ describe('JobQueue', () => {
     await tick();
     expect(idle).toBe(true);
   });
+
+  it('whenRootIdle() counts a job for its own root and for each of its alsoRoots, and for no other root', async () => {
+    const { queue } = recordingQueue();
+    const job = held();
+    const done = queue.enqueue('seed', '/worktree', job.run, { alsoRoots: ['/source'] });
+    await job.started;
+    let source = false;
+    let other = false;
+    void queue.whenRootIdle('/source').then(() => { source = true; });
+    void queue.whenRootIdle('/other').then(() => { other = true; });
+    await tick();
+    expect(other, 'a root the job does not name is idle at once').toBe(true);
+    expect(source, 'the source the seed reads is not idle while the seed runs').toBe(false);
+    job.finish();
+    await done;
+    await tick();
+    expect(source, 'the source is idle once the seed ended').toBe(true);
+  });
 });
 
 describe('job log lines (builder.log)', () => {
