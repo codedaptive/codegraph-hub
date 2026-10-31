@@ -28,6 +28,8 @@ pinned databases open and current [B13].
 
 The CLI commands that write an index (`init`, `index`, `sync`, `checkpoint`/`--fresh`) hand the work to the builder
 when it is running; when it is not, they write in their own process under the writer lock (R-14).
+`codegraph uninit` asks a running server to release the root before it deletes `.codegraph/`; `codegraph unlock`
+removes only a lock whose owner is dead, and with a live holder says so and removes nothing (R-15).
 
 While no server answers, a session is served in-process, read-only: it never writes, seeds or builds an index, and
 it moves to the server as soon as one answers.
@@ -138,6 +140,7 @@ hook, building guidance, and the worktree lifecycle and tools carried from sm.4.
 |---|---|
 | Three `explore`-under-focus defects (queries ledger `reports/focus-grep-blast-defects.md`) | scheduled after sm.5 (queries, then host) |
 | CLI write commands hand their work to a running builder (R-14) | to build (`host`) |
+| `uninit` releases through a running server; `unlock` refuses a live holder (R-15) | to build (`host`) |
 
 ## 9. Out of scope (R-12)
 

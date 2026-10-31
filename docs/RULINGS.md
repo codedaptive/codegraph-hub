@@ -141,3 +141,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
   writer lock), so the CLI stays the repair path.
 - Refines: [B9] (R-11); answers Kong's K-43 (#1307).
 - Work implied: Orc-Codegraph routes the CLI write commands to a running builder (host lane).
+
+## R-15. Q-14: uninit releases through a running server; unlock refuses a live holder
+- Date: 2026-10-31 / Bob ("agreed", to the recommendation).
+- Ruling: `codegraph uninit`, with a server running, asks it to release the root first (the builder's release op),
+  then deletes `.codegraph/`; with none running it deletes as today. `codegraph unlock` stays the repair tool for a
+  lock whose owner is dead; when a live process holds the lock it says so and removes nothing.
+- Refines: R-14; answers Kong's K-45 (#1516).
+- Work implied: Orc-Codegraph routes both changes (host lane).
