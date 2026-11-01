@@ -3026,8 +3026,11 @@ export class ToolHandler {
    * idle timeout; only close releases it here. The trim reads the registry
    * (one small file per root) only for an entry that is idle; arming the idle
    * timer reads it for the oldest roots, up to the first unpinned one.
+   * `maxOpen` is no standing cap: it defaults to none, and only
+   * {@link releaseIdleMemory} passes one, to close every project but the last
+   * one used on a query worker kept through a quiet spell.
    */
-  private trimProjects(): void {
+  private trimProjects(maxOpen = Infinity): void {
     if (this.activeCalls > 0) return;
     for (const resolve of this.idleCallWaiters.splice(0)) resolve();
     const idleMs = resolveProjectIdleTimeoutMs();
@@ -3040,7 +3043,7 @@ export class ToolHandler {
     };
     for (const [root, cg] of this.projectCache) {
       const idle = idleMs > 0 && now - (this.projectUsedAt.get(root) ?? now) >= idleMs;
-      if (!this.closing && !idle) break;
+      if (!this.closing && this.projectCache.size <= maxOpen && !idle) break;
       if (this.projectGates.has(cg)) continue;
       if (!this.closing && pinned(root)) continue;
       this.projectCache.delete(root);
@@ -3155,6 +3158,22 @@ export class ToolHandler {
     } finally {
       this.pendingCloses--;
       this.trimProjects();
+    }
+  }
+
+  /**
+   * A query worker kept through a quiet spell gives back what it can without
+   * going cold: every project but the last one used closes (a pinned one
+   * stays, as it does for the idle close), and what stays open lets go of the
+   * memory it holds only to read faster. The heap needs nothing from here: V8
+   * shrinks an idle thread's by itself, well before the pool's idle delay is up.
+   */
+  releaseIdleMemory(): void {
+    this.trimProjects(1);
+    for (const cg of [this.cg, ...this.projectCache.values()]) {
+      try {
+        cg?.releaseMemory();
+      } catch { /* one that can't let go still answers, and the others still can */ }
     }
   }
 
@@ -5813,7 +5832,7 @@ export class ToolHandler {
     // names, says who holds what, not where the code goes: rocksdb's classes
     // reach everything through them, and they would pull a flow's rank and its
     // file budget away from the code on the flow.
-    const isCFamily = (node: Node | undefined): boolean => node?.language === 'c' || node?.language === 'cpp';
+    const isCFamily = (node: Node | undefined): boolean => node?.language === 'c' || node?.language === 'cpp' || node?.language === 'objc';
     const isCMemberTypeEdge = (edge: Edge): boolean =>
       edge.kind === 'references' && isTypeDeclaration(edge.source) && isCFamily(subgraph.nodes.get(edge.source));
     const connectedToEntry = new Set<string>();
