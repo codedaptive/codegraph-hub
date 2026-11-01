@@ -170,3 +170,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
   PRs and issues itself. `grep`, `blast`, `orphans` and `suspects` are PRs, not fork-only: their logic needs no
   extension hooks. Readings 1-2 of SPEC-upstream draft 1 stand.
   Fork name (Bob): `codedaptive/codegraph-sharedserver`, public.
+
+## R-18. Go on the R-17 plan: upstream refresh first; sm.8 stays installed
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: follow Orc-Codegraph's R-17 plan (`design/Orc-Codegraph/ledger/reports/r17-plan.md`), bringing our code up
+  to current upstream first. The installed 1.6.2-sm.8 stays in use: all testing runs in isolation (development
+  builds on their own socket and state directory, throwaway clones), and Bob is told before any local install or
+  update replaces it.
+- Work implied: Orc-Codegraph starts the plan; any new `sm.N` install waits for Bob's go-ahead.
