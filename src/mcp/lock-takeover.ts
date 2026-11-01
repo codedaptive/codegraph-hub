@@ -337,6 +337,24 @@ function clearDeadGuard(guard: string): boolean {
   return true;
 }
 
+/**
+ * The pid recorded in `${lockPath}.takeover`, for a refusal message after
+ * {@link removeLockIfUnchanged} returned 'busy': the guard's body when it is a
+ * bare pid above zero and not this process's own, otherwise undefined (no
+ * guard, unreadable, empty or malformed, or this process's enclosing
+ * takeover). It is one read made after the busy result, so it names whoever
+ * holds the guard at that moment, which may already be a later taker; it only
+ * labels the refusal and decides nothing.
+ */
+export function takeoverGuardHolder(lockPath: string): number | undefined {
+  const read = readGuard(`${lockPath}.takeover`);
+  if (!read) return undefined;
+  const text = read.snap.raw.trim();
+  if (!/^\d+$/.test(text)) return undefined;
+  const pid = Number(text);
+  return pid > 0 && pid !== process.pid ? pid : undefined;
+}
+
 function acquireGuard(guard: string): boolean {
   if (heldGuards.has(guard)) return false;
   for (let attempt = 0; ; attempt++) {

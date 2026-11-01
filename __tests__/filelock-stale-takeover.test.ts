@@ -148,7 +148,7 @@ describe('FileLock stale takeover (#2979)', () => {
     fs.writeFileSync(`${lockPath}.takeover`, String(breaker.child.pid));
 
     const lock = new FileLock(lockPath);
-    expect(() => lock.acquire()).toThrow(/locked by another process/);
+    expect(() => lock.acquire()).toThrow(new RegExp(`locked by another process \\(PID ${breaker.child.pid}\\)`));
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(DEAD_PID);
     expect(fs.readFileSync(`${lockPath}.takeover`, 'utf8')).toBe(String(breaker.child.pid));
   });
@@ -183,6 +183,22 @@ describe('FileLock stale takeover (#2979)', () => {
     lock.release();
     expect(fs.existsSync(lockPath)).toBe(false);
   });
+
+  // A first line that is not a pid above zero names no process. Zero and -1 are the cases that matter: signal 0
+  // to pid 0 reaches this process's own group, and to -1 every process it may signal, so either would read as live.
+  for (const first of ['0', '-1', 'garbage']) {
+    it(`takes over a lock whose first line is ${first}, which names no process`, () => {
+      fs.writeFileSync(lockPath, `${first}\n`);
+      const lock = new FileLock(lockPath);
+      lock.acquire();
+      try {
+        expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+      } finally {
+        lock.release();
+      }
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
+  }
 
   it('treats a PID it may not signal (EPERM) as a live holder', () => {
     // Another user's process, or an elevated one on Windows: alive, just not ours to signal.

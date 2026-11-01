@@ -7,10 +7,9 @@
  * the JSON stamp `{root, dirId, dbId, pid, pidStart}`. `writer.pid` and `rebuild.pid` are not read here: the
  * commands that need them free say so themselves when one is held (`writerLockHeldMessage`, the rebuild refusal).
  *
- * The lock is judged stale by the rule FileLock.acquire applies, with two deliberate differences: a first line
- * that is not a pid above zero is stale here (FileLock's signal 0 to pid 0 reaches the caller's own process group
- * and holds it, so `unlock` removes a lock `index` refuses); and EPERM counts as running here (FileLock reads it as
- * dead, so `unlock` refuses where `index` would take over).
+ * The lock is judged stale by the rule FileLock.acquire applies, with one difference: an empty lock is stale here
+ * at any age (its first line is not a pid), where FileLock holds one younger than its empty-lock grace because its
+ * creator may still be writing the pid.
  *
  *   - the first line is not a pid above zero: stale (a pid of 0 or below is no process, and signal 0 to pid 0
  *     would address the caller's own process group);

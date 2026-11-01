@@ -4,8 +4,10 @@
  * The host tests that need a separate OS process running the real code from src
  * (dead-lock-victim.ts, lock-takeover-competitor.ts) launch the running node
  * binary on this file. It registers a CommonJS `.ts` loader that strips types
- * with esbuild's transformSync (esbuild is already installed through vite; no
- * new dependency), then requires the fixture. Each .ts file is compiled on its
+ * with esbuild's transformSync, then requires the fixture. esbuild is not
+ * declared in package.json: it is installed because vite depends on it, and
+ * vite is a dependency of vitest (a root devDependency) and a devDependency of
+ * the `ui` workspace. This file works only while vite keeps that dependency. Each .ts file is compiled on its
  * own as Node loads it, so every module keeps its own `__dirname` and resolves
  * its imports (extensionless relative paths, `index.ts` directories, packages
  * in node_modules, dynamic `import()` included) the way the repo's CommonJS

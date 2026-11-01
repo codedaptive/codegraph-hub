@@ -32,7 +32,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createLockFile, removeLockIfUnchanged, snapshotLock, type LockSnapshot } from './mcp/lock-takeover';
+import { createLockFile, removeLockIfUnchanged, snapshotLock, takeoverGuardHolder, type LockSnapshot } from './mcp/lock-takeover';
 
 // ============================================================
 // SECURITY UTILITIES
@@ -484,7 +484,10 @@ export class FileLock {
 
   /**
    * Acquire the lock. Throws if the lock is held by another live process and
-   * its record is not foreign. A lock whose PID is dead or malformed is stale;
+   * its record is not foreign; the message names the holder's PID, or the PID
+   * in the takeover guard when another process is replacing a stale lock
+   * right now. A lock whose PID is dead or malformed (a first line that is not
+   * a pid above zero) is stale;
    * so is one whose second-line record the owner calls foreign (another
    * project's, copied in with its `.codegraph/`, or one whose PID now names a
    * process that started at another time than the recorded `pidStart`), even
@@ -502,6 +505,7 @@ export class FileLock {
     // A lock that exists but cannot be read is held (fail closed).
     let snapshot: LockSnapshot | null;
     try { snapshot = snapshotLock(this.lockPath); } catch { throw locked(); }
+    let removal: ReturnType<typeof removeLockIfUnchanged> | undefined;
     if (snapshot) {
       const content = snapshot.raw;
       // An empty lock its creator may still be writing is held, not stale
@@ -523,21 +527,28 @@ export class FileLock {
       }
       // A long sync can hold the lock for hours. Its age says nothing about
       // whether the writer is still alive; only a dead or malformed PID, or a
-      // foreign record, is stale.
-      if (!foreign && !isNaN(pid) && this.isProcessAlive(pid)) throw locked(pid);
+      // foreign record, is stale. A first line that is not a pid above zero
+      // (NaN, 0, -1) names no process and is stale before any liveness test:
+      // signal 0 to pid 0 or a negative pid addresses a process group (pid 0
+      // the caller's own), which would read as a live holder.
+      if (!foreign && pid > 0 && this.isProcessAlive(pid)) throw locked(pid);
       // Stale (dead process, malformed PID or foreign record): remove it only
       // if it is still the file judged above, under the `.takeover` guard, so
       // a fresh lock another taker created meanwhile is not deleted
       // (residuals: see mcp/lock-takeover). Any
       // result falls through to the exclusive create, which wins only if no
       // lock is in place.
-      try { removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
+      try { removal = removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
     }
     // Write our PID (and our stamp, with an owner), created exclusively
     // (linked into place complete where the filesystem has hard links);
-    // false means another process holds the lock.
+    // false means another process holds the lock. When the removal above was
+    // busy, a live process held the takeover guard and is replacing the stale
+    // lock: the refusal names the pid in that guard, as read now.
     const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
-    if (!createLockFile(this.lockPath, body)) throw locked();
+    if (!createLockFile(this.lockPath, body)) {
+      throw locked(removal === 'busy' ? takeoverGuardHolder(this.lockPath) : undefined);
+    }
     this.held = true;
   }
 
