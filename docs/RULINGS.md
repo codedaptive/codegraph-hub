@@ -120,6 +120,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-7 (graft leftovers) as work for this team; S-33's opt-in gate; S-43's publication hold; the
   performance acceptance carried from MISSION.md/R-8.
 - Work implied: Orc-Codegraph writes the two Q-12 files and plans against docs/SPEC.md draft 3.
+- Note 2026-11-01: the code also has an opt-out, `CODEGRAPH_NO_AUTO_SEED=1`, which turns automatic seeding and cold
+  builds off for the process that sets it (docs/SPEC.md §3). It is consistent with "no opt-in"; nothing sets it.
 
 ## R-13. The harness is not ours
 - Date: 2026-10-30 / Bob (#1243), standing rule.
@@ -149,3 +151,40 @@ General as a RULING line. Decisions already settled by a document live in `team/
   lock whose owner is dead; when a live process holds the lock it says so and removes nothing.
 - Refines: R-14; answers Kong's K-45 (#1516).
 - Work implied: Orc-Codegraph routes both changes (host lane).
+- Confirmed 2026-10-31 (Bob): `uninit` being undone by the next query (R-12, no opt-in) is the intended behaviour.
+
+## R-16. Q-15: builder robustness items closed as non-issues
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: the builder liveness watchdog, a git hook's `sync -q` waiting behind a running job, and a stale
+  `rebuild.pid` after a killed builder are closed as non-issues; they are dealt with only if one ever surfaces.
+- Basis: no hang seen in the builder log; no CodeGraph git hooks are installed in the machine's repositories; a stale
+  `rebuild.pid` is reclaimed.
+- Work implied: none. Answers Orc #1657 (host's cli-builder-route report, Open 1, 3, 4).
+
+## R-17. Offer our work upstream: PRs, a public fork and one issue
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: open pull requests upstream for the changes that make sense on their own; publish a public fork with
+  everything else and open one upstream issue describing what the fork adds, offered for upstream to use as it
+  likes; if upstream wants any of it in the main repository, we volunteer to bring it over.
+- Supersedes: R-10(a)'s "never distributed" (the fork is published) and R-12's deferral of the upstream process.
+- Expanded in `docs/SPEC-upstream.md`. Work implied: Orc-Codegraph plans it; Bob publishes.
+- Amended 2026-10-31 (Bob): the team does the work with `gh`, creating the fork under `codedaptive` and opening the
+  PRs and issues itself. `grep`, `blast`, `orphans` and `suspects` are PRs, not fork-only: their logic needs no
+  extension hooks. Readings 1-2 of SPEC-upstream draft 1 stand.
+  Fork name (Bob): `codedaptive/codegraph-sharedserver`, public.
+
+## R-18. Go on the R-17 plan: upstream refresh first; sm.8 stays installed
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: follow Orc-Codegraph's R-17 plan (`design/Orc-Codegraph/ledger/reports/r17-plan.md`), bringing our code up
+  to current upstream first. The installed 1.6.2-sm.8 stays in use: all testing runs in isolation (development
+  builds on their own socket and state directory, throwaway clones), and Bob is told before any local install or
+  update replaces it.
+- Work implied: Orc-Codegraph starts the plan; any new `sm.N` install waits for Bob's go-ahead.
+
+## R-19. Publishing the R-17 offer
+- Date: 2026-11-01 / Bob, direct (answers Orc #1716).
+- Ruling: (1) open all 14 PRs in one wave; (2) remove every reference to "graft" from what is published (fork and
+  PRs); (3) public commits carry `bob-codedaptive.com <bob@codedaptive.com>`; (4) promote the upstream merge to
+  `ours` as sm.9, without installing it (R-18 still holds: ask Bob before any install).
+- Work implied: Orc-Codegraph publishes per `design/Orc-Codegraph/ledger/reports/r17-publish-plan.md` once Kong's
+  read and the per-branch suites are clean.
