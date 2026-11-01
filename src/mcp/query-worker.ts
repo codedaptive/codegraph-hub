@@ -23,8 +23,9 @@
  * When the pool shrinks after a burst it sends `retire` to an idle worker: the
  * worker closes every CodeGraph it opened, collects garbage (see
  * src/worker-teardown.ts), answers `retired` and exits 0. The one worker the
- * shrink leaves is sent `trim` once it has been idle as long: it shrinks in
- * place (ToolHandler.releaseIdleMemory) and answers `trimmed` with the bytes it
+ * retirement leaves is sent `trim` once it has been idle for the pool's
+ * `idleShrinkMs` (5 min by default) and has served since its last trim: it
+ * shrinks in place (ToolHandler.releaseIdleMemory) and answers `trimmed` with the bytes it
  * still holds, so the next call finds it warm.
  *
  * When a project goes away (the housekeeping sweep tears down a removed

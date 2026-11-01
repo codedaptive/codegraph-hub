@@ -3,9 +3,12 @@
  *
  * The pool grows toward its size on a burst of concurrent calls. A worker that
  * then sits idle (no call in flight) for `idleTimeoutMs` is retired, oldest
- * idle first, down to one started worker (a worker still starting does not
- * count toward the floor). Retiring is a handshake, not a crash: the pool
- * drops the worker from its live set, posts `{ type: 'retire' }`, and waits for the worker's exit (terminating it only
+ * idle first, except the worker that served last, which goes only as the sole
+ * idle worker, down to one started worker (a worker still starting does not
+ * count toward the floor; the worker that stays is trimmed on its own clock,
+ * `idleShrinkMs`, covered in query-pool-idle-trim.test.ts). Retiring is
+ * a handshake, not a crash: the pool drops the worker from its live set, posts
+ * `{ type: 'retire' }`, and waits for the worker's exit (terminating it only
  * after `startSettleMs`). It never respawns, never counts toward the crash
  * budget, and leaves `healthy` and `ready` true. The worker answers `retire`
  * by closing every CodeGraph it opened, posting `{ type: 'retired', closed }`
@@ -417,7 +420,9 @@ describe('query pool idle retirement (real workers)', () => {
     vi.stubEnv('CODEGRAPH_QUERY_POOL_SIZE', '2');
     vi.stubEnv('CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS', '500');
     // Keep the handler's own per-project idle release out of the fd counts:
-    // only a worker's retirement may close its connections here.
+    // only a worker's retirement may close its connections here. A trim also
+    // closes projects; the default idleShrinkMs (5 min) keeps it out of this
+    // test's window.
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
   });
 

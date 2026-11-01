@@ -3217,7 +3217,7 @@ export class ToolHandler {
    * going cold: every project but the last one used closes (a pinned one
    * stays, as it does for the idle close), and what stays open lets go of the
    * memory it holds only to read faster. The heap needs nothing from here: V8
-   * shrinks an idle thread's by itself, well before the pool's idle delay is up.
+   * shrinks an idle thread's by itself, well before the pool's `idleShrinkMs` is up.
    */
   releaseIdleMemory(): void {
     this.trimProjects(1);
