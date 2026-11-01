@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { canonicalProjectRoot } from '../../../directory';
 import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm-runtime-flags';
-import { LockUnavailableError } from '../../../sync/watcher';
+import { LockUnavailableError } from '../../../errors';
 import type { IndexResult, SyncResult } from '../../../extraction';
 import type { IndexWriteEvent } from './cli-wire';
 import type { FenceKind } from './fences';

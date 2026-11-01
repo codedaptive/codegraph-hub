@@ -13,10 +13,15 @@
  *
  * The sequence, each step before anything is opened:
  *  1. a missing or blank tool name -> InvalidParams;
- *  2. a name that is neither a built-in nor a loaded extension's tool -> InvalidParams;
- *  3. {@link sessionCallGuard}: required `projectPath` inside the repo anchor,
+ *  2. `arguments` that are not an object (a string, number, boolean or array;
+ *     missing, null or another falsy value mean none) -> InvalidParams
+ *     ({@link TOOL_ARGUMENTS_NOT_OBJECT}). It is a malformed request, the
+ *     client's to fix, so it is never run: run, a string made the handler
+ *     throw, which came back as an internal codegraph error to retry (#2981);
+ *  3. a name that is neither a built-in nor a loaded extension's tool -> InvalidParams;
+ *  4. {@link sessionCallGuard}: required `projectPath` inside the repo anchor,
  *     otherwise its success-shaped guidance;
- *  4. `execute` with the guard's absolute `projectPath` substituted, the
+ *  5. `execute` with the guard's absolute `projectPath` substituted, the
  *     session's {@link indexRootAdmission}, which `execute` insists on for an MCP
  *     engine's handler, the anchor's root, where the index builder cold-builds
  *     a path outside git that has no index, and the session's own tool
@@ -37,6 +42,7 @@
 import { ErrorCodes } from '../../../mcp/transport';
 import { isKnownTool, type ToolHandler, type ToolResult } from '../../../mcp/tools';
 import type { ExploreSessionState } from '../../../mcp/explore-session-state';
+import type { IndexVersionWarningState } from '../../../mcp/index-version-warning';
 import { indexRootAdmission, sessionCallGuard, type RepoAnchor } from './repo-anchor';
 import {
   SESSION_FOCUS_ARG,
@@ -44,6 +50,9 @@ import {
   withoutSessionArgs,
   type SessionToolList,
 } from './session-scope';
+
+/** The invalid-params message for a `tools/call` whose `arguments` are not an object. */
+export const TOOL_ARGUMENTS_NOT_OBJECT = 'Tool arguments must be an object';
 
 /** What one `tools/call` came to: the tool's answer, or a JSON-RPC error to reply with. */
 export type ToolCallOutcome =
@@ -61,6 +70,11 @@ export interface ToolCallInput {
   anchor: RepoAnchor | null;
   /** The calling session's explore history (CG-17); omitted when the caller keeps none. */
   exploreSession?: ExploreSessionState;
+  /**
+   * The calling client's one-time stale-index warnings (`IndexVersionWarningState`);
+   * omitted when the caller keeps none, and no warning is then added.
+   */
+  indexVersionWarnings?: IndexVersionWarningState;
   /**
    * The session's focus: normalised directories relative to the repository root
    * (`sessionFocusEntries`), `[]` or omitted for a session with none.
@@ -93,12 +107,16 @@ export async function dispatchToolCall(call: ToolCallInput): Promise<ToolCallOut
   if (typeof toolName !== 'string' || toolName.trim() === '') {
     return { error: { code: ErrorCodes.InvalidParams, message: 'Missing tool name' } };
   }
+  const rawArgs = params?.arguments || {};
+  if (!isRecord(rawArgs)) {
+    return { error: { code: ErrorCodes.InvalidParams, message: TOOL_ARGUMENTS_NOT_OBJECT } };
+  }
   if (!isKnownTool(toolName)) {
     return { error: { code: ErrorCodes.InvalidParams, message: `Unknown tool: ${toolName}` } };
   }
 
   // Strip first: the keys are the session's to set, never the wire's.
-  const args = withoutSessionArgs(isRecord(params?.arguments) ? params.arguments : {});
+  const args = withoutSessionArgs(rawArgs);
   const guarded = await sessionCallGuard(args, call.anchor);
   if ('answer' in guarded) return { toolName, result: guarded.answer };
 
@@ -119,6 +137,7 @@ export async function dispatchToolCall(call: ToolCallInput): Promise<ToolCallOut
       admitIndexRoot: indexRootAdmission(call.anchor!),
       anchorRoot: call.anchor!.root,
       toolAllowlist: call.toolAllowlist,
+      indexVersionWarnings: call.indexVersionWarnings,
     },
   );
   return { toolName, result };

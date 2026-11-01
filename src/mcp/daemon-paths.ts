@@ -33,7 +33,6 @@
  * they still converge on whichever the server bound with zero coordination.
  */
 
-import * as crypto from 'crypto';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
@@ -52,7 +51,9 @@ const POSIX_SOCKET_PATH_LIMIT = 100;
  * collisions negligible.
  */
 function stateIdHash(stateId: string): string {
-  return crypto.createHash('sha256').update(stateId).digest('hex').slice(0, 16);
+  // `crypto` is the slowest builtin to load, and every CLI command loads this file.
+  const { createHash } = require('crypto') as typeof import('crypto');
+  return createHash('sha256').update(stateId).digest('hex').slice(0, 16);
 }
 
 /**

@@ -415,6 +415,8 @@ export function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
 }
 
+const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\]/;
+
 /**
  * Escape `text` to match itself literally inside a regular expression.
  * Symbol names are not always plain words: C++'s `operator++` and
@@ -423,8 +425,18 @@ export function normalizePath(filePath: string): string {
  * is read as pattern syntax and may not compile at all.
  */
 export function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Most text here is an identifier, with nothing to escape.
+  return REGEXP_SYNTAX.test(text) ? text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : text;
 }
+
+/**
+ * An empty lock file younger than this is still being written by the process
+ * that created it (#2979): where hard links are missing, the lock is created
+ * with an exclusive create first and the PID lands a moment later (see
+ * `createLockFile`). Only a crash leaves one empty for long, and FAT's 2 s
+ * timestamps stay well inside this.
+ */
+const EMPTY_LOCK_GRACE_MS = 10_000;
 
 /**
  * The project that takes a {@link FileLock}. `stamp()` is the record written
@@ -477,7 +489,9 @@ export class FileLock {
    * project's, copied in with its `.codegraph/`, or one whose PID now names a
    * process that started at another time than the recorded `pidStart`), even
    * when its PID is alive. A record at the owner's own root whose PID is alive
-   * and started when recorded (or that records no start time) holds.
+   * and started when recorded (or that records no start time) holds. An empty
+   * lock younger than {@link EMPTY_LOCK_GRACE_MS} holds too: its creator is
+   * still writing the PID.
    */
   acquire(): void {
     const locked = (pid?: number) => new Error(
@@ -490,6 +504,10 @@ export class FileLock {
     try { snapshot = snapshotLock(this.lockPath); } catch { throw locked(); }
     if (snapshot) {
       const content = snapshot.raw;
+      // An empty lock its creator may still be writing is held, not stale
+      // (#2979); an old empty one, left by a crash, is stale like any
+      // malformed body.
+      if (content.trim() === '' && this.youngerThanGrace()) throw locked();
       // parseInt stops at the first newline: the PID is the first line.
       const pid = parseInt(content.trim(), 10);
       // The record is exactly the second line, parsed as JSON and never
@@ -521,6 +539,15 @@ export class FileLock {
     const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
     if (!createLockFile(this.lockPath, body)) throw locked();
     this.held = true;
+  }
+
+  /** True while the lock file's mtime is within {@link EMPTY_LOCK_GRACE_MS}; false when it cannot be read. */
+  private youngerThanGrace(): boolean {
+    try {
+      return Date.now() - fs.statSync(this.lockPath).mtimeMs < EMPTY_LOCK_GRACE_MS;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -572,8 +599,9 @@ export class FileLock {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // EPERM: it exists but is not ours to signal (another user's, or elevated on Windows).
+      return (err as NodeJS.ErrnoException).code === 'EPERM';
     }
   }
 }
