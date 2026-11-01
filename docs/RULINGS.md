@@ -180,3 +180,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
   builds on their own socket and state directory, throwaway clones), and Bob is told before any local install or
   update replaces it.
 - Work implied: Orc-Codegraph starts the plan; any new `sm.N` install waits for Bob's go-ahead.
+
+## R-19. Publishing the R-17 offer
+- Date: 2026-11-01 / Bob, direct (answers Orc #1716).
+- Ruling: (1) open all 14 PRs in one wave; (2) remove every reference to "graft" from what is published (fork and
+  PRs); (3) public commits carry `bob-codedaptive.com <bob@codedaptive.com>`; (4) promote the upstream merge to
+  `ours` as sm.9, without installing it (R-18 still holds: ask Bob before any install).
+- Work implied: Orc-Codegraph publishes per `design/Orc-Codegraph/ledger/reports/r17-publish-plan.md` once Kong's
+  read and the per-branch suites are clean.
