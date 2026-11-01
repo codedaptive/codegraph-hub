@@ -2796,11 +2796,12 @@ export class ToolHandler {
   /**
    * The index root a call on `projectPath` selects: {@link selectOwnIndexRoot} on a handler with a builder (a git
    * repository nested in an indexed checkout is its own worktree root, so the checkout's index does not answer
-   * for it, covered or not: the builder seeds or builds one for the nested repository unless automatic indexing
-   * is off, the call answers the building note while that runs, and the not-indexed guidance when the copy or
-   * build fails), {@link selectIndexRoot} on one without (the CLI, the read-only fallback, query workers: nothing
-   * builds there, and {@link uncoveredNestedRepo} guards the nested case instead). The one place the choice
-   * is made, for the selection, the builder question, the sensitive-path refusal and the focus root.
+   * for it, covered or not: the builder seeds or builds one for the nested repository unless
+   * CODEGRAPH_NO_AUTO_SEED=1 turns automatic indexing off, the call answers the building note while that runs,
+   * and the not-indexed guidance when the copy or build fails), {@link selectIndexRoot} on one without (the CLI,
+   * the read-only fallback, query workers: nothing builds there, and {@link uncoveredNestedRepo} guards the nested
+   * case instead). The one place the choice is made, for the selection, the builder question, the sensitive-path
+   * refusal and the focus root.
    */
   private selectIndexRootForCall(projectPath: string): string | null {
     return this.builder ? selectOwnIndexRoot(projectPath) : selectIndexRoot(projectPath);

@@ -153,9 +153,9 @@ export function ownIndexRootFor(projectPath: string, candidate: string | null): 
  * {@link selectIndexRoot} for the engines that build their own indexes (the server with an index builder, and
  * the builder itself): the index root that is `projectPath`'s own ({@link ownIndexRootFor}). Null for a path in
  * a nested repository that has no index of its own: the builder seeds or builds one for that repository
- * (unless automatic indexing is off), the call answers the building note while that runs, and the
- * not-indexed guidance when the copy or build fails. Handlers with no builder (the CLI, the in-process read-only
- * fallback, query workers) keep {@link selectIndexRoot}.
+ * (unless CODEGRAPH_NO_AUTO_SEED=1 turns automatic indexing off), the call answers the building note while that
+ * runs, and the not-indexed guidance when the copy or build fails. Handlers with no builder (the CLI, the
+ * in-process read-only fallback, query workers) keep {@link selectIndexRoot}.
  */
 export function selectOwnIndexRoot(projectPath: string): string | null {
   return ownIndexRootFor(projectPath, selectIndexRoot(projectPath));
