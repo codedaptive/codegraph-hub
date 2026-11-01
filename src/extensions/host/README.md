@@ -185,8 +185,8 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   (`ownIndexRootFor` fails closed), and the call gets the builder's not-indexed guidance. That holds on a builder engine
   whether or not the outer index covers the nested repository: an embedded clone that is not gitignored,
   or a submodule, is still not answered from the outer index; it gets its own. The builder seeds it from
-  its own sibling worktrees or cold-builds it at its own root, unless automatic indexing is off; calls
-  answer the building note while that runs, and the not-indexed guidance when the copy or build fails.
+  its own sibling worktrees or cold-builds it at its own root, unless `CODEGRAPH_NO_AUTO_SEED=1` turns automatic
+  indexing off; calls answer the building note while that runs, and the not-indexed guidance when the copy or build fails.
   (A linked worktree of the checkout's own repository still borrows the checkout's index until it is
   seeded.) A path in a different repository than the session's still gets the anchor guidance. The proxy's
   in-process fallback (the server unreachable) and the query workers have no builder and are read-only;
