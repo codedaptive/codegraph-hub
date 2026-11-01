@@ -199,3 +199,10 @@ General as a RULING line. Decisions already settled by a document live in `team/
   install or update), R-19 (the R-17 publishing answers).
 - Work implied: Orc-Codegraph restarts every lane on its backlog and finishes R-17's publication; a status for Bob
   in the morning naming what was done, what was not, and why.
+
+## R-21. No Linux/Windows validation before the upstream PRs
+- Date: 2026-11-01 / Bob, direct ("this can not be done").
+- Ruling: the lock PRs (and every R-17 PR) go upstream without Linux or Windows validation. Each PR text says it was
+  tested on macOS only, so the maintainer can validate the other platforms.
+- Supersedes: Orc-Codegraph's todo item to validate the lock PRs on Windows and Linux before opening them.
+- Work implied: Orc-Codegraph drops that step and checks the PR texts say macOS only.
