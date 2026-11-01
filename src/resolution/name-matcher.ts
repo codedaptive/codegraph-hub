@@ -8887,6 +8887,13 @@ interface RustModBlock {
   close: number;
   /** The inline module it is declared in, or null for the file's own top level. */
   parent: RustModBlock | null;
+  /**
+   * The braces of the function body, or other block, it is declared in
+   * (`fn f() { mod a { … } }`): the module is `a` there alone and is no item
+   * of the module around it. Undefined for a module's own `mod`, in a macro's
+   * braces too.
+   */
+  scope?: RustUseScope;
 }
 
 const RUST_CRATES = new WeakMap<ResolutionContext, Set<string>>();
@@ -9299,9 +9306,16 @@ function rustCodeBraces(text: string): number[] {
 /** The inline `mod name { … }` blocks of a file's text (comments already blanked), in source order. */
 function rustModBlocks(text: string, codeBraces: () => readonly number[] = () => rustCodeBraces(text)): { blocks: RustModBlock[]; balanced: boolean } {
   const heads = new Map<number, string>();
-  for (const m of text.matchAll(/\bmod\s+(?:r#)?([A-Za-z_]\w*)\s*\{/g)) heads.set(m.index! + m[0].length - 1, m[1]!);
+  const kws: number[] = [];
+  for (const m of text.matchAll(/\bmod\s+(?:r#)?([A-Za-z_]\w*)\s*\{/g)) {
+    heads.set(m.index! + m[0].length - 1, m[1]!);
+    kws.push(m.index!);
+  }
   const blocks: RustModBlock[] = [];
   if (heads.size === 0) return { blocks, balanced: true };
+  // The block each `mod` is written in, if it is in a block rather than a module (rustUseScopes).
+  const scopes = rustUseScopes(text, kws, codeBraces(), new Set(heads.keys()));
+  const scopeOf = new Map<number, RustUseScope | undefined>([...heads.keys()].map((at, i) => [at, scopes?.[i]]));
   const open: Array<RustModBlock | null> = [];
   let inner: RustModBlock | null = null;
   let balanced = true;
@@ -9309,7 +9323,9 @@ function rustModBlocks(text: string, codeBraces: () => readonly number[] = () =>
   for (const at of codeBraces()) {
     if (text[at] === '{') {
       const name = heads.get(at);
-      const block: RustModBlock | null = name === undefined ? null : { name, open: at, close: text.length, parent: inner };
+      const scope = scopeOf.get(at);
+      const block: RustModBlock | null = name === undefined ? null
+        : scope ? { name, open: at, close: text.length, parent: inner, scope } : { name, open: at, close: text.length, parent: inner };
       if (block) {
         blocks.push(block);
         inner = block;
@@ -9728,7 +9744,8 @@ function rustLibModule(crateDir: string, context: ResolutionContext): RustModule
 }
 
 /**
- * The module `name` that `m` declares: inline (`mod name { … }`), else
+ * The module `name` that `m` declares: inline (`mod name { … }`, other than
+ * one a function declares in its own body), else
  * `<name>.rs` or `<name>/mod.rs` in its directory, else one it passes on under
  * that name — dioxus's `pub use dioxus_hooks as hooks;`. One a `#[path]`
  * puts elsewhere is the file it names when `m` declares it once, whatever
@@ -9745,7 +9762,8 @@ function rustSubmodule(m: RustModule, name: string, context: ResolutionContext, 
     const target = decls.length === 1 ? decls[0]!.target : null;
     return target !== null && context.fileExists(target) ? { file: target, dir: rustParentDir(target), block: null, root: false } : null;
   }
-  const block = layout.blocks.find((b) => b.name === name && b.parent === m.block);
+  // (A `mod` a function declares in its body is no item of `m`.)
+  const block = layout.blocks.find((b) => b.name === name && b.parent === m.block && !b.scope);
   if (block) return { file: m.file, dir, block, root: false };
   for (const file of [`${dir}.rs`, `${dir}/mod.rs`]) {
     if (context.fileExists(file)) return { file, dir, block: null, root: false };
@@ -10461,10 +10479,13 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * associated item, nor a function's local item. Null when the path names no
  * module the project holds, or one that holds nothing by that name — and for
  * one whose head a `use` takes from the standard library (`fs::read` under
- * `use std::fs;`), whatever module of that name the project has.
+ * `use std::fs;`), whatever module of that name the project has. A head a
+ * `use` in a function's body binds is the path that `use` names (`use
+ * crate::b as a;` makes `a::take()` `crate::b::take()`), and one a `mod`
+ * declared in the body names is no module the walk reaches: null.
  */
 export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): Node | null {
-  const segs = ref.referenceName.replace(/^::/, '').split('::');
+  let segs = ref.referenceName.replace(/^::/, '').split('::');
   if (segs.length < 2 || !segs.every((s) => /^[A-Za-z_]\w*$/.test(s))) return null;
   const variants = ref.referenceKind === 'imports';
   const offset = rustRefOffset(ref, context);
@@ -10478,11 +10499,28 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
   const ownerUse = typed && segs.length === 2 ? rustVisibleUse(owner, ref.filePath, offset, context) : undefined;
   if (typed && (ref.referenceKind !== 'calls' || owner === 'Self' || (segs.length === 2 && !ownerUse?.paths.length))) return null;
   const from = rustModuleAt(ref.filePath, offset, context);
-  const head = segs[0]!;
-  const bare = head !== 'crate' && head !== 'self' && head !== 'super';
+  let head = segs[0]!;
+  let bare = head !== 'crate' && head !== 'self' && head !== 'super';
   if (bare) {
     const bound = rustVisibleUse(head, ref.filePath, offset, context);
     if (bound && bound.std.length > 0 && bound.paths.length === 0) return null;
+    // A head a `use` in the function's body (or a block in it) binds is the
+    // path that `use` names there — `use crate::b as a;` makes `a::Cache::open()`
+    // `crate::b::Cache::open()` — never the module of that name the walk from
+    // the enclosing module would find. A head the `use`s name differently, or a
+    // type a `use` binds (`Cache::open()`, read below), is left to the walk.
+    if (bound && bound.block !== -1 && bound.paths.length > 0 && !variants && !(typed && segs.length === 2)) {
+      const via = bound.paths[0]!.segs;
+      if (bound.paths.some((p) => p.segs.join('::') !== via.join('::'))) return null;
+      segs = [...via, ...segs.slice(1)];
+      head = segs[0]!;
+      bare = head !== 'crate' && head !== 'self' && head !== 'super';
+    }
+    // So does a `mod` declared in the body, or in a block in it, around the
+    // reference: `a` is that module there, which the walk does not read
+    // (rustSubmodule takes a module's own `mod`s alone).
+    if (rustUsesOf(ref.filePath, context).blocks.some((b) => b.name === head && b.scope !== undefined && b.parent === from.block &&
+        b.scope.open < offset && offset < b.scope.close)) return null;
   }
   let memo = RUST_PATH_TARGETS.get(context);
   if (!memo) RUST_PATH_TARGETS.set(context, (memo = new Map()));
@@ -10530,8 +10568,11 @@ const RUST_TYPE_MEMBERS = new WeakMap<ResolutionContext, Map<string, string | nu
  * The associated item `member` of a Rust type, as `Type::member` reaches it:
  * an enum's variant; else the type's own (inherent) function or `const`, a
  * trait impl's only when it is the one item of that name; a trait's own
- * declared method. An impl of the type is written in the type's crate, so a
- * namesake type's impl in another crate is never it. Null when none is.
+ * declared method. An impl of the type is written in the type's crate, and
+ * its header names the type itself (rustImplSelfItems), so a namesake type's
+ * impl — in another crate, in another inline module of the file, in a
+ * function's body, or for a reference to the type — is never it. Null when
+ * none is.
  */
 function rustTypeMember(type: Node, member: string, context: ResolutionContext): Node | null {
   if (type.language !== 'rust' || !RUST_DECLARED_TYPE_KINDS.has(type.kind) || type.kind === 'type_alias') return null;
@@ -10545,8 +10586,13 @@ function rustTypeMember(type: Node, member: string, context: ResolutionContext):
   if (!found) {
     const graph = rustCrateGraph(context);
     const crate = rustCrateDirOf(type.filePath, graph);
-    const within = (n: Node): boolean => type.kind !== 'trait' ||
-      (n.filePath === type.filePath && n.startLine >= type.startLine && n.startLine <= (type.endLine ?? type.startLine));
+    // A trait's own declaration is written in the trait's body. Any other
+    // type's item is written in an `impl` whose header names that type, walked
+    // from the module the `impl` is in: a namesake type's (in another inline
+    // module of the file, or one a function declares for itself) does not.
+    const within = (n: Node): boolean => type.kind === 'trait'
+      ? n.filePath === type.filePath && n.startLine >= type.startLine && n.startLine <= (type.endLine ?? type.startLine)
+      : rustImplSelfItems(n, context)?.has(type.id) === true;
     const all = context.getNodesByName(member).filter((n) => n.language === 'rust' && RUST_MEMBER_KINDS.has(n.kind) &&
       n.qualifiedName === `${type.name}::${member}` && rustCrateDirOf(n.filePath, graph) === crate && within(n));
     const inherent = all.filter((n) => !isRustTraitImplMethod(n, context));
@@ -12333,8 +12379,7 @@ function rustMethodsNamed(name: string, method: string, context: ResolutionConte
 /**
  * The `Name::method` nodes of the types a lookup found: a namesake type's
  * methods are its own. A method is the type's when it sits in the type's
- * file, or its impl's file names the type by that name. Given no types, every
- * type's `Name::method` (the trait's own declarations excepted).
+ * file, or its impl's file names the type by that name.
  */
 function rustOwnedMethods(name: string, method: string, lookup: RustTypeLookup, context: ResolutionContext): Node[] {
   // A trait's own declaration of the method is the trait's, whatever type
@@ -12389,99 +12434,6 @@ function rustImplSelfItems(method: Node, context: ResolutionContext): Set<string
   // A bare name is looked up in the impl's own module, as `self::Cache`.
   const segs = type.segments.length > 0 ? [...type.segments, type.name] : ['self', type.name];
   return rustWalkedItems(segs, method.filePath, block.at, context);
-}
-
-/**
- * A Rust call written as a module path of three or more segments to a type's
- * associated function — `crate::store::Cache::open(…)`,
- * `other_crate::Cache::open(…)`; a two-segment `Cache::open` is colonMatch's —
- * is the one method of the struct, enum or union the path walks to, from the
- * module the call is written in (as rustPathTarget walks a path to a module's
- * item) or, for a 2015 path, from its crate's root. Only a type the walk names
- * counts: no guess by the modules' names, which could pick a namesake in a
- * crate the path never reaches. A method is the type's only when the type its
- * `impl` header names, walked from the `impl`'s module, is that walked type
- * (rustImplSelfItems): the `impl` may sit in another file, a namesake type's
- * `impl` in the same file is not the type's, and neither is the `impl` of a
- * type a function declares in its own body nor an `impl` for a reference to
- * the type (`impl Open for &Cache`). Null for a path written with a leading
- * `::` (`::a::Cache::open()`): since Rust 2018 that names the external crate
- * `a`, which the walk from the module would mistake for the calling crate's
- * own `mod a` when it declares one; the external crate is not walked, and no
- * edition is read, so a 2015 crate's `::a::…` (its root's `a`) is declined
- * too. Null when the walk
- * reaches a trait (whose methods belong to whatever implements it) or an
- * alias (the walk does not follow it to the type it names), no type, std or
- * an out-of-project crate, or when the type has no single method of that
- * name — a trait's provided method, which no `impl` of the type writes,
- * included. Null too when the function's body, or a block in it around the
- * call, gives the path's first segment a meaning of its own: a `use` binding
- * it to a project path (`use crate::b as a; a::Cache::open()`), or a module
- * of that name declared anywhere in that block (`mod a { … }
- * a::Cache::open()`). The walk from the module does not read that `use`, and
- * does not tell that `mod` from the module's own `a`.
- */
-function matchRustTypePathMethod(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-  // `::a::Cache::open()`: since Rust 2018 a leading `::` names the external
-  // crate `a`, which the walk from the module would take for the calling
-  // crate's own `mod a`. No edition is read, so a 2015 crate's `::a::…` (its
-  // root's `a`) is declined too.
-  if (ref.referenceName.startsWith('::')) return null;
-  const segs = ref.referenceName.split('::');
-  if (segs.length < 3 || !segs.every((s) => /^[A-Za-z_]\w*$/.test(s))) return null;
-  const method = segs[segs.length - 1]!;
-  const type = segs[segs.length - 2]!;
-  // Modules are snake_case and types PascalCase: `a::B::C::f` is no module path to a type.
-  if (!/^[A-Z]/.test(type) || segs.slice(0, -2).some((s) => /^[A-Z]/.test(s))) return null;
-  const head = segs[0]!;
-  // `std::sync::Arc::new(…)`: std's. The walk would find no project item for
-  // it either (rustWalkModules), so this only skips the work.
-  if (RUST_STD_ROOTS.has(head)) return null;
-  const offset = rustRefOffset(ref, context);
-  const bare = head !== 'crate' && head !== 'self' && head !== 'super';
-  if (bare) {
-    // `fs::File::open(…)` under `use std::fs;`: std's, whatever the project names `fs`.
-    const bound = rustVisibleUse(head, ref.filePath, offset, context);
-    if (bound && bound.std.length > 0 && bound.paths.length === 0) return null;
-    // `use crate::b as a;` in the function's body makes `a` crate::b there;
-    // the walk from the module would take the module's own `a`.
-    if (bound && bound.block !== -1 && bound.paths.length > 0) return null;
-    // So does `mod a { … }` declared anywhere in the function's body, or in a
-    // block in it around the call: `a` is that module there. Such a `mod` is
-    // one whose innermost braces are no module's own (as rustImplSelfItems
-    // tells an `impl` in a block from one in a module's body); a macro's
-    // braces count as a block, so one in `cfg_x! { … }` around the call
-    // declines too.
-    const uses = rustUsesOf(ref.filePath, context);
-    const mod = rustBlockAt(uses.blocks, offset);
-    const local = uses.blocks.filter((b) => b.name === head && b.parent === mod);
-    const scopes = local.length > 0 ? rustScopesOf(ref.filePath, context) : null;
-    if (scopes && local.some((b) => {
-      const block = rustInnerBlockAt(scopes, b.open);
-      return block !== null && block[0] !== mod?.open && block[0] < offset && offset < block[1];
-    })) return null;
-    if (!rustProjectCrates(context).has(head) && rustDependencyCrates(context).has(head)) return null;
-  }
-  const typePath = segs.slice(0, -1);
-  let walked: Node[] | null = null;
-  const ids = rustWalkedItems(typePath, ref.filePath, offset, context);
-  if (ids !== null) walked = [...ids].map((id) => context.getNodeById?.(id)).filter((n): n is Node => n != null);
-  else if (bare) {
-    const root = rustCrateRootModule(ref.filePath, context);
-    if (root) walked = rustUsePathItems(typePath, root, context, new Set());
-  }
-  const types = (walked ?? []).filter((n) => n.language === 'rust' && RUST_OWNER_KINDS.has(n.kind));
-  // A walk to a trait or an alias names no type, and so no type's method.
-  if (types.length === 0) return null;
-  const typeIds = new Set(types.map((t) => t.id));
-  // By the impl's header, not its file: an inline `mod b`'s namesake `Cache`
-  // shares the walked type's file, as does a `Cache` a function declares for
-  // itself, and a split `impl` lives in another one.
-  const methods = rustMethodsNamed(type, method, context).filter((m) => m.kind === 'method' &&
-    [...(rustImplSelfItems(m, context) ?? [])].some((id) => typeIds.has(id)));
-  if (methods.length !== 1) return null;
-  const target = methods[0]!;
-  return { original: ref, targetNodeId: target.id, confidence: target.filePath === ref.filePath ? 0.9 : 0.8, resolvedBy: 'qualified-name' };
 }
 
 /**
@@ -23211,8 +23163,6 @@ export function matchMethodCall(
     // is a call on the function's object: a member of its class, of a class
     // it derives from or of one it is nested in, when one has that name.
     if (ref.language === 'cpp') return nmTimedT('mc-cppthis', ref, () => matchCppImplicitThisCall(ref, context)) ?? null;
-    // A Rust `crate::m::Type::method(…)`: the method of the type the path walks to.
-    if (ref.language === 'rust' && ref.referenceKind === 'calls') return matchRustTypePathMethod(ref, context);
     return null;
   }
 
