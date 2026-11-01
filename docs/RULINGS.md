@@ -158,3 +158,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Basis: no hang seen in the builder log; no CodeGraph git hooks are installed in the machine's repositories; a stale
   `rebuild.pid` is reclaimed.
 - Work implied: none. Answers Orc #1657 (host's cli-builder-route report, Open 1, 3, 4).
+
+## R-17. Offer our work upstream: PRs, a public fork and one issue
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: open pull requests upstream for the changes that make sense on their own; publish a public fork with
+  everything else and open one upstream issue describing what the fork adds, offered for upstream to use as it
+  likes; if upstream wants any of it in the main repository, we volunteer to bring it over.
+- Supersedes: R-10(a)'s "never distributed" (the fork is published) and R-12's deferral of the upstream process.
+- Expanded in `docs/SPEC-upstream.md`. Work implied: Orc-Codegraph plans it; Bob publishes.
