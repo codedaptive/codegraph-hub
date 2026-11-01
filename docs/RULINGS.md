@@ -169,3 +169,4 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Amended 2026-10-31 (Bob): the team does the work with `gh`, creating the fork under `codedaptive` and opening the
   PRs and issues itself. `grep`, `blast`, `orphans` and `suspects` are PRs, not fork-only: their logic needs no
   extension hooks. Readings 1-2 of SPEC-upstream draft 1 stand.
+  Fork name (Bob): `codedaptive/codegraph-sharedserver`, public.

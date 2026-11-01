@@ -1,6 +1,6 @@
 # SPEC: offering our work upstream
 
-Draft 3, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
+Draft 4, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
 `colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
 
 ## 1. What Bob decided
@@ -58,7 +58,7 @@ and `declaredSupertypes` reading a nested type's inheritance clause.
 
 **The fork** is upstream plus every feature on `ours`, under a public GitHub fork of `colbymchenry/codegraph` in the `codedaptive` organisation. `codedaptive/codegraph` is
 already taken by our private repository (not a GitHub fork), so the public fork takes another name,
-`codedaptive/codegraph-fork`. **[check 3]** It
+`codedaptive/codegraph-sharedserver`, public (Bob, R-17). It
 carries the product only: no `fleet/`, no fork-only root `Makefile` (codeteam's targets), no `docs/RULINGS.md`, team
 reports or graft golden files. (R-17) Its README opens with a section on what the fork adds and how to
 use it.
@@ -91,4 +91,4 @@ Linux and Windows, if they want it.
 1. Settled by R-17: the fork leaves out the team's files
    (`fleet/`, the codeteam Makefile, rulings, reports, graft golden files, `docs/SPEC*.md`).
 2. Settled by R-17: grep, blast, orphans and suspects are PRs (9-12).
-3. The public fork is named `codedaptive/codegraph-fork`, since `codedaptive/codegraph` is our private repository.
+3. Settled by R-17: the public fork is `codedaptive/codegraph-sharedserver`.
