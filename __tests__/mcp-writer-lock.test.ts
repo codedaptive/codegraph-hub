@@ -346,11 +346,21 @@ describe('an engine with a builder asks it and never takes a lock or writes itse
 
   it('fresh: true syncs through the builder, never the engine', async () => {
     const { calls, builder } = stubBuilder();
+    // The stub's sync does not index. It rewrites app.ts to the bytes beforeEach indexed, which is all the
+    // measurement needs: getChangedFiles compares content hashes, so the rewritten file is not pending. The
+    // call is still recorded, and the wait ends on nothing pending after that one sync.
+    (builder as unknown as { sync: (r: string) => Promise<{ filesChanged: number }> }).sync = async (r: string) => {
+      calls.push(`sync ${r}`);
+      fs.writeFileSync(path.join(r, 'app.ts'), 'export function originalSymbol() { return 1; }\n');
+      return { filesChanged: 1 };
+    };
     engine = new BuiltMCPEngine({ builder });
     fs.writeFileSync(path.join(root, 'app.ts'), 'export function changedSymbol() { return 2; }\n');
-    // The stub's sync changes nothing, so the wait keeps asking until its bound; a short one ends it quickly.
+    // The wait's clock starts before its first measurement, so that measurement and each sync count against
+    // the bound. On a loaded machine a short bound could run out before the first sync is asked for. The 30 s
+    // bound is a backstop the wait does not reach here, since one sync ends it.
     const prior = process.env.CODEGRAPH_FRESH_TIMEOUT_MS;
-    process.env.CODEGRAPH_FRESH_TIMEOUT_MS = '400';
+    process.env.CODEGRAPH_FRESH_TIMEOUT_MS = '30000';
     try {
       const result = await engine.getToolHandler().execute('codegraph_search', { projectPath: root, query: 'originalSymbol', fresh: true }, undefined, ADMIT_ALL);
       expect(result.isError).not.toBe(true);
