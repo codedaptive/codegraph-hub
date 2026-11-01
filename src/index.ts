@@ -2324,9 +2324,14 @@ export class CodeGraph {
     return this.queries.searchNodes(query, options);
   }
 
-  /** Lexical evidence for an empty explore result; does not alter retrieval. */
-  getExploreMissDiagnostics(query: string) {
-    return this.queries.getExploreMissDiagnostics(query);
+  /**
+   * Lexical evidence for an empty explore result; does not alter retrieval.
+   * `pathPrefixes` is the path focus (absent or empty = the whole index): only
+   * nodes whose file is inside it count as matched or as candidates. A file or
+   * import node can make a word matched; it is never a candidate.
+   */
+  getExploreMissDiagnostics(query: string, pathPrefixes: readonly string[] = []) {
+    return this.queries.getExploreMissDiagnostics(query, pathPrefixes);
   }
 
   /**
