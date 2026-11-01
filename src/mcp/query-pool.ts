@@ -13,7 +13,7 @@
  *   - lazy growth: one warm worker on construct, grows to `size` on demand, so a
  *     single-agent session pays for one connection and a 10-subagent burst grows
  *     to the core budget.
- *   - idle shrink: a worker idle for `idleTimeoutMs` (default 60s,
+ *   - idle retirement: a worker idle for `idleTimeoutMs` (default 60s,
  *     `CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS`, `0` = never) is retired, oldest
  *     idle first, down to a floor of one started worker (a worker still
  *     starting does not count toward the floor). The worker that served last
@@ -21,10 +21,12 @@
  *     served earlier or not at all. Retiring is a handshake: the worker closes its
  *     connections and exits 0. It is not a crash, so it is never respawned and
  *     never counts toward the crash budget.
- *   - idle trim: the one worker the shrink leaves gives its memory back too,
- *     once it has been idle as long and has served since its last trim. It
- *     is not stopped: it stays up and shrinks in place (`trim`: it closes
- *     every project but the last one used, and its connections give up their
+ *   - idle trim: the one worker the retirement leaves gives its memory back too,
+ *     once it has been idle for `idleShrinkMs` (default 5 min, `0` = never; its
+ *     own clock) and has served since its
+ *     last trim. A pool still above the floor is not trimmed: it retires
+ *     first. The worker is not stopped: it stays up and shrinks in place
+ *     (`trim`: it closes every project but the last one used, and its connections give up their
  *     page cache and file mapping), so the next call finds a warm worker, its
  *     compiled code and the memos of its connection, rather than a cold start.
  *     It answers `trimmed` with what it still holds; one holding over
@@ -125,8 +127,19 @@ const WORKER_START_SETTLE_MS = 15_000;
 const DEFAULT_WORKER_IDLE_TIMEOUT_MS = 60_000;
 
 /**
- * Started workers the idle shrink never retires below (a worker still starting
- * does not count). One, not zero: `ready` stays true through the shrink (it
+ * Default idle time before the last started worker is trimmed in place. Five
+ * minutes: an ordinary pause (reading, thinking, a break of a few minutes) must
+ * not empty the page cache and the project caches the worker holds, so the next
+ * call finds them warm. Longer than the default retirement delay on purpose:
+ * spares cost a whole worker each and
+ * go quickly, while the one worker left costs only its caches. Applies only to
+ * that last worker's trim, never to the retirement of spares.
+ */
+const DEFAULT_IDLE_SHRINK_MS = 300_000;
+
+/**
+ * Started workers the idle retirement never goes below (a worker still starting
+ * does not count). One, not zero: `ready` stays true through the retirement (it
  * drops only while a worker too heavy to keep is replaced) and the ToolHandler
  * routes to the pool on `healthy && ready`, so a pool shrunk to nothing would
  * queue the next call behind a cold start, the #662 first-call stall `ready`
@@ -204,12 +217,25 @@ export interface QueryPoolOptions {
   startSettleMs?: number;
   /**
    * How long a worker may sit idle before it is retired, down to one started
-   * worker (a worker still starting does not count toward the floor); the one
-   * that stays is trimmed in place once idle as long. `0` (or a negative or
-   * non-finite value) never retires or trims. Default
+   * worker (a worker still starting does not count toward the floor). `0` (or a
+   * negative or non-finite value) never retires. Its clock governs only the
+   * retirement; it also decides whether a grown pool ever reaches the one worker
+   * that is trimmed: the worker that stays is trimmed after `idleShrinkMs`. With `0`
+   * a pool that has grown never gets back down to one worker, so it is never
+   * trimmed either (the trim is only for the one worker left); a pool that
+   * never grew is trimmed after `idleShrinkMs`. Default
    * `resolveWorkerIdleTimeoutMs(process.env.CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS)`.
    */
   idleTimeoutMs?: number;
+  /**
+   * How long the last started worker stays idle before it is trimmed in place
+   * (it keeps running, but closes every project but the last one used and gives
+   * its connections' page cache back). Its clock is its own; the trim still waits
+   * for the pool to reach one started worker (see `idleTimeoutMs`) and for a call
+   * served since the last trim. `0` (or
+   * a negative or non-finite value) never trims. Default 5 min.
+   */
+  idleShrinkMs?: number;
 }
 
 /**
@@ -279,7 +305,8 @@ export class QueryPool {
   // away — what destroy() waits on before terminating it (see
   // WORKER_START_SETTLE_MS).
   private starts = new Map<PoolWorker, { settled: Promise<void>; settle: () => void }>();
-  // When each worker in `idle` last became idle: what the idle shrink ages.
+  // When each worker in `idle` last became idle: what the idle retirement
+  // (idleTimeoutMs) and the idle trim (idleShrinkMs) both age.
   private idleSince = new Map<PoolWorker, number>();
   // Workers told to retire and not yet gone. They are already out of `workers`
   // and `idle`; their exit or error lands here, never in onWorkerGone. `gone`
@@ -318,6 +345,7 @@ export class QueryPool {
   private readonly createWorker: () => PoolWorker;
   private readonly startSettleMs: number;
   private readonly idleTimeoutMs: number;
+  private readonly idleShrinkMs: number;
   private readonly idleKeepBytes: number;
   // Set by a served call and cleared when the last worker is trimmed, so a
   // worker that has answered nothing since is left alone rather than trimmed
@@ -339,6 +367,8 @@ export class QueryPool {
     this.startSettleMs = opts.startSettleMs ?? WORKER_START_SETTLE_MS;
     const idleMs = opts.idleTimeoutMs ?? resolveWorkerIdleTimeoutMs(process.env.CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS);
     this.idleTimeoutMs = Number.isFinite(idleMs) && idleMs > 0 ? idleMs : 0;
+    const shrinkMs = opts.idleShrinkMs ?? DEFAULT_IDLE_SHRINK_MS;
+    this.idleShrinkMs = Number.isFinite(shrinkMs) && shrinkMs > 0 ? shrinkMs : 0;
     this.spawnOne(); // one eager warm worker, ready for the first call
   }
 
@@ -369,9 +399,9 @@ export class QueryPool {
    * strictly better while nothing is warm, which also holds while the
    * replacement for a worker too heavy to keep starts (replaceIfHeavy). Stays
    * true across the idle retirement, which never retires below
-   * MIN_STARTED_WORKERS and trims the worker it leaves in place instead of
-   * stopping it, and across crash-respawn gaps, which are covered by retry +
-   * backstop.
+   * MIN_STARTED_WORKERS, and across the trim of the one worker left, which runs
+   * in place after `idleShrinkMs` and never stops it; and across crash-respawn
+   * gaps, which are covered by retry + backstop.
    */
   get ready(): boolean {
     return this.everReady && !this.destroyed;
@@ -537,7 +567,7 @@ export class QueryPool {
    * The idle worker the next retirement takes: the oldest idle one, except
    * the worker that served last, which is the one worth keeping (see
    * `lastServer`) and goes only when it is the sole idle worker (the others
-   * are running a call). `idle` is in idle order, oldest first, so the first
+   * are running a call or still starting). `idle` is in idle order, oldest first, so the first
    * one that is not `lastServer` has the earliest deadline of those that can go.
    */
   private retireCandidate(): PoolWorker | undefined {
@@ -547,8 +577,9 @@ export class QueryPool {
   /**
    * The last started worker is due its trim: nothing else is running, queued
    * or starting, it has served since it was last trimmed, and (checked by the
-   * caller against its deadline) it has been idle for `idleTimeoutMs`. A pool
-   * above the floor is not due: it retires first.
+   * caller against its deadline) it has been idle for `idleShrinkMs`. A pool
+   * above the floor is not due: it retires first, so with `idleTimeoutMs` 0 a
+   * pool that has grown is never trimmed.
    */
   private trimCandidate(): PoolWorker | undefined {
     if (this.canRetire() || !this.servedSinceTrim || !this.quiescent) return undefined;
@@ -557,17 +588,28 @@ export class QueryPool {
 
   /**
    * Arm the timer for the earliest idle deadline: the retirement candidate's
-   * while the pool is above its floor, else the last worker's trim. Clears it
-   * when neither can happen.
+   * (`idleTimeoutMs`) while the pool is above its floor, else the last
+   * worker's trim (`idleShrinkMs`). Each clock is skipped when its own option
+   * is 0. Clears the timer when neither can happen.
    */
   private scheduleRetire(): void {
     if (this.retireTimer) clearTimeout(this.retireTimer);
     this.retireTimer = null;
-    if (this.destroyed || this.idleTimeoutMs <= 0) return;
-    const next = this.canRetire() ? this.retireCandidate() : this.trimCandidate();
+    if (this.destroyed) return;
+    let next: PoolWorker | undefined;
+    let waitMs: number;
+    if (this.canRetire()) {
+      if (this.idleTimeoutMs <= 0) return;
+      next = this.retireCandidate();
+      waitMs = this.idleTimeoutMs;
+    } else {
+      if (this.idleShrinkMs <= 0) return;
+      next = this.trimCandidate();
+      waitMs = this.idleShrinkMs;
+    }
     if (!next) return;
     const since = this.idleSince.get(next) ?? Date.now();
-    const delay = Math.min(Math.max(1, since + this.idleTimeoutMs - Date.now()), MAX_TIMER_DELAY_MS);
+    const delay = Math.min(Math.max(1, since + waitMs - Date.now()), MAX_TIMER_DELAY_MS);
     this.retireTimer = setTimeout(() => {
       this.retireTimer = null;
       this.retireIdle();
@@ -576,20 +618,20 @@ export class QueryPool {
   }
 
   /**
-   * Retire workers idle past the timeout, down to the floor, then trim the
-   * worker that is left if it has been idle as long.
+   * Retire workers idle past `idleTimeoutMs`, down to the floor, then trim the
+   * worker that is left if it has been idle for `idleShrinkMs`.
    */
   private retireIdle(): void {
     if (this.destroyed) return;
     const now = Date.now();
-    while (this.canRetire()) {
+    while (this.idleTimeoutMs > 0 && this.canRetire()) {
       const w = this.retireCandidate();
       if (!w) break;
       if (now - (this.idleSince.get(w) ?? now) < this.idleTimeoutMs) break;
       this.retire(w);
     }
-    const last = this.trimCandidate();
-    if (last && now - (this.idleSince.get(last) ?? now) >= this.idleTimeoutMs) this.trim(last);
+    const last = this.idleShrinkMs > 0 ? this.trimCandidate() : undefined;
+    if (last && now - (this.idleSince.get(last) ?? now) >= this.idleShrinkMs) this.trim(last);
     this.scheduleRetire();
   }
 

@@ -91,18 +91,30 @@ describe('codegraph daemon', () => {
     expect(isProcessAlive(pid)).toBe(true);
   });
 
+  // Own timeout. It runs two CLI invocations (each re-execs the built CLI once) and a
+  // stand-in server. Measured on 18 CPUs at 1-minute load average ~106-115: 20.5 s alone;
+  // 23.0-26.6 s with four copies at load ~101-108. Re-measured after the exit wait below:
+  // 18.8-20.6 s. The 90 s limit is about three times the slowest run measured across these
+  // tests (32.0 s).
   it('--stop stops it, verified by its hello, and a second --stop finds none', async () => {
     const pid = await startStandInServer(CodeGraphPackageVersion);
+    // The stand-in is this test's own child, so its 'exit' event shows it has exited;
+    // the stdout check below ties that exit to --stop. Attach before --stop runs; skip
+    // the wait if it already exited.
+    const stand = child!;
+    const exited = stand.exitCode !== null || stand.signalCode !== null
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => stand.once('exit', () => resolve()));
     const result = await run(['daemon', '--stop']);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain(`Stopped the CodeGraph server (pid ${pid}`);
-    const end = Date.now() + 5_000;
-    while (isProcessAlive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    // The wait is on the event; the test timeout bounds it.
+    await exited;
     expect(isProcessAlive(pid)).toBe(false);
     const again = await run(['daemon', '--stop']);
     expect(again.code).toBe(0);
     expect(again.stdout).toContain('No CodeGraph server running.');
-  });
+  }, 90_000);
 
   it('--stop leaves a process alone that holds the lock but does not answer as the server', async () => {
     const stranger = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });

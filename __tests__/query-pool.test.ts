@@ -30,11 +30,12 @@ type Action = { result: ToolResult } | { crash: true } | { hang: true } | { wait
  * one. `behavior` decides per call whether to return a result, crash (exit≠0),
  * hang (never reply — exercises the backstop), or wait on a promise (lets a test
  * hold a call in-flight to observe concurrency). Emits 'ready' on a macrotask so
- * the pool has wired its listeners first. The pool's idle shrink posts
- * `{ type: 'retire' }`; the fake answers it as the real worker does,
- * `{ type: 'retired' }` then exit code 0 on a macrotask, unless `ignoresRetire`.
- * The pool's trim of the last worker posts `{ type: 'trim' }`; the fake counts it
- * and answers `{ type: 'trimmed', heldBytes }`, unless `holdsTrimReport`.
+ * the pool has wired its listeners first. The pool's idle retirement (after
+ * `idleTimeoutMs`) posts `{ type: 'retire' }`; the fake answers it as the real
+ * worker does, `{ type: 'retired' }` then exit code 0 on a macrotask, unless
+ * `ignoresRetire`. The pool's trim of the last worker (after `idleShrinkMs`)
+ * posts `{ type: 'trim' }`; the fake counts it and answers
+ * `{ type: 'trimmed', heldBytes }`, unless `holdsTrimReport`.
  */
 class FakeWorker implements PoolWorker {
   private msgCb?: (m: unknown) => void;
@@ -248,7 +249,7 @@ describe('QueryPool', () => {
     expect(pool.liveWorkers).toBe(2);
     expect(workers.some((w) => w.retireReceived)).toBe(false);
     workers[1]!.emitMessage({ type: 'ready', ok: true });
-    // Its ready arms the shrink: the idle worker that did not serve last (this one, the
+    // Its ready arms the retirement: the idle worker that did not serve last (this one, the
     // newest idle) retires and nothing replaces it; the worker that served stays.
     await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
     expect(workers).toHaveLength(2);
@@ -276,7 +277,7 @@ describe('QueryPool', () => {
     expect(workers[0]!.retireReceived).toBe(false);
     expect(pool.liveWorkers).toBe(1);
 
-    // A burst grows the pool; the shrink leaves one worker, which then stays.
+    // A burst grows the pool; the retirement leaves one worker, which then stays.
     await Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
     expect(workers).toHaveLength(2);
     await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
@@ -316,7 +317,7 @@ describe('QueryPool', () => {
     function keepingPool(size: number, ready: (index: number) => boolean | null = () => true) {
       const workers: FakeWorker[] = [];
       const pool = new QueryPool({
-        size, idleTimeoutMs: 5, idleKeepBytes: light,
+        size, idleTimeoutMs: 5, idleShrinkMs: 5, idleKeepBytes: light,
         createWorker: () => {
           const index = workers.length;
           const worker = new FakeWorker(() => ({ result: ok(`worker ${index}`) }), ready(index));
@@ -354,7 +355,7 @@ describe('QueryPool', () => {
       const workers: FakeWorker[] = [];
       const releases: Array<() => void> = [];
       const pool = new QueryPool({
-        size: 3, idleTimeoutMs: 5, idleKeepBytes: light,
+        size: 3, idleTimeoutMs: 5, idleShrinkMs: 5, idleKeepBytes: light,
         createWorker: () => {
           const index = workers.length;
           const worker = new FakeWorker(() => ({ wait: new Promise((resolve) => { releases[index] = () => resolve(ok('r')); }) }));
@@ -403,7 +404,7 @@ describe('QueryPool', () => {
       const { pool, workers } = keepingPool(1);
       await pool.run('codegraph_search', {});
       await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
-      await sleep(30); // many idle timeouts later
+      await sleep(30); // many idle shrink periods later
       expect(workers[0]!.trims).toBe(1);
       await pool.run('codegraph_search', {});
       await vi.waitFor(() => expect(workers[0]!.trims).toBe(2));
@@ -413,7 +414,7 @@ describe('QueryPool', () => {
     it('does not trim a worker that has served nothing', async () => {
       const { pool, workers } = keepingPool(1);
       await vi.waitFor(() => expect(pool.ready).toBe(true));
-      await sleep(30); // many idle timeouts
+      await sleep(30); // many idle shrink periods
       expect(workers[0]!.trims).toBe(0);
       await pool.destroy();
     });
@@ -422,7 +423,7 @@ describe('QueryPool', () => {
       const workers: FakeWorker[] = [];
       const releases: Array<() => void> = [];
       const pool = new QueryPool({
-        size: 2, idleTimeoutMs: 5, idleKeepBytes: light,
+        size: 2, idleTimeoutMs: 5, idleShrinkMs: 5, idleKeepBytes: light,
         createWorker: () => {
           const index = workers.length;
           const worker = new FakeWorker(() => ({ wait: new Promise((resolve) => { releases[index] = () => resolve(ok('r')); }) }));
@@ -445,10 +446,10 @@ describe('QueryPool', () => {
       await pool.destroy();
     });
 
-    it('never trims or retires with idleTimeoutMs 0', async () => {
+    it('never trims with idleShrinkMs 0, however long it idles', async () => {
       const workers: FakeWorker[] = [];
       const pool = new QueryPool({
-        size: 1, idleTimeoutMs: 0, idleKeepBytes: light,
+        size: 1, idleTimeoutMs: 5, idleShrinkMs: 0, idleKeepBytes: light,
         createWorker: () => {
           const worker = new FakeWorker(() => ({ result: ok('r') }));
           workers.push(worker);
@@ -459,6 +460,29 @@ describe('QueryPool', () => {
       await sleep(30);
       expect(workers[0]!.trims).toBe(0);
       expect(workers[0]!.retireReceived).toBe(false);
+      await pool.destroy();
+    });
+
+    it('never retires with idleTimeoutMs 0, so a pool that grew is never trimmed either', async () => {
+      const workers: FakeWorker[] = [];
+      const pool = new QueryPool({
+        size: 2, idleTimeoutMs: 0, idleShrinkMs: 5, idleKeepBytes: light,
+        createWorker: () => {
+          const worker = new FakeWorker(() => ({ result: ok('r') }));
+          worker.heldBytes = light;
+          workers.push(worker);
+          return worker;
+        },
+      });
+      await vi.waitFor(() => expect(pool.ready).toBe(true));
+      await Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+      expect(workers).toHaveLength(2);
+      await sleep(30); // many idle shrink periods
+      expect(pool.liveWorkers).toBe(2);
+      for (const worker of workers) {
+        expect(worker.retireReceived).toBe(false);
+        expect(worker.trims).toBe(0); // above the floor: the trim is only for the one worker left
+      }
       await pool.destroy();
     });
 
@@ -939,7 +963,7 @@ describe('MCP query pool with real projects (#1465)', () => {
       require(${JSON.stringify(path.resolve(__dirname, '../dist/mcp/query-worker.js'))});
     `;
     pool = new QueryPool({
-      size: 2, idleTimeoutMs: 50,
+      size: 2, idleTimeoutMs: 50, idleShrinkMs: 50,
       createWorker: () => {
         const worker = new Worker(script, { eval: true, workerData: { root: alpha } });
         worker.on('message', (m: { type?: string; heldBytes?: number }) => {
@@ -969,7 +993,7 @@ describe('MCP query pool with real projects (#1465)', () => {
     const exits: Promise<number>[] = [];
     const retireSent: boolean[] = [];
     pool = new QueryPool({
-      size: 1, idleTimeoutMs: 50, idleKeepBytes: 0, // a worker holds more than 0 bytes after any trim, so it is replaced
+      size: 1, idleTimeoutMs: 50, idleShrinkMs: 50, idleKeepBytes: 0, // a worker holds more than 0 bytes after any trim, so it is replaced
       createWorker: () => {
         const worker = new Worker(path.resolve(__dirname, '../dist/mcp/query-worker.js'), { workerData: { root: alpha } });
         const i = workers.push(worker) - 1;

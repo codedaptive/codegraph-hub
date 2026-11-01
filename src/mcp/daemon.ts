@@ -61,6 +61,7 @@ import {
   ServerLockInfo,
   decodeServerLock,
   encodeServerLock,
+  POSIX_SOCKET_PATH_LIMIT,
   getServerPidPath,
   getServerSocketCandidates,
   getServerSocketPath,
@@ -328,8 +329,11 @@ export class Daemon {
     // read-tool dispatch to a worker pool — otherwise concurrent explores
     // serialize and starve the MCP transport (clients time out). Read tools run
     // on a worker pool; `CODEGRAPH_QUERY_POOL_SIZE=0` disables it. The engine is
-    // rootless: no project is opened until a tool call names one.
-    this.engine = new MCPEngine({ queryPool: true, builder: this.builder });
+    // rootless: a project is opened when a tool call names it, or, with
+    // `openPinned`, when the registry pins it with an index: at start, and after
+    // each housekeeping pass (with CODEGRAPH_HOUSEKEEPING_INTERVAL_MS=0 a later
+    // pin is picked up at the next server start only).
+    this.engine = new MCPEngine({ queryPool: true, builder: this.builder, openPinned: true });
   }
 
   /**
@@ -359,6 +363,20 @@ export class Daemon {
     const listen = (socketPath: string): Promise<net.Server> =>
       bindServerSocket(socketPath, (socket) => this.handleConnection(socket));
 
+    // The state-dir socket is left off the candidate list when its path is over
+    // POSIX_SOCKET_PATH_LIMIT (a conservative margin, not the OS limit; see
+    // daemon-paths.ts). It is passed on as `skipped` so the failure message below
+    // can say it was never tried. An empty list means the state dir is gone, and
+    // there is nothing to report as skipped. Windows has a single pipe candidate.
+    const stateSocket = path.join(getStateDir(), 'server.sock');
+    const skipped =
+      process.platform !== 'win32' && candidates.length > 0 && !candidates.includes(stateSocket)
+        ? [{
+            socketPath: stateSocket,
+            reason: `longer than the ${POSIX_SOCKET_PATH_LIMIT}-byte state-dir limit`,
+          }]
+        : [];
+
     let bound: { server: net.Server; socketPath: string };
     try {
       bound = await bindFirstUsableSocket(candidates, listen, {
@@ -366,14 +384,17 @@ export class Daemon {
           process.stderr.write(
             `[CodeGraph daemon] Socket ${from} unusable (${code}); relocating to ${to}.\n`
           ),
+        skipped,
       });
     } catch (err) {
-      // Every candidate failed (the last one, or a non-relocatable error like a
-      // racing EADDRINUSE). We already hold the lockfile `tryAcquireDaemonLock`
-      // wrote; release it and any partial sockets so the NEXT launcher doesn't
-      // spin respawning us on a stale lock pointing at our now-dying pid. Then
-      // re-throw so the caller (the bin's try/catch) exits this detached server
-      // with status 1 and every launcher serves its session in-process (#974).
+      // Every candidate failed with a non-conflict error (a SocketBindError naming
+      // each one), or a racing EADDRINUSE (raw). We already hold the
+      // lockfile `tryAcquireDaemonLock` wrote; release it and any partial sockets
+      // so the NEXT launcher doesn't spin respawning us on a stale lock pointing
+      // at our now-dying pid. Then re-throw so the caller (the bin's try/catch)
+      // prints the message (after a `Failed to start server:` prefix) and exits this
+      // detached server with status 1, and every launcher serves its session
+      // in-process.
       this.cleanupLockfile();
       if (process.platform !== 'win32') {
         for (const candidate of candidates) {
@@ -854,13 +875,46 @@ export function clearStaleDaemonLock(
  * and every launcher serves in-process. EVERY OTHER bind error just means "this path
  * didn't work," almost always a filesystem that can't host an AF_UNIX node at all
  * (ExFAT/FAT, network mounts, WSL2 DrvFs), which reports a DIFFERENT errno per OS
- * (ENOTSUP macOS, EPERM Linux; #997). Enumerating the "unsupported" codes is
- * whack-a-mole, so we relocate on anything-but-conflict instead — robust and
- * self-correcting: if the deterministic tmpdir fallback ALSO fails, that error
- * propagates from the last candidate. (ENAMETOOLONG never reaches here — the
- * candidate list already routes over-long paths straight to tmpdir.)
+ * (a different errno per OS; #997), or a path past the OS length limit (the tmpdir
+ * candidate is never length-checked, so a long TMPDIR reaches here). Enumerating the "unsupported" codes is whack-a-mole, so we relocate
+ * on anything-but-conflict instead — robust and self-correcting: if the deterministic
+ * tmpdir fallback ALSO fails, bindFirstUsableSocket throws a {@link SocketBindError}
+ * naming every attempt.
  */
 const SOCKET_BIND_CONFLICT_CODE = 'EADDRINUSE';
+
+/**
+ * Bind codes that may mean the socket path is too long. EINVAL is what Darwin 27.2 with
+ * Node 26 returned at 254 bytes and more (measured); ENAMETOOLONG is listed for other
+ * systems and is not measured. Either code can have another cause, so the message line
+ * that uses this set is a hint.
+ */
+const SOCKET_PATH_LENGTH_CODES = ['EINVAL', 'ENAMETOOLONG'];
+
+/**
+ * Every candidate failed to bind for a non-conflict reason, or the list was empty (the
+ * state dir is missing, or none was given). `attempts` is each tried path in order with
+ * its UTF-8 byte length (the unit of the kernel's sun_path limit) and error code; `code`
+ * and `cause` are the LAST attempt's. With no attempts, `code` is ENOENT and `cause` is
+ * unset. The serve command prints the message after a `Failed to start server:` prefix,
+ * so it names every path and hints what to shorten when a length-type code was among them.
+ */
+export class SocketBindError extends Error {
+  readonly code: string;
+  readonly attempts: { socketPath: string; bytes: number; code: string }[];
+
+  constructor(
+    message: string,
+    code: string,
+    attempts: { socketPath: string; bytes: number; code: string }[],
+    cause?: unknown,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'SocketBindError';
+    this.code = code;
+    this.attempts = attempts;
+  }
+}
 
 /**
  * Bind the first usable socket from an ordered candidate list, relocating past
@@ -868,15 +922,21 @@ const SOCKET_BIND_CONFLICT_CODE = 'EADDRINUSE';
  * SOCKET_BIND_CONFLICT_CODE}). The injected `listen` does the real
  * `net.Server.listen` (and stale-socket clear); abstracted so the relocation
  * policy is unit-testable without a real unsupported filesystem. Returns the
- * server plus the path actually bound. An EADDRINUSE, or any error on the LAST
- * candidate, propagates — the caller releases the lockfile and every
- * launcher serves in-process (#974). Exported for testing.
+ * server plus the path actually bound. An EADDRINUSE propagates as the raw error.
+ * When every candidate fails for another reason, a {@link SocketBindError} lists
+ * each attempt, then each of `opts.skipped` (candidates the caller left off the
+ * list, with why), and the caller releases the lockfile so every launcher serves
+ * in-process. Exported for testing.
  */
 export async function bindFirstUsableSocket(
   candidates: string[],
   listen: (socketPath: string) => Promise<net.Server>,
-  opts: { onRelocate?: (from: string, to: string, code: string) => void } = {},
+  opts: {
+    onRelocate?: (from: string, to: string, code: string) => void;
+    skipped?: { socketPath: string; reason: string }[];
+  } = {},
 ): Promise<{ server: net.Server; socketPath: string }> {
+  const attempts: { socketPath: string; bytes: number; code: string }[] = [];
   let lastErr: unknown;
   for (let i = 0; i < candidates.length; i++) {
     const socketPath = candidates[i]!; // i < length, so always defined
@@ -887,17 +947,38 @@ export async function bindFirstUsableSocket(
     } catch (err) {
       lastErr = err;
       const code = (err as NodeJS.ErrnoException).code;
-      if (!isLast && code !== SOCKET_BIND_CONFLICT_CODE) {
+      if (code === SOCKET_BIND_CONFLICT_CODE) throw err;
+      attempts.push({ socketPath, bytes: Buffer.byteLength(socketPath), code: code ?? 'UNKNOWN' });
+      if (!isLast) {
         opts.onRelocate?.(socketPath, candidates[i + 1]!, code ?? ''); // !isLast ⇒ i+1 in range
         continue;
       }
-      throw err;
     }
   }
-  // Only reachable with an empty candidate list: a caller passing none, or the state dir
-  // deleted between taking the lock and binding (the candidates are keyed on its identity,
-  // so `getServerSocketCandidates()` is then empty).
-  throw lastErr ?? new Error('no socket candidates to bind');
+  // An empty candidate list gets here without an attempt: a caller passing none, or the state
+  // dir missing or deleted between taking the lock and binding (the candidates are keyed on its
+  // identity, so `getServerSocketCandidates()` is then empty). No attempt means no cause to carry.
+  const last = attempts[attempts.length - 1];
+  if (last === undefined) {
+    throw new SocketBindError(
+      'Could not bind the CodeGraph server socket: there are no socket candidates (the state dir is missing, or none were given).',
+      'ENOENT',
+      attempts,
+    );
+  }
+  const lines = [
+    'Could not bind the CodeGraph server socket; every candidate failed:',
+    ...attempts.map((a) => `  ${a.socketPath} (${a.bytes} bytes): ${a.code}`),
+    ...(opts.skipped ?? []).map(
+      (s) => `  ${s.socketPath} (${Buffer.byteLength(s.socketPath)} bytes): skipped, ${s.reason}`,
+    ),
+  ];
+  if (attempts.some((a) => SOCKET_PATH_LENGTH_CODES.includes(a.code))) {
+    lines.push(
+      "A socket path this long may be over this machine's limit: shorten TMPDIR or the state dir (CODEGRAPH_STATE_DIR).",
+    );
+  }
+  throw new SocketBindError(lines.join('\n'), last.code, attempts, lastErr);
 }
 
 function resolveClientSweepMs(): number {
