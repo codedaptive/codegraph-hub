@@ -113,11 +113,13 @@ On 2026-11-01 (codeteam `3157a61`) it lists 99, all present:
 Pinning only writes the registry (`<state dir>/projects/`, by default `~/.codegraph/projects/`): it creates no index and
 touches no worktree. The machine server closes an open project after 10 idle minutes
 (`CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS`, `src/mcp/tools.ts`) and has no cap on how many are open; a pinned project is
-exempt from that close, so the builder's hold on it (its watcher and writer slot) stays too. Nothing opens a pinned
-project when the server starts: it opens on the first call that names it, so after a server restart a pinned worktree is
-closed, and not being synced, until then. Teardown still treats a pinned worktree that has gone like any other.
-A pinned worktree with no index yet gets one on its first call: copied from its indexed sibling, or cold-built when it
-has none; pinning does not change which. Pin after step 1 so the pinned worktrees are the ones with indexes.
+exempt from that close, so the builder's hold on it (its watcher and writer slot) stays too. The server opens every
+pinned project that has an index when it starts and again after each housekeeping pass (60 s by default,
+`CODEGRAPH_HOUSEKEEPING_INTERVAL_MS`; `src/extensions/host/worktree-lifecycle/pinned-open.ts`), so a restart does not leave
+a pinned worktree closed until a call names it; a pinned root with no index is skipped, never cold-built. Teardown still
+treats a pinned worktree that has gone like any other.
+A pinned worktree with no index yet gets one on its first call, not from the pin: copied from its indexed sibling, or
+cold-built when it has none; pinning does not change which. Pin after step 1 so the pinned worktrees are the ones with indexes.
 
 Tested 2026-10-30 on a throwaway build, not re-run since (the four `project` commands it calls were re-run on sm.8, see
 the Precondition): the list mode against the live manifests (89 lines, exit 0; 99 on 2026-11-01). `--apply` and

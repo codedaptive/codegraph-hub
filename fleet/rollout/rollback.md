@@ -15,9 +15,8 @@ claude mcp add codegraph -s user -- codegraph serve --mcp
 # 3. codeteam/share/mcp-codegraph.json (mcp-json.md): the added settings out.
 cd /Users/bob/devlop/codeteam && patch -p1 -R < <fork>/fleet/rollout/mcp-json.patch
 
-# 2. Go-live indexes and pins (go-live-runbook.md, "Undo"): the codeteam pin patch out, the pins undone from
-#    pin-standing.log, the indexes removed once their daemons have stopped.
-cd /Users/bob/devlop/codeteam && patch -p1 -R < <fork>/fleet/rollout/codeteam-pin.patch
+# 2. Go-live indexes and pins (go-live-runbook.md, "Undo"): the pins undone from pin-standing.log, and the
+#    indexes step 1 made removed with `codegraph uninit -f <worktree>` (not rm -rf), for those worktrees only.
 python3 -I -B <fork>/fleet/rollout/pin-standing.py --undo --log <the pin-standing.log go-live wrote>
 
 # 1. Global install (global-install.md): sm.N out, 1.5.0 back. --ignore-scripts keeps sm.N's preuninstall
@@ -28,5 +27,5 @@ codegraph --version    # 1.5.0
 ```
 
 Sessions read their MCP config at launch: restart them after the rollback. `mcp-json.patch` and
-`codeteam-mcp.patch` and `codeteam-pin.patch` were checked on copies of today's files: each applies, and its reverse restores the files
+`codeteam-mcp.patch` were checked on copies of today's files: each applies, and its reverse restores the files
 byte for byte.

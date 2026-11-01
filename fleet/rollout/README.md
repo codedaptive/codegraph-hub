@@ -12,7 +12,7 @@ change to shared state with its exact diff and its undo. None has been applied.
 | # | Write-up | Shared state | Waits on |
 |---|---|---|---|
 | 1 | `global-install.md` | `/opt/homebrew` npm prefix: 1.5.0 out, 1.6.2-sm.N (`fleet/pack.sh`) in | nothing |
-| 2 | `go-live-runbook.md` (+ `pin-standing.py`, `codeteam-pin.patch`) | one cold index per team repository; `codegraph project pin` for the 89 standing and tier worktrees; `codeteam init` pins the standing worktrees it creates | 1, with an sm.N carrying worktree-lifecycle |
+| 2 | `go-live-runbook.md` (+ `pin-standing.py`) | one cold index per team repository; `codegraph project pin` for the 99 standing and tier worktrees `pin-standing.py` lists (2026-11-01) | 1, with an sm.N carrying the host features (the `project` command, the builder) |
 | 3 | `mcp-json.md` (+ `mcp-json.patch`) | `codeteam/share/mcp-codegraph.json`: the ten tools (sm.2) and `CODEGRAPH_QUERY_POOL_SIZE=0` in codeteam's staged entry | 2 (no team sees CodeGraph before its repository is indexed and pinned) |
 | 4 | `claude-json.md` | `~/.claude.json`: the stale user-scope 1.5.0 entry removed | nothing |
 | 5 | `per-team-mcp.md` (+ `codeteam-mcp.patch`) | codeteam's launch code: a manifest's `mcp_configs` adds MCP files for that team; then one manifest line per team switches it on | proposal to codeteam's maintainer; switching a team on waits on 2 and 3, and the order is Bob's (Q-7) |
