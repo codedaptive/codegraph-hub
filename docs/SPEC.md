@@ -64,7 +64,12 @@ The lifecycle already on `ours` (`src/extensions/host/worktree-lifecycle/`), unc
 
 With no indexed sibling (or a directory that is not a git worktree), the builder cold-builds it from the queue, and
 calls meanwhile get success-shaped "building" guidance. No opt-in: the registration/`CODEGRAPH_AUTO_INDEX=1` gate
-on `ours` (S-33) goes (R-12).
+on `ours` (S-33) goes (R-12). `CODEGRAPH_NO_AUTO_SEED=1` turns automatic seeding and cold builds off for the process
+that sets it.
+
+A call for a root whose copy is queued behind a running job waits up to 10 s
+(`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`) for it, then answers with the building guidance; it never waits for a cold
+build to finish.
 
 A directory outside git with no index is cold-built at the session's launch directory, and calls meanwhile get the
 building guidance. The builder refuses what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860)
@@ -140,7 +145,7 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 
 | Release | What it shipped |
 |---|---|
-| sm.5 (ours 687fb5a6) | one machine server and index builder, 10-minute close with no cap, pinned standing databases, repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree hook, building guidance; the worktree lifecycle and tools carried from sm.4 |
+| sm.5 (ours 687fb5a6) | one machine server and index builder, 10-minute close with no cap, pinned standing databases, repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` on the finding tools (grep included; blast always covers the repository and lists out-of-focus dependents apart), the worktree hook, building guidance; the worktree lifecycle and tools carried from sm.4 |
 | sm.6 (ours b8a23dbc) | CLI index writes go to a running builder (R-14); focused context recall filtered to the focus; the out-of-focus name note (S-46) |
 | sm.7 (ours 62efe36e) | `uninit` releases through a running server first; `unlock` refuses a live holder (R-15); the out-of-focus name note's ceiling fix |
 | sm.8 (ours a7881907) | a focused `explore` keeps its Flow strip along the deepest in-focus chain, and its no-result explanation names no out-of-focus symbol (queries Defects 1 and 2) |

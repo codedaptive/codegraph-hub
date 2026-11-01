@@ -74,7 +74,7 @@ use it.
 | Area | What the fork adds |
 |---|---|
 | One server per machine | One MCP server for every repository and worktree, started by the first client; each call names its path; databases open on demand and close after 10 idle minutes, with no cap |
-| Index builder | One long-lived process with a queue does every index write; small syncs go ahead of full builds; a query never waits on a build |
+| Index builder | One long-lived process with a queue does every index write; small syncs go ahead of full builds; a query waits at most a few seconds for a queued copy, never for a full build |
 | Worktree lifecycle | A new git worktree copies its index from the nearest indexed sibling; a removed worktree's index is deleted; dead locks are reclaimed |
 | Session focus | `serve --mcp --focus <dir>`: finding tools answer inside the focus, impact tools cover the whole repository and list out-of-focus results apart |
 | Worktree hook | A Claude Code `PreToolUse` hook that sets `projectPath` to the agent's own git root |
