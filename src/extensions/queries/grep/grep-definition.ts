@@ -37,7 +37,7 @@ export const GREP_TOOL = {
         enum: ['focus', 'repo'],
         description: 'Results stay inside the directories this session was started with (--focus). Pass "repo" to search the whole repository for this call. Has no effect when the session has no focus.',
       },
-      projectPath: { type: 'string', description: 'Path inside the project to search (the nearest .codegraph/ at or above it is used).' },
+      projectPath: { type: 'string', description: 'REQUIRED: the root path of the code to search (or any directory inside it); the index of the repository it is in is the one used. There is no default project.' },
     },
     required: ['pattern'],
   },
