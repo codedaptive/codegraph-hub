@@ -17,17 +17,22 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 102 upstream files** (90 modified, 12 deleted) at exchange `e92dc2d2ab`, 2026-10-31. An upstream file is one
-that exists at the fork's merge-base with upstream (`60b0d7a9`; upstream `main` has since moved to `2008e2f33f`, which
-the fork has not taken) and that exchange modifies or deletes. Recount with
-`git diff --name-status 60b0d7a9 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
-files the fork added (20: 16 new files in upstream's folders, such as `src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
-`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts` and new tests in `__tests__/`; and the fork-only
-`Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/lanes/queries.md`). 62 of the 102 are named in the rows below; the other 40 are
-flat upstream tests that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
-of those two commits). Each row from `machine-server` on was checked on its own against its commit
+**Total: 107 upstream files** (95 modified, 12 deleted) at exchange `3c654fc9`, 2026-11-01. An upstream file is one
+that exists in upstream `4499d007` (the upstream commit the fork last merged, `e10a983e`; before that the fork's base was
+`60b0d7a9`) and that exchange modifies or deletes. Recount with
+`git diff --name-status 4499d007 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
+files the fork added (21: 17 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
+`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`) and 13 new tests in `__tests__/`; and the fork-only
+`Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/lanes/queries.md`). 68 of the 107 are named in the rows below; the other 39 are
+flat upstream tests (30 edited, 9 deleted) that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
+of those two commits). Three upstream files named below do not exist in the tree: `src/mcp/daemon-manager.ts`,
+`src/mcp/daemon-registry.ts` and `src/mcp/project-lifecycle.ts` were deleted by the fork (`machine-server`, `index-builder`); they
+still exist in upstream, and the earlier rows that name `daemon-registry.ts` (`copied-index-locks`, `lock-takeover-race`, `worktree-lifecycle`)
+edited it before that deletion. The merge of upstream `4499d007` changed no row: every upstream file the fork edits still differs from upstream's,
+and every file that differs has a row. Each row from `machine-server` on was checked on its own against its commit
 (`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
-`-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`, `-r e92dc2d2ab`) and against upstream.
+`-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`, `-r e92dc2d2ab`, `-r 69de0412`,
+`-r 3648f06a`) and against upstream; the `upstream-refresh` row is checked against `git diff 4499d007 exchange`.
 
 | Feature | Upstream files |
 |---|---|
@@ -67,6 +72,8 @@ of those two commits). Each row from `machine-server` on was checked on its own 
 | `focus-flow` (queries) | `src/graph/named-symbol-flow.ts`, `src/graph/symbol-lookup.ts` (`NamedSymbolFlowOptions` takes an optional index-relative `pathPrefixes` list; named symbols and the walks stay in focus; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-flow.test.ts` |
 | `focus-diagnostics` (queries) | `src/db/queries.ts`, `src/index.ts` (both also named under `focus-recall`; `getExploreMissDiagnostics` takes an optional index-relative `pathPrefixes` list, so the matched words, unmatched words and retry candidates come only from in-focus code; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-diagnostics.test.ts` |
 | `focus-scope-host` (host) | `src/mcp/tools.ts` (also named in other rows; explore passes the session focus to its Flow search and its empty-result diagnostics). The only file in the commit outside fork-only trees; no deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/host/focus-scope.gate.test.ts` |
+| `rust-path-calls` (resolution, Orc commit `69de0412`, no Feature trailer) | `src/resolution/name-matcher.ts` and `CHANGELOG.md` (both also named in other rows; the fork's own `matchRustTypePathMethod` is removed in favour of upstream's mechanism, made correct for seven edge cases). No deletions, no new files in upstream's tree. The two tests are the fork's own: `__tests__/rust-crate-path-calls.test.ts` (edited; new in the fork, so not counted) and `__tests__/rust-path-call-edge-cases.test.ts` (new, not counted) |
+| `upstream-refresh` (integration, no feature; merge `e10a983e` of upstream `4499d007` and `3648f06a`) | five upstream tests the fork adapts to its machine server: `__tests__/filelock-stale-takeover.test.ts`, `__tests__/fixtures/filelock-contender.cjs` and `__tests__/mcp-stdout-failure.test.ts` (`3648f06a`: idle retirement, lock takeover, direct-mode shutdown; the same commit also edits `__tests__/query-pool.test.ts`, also edited by `machine-server`), `__tests__/mcp-index-version-warning.test.ts` and `__tests__/mcp-tool-call-arguments.test.ts` (the merge resolution; both are upstream's tests, new to the fork's base with this merge). No `src/` files beyond those already named in the rows above |
 | docs (Designer, no feature; `52f0392a`) | `docs/AGENTS.md` (the per-root-daemon text, one line), `AGENTS.md` (the same line; also named in `node-25-support`). Fork-only in the same commit: `docs/SPEC.md` |
 
 

@@ -18,8 +18,22 @@ import * as os from 'os';
 import { CodeGraph } from '../src';
 import { once } from 'events';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
+import { SERVER_INFO } from '../src/mcp/session';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
+
+/** The fields of `serverInfo` a host can draw. */
+function expectServerBranding(info: { title?: string; icons?: Array<Record<string, unknown>> }): void {
+  expect(info.title).toBe('CodeGraph');
+  expect(info.icons).toHaveLength(1);
+  const icon = info.icons![0]!;
+  expect(icon.mimeType).toBe('image/svg+xml');
+  expect(String(icon.src)).toMatch(/^data:image\/svg\+xml;base64,/);
+  const svg = Buffer.from(String(icon.src).split(',')[1]!, 'base64').toString('utf8');
+  expect(svg).toMatch(/^<svg\b/);
+  // `sizes` is left off on purpose: see SERVER_INFO.
+  expect(Object.keys(icon).sort()).toEqual(['mimeType', 'src']);
+}
 
 function spawnServer(cwd: string, stateDir: string): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, 'serve', '--mcp'], {
@@ -119,6 +133,21 @@ async function removeWhenReleased(dir: string, timeoutMs = 5000): Promise<void> 
   }
 }
 
+describe('MCP server title and icon', () => {
+  it('names the server and carries an icon no host has to fetch', () => {
+    expectServerBranding(SERVER_INFO);
+  });
+
+  it('keeps the machine name hosts key on, and nothing but shapes in the icon', () => {
+    expect(SERVER_INFO.name).toBe('codegraph');
+    const svg = Buffer.from(SERVER_INFO.icons[0]!.src.split(',')[1]!, 'base64').toString('utf8');
+    expect(svg.match(/<\w+/g)?.sort()).toEqual(
+      ['<circle', '<circle', '<circle', '<line', '<line', '<line', '<rect', '<svg'],
+    );
+    expect(svg).not.toMatch(/href|url\(|on\w+=|style/i);
+  });
+});
+
 describe('MCP initialize handshake (issue #172)', () => {
   let tempDir: string;
   let stateDir: string;
@@ -170,6 +199,7 @@ describe('MCP initialize handshake (issue #172)', () => {
     const json = JSON.parse(response.text);
     expect(json.id).toBe(0);
     expect(json.result.serverInfo.name).toBe('codegraph');
+    expectServerBranding(json.result.serverInfo);
     expect(json.result.instructions).toContain('missing argument: root path to the code you wish to query');
 
     // A request answered after the handshake proves the server has had time to

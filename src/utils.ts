@@ -32,7 +32,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createLockFile, removeLockIfUnchanged, snapshotLock, type LockSnapshot } from './mcp/lock-takeover';
+import { createLockFile, removeLockIfUnchanged, snapshotLock, takeoverGuardHolder, type LockSnapshot } from './mcp/lock-takeover';
 
 // ============================================================
 // SECURITY UTILITIES
@@ -415,6 +415,8 @@ export function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
 }
 
+const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\]/;
+
 /**
  * Escape `text` to match itself literally inside a regular expression.
  * Symbol names are not always plain words: C++'s `operator++` and
@@ -423,8 +425,18 @@ export function normalizePath(filePath: string): string {
  * is read as pattern syntax and may not compile at all.
  */
 export function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Most text here is an identifier, with nothing to escape.
+  return REGEXP_SYNTAX.test(text) ? text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : text;
 }
+
+/**
+ * An empty lock file younger than this is still being written by the process
+ * that created it (#2979): where hard links are missing, the lock is created
+ * with an exclusive create first and the PID lands a moment later (see
+ * `createLockFile`). Only a crash leaves one empty for long, and FAT's 2 s
+ * timestamps stay well inside this.
+ */
+const EMPTY_LOCK_GRACE_MS = 10_000;
 
 /**
  * The project that takes a {@link FileLock}. `stamp()` is the record written
@@ -472,12 +484,17 @@ export class FileLock {
 
   /**
    * Acquire the lock. Throws if the lock is held by another live process and
-   * its record is not foreign. A lock whose PID is dead or malformed is stale;
+   * its record is not foreign; the message names the holder's PID, or the PID
+   * in the takeover guard when another process is replacing a stale lock
+   * right now. A lock whose PID is dead or malformed (a first line that is not
+   * a pid above zero) is stale;
    * so is one whose second-line record the owner calls foreign (another
    * project's, copied in with its `.codegraph/`, or one whose PID now names a
    * process that started at another time than the recorded `pidStart`), even
    * when its PID is alive. A record at the owner's own root whose PID is alive
-   * and started when recorded (or that records no start time) holds.
+   * and started when recorded (or that records no start time) holds. An empty
+   * lock younger than {@link EMPTY_LOCK_GRACE_MS} holds too: its creator is
+   * still writing the PID.
    */
   acquire(): void {
     const locked = (pid?: number) => new Error(
@@ -488,8 +505,13 @@ export class FileLock {
     // A lock that exists but cannot be read is held (fail closed).
     let snapshot: LockSnapshot | null;
     try { snapshot = snapshotLock(this.lockPath); } catch { throw locked(); }
+    let removal: ReturnType<typeof removeLockIfUnchanged> | undefined;
     if (snapshot) {
       const content = snapshot.raw;
+      // An empty lock its creator may still be writing is held, not stale
+      // (#2979); an old empty one, left by a crash, is stale like any
+      // malformed body.
+      if (content.trim() === '' && this.youngerThanGrace()) throw locked();
       // parseInt stops at the first newline: the PID is the first line.
       const pid = parseInt(content.trim(), 10);
       // The record is exactly the second line, parsed as JSON and never
@@ -505,22 +527,38 @@ export class FileLock {
       }
       // A long sync can hold the lock for hours. Its age says nothing about
       // whether the writer is still alive; only a dead or malformed PID, or a
-      // foreign record, is stale.
-      if (!foreign && !isNaN(pid) && this.isProcessAlive(pid)) throw locked(pid);
+      // foreign record, is stale. A first line that is not a pid above zero
+      // (NaN, 0, -1) names no process and is stale before any liveness test:
+      // signal 0 to pid 0 or a negative pid addresses a process group (pid 0
+      // the caller's own), which would read as a live holder.
+      if (!foreign && pid > 0 && this.isProcessAlive(pid)) throw locked(pid);
       // Stale (dead process, malformed PID or foreign record): remove it only
       // if it is still the file judged above, under the `.takeover` guard, so
       // a fresh lock another taker created meanwhile is not deleted
       // (residuals: see mcp/lock-takeover). Any
       // result falls through to the exclusive create, which wins only if no
       // lock is in place.
-      try { removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
+      try { removal = removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
     }
     // Write our PID (and our stamp, with an owner), created exclusively
     // (linked into place complete where the filesystem has hard links);
-    // false means another process holds the lock.
+    // false means another process holds the lock. When the removal above was
+    // busy, a live process held the takeover guard and is replacing the stale
+    // lock: the refusal names the pid in that guard, as read now.
     const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
-    if (!createLockFile(this.lockPath, body)) throw locked();
+    if (!createLockFile(this.lockPath, body)) {
+      throw locked(removal === 'busy' ? takeoverGuardHolder(this.lockPath) : undefined);
+    }
     this.held = true;
+  }
+
+  /** True while the lock file's mtime is within {@link EMPTY_LOCK_GRACE_MS}; false when it cannot be read. */
+  private youngerThanGrace(): boolean {
+    try {
+      return Date.now() - fs.statSync(this.lockPath).mtimeMs < EMPTY_LOCK_GRACE_MS;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -572,8 +610,9 @@ export class FileLock {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      // EPERM: it exists but is not ours to signal (another user's, or elevated on Windows).
+      return (err as NodeJS.ErrnoException).code === 'EPERM';
     }
   }
 }

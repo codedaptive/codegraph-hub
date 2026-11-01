@@ -105,6 +105,16 @@ describe('codegraph_suspects through ToolHandler (in-process)', () => {
     expect(props.format!.enum).toEqual(['text', 'json']);
   });
 
+  it('describes projectPath as required: the server has no default project', () => {
+    vi.stubEnv('CODEGRAPH_MCP_TOOLS', 'explore,suspects');
+    const def = getStaticTools().find((t) => t.name === 'codegraph_suspects');
+    const props = (def!.inputSchema as { properties: Record<string, { description?: string }> }).properties;
+    const description = props.projectPath!.description!;
+    expect(description).not.toContain('Defaults to');
+    expect(description).toContain('REQUIRED');
+    expect(description).toContain('missing argument: root path to the code you wish to query');
+  });
+
   it('returns the text report for at most 25 targets with 5 edges each by default', async () => {
     const res = await run({ projectPath: project });
     expect(res.isError).toBeFalsy();

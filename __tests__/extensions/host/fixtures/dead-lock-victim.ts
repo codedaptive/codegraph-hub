@@ -9,7 +9,7 @@
  * kills it. A SIGKILL'd victim leaves its records behind, as a server killed
  * mid-write does.
  *
- * Usage: node <vite-node's JS entry> dead-lock-victim.ts -- <projectRoot> <lock>[,<lock>...]
+ * Usage: node run-ts.cjs dead-lock-victim.ts -- <projectRoot> <lock>[,<lock>...]
  *   lock = writer    tryAcquireWriterLock(root, 'direct')                  -> .codegraph/writer.pid
  *   lock = rebuild   tryAcquireWriterLock(root, 'rebuild', 'rebuild.pid')  -> .codegraph/rebuild.pid
  *   lock = filelock  FileLock on .codegraph/codegraph.lock with the lockStamp owner CodeGraph passes

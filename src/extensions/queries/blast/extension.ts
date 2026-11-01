@@ -94,7 +94,7 @@ export const blastTool: ExtensionTool = {
       properties: {
         projectPath: {
           type: 'string',
-          description: 'Path to the project (or any directory inside it). Defaults to the session project.',
+          description: 'REQUIRED: the root path of the code to query (or any directory inside it); the index of the repository it is in is the one used. There is no default project.',
         },
         base: {
           type: 'string',

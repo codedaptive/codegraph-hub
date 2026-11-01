@@ -876,7 +876,8 @@ export function buildingNote(root: string): string {
  * one's checkout: `projectPath` need not itself be a worktree root, so the note
  * says it is "in the git worktree", which holds for both),
  * when {@link ensureWorktreeIndex} could neither seed it nor build it: the
- * copy from a sibling failed, the build failed, or automatic seeding is off.
+ * copy from a sibling failed, the build failed, or automatic indexing is off
+ * (`CODEGRAPH_NO_AUTO_SEED=1` set in the environment turns it off).
  * A later call tries again where it can (it retries a failed copy), so the
  * plain "not indexed" guidance, which does not say a later call can succeed,
  * would be wrong there.
@@ -885,7 +886,8 @@ export function unseededWorktreeNote(projectPath: string, worktree: string): str
   return (
     `The project at ${projectPath} isn't indexed with codegraph yet: it is in the git worktree (${worktree}), ` +
     'which has no index of its own, and codegraph could not give it one (the copy from another worktree of its ' +
-    'repository failed, the build failed, or automatic indexing is off), so codegraph cannot query it ' +
+    'repository failed, the build failed, or automatic indexing is off (CODEGRAPH_NO_AUTO_SEED=1 is set; unset it ' +
+    'to turn automatic indexing back on)), so codegraph cannot query it ' +
     'now. Use your built-in tools (Read/Grep/Glob) for that codebase ' +
     'meanwhile. The next codegraph call here tries again where it can: a failed copy is retried on the ' +
     'next call. ' +

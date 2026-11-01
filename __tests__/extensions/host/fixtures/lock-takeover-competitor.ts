@@ -1,8 +1,8 @@
 /**
  * Competitor A for lock-takeover-race.gate.test.ts.
  *
- * Run as a separate process (vite-node, launched as `node <vite-node's JS
- * entry>` by the gate's competitorLaunch) from inside taker B's
+ * Run as a separate process (launched as `node run-ts.cjs` by the gate's
+ * competitorLaunch) from inside taker B's
  * `fs.unlinkSync(lockPath)`, before B's unlink proceeds. It loads the real
  * lock code from src and performs the same stale-lock takeover B is in the
  * middle of, then prints one JSON line: `{"acquired": boolean}` (plus the
@@ -17,7 +17,7 @@
  * as `held`; the output never has an `error` field, and the gate rejects any
  * line that does, or whose `acquired` is not a boolean.
  *
- * Usage: node <vite-node's JS entry> lock-takeover-competitor.ts -- <kind> <arg> <deadPid>
+ * Usage: node run-ts.cjs lock-takeover-competitor.ts -- <kind> <arg> <deadPid>
  *   kind = writer        arg = projectRoot   (tryAcquireWriterLock)
  *   kind = filelock      arg = lockPath      (new FileLock(lockPath).acquire())
  *   kind = filelock-owner arg = projectRoot  (FileLock on .codegraph/codegraph.lock with a lockStamp owner)

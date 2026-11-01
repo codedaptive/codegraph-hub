@@ -6,7 +6,6 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
-import { createRequire } from 'module';
 import * as path from 'path';
 
 const REPO = path.resolve(__dirname, '../../../..');
@@ -25,15 +24,8 @@ export const START_FIELD = 'pidStart';
  */
 export const STALE_GUARD_AGE_S = 60;
 
-/** vite-node's JS entry, as lock-takeover-race.gate.test.ts resolves it. */
-function resolveViteNodeEntry(): string {
-  const pkgPath = createRequire(path.join(REPO, 'package.json')).resolve('vite-node/package.json');
-  const bin = (JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { bin: string | Record<string, string> }).bin;
-  const rel = typeof bin === 'string' ? bin : bin['vite-node'];
-  if (!rel) throw new Error(`vite-node's package.json names no "vite-node" bin: ${pkgPath}`);
-  return path.join(path.dirname(pkgPath), rel);
-}
-const VITE_NODE_ENTRY = resolveViteNodeEntry();
+/** The TypeScript runner (run-ts.cjs) the running node binary is launched on, as in lock-takeover-race.gate.test.ts. */
+const TS_RUNNER = path.join(__dirname, 'run-ts.cjs');
 const VICTIM = path.join(__dirname, 'dead-lock-victim.ts');
 
 const started: ChildProcess[] = [];
@@ -73,10 +65,10 @@ export function deadPid(): number {
 /**
  * Start the victim (fixtures/dead-lock-victim.ts) on `root`, taking `locks`
  * through the real code from src, and resolve once it has them all. It holds
- * them until killed. vite-node startup takes about 2 s on an idle machine.
+ * them until killed. It runs as a separate node process through run-ts.cjs.
  */
 export async function startVictim(root: string, locks: string[], timeoutMs = 45_000): Promise<number> {
-  const child = spawn(process.execPath, [VITE_NODE_ENTRY, VICTIM, '--', root, locks.join(',')], {
+  const child = spawn(process.execPath, [TS_RUNNER, VICTIM, '--', root, locks.join(',')], {
     cwd: REPO,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

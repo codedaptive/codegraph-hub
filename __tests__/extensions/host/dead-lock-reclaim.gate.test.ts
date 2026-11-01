@@ -18,7 +18,7 @@
  * install runs, so dist must be built from the code under test: the first
  * test refuses a dist older than the lock sources (`npm run build`).
  *
- * Each test spawns two real servers and a vite-node victim; on an idle
+ * Each test spawns two real servers and a victim (node on fixtures/run-ts.cjs); on an idle
  * machine one takes 10-20 s, under load much more, hence the 180 s timeouts.
  * Every test has its own state dir (`CODEGRAPH_STATE_DIR`), so no test touches
  * the live server of this machine. A server holds no project until a call

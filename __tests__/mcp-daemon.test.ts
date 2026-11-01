@@ -50,7 +50,9 @@ import { getServerSocketPath } from '../src/mcp/daemon-paths';
 import { stateIdentityOf } from './extensions/host/state-identity';
 import { MISSING_PROJECT_PATH_TEXT } from '../src/extensions/host/server/repo-anchor';
 import { once } from 'events';
+import { EXTRACTION_VERSION } from '../src/extraction/extraction-version';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
+import { SERVER_INFO } from '../src/mcp/session';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
@@ -206,6 +208,17 @@ function countListeningLines(): number {
   return readServerLog().split('\n').filter((l) => l.includes('[CodeGraph daemon] Listening on')).length;
 }
 
+function stampIndexStale(cg: CodeGraph, version: string): void {
+  const metadata = cg as unknown as {
+    queries: { setMetadata(key: string, value: string): void };
+  };
+  metadata.queries.setMetadata('indexed_with_version', version);
+  metadata.queries.setMetadata(
+    'indexed_with_extraction_version',
+    String(EXTRACTION_VERSION - 1),
+  );
+}
+
 function killTree(...procs: ChildProcessWithoutNullStreams[]): void {
   for (const p of procs) {
     if (!p.killed) { try { p.kill('SIGKILL'); } catch { /* gone */ } }
@@ -321,7 +334,7 @@ describe('The machine server', () => {
     servers.push(first);
     sendInitialize(first.child, 1);
     const firstResp = await waitFor(() => findResponse(first.stdout, 1), 10000);
-    expect(firstResp.result.serverInfo.name).toBe('codegraph');
+    expect(firstResp.result.serverInfo).toEqual(SERVER_INFO);
 
     // The launcher is a PROXY (not the server itself) — that's the detach fix.
     await waitFor(() => first.stderr.some((l) => l.includes('Attached to shared daemon')), 8000);
@@ -373,6 +386,85 @@ describe('The machine server', () => {
       fs.rmSync(bare, { recursive: true, force: true });
     }
   }, 30000);
+
+  // The stale-index warning (#1852) through the machine server: every call names
+  // its projectPath, and one server answers every proxy, each a client of its own.
+  it('warns once per proxied client when the shared project index is stale (#1852)', async () => {
+    fs.writeFileSync(path.join(tempDir, 'alpha.ts'), 'export function alpha() { return 1; }\n');
+    const indexed = await CodeGraph.open(tempDir);
+    await indexed.indexAll();
+    stampIndexStale(indexed, '0.1.0');
+    indexed.close();
+
+    const first = spawnServer(tempDir);
+    const second = spawnServer(tempDir);
+    servers.push(first, second);
+    sendInitialize(first.child, 1);
+    sendInitialize(second.child, 1);
+    await waitFor(() => findResponse(first.stdout, 1), 10000);
+    await waitFor(() => findResponse(second.stdout, 1), 10000);
+    await waitFor(() => first.stderr.some((line) => line.includes('Attached to shared daemon')), 8000);
+    await waitFor(() => second.stderr.some((line) => line.includes('Attached to shared daemon')), 8000);
+
+    const responseText = (response: any): string => response.result.content[0].text;
+
+    sendToolCall(first.child, 2, 'codegraph_search', tempDir, { query: 'alpha' });
+    const firstInitial = await waitFor(() => findResponse(first.stdout, 2), 10000);
+
+    sendToolCall(first.child, 3, 'codegraph_search', tempDir, { query: 'alpha' });
+    sendToolCall(second.child, 2, 'codegraph_search', tempDir, { query: 'alpha' });
+    const firstRepeat = await waitFor(() => findResponse(first.stdout, 3), 10000);
+    const secondInitial = await waitFor(() => findResponse(second.stdout, 2), 10000);
+
+    expect(responseText(firstInitial)).toMatch(/index predates the running extraction engine/i);
+    expect(responseText(firstRepeat)).not.toMatch(/index predates/i);
+    expect(responseText(secondInitial)).toMatch(/index predates the running extraction engine/i);
+    expect(countListeningLines()).toBe(1);
+  }, 45000);
+
+  it('does not repeat a server-delivered warning after proxy failover (#1852)', async () => {
+    fs.writeFileSync(path.join(tempDir, 'alpha.ts'), 'export function alpha() { return 1; }\n');
+    const indexed = await CodeGraph.open(tempDir);
+    await indexed.indexAll();
+    stampIndexStale(indexed, '0.1.0');
+    indexed.close();
+
+    const otherRoot = path.join(tempDir, 'other');
+    fs.mkdirSync(otherRoot);
+    fs.writeFileSync(path.join(otherRoot, 'bravo.ts'), 'export function bravo() { return 2; }\n');
+    const other = await CodeGraph.init(otherRoot, { index: false });
+    await other.indexAll();
+    stampIndexStale(other, '0.2.0');
+    other.close();
+
+    const server = spawnServer(tempDir, { CODEGRAPH_PPID_POLL_MS: '5000' });
+    servers.push(server);
+    sendInitialize(server.child, 1);
+    await waitFor(() => findResponse(server.stdout, 1), 10000);
+    await waitFor(() => server.stderr.some((line) => line.includes('Attached to shared daemon')), 8000);
+    await waitFor(() => (readLockPid() ?? 0) > 0, 8000);
+    const serverPid = readLockPid()!;
+
+    sendToolCall(server.child, 2, 'codegraph_search', tempDir, { query: 'alpha' });
+    const throughServer = await waitFor(() => findResponse(server.stdout, 2), 10000);
+    expect(throughServer.result.content[0].text).toMatch(/index predates/i);
+
+    process.kill(serverPid, 'SIGTERM');
+    expect(await waitProcessExit(serverPid, 8000)).toBe(true);
+    await waitFor(
+      () => server.stderr.some((line) => line.includes('serving this session in-process')),
+      8000,
+    );
+
+    sendToolCall(server.child, 3, 'codegraph_search', tempDir, { query: 'alpha' });
+    const afterFailover = await waitFor(() => findResponse(server.stdout, 3), 10000);
+    expect(afterFailover.result.content[0].text).not.toMatch(/index predates/i);
+
+    sendToolCall(server.child, 4, 'codegraph_search', otherRoot, { query: 'bravo' });
+    const otherProject = await waitFor(() => findResponse(server.stdout, 4), 10000);
+    expect(otherProject.result.content[0].text).toMatch(/index predates/i);
+    expect(otherProject.result.content[0].text).toContain('CodeGraph v0.2.0');
+  }, 45000);
 
   it('concurrent launchers converge on a single server (the lock appears complete, never empty)', async () => {
     // Fire three launchers as close to simultaneously as possible — this is the

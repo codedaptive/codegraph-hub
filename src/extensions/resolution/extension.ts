@@ -161,7 +161,13 @@ export const suspectsTool: ExtensionTool = {
       properties: {
         projectPath: {
           type: 'string',
-          description: 'Path to the project (or any directory inside it). Defaults to the session project.',
+          // The server has no default project: it answers a call without this
+          // argument with "missing argument: root path to the code you wish to
+          // query" (src/extensions/host/server/repo-anchor.ts).
+          description:
+            'REQUIRED: the root path of the code to query (or any directory inside it); the report covers the ' +
+            'project whose index that path belongs to. There is no default project: a call without it is ' +
+            'answered "missing argument: root path to the code you wish to query".',
         },
         limit: {
           type: 'string',
