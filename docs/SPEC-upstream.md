@@ -1,6 +1,6 @@
 # SPEC: offering our work upstream
 
-Draft 4, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
+Draft 5, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
 `colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
 
 ## 1. What Bob decided
@@ -25,6 +25,12 @@ Draft 4, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-
 
 One PR per row, each on `pr/<feature>` cut from current upstream with that feature's commits applied, its tests
 passing on upstream's suite. Smallest and least dependent first.
+
+The rows are not all independent (Orc-Codegraph, from the tree, `design/Orc-Codegraph/ledger/reports/r17-plan.md`):
+3 builds on 2; 5-8 share Swift/Rust resolution files and the extraction kernel; 12 builds on 11. A PR from the fork
+cannot be based on another open PR, so a dependent PR either carries its prerequisite's commits (and says so) or
+waits until the prerequisite merges. The refresh comes first: upstream is 84 commits ahead and a merge conflicts in
+26 files.
 
 | PR | Feature(s) | What it fixes |
 |---|---|---|
