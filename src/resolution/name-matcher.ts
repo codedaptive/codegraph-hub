@@ -25,6 +25,7 @@ import { cppIncludedFile, cppIncludedHeadersBeside, cppIncluders } from './cpp-i
 import { isCFeatureVariant, isOffByDefault } from './c-feature-variants';
 import { isTestFile, isTestPath } from '../search/query-utils';
 import { ambientModuleDeclarations, declaringFileAnswers, inBlock, isDeclarationFile, isMergedAmbientDeclaration, scanGlobalScope, type GlobalScopeScan } from './ambient-modules';
+import { leavesWorkspaceRoot } from './workspace-packages';
 import { isMinifiedContent } from '../extraction/generated-detection';
 import { getCargoWorkspaceCrateMap, parsePackageName, parseTargetPaths } from './frameworks/cargo-workspace';
 import { blankRustCode, readRustScopes, rustBindingAt, rustInnerBlockAt, rustBoundsOf, rustFnAt, rustImplAt, splitRustTopLevel, type RustBinding, type RustPatternSite, type RustScopes } from './rust-scopes';
@@ -1895,6 +1896,7 @@ function lexicalScopeOf(candidate: Node, context: ResolutionContext): { start: n
     scope = { start: container.startLine, end: container.endLine };
     break;
   }
+  scope ??= literalPlaceOf(candidate, context)?.block ?? null;
   memo.set(candidate.id, scope);
   return scope;
 }
@@ -2010,10 +2012,20 @@ export function tsGlobalScope(file: string, context: ResolutionContext): GlobalS
   if (scope === undefined) {
     const source = context.readFile(file);
     scope = source === null ? null : scanGlobalScope(source);
-    if (scope?.script && HAS_CJS_EXPORT.test(source!)) scope = { ...scope, script: false, globalWords: new Set() };
+    if (scope?.script && HAS_CJS_EXPORT.test(source!) && !isFlowLibrary(file, scope)) scope = { ...scope, script: false, globalWords: new Set() };
     memo.set(file, scope);
   }
   return scope;
+}
+
+/**
+ * Whether a file is a Flow library definition: a `.js` script with a top-level
+ * `declare`, which only Flow reads, like react's `flow-typed/environments` and
+ * the `[libs]` of its flowconfig. Its `declare module.exports` is no CommonJS
+ * export, and its top level is the global scope of every file Flow checks.
+ */
+function isFlowLibrary(file: string, scope: GlobalScopeScan): boolean {
+  return scope.declares && /\.[cm]?jsx?$/i.test(file);
 }
 
 /**
@@ -2032,14 +2044,28 @@ export function tsGlobalScope(file: string, context: ResolutionContext): GlobalS
  * level is global only to its own program — vscode's colorize fixtures
  * declare `type T` and copilot's eslint fixtures `interface Node` — and a
  * test's or fixture's globals are its tests' only, as its `declare module`
- * blocks are (see ambient-modules.ts).
+ * blocks are (see ambient-modules.ts). A Flow library's are for the JavaScript
+ * files Flow reads (isFlowLibrary): TypeScript's own `ReadableStream` is no
+ * `declare class` of a `flow-typed` folder beside it.
  */
 function isTsTypeInScope(n: Node, ref: UnresolvedRef, context: ResolutionContext): boolean {
   if (n.filePath === ref.filePath || !TS_JS_FILE.test(n.filePath)) return true;
   const scope = tsGlobalScope(n.filePath, context);
   if (!scope) return true;
-  if ((scope.script && !isDeclarationFile(n.filePath)) || (isTestFile(n.filePath) && !isTestFile(ref.filePath))) return false;
+  const declaration = isDeclarationFile(n.filePath) || (isFlowLibrary(n.filePath, scope) && !/\.[cm]?tsx?$/i.test(ref.filePath));
+  if ((scope.script && !declaration) || (isTestFile(n.filePath) && !isTestFile(ref.filePath))) return false;
   return scope.globalWords.has(`${n.startLine}:${n.startColumn}`);
+}
+
+/**
+ * Whether a name in a JS/TS monorepo inside the repository would reach past it:
+ * it has an install of its own (WorkspacePackages.nestedRoots). The tests of
+ * react's `compiler/` call `@types/jest`'s `expect`, not the `declare function
+ * expect` of the outer repository's `scripts/jest`.
+ */
+export function crossesWorkspaceRoot(n: Node, ref: UnresolvedRef, context: ResolutionContext): boolean {
+  return JS_FAMILY.has(ref.language) && JS_FAMILY.has(n.language) &&
+    leavesWorkspaceRoot(ref.filePath, n.filePath, context.getWorkspacePackages?.());
 }
 
 /**
@@ -2060,7 +2086,7 @@ function isTsBareTypeName(ref: UnresolvedRef, context: ResolutionContext): boole
       (typeRef && isWrittenQualified(ref, context))) return false;
   const scope = tsGlobalScope(ref.filePath, context);
   const at = { startLine: ref.line, startColumn: ref.column };
-  return scope?.script === false && !scope.importAliases.has(ref.referenceName) &&
+  return !!scope && (scope.script === false || isFlowLibrary(ref.filePath, scope)) && !scope.importAliases.has(ref.referenceName) &&
     !scope.moduleBlocks.some((block) => inBlock(at, block));
 }
 
@@ -2684,6 +2710,30 @@ const OBJC_FILE_LOCAL_KINDS: ReadonlySet<string> = new Set(['struct', 'union', '
  */
 function isObjcFileLocalElsewhere(n: Node, ref: UnresolvedRef): boolean {
   return n.language === 'objc' && n.filePath !== ref.filePath && OBJC_FILE_LOCAL_KINDS.has(n.kind) && C_SOURCE_EXT.test(n.filePath);
+}
+
+/** What an Objective-C struct's member or an alias can be declared with. */
+const OBJC_DECLARED_TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'protocol', 'struct', 'union', 'enum', 'type_alias']);
+
+/**
+ * Does `ref` name the type an Objective-C struct's member or an alias is
+ * declared with? Extraction writes no other `references` from either: a value
+ * read is its function's. (A node's id starts with its kind.)
+ */
+export function isObjcDeclaredTypeRef(ref: UnresolvedRef): boolean {
+  return ref.language === 'objc' && ref.referenceKind === 'references' && /^(?:struct|union|type_alias):/.test(ref.fromNodeId);
+}
+
+/**
+ * The declarations an Objective-C type name stands for: a class's own header
+ * (`NSString.h`), then any header or the file itself. A class has a node per
+ * `@implementation` and category, and the one in some other source file is the
+ * least of them: GNUstep's `NSString` has 14, in test files too.
+ */
+function objcTypeDeclarations(candidates: Node[], ref: UnresolvedRef): Node[] {
+  const visible = candidates.filter((n) => n.filePath === ref.filePath || !C_SOURCE_EXT.test(n.filePath));
+  const own = visible.filter((n) => n.filePath.endsWith(`/${ref.referenceName}.h`) || n.filePath === `${ref.referenceName}.h`);
+  return own.length > 0 ? own : visible.length > 0 ? visible : candidates;
 }
 
 /** Per context: a C/C++ type's qualified name → its declarations. */
@@ -4030,6 +4080,7 @@ export function isVisibleAcrossFiles(candidate: Node, ref: UnresolvedRef, contex
   // `job.OPCommand` result type is not the method `Context.OPCommand`.
   if (ref.language === 'go' && candidate.language === 'go' &&
       (isGoExternalQualified(ref, context) || !isInGoQualifierPackage(candidate, ref, context))) return false;
+  if ((ref.language === 'csharp' || ref.language === 'razor') && !csharpTypeArityFits(candidate, ref, context)) return false;
   if (candidate.filePath === ref.filePath) return true;
   // A vendored minified bundle's names are mangled: healthchecks' 369 `$(…)`
   // (jQuery, a global) went to a one-letter helper inside bootstrap-native.min.js.
@@ -6645,9 +6696,29 @@ function stdMethodNames(language: string): ReadonlySet<string> | null {
     case 'scala': return SCALA_STD_METHODS;
     case 'java': return JAVA_STD_METHODS;
     case 'swift': return SWIFT_STD_METHODS;
+    case 'ruby': return RUBY_STD_METHODS;
     default: return null;
   }
 }
+
+/**
+ * The `?` and `!` methods of Ruby's core classes. Nearly every receiver answers
+ * them, so the one project method of such a name says nothing about one:
+ * sinatra's `bad_cookies.empty?` on an Array is no `Cookies::Jar#empty?`.
+ */
+const RUBY_STD_METHODS: ReadonlySet<string> = new Set([
+  'nil?', 'is_a?', 'kind_of?', 'instance_of?', 'respond_to?', 'frozen?', 'equal?', 'eql?', 'instance_variable_defined?',
+  'between?', 'zero?', 'positive?', 'negative?', 'nonzero?', 'even?', 'odd?', 'finite?', 'infinite?', 'nan?', 'integer?',
+  'empty?', 'any?', 'all?', 'none?', 'one?', 'include?', 'member?', 'key?', 'has_key?', 'value?', 'has_value?', 'cover?',
+  'disjoint?', 'intersect?', 'subset?', 'superset?', 'proper_subset?', 'proper_superset?',
+  'start_with?', 'end_with?', 'match?', 'ascii_only?', 'valid_encoding?', 'casecmp?',
+  'eof?', 'closed?', 'tty?', 'exist?', 'file?', 'directory?', 'absolute?', 'relative?', 'alive?', 'lambda?',
+  'blank?', 'present?',
+  'merge!', 'map!', 'collect!', 'select!', 'filter!', 'reject!', 'compact!', 'flatten!', 'uniq!', 'sort!', 'sort_by!',
+  'reverse!', 'rotate!', 'shuffle!', 'slice!', 'transform_keys!', 'transform_values!', 'gsub!', 'sub!', 'strip!',
+  'lstrip!', 'rstrip!', 'chomp!', 'chop!', 'squeeze!', 'upcase!', 'downcase!', 'capitalize!', 'swapcase!', 'tr!',
+  'delete!', 'next!', 'succ!', 'encode!', 'scrub!', 'delete_prefix!', 'delete_suffix!',
+]);
 
 /** Whether `name` is one of `language`'s standard-library method names (VB.NET's in any case). */
 export function isStdMethodName(language: string, name: string): boolean {
@@ -6675,6 +6746,12 @@ const DART_STD_METHODS: ReadonlySet<string> = new Set([
  */
 function receiverNamesOwner(receiver: string, method: Node, context: ResolutionContext): boolean {
   if (method.language === 'go') return namesOwnerType(receiver, method);
+  // A Ruby receiver, the class that owns the method, not one of the modules
+  // around it: `Sinatra::Cookies::Jar` is no `bad_cookies`.
+  if (method.language === 'ruby') {
+    const cut = method.qualifiedName.lastIndexOf('::');
+    return cut > 0 && sharesReceiverWord(receiver, { ...method, qualifiedName: `${method.qualifiedName.slice(0, cut).split('::').pop()!}::${method.name}` });
+  }
   if (method.language === 'dart') {
     const cut = method.qualifiedName.lastIndexOf('::');
     const owner = cut > 0 ? method.qualifiedName.slice(0, cut).split('::').pop()! : '';
@@ -7923,6 +8000,101 @@ function isCsharpTypeVisible(n: Node, ref: UnresolvedRef, context: ResolutionCon
   return scope.usings.has(ns);
 }
 
+/** Space, comments and preprocessor lines, which may stand between C# attribute lists. */
+const CSHARP_TRIVIA = /(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*)*/y;
+/** What decides where a C# attribute list ends: a bracket, or a literal that may hold one. */
+const CSHARP_ATTRIBUTE_PIECE = /@"(?:[^"]|"")*"|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[[\]]/g;
+
+/** Where `text` goes on past the C# attribute lists that open at `from`. */
+function csharpPastAttributes(text: string, from: number): number {
+  let at = from;
+  for (;;) {
+    CSHARP_TRIVIA.lastIndex = at;
+    CSHARP_TRIVIA.test(text);
+    at = CSHARP_TRIVIA.lastIndex;
+    if (text[at] !== '[') return at;
+    CSHARP_ATTRIBUTE_PIECE.lastIndex = at;
+    let depth = 0;
+    let piece: RegExpExecArray | null;
+    do {
+      piece = CSHARP_ATTRIBUTE_PIECE.exec(text);
+      if (piece?.[0] === '[') depth++;
+      else if (piece?.[0] === ']') depth--;
+    } while (piece && depth > 0);
+    if (!piece) return at;
+    at = CSHARP_ATTRIBUTE_PIECE.lastIndex;
+  }
+}
+
+/**
+ * A C# declaration's source from past its attributes: its node starts at them,
+ * so its first line may be `[MethodImpl(…)]`, and more of them may follow.
+ */
+function csharpDeclarationSource(node: Node, context: ResolutionContext): string {
+  const lines = context.getFileLines?.(node.filePath) ?? context.readFile(node.filePath)?.split(/\r?\n/) ?? [];
+  const source = lines.slice(node.startLine - 1, node.endLine).join('\n');
+  return source.slice(csharpPastAttributes(source, 0));
+}
+
+const CSHARP_TYPE_ARITY = new WeakMap<ResolutionContext, Map<string, number>>();
+
+/** How many type parameters a C# type declares: `class Cache<K, V>` 2, `class List` 0. */
+function csharpDeclaredArity(type: Node, context: ResolutionContext): number {
+  let memo = CSHARP_TYPE_ARITY.get(context);
+  if (!memo) CSHARP_TYPE_ARITY.set(context, (memo = new Map()));
+  const hit = memo.get(type.id);
+  if (hit !== undefined) return hit;
+  const lines = context.getFileLines?.(type.filePath) ?? context.readFile(type.filePath)?.split(/\r?\n/) ?? [];
+  if (type.kind === 'component') {
+    const arity = lines.filter((l) => /^\s*@typeparam\b/.test(l)).length;
+    memo.set(type.id, arity);
+    return arity;
+  }
+  // The first `class Name` is the declaration; a later one is a comment or a string.
+  const params = new RegExp(String.raw`\b(?:class|struct|interface|record|enum)\s+(?:(?:class|struct)\s+)?${escapeRegExp(type.name)}\b(?:\s*<([^<>]*)>)?`).exec(csharpDeclarationSource(type, context))?.[1];
+  const arity = params === undefined ? 0 : params.split(',').length;
+  memo.set(type.id, arity);
+  return arity;
+}
+
+/**
+ * How many type arguments the C# type named at `ref` is written with: 2 for
+ * `Cache<string, List<int>>`, 0 for none, null when the list doesn't close on
+ * its line.
+ */
+function csharpWrittenArity(ref: UnresolvedRef, context: ResolutionContext): number | null {
+  const name = ref.referenceName.split('.').pop()!;
+  const line = (context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/) ?? [])[ref.line - 1] ?? '';
+  const at = line.indexOf(name, Math.max(0, ref.column));
+  if (at < 0) return 0;
+  let i = at + name.length;
+  while (line[i] === ' ') i++;
+  if (line[i] !== '<') return 0;
+  let depth = 0;
+  let args = 1;
+  for (; i < line.length; i++) {
+    const c = line[i]!;
+    if (c === '<' || c === '(' || c === '[') depth++;
+    else if (c === '>' || c === ')' || c === ']') {
+      if (--depth === 0) return args;
+    } else if (c === ',' && depth === 1) args++;
+  }
+  return null;
+}
+
+/**
+ * Whether a C# type can be what `ref` names, by type arguments: a name written
+ * with them means a type declaring as many. `new List<CatalogBrand>()` is the
+ * BCL's `List<T>`, not the Blazor page `List` around it, whose namespace would
+ * win for a bare `List`.
+ */
+export function csharpTypeArityFits(type: Node, ref: UnresolvedRef, context: ResolutionContext): boolean {
+  if ((ref.referenceKind !== 'references' && ref.referenceKind !== 'instantiates') ||
+      !(CSHARP_TYPE_KINDS.has(type.kind) || (type.kind === 'component' && type.language === 'razor'))) return true;
+  const written = csharpWrittenArity(ref, context);
+  return !written || written === csharpDeclaredArity(type, context);
+}
+
 /**
  * Whether a bare C# name can reach `n` as a nested type: only from inside the
  * type that declares it (any partial part, any depth) or a class deriving from
@@ -8561,37 +8733,200 @@ function rubyMethodsOfCallerKind(candidates: Node[], ref: UnresolvedRef, context
   return candidates.some(twinOfOtherKind) ? candidates.filter((n) => !twinOfOtherKind(n)) : candidates;
 }
 
-/** A Ruby class's qualified name, those of its superclasses, and of every module mixed into any of them. */
-export function rubyAncestry(qn: string, context: ResolutionContext): Set<string> {
+const RUBY_MIXINS = new WeakMap<ResolutionContext, Map<string, RubyMixins>>();
+
+/** What one declaration of a Ruby class or module adds to its ancestors, each list in the order Ruby looks there. */
+interface RubyMixins {
+  prepended: string[];
+  included: string[];
+  extended: string[];
+  superclass: string | null;
+}
+
+/**
+ * What a Ruby class or module declaration mixes in, read from its own body
+ * (a class nested in it has its own mixins) and found by constant lookup from
+ * there. The module mixed in last is asked first: rails' `save!` is
+ * `Transactions`', which `Base` includes after `Persistence`.
+ */
+function rubyMixinsOf(decl: Node, context: ResolutionContext): RubyMixins {
+  let memo = RUBY_MIXINS.get(context);
+  if (!memo) RUBY_MIXINS.set(context, (memo = new Map()));
+  const hit = memo.get(decl.id);
+  if (hit) return hit;
+  const q = decl.qualifiedName;
+  const found: RubyMixins = { prepended: [], included: [], extended: [], superclass: null };
+  const lines = context.getFileLines?.(decl.filePath) ?? context.readFile(decl.filePath)?.split(/\r?\n/) ?? [];
+  const sup = /^\s*class\s+[\w:]+\s*<\s*(::)?([A-Z][\w:]*)/.exec(lines[decl.startLine - 1] ?? '');
+  if (sup) found.superclass = rubyConstantQn(sup[2]!, sup[1] || !q.includes('::') ? '' : q.slice(0, q.lastIndexOf('::')), context);
+  const nested = context.getNodesInFile(decl.filePath).filter((n) => (n.kind === 'class' || n.kind === 'module') && n.id !== decl.id &&
+    n.startLine > decl.startLine && n.endLine < decl.endLine);
+  for (let i = decl.startLine; i < decl.endLine && i < lines.length; i++) {
+    // A module a call returns (`include RouteSet.new.tap { … }.url_helpers`,
+    // actionpack's tests) is no mixin of the constant the call starts at.
+    const mix = /^\s*(include|extend|prepend)\s+([A-Z:][\w:]*(?:\s*,\s*[A-Z:][\w:]*)*)(?![\w:]|\s*[.(])/.exec(lines[i]!);
+    if (!mix || nested.some((n) => n.startLine <= i + 1 && n.endLine >= i + 1)) continue;
+    const names = mix[2]!.split(/\s*,\s*/).map((name) => name.startsWith('::') ? rubyConstantQn(name.slice(2), '', context) : rubyConstantQn(name, q, context));
+    const list = mix[1] === 'include' ? found.included : mix[1] === 'prepend' ? found.prepended : found.extended;
+    list.unshift(...names);
+  }
+  memo.set(decl.id, found);
+  return found;
+}
+
+/**
+ * A Ruby class's qualified name, those of its superclasses, and of every
+ * module mixed into any of them, in the order Ruby looks a method up. For
+ * what an instance answers (`instance`), a module the class `extend`s is
+ * left out: its methods are the class's own.
+ */
+export function rubyAncestry(qn: string, context: ResolutionContext, instance = false): Set<string> {
   let memo = RUBY_ANCESTRY.get(context);
   if (!memo) RUBY_ANCESTRY.set(context, (memo = new Map()));
-  const hit = memo.get(qn);
+  const key = instance ? `instance ${qn}` : qn;
+  const hit = memo.get(key);
   if (hit) return hit;
   const seen = new Set<string>();
-  const queue = [qn];
-  while (queue.length > 0 && seen.size < 60) {
-    const q = queue.shift()!;
-    if (seen.has(q)) continue;
+  const order = new Set<string>();
+  const visit = (q: string): void => {
+    if (seen.has(q) || seen.size >= 250) return;
     seen.add(q);
-    for (const decl of context.getNodesByQualifiedName(q)) {
-      if (decl.language !== 'ruby' || (decl.kind !== 'class' && decl.kind !== 'module')) continue;
-      const lines = context.getFileLines?.(decl.filePath) ?? context.readFile(decl.filePath)?.split(/\r?\n/) ?? [];
-      const outer = q.includes('::') ? q.slice(0, q.lastIndexOf('::')) : '';
-      const sup = /^\s*class\s+[\w:]+\s*<\s*(::)?([A-Z][\w:]*)/.exec(lines[decl.startLine - 1] ?? '');
-      if (sup) queue.push(rubyConstantQn(sup[2]!, sup[1] ? '' : outer, context));
-      for (const line of lines.slice(decl.startLine, decl.endLine)) {
-        // A module a call returns (`include RouteSet.new.tap { … }.url_helpers`,
-        // actionpack's tests) is no mixin of the constant the call starts at.
-        const mix = /^\s*(?:include|extend|prepend)\s+([A-Z:][\w:]*(?:\s*,\s*[A-Z:][\w:]*)*)(?![\w:]|\s*[.(])/.exec(line);
-        if (!mix) continue;
-        for (const name of mix[1]!.split(/\s*,\s*/)) {
-          queue.push(name.startsWith('::') ? rubyConstantQn(name.slice(2), '', context) : rubyConstantQn(name, q, context));
+    const mixins = context.getNodesByQualifiedName(q)
+      .filter((decl) => decl.language === 'ruby' && (decl.kind === 'class' || decl.kind === 'module'))
+      .map((decl) => rubyMixinsOf(decl, context));
+    for (const m of mixins) m.prepended.forEach(visit);
+    order.add(q);
+    for (const m of mixins) {
+      m.included.forEach(visit);
+      if (!instance) m.extended.forEach(visit);
+    }
+    for (const m of mixins) if (m.superclass) visit(m.superclass);
+  };
+  visit(qn);
+  memo.set(key, order);
+  return order;
+}
+
+/**
+ * The instance method `name` a value of the Ruby class written `typeName`
+ * where `ref` is answers from its ancestors: the class Ruby's constant lookup
+ * finds there, then its superclasses and the modules they include. Walked by
+ * bare names, rails' `company.has_attribute?` took the `has_attribute?` of a
+ * `ClassMethods` module, one of dozens of that name.
+ */
+function rubyInstanceMethodOf(typeName: string, name: string, ref: UnresolvedRef, context: ResolutionContext): Node | null {
+  const looked = rubyConstantQn(typeName, rubyScopeAt(ref, context), context);
+  // A type read without its namespace (`Arel::Nodes::BindParam.new` is read as
+  // `BindParam`) is any class of that name.
+  const classes = context.getNodesByQualifiedName(looked).some(isRubyNamespace) ? [looked]
+    : [...new Set(context.getNodesByName(typeName.split('::').pop()!).filter(isRubyNamespace).map((n) => n.qualifiedName))];
+  for (const qn of classes) {
+    for (const owner of rubyAncestry(qn, context, true)) {
+      const methods = rubyMethodsOf(owner, name, context);
+      if (methods.length > 0) return rubyMethodsOfKindFirst(methods, 'instance')[0]!;
+    }
+  }
+  return null;
+}
+
+const RUBY_METHOD_OWNERS = new WeakMap<ResolutionContext, Map<string, Map<string, Node[]>>>();
+
+/** The Ruby methods `name` of the class or module `owner`. A walk up a class's ancestors asks this of each one, for each method name. */
+function rubyMethodsOf(owner: string, name: string, context: ResolutionContext): Node[] {
+  let memo = RUBY_METHOD_OWNERS.get(context);
+  if (!memo) RUBY_METHOD_OWNERS.set(context, (memo = new Map()));
+  let owners = memo.get(name);
+  if (!owners) {
+    memo.set(name, (owners = new Map()));
+    for (const n of context.getNodesByName(name)) {
+      if (n.kind !== 'method' || n.language !== 'ruby') continue;
+      const at = n.qualifiedName.lastIndexOf('::');
+      if (at < 0) continue;
+      const of = n.qualifiedName.slice(0, at);
+      const methods = owners.get(of);
+      if (methods) methods.push(n);
+      else owners.set(of, [n]);
+    }
+  }
+  return owners.get(owner) ?? [];
+}
+
+function isRubyNamespace(n: Node): boolean {
+  return n.language === 'ruby' && (n.kind === 'class' || n.kind === 'module');
+}
+
+const RUBY_FILE_SCOPES = new WeakMap<ResolutionContext, Map<string, Node[]>>();
+
+/** The qualified name of the innermost class or module around `ref`, or '' at the top of its file. */
+function rubyScopeAt(ref: UnresolvedRef, context: ResolutionContext): string {
+  let memo = RUBY_FILE_SCOPES.get(context);
+  if (!memo) RUBY_FILE_SCOPES.set(context, (memo = new Map()));
+  let scopes = memo.get(ref.filePath);
+  if (!scopes) {
+    scopes = context.getNodesInFile(ref.filePath).filter((n) => n.kind === 'class' || n.kind === 'module')
+      .sort((a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine));
+    memo.set(ref.filePath, scopes);
+  }
+  return scopes.find((n) => n.startLine <= ref.line && n.endLine >= ref.line)?.qualifiedName ?? '';
+}
+
+/**
+ * The class method `name` a Ruby class answers past its own: up its
+ * superclasses, a `def self.` of theirs, an instance method of a module one of
+ * them `extend`s, or of the `ClassMethods` a module they include brings along
+ * (ActiveSupport::Concern). Never an instance method of a module they
+ * include, nor a `def self.` of one, which stays that module's:
+ * rails' `Topic.create` is no `Reflection.create`.
+ */
+function rubyClassMethodOf(qn: string, name: string, context: ResolutionContext): Node | null {
+  const named = (owner: string, isStatic: boolean): Node | undefined =>
+    rubyMethodsOf(owner, name, context).find((n) => (n.isStatic === true) === isStatic);
+  const seen = new Set<string>();
+  for (let cls: string | null = qn; cls !== null && !seen.has(cls);) {
+    seen.add(cls);
+    const decls: Node[] = context.getNodesByQualifiedName(cls).filter(isRubyNamespace);
+    if (cls !== qn) {
+      const own = named(cls, true);
+      if (own) return own;
+    }
+    for (const decl of decls) {
+      const mixins = rubyMixinsOf(decl, context);
+      for (const module of mixins.extended) {
+        for (const owner of rubyAncestry(module, context, true)) {
+          const method = named(owner, false);
+          if (method) return method;
+        }
+      }
+      for (const module of mixins.included) {
+        for (const owner of rubyAncestry(module, context, true)) {
+          const method = named(`${owner}::ClassMethods`, false);
+          if (method) return method;
         }
       }
     }
+    cls = decls.map((decl) => rubyMixinsOf(decl, context).superclass).find((up) => up !== null) ?? null;
   }
-  memo.set(qn, seen);
-  return seen;
+  return null;
+}
+
+/**
+ * The method `name` the first of a Ruby class's ancestors declares, past the
+ * class itself: read through its real superclass and mixins, each found by
+ * Ruby's constant lookup. A base's bare name finds a namesake's method:
+ * `ActiveRecord::Base` is every `Base` in rails.
+ */
+function rubyAncestorMethod(qn: string, name: string, context: ResolutionContext, kind?: RubyMethodKind): Node | null {
+  if (kind === 'class') return rubyClassMethodOf(qn, name, context);
+  for (const owner of rubyAncestry(qn, context)) {
+    if (owner === qn) continue;
+    const methods = rubyMethodsOf(owner, name, context);
+    // A module's `def self.` stays the module's: rails' `topic.create` is no
+    // `Reflection.create`.
+    const reached = methods.find((n) => n.isStatic !== true) ??
+      (context.getNodesByQualifiedName(owner).some((d) => d.kind === 'class') ? methods[0] : undefined);
+    if (reached) return reached;
+  }
+  return null;
 }
 
 /** The class or module a constant written inside `scope` names: the nearest enclosing namespace that has it, else the name itself. */
@@ -8715,8 +9050,9 @@ function isPhpMethodInScope(method: Node, ref: UnresolvedRef, via: 'self' | 'par
   // Past an ancestor outside the repository (Orchestra's TestCase) that
   // ancestor's members are unseen — the repository's traits it uses among
   // them. A trait's method may still be the one meant; an unrelated class's
-  // (Drupal's comparator `assertEquals`) never is.
-  return up.leavesRepo && context.getNodesByQualifiedName(ownerQn).some((d) => d.kind === 'trait');
+  // (Drupal's comparator `assertEquals`) never is. Nor a trait's, for a call
+  // written `parent::x()`: that is what the outside parent declares.
+  return via === 'self' && up.leavesRepo && context.getNodesByQualifiedName(ownerQn).some((d) => d.kind === 'trait');
 }
 
 /**
@@ -8743,6 +9079,11 @@ function phpReceiverReaches(receiver: string, method: Node, context: ResolutionC
 
 /** Every type `start` reaches through `extends` and trait `use`, and whether it left the repository on the way. */
 function phpAncestry(start: readonly string[], context: ResolutionContext): { qns: Set<string>; leavesRepo: boolean } {
+  let memo = PHP_ANCESTRIES.get(context);
+  if (!memo) PHP_ANCESTRIES.set(context, (memo = new Map()));
+  const key = start.join('\0');
+  const hit = memo.get(key);
+  if (hit) return hit;
   const qns = new Set<string>();
   const queue = [...start];
   let leavesRepo = false;
@@ -8754,8 +9095,12 @@ function phpAncestry(start: readonly string[], context: ResolutionContext): { qn
     if (decls.length === 0) leavesRepo = true;
     for (const decl of decls) queue.push(...phpSupertypeQns(decl, context));
   }
-  return { qns, leavesRepo };
+  const found = { qns, leavesRepo };
+  memo.set(key, found);
+  return found;
 }
+
+const PHP_ANCESTRIES = new WeakMap<ResolutionContext, Map<string, { qns: Set<string>; leavesRepo: boolean }>>();
 
 const PHP_FILE_SCOPES = new WeakMap<ResolutionContext, Map<string, { namespace: string; uses: Map<string, string> }>>();
 
@@ -8773,6 +9118,13 @@ function phpFileScope(file: string, context: ResolutionContext): { namespace: st
   for (const m of header.matchAll(/^\s*use\s+(?:function\s+|const\s+)?([\w\\]+)(?:\s+as\s+(\w+))?\s*;/gm)) {
     const fqn = m[1]!.replace(/^\\/, '');
     uses.set(m[2] ?? fqn.split('\\').pop()!, fqn);
+  }
+  // `use App\Models\{User, Post as Article};`
+  for (const m of header.matchAll(/^\s*use\s+(?:function\s+|const\s+)?([\w\\]+)\\\{([^}]*)\}\s*;/gm)) {
+    for (const item of m[2]!.split(',')) {
+      const named = /^\s*([\w\\]+)(?:\s+as\s+(\w+))?\s*$/.exec(item);
+      if (named) uses.set(named[2] ?? named[1]!.split('\\').pop()!, `${m[1]!.replace(/^\\/, '')}\\${named[1]}`);
+    }
   }
   const scope = { namespace, uses };
   memo.set(file, scope);
@@ -8793,7 +9145,7 @@ function phpTypeQn(name: string, file: string, context: ResolutionContext): stri
   return at < 0 ? fqn : `${fqn.slice(0, at)}::${fqn.slice(at + 1)}`;
 }
 
-/** The qualified names a PHP class or trait extends and the traits it uses. */
+/** The qualified names of the traits a PHP class or trait uses, then those it extends: the order PHP finds a method in. */
 function phpSupertypeQns(decl: Node, context: ResolutionContext): string[] {
   let memo = PHP_SUPERS.get(context);
   if (!memo) {
@@ -8804,20 +9156,139 @@ function phpSupertypeQns(decl: Node, context: ResolutionContext): string[] {
   if (hit) return hit;
   const names: string[] = [];
   const lines = context.getFileLines?.(decl.filePath) ?? context.readFile(decl.filePath)?.split(/\r?\n/) ?? [];
-  const head = lines.slice(decl.startLine - 1, decl.startLine + 4).join(' ');
-  const extended = /\bextends\s+([^{]*?)(?:\bimplements\b|\{)/.exec(head)?.[1] ?? '';
-  for (const m of extended.matchAll(/(\\?[A-Za-z_][\w\\]*)/g)) names.push(m[1]!);
+  // A declaration starts at its attributes: Drupal's `#[ContentEntityType(…)]`
+  // runs for dozens of lines above `class Term extends …`.
+  const named = new RegExp(String.raw`\b(?:class|interface|trait|enum)\s+${escapeRegExp(decl.name)}\b`, 'i');
+  let at = decl.startLine - 1;
+  while (at < decl.endLine - 1 && !named.test(lines[at] ?? '')) at++;
+  if (at >= decl.endLine - 1) at = decl.startLine - 1;
+  const head = lines.slice(at, at + 12).join(' ');
   // `use StringTranslationTrait, MessengerTrait;` at the top of the body —
   // one per line or one list across several (Laravel's Command, Model).
-  const bodyLines = lines.slice(decl.startLine, Math.min(decl.endLine, decl.startLine + 80));
+  const bodyLines = lines.slice(at + 1, Math.min(decl.endLine, at + 81));
   const firstFunction = bodyLines.findIndex((l) => /\bfunction\b/.test(l));
   const body = bodyLines.slice(0, firstFunction < 0 ? bodyLines.length : firstFunction).join('\n');
   for (const used of body.matchAll(/^\s*use\s+([\w\\,\s]+?)\s*[;{]/gm)) {
     for (const t of used[1]!.split(',')) if (t.trim()) names.push(t.trim());
   }
+  const extended = /\bextends\s+([^{]*?)(?:\bimplements\b|\{)/.exec(head)?.[1] ?? '';
+  for (const m of extended.matchAll(/(\\?[A-Za-z_][\w\\]*)/g)) names.push(m[1]!);
   const qns = names.map((n) => phpTypeQn(n, decl.filePath, context));
   memo.set(decl.id, qns);
   return qns;
+}
+
+/**
+ * The method `name` a PHP type reaches past its own: in a trait it uses, then
+ * up what it extends, each found the way PHP finds a class name. Laravel's
+ * `Pivot` takes `getForeignKey` from its trait `AsPivot`, not from `Model` above
+ * it, and a parent's bare name would be any class of that name: `Collection`
+ * under `use Illuminate\Database\Eloquent\Collection;` overrides the
+ * `Illuminate\Support\Collection` it extends.
+ */
+function phpAncestorMethod(decl: Node, name: string, context: ResolutionContext, seen = new Set([decl.qualifiedName])): Node | null {
+  for (const qn of phpSupertypeQns(decl, context)) {
+    if (seen.has(qn)) continue;
+    seen.add(qn);
+    for (const up of context.getNodesByQualifiedName(qn)) {
+      if (up.language !== 'php' || !PHP_TYPE_KINDS.has(up.kind)) continue;
+      const found = findOwnMethod(fileMethodsNamed(up.filePath, name, context), up, name) ?? phpAncestorMethod(up, name, context, seen);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a PHP file names a class by its short name, under any alias: one of
+ * its own namespace, or one a `use` imports. A variable named after a class
+ * the file can't name is named after a word: Drupal's `$entity` is no views
+ * plugin `Entity`, in a namespace the file never mentions.
+ */
+function phpFileNamesClass(candidate: Node, file: string, context: ResolutionContext): boolean {
+  const { namespace, uses } = phpFileScope(file, context);
+  const fqn = candidate.qualifiedName.replace(/::/g, '\\').toLowerCase();
+  if (fqn === (namespace ? `${namespace}\\${candidate.name}` : candidate.name).toLowerCase()) return true;
+  for (const used of uses.values()) if (used.toLowerCase() === fqn) return true;
+  return false;
+}
+
+/**
+ * The method a variable named after a PHP class reaches when the calling file
+ * can't name that class, so that only a word ties them: the class's own, or
+ * what it inherits when it is the one class of that name. Among namesakes the
+ * word picks none: Drupal's `$entity->access()` is no views plugin `Entity`'s
+ * `HandlerBase::access`, while its `$theme->getName()` is the `Extension` that
+ * the one `Theme` extends, and BookStack's `$chapter->getShortName()` is `Entity`'s.
+ */
+function phpUnnamedClassMethod(cls: Node, name: string, onlyOfName: boolean, context: ResolutionContext): Node | undefined {
+  const own = findOwnMethod(fileMethodsNamed(cls.filePath, name, context), cls, name);
+  return own ?? (onlyOfName ? phpAncestorMethod(cls, name, context) ?? undefined : undefined);
+}
+
+/**
+ * The method a Laravel facade hands a static call on to: `__callStatic` sends
+ * what the facade doesn't declare to the class `getFacadeAccessor` names, as in
+ * `return ParallelTesting::class;`. An accessor that returns a container key
+ * (`'cache'`) names no class here.
+ */
+function phpFacadeMethod(facade: Node, name: string, context: ResolutionContext): Node | null {
+  if (!phpSupertypeQns(facade, context).some((qn) => qn.endsWith('::Facade'))) return null;
+  const accessor = findOwnMethod(context.getNodesInFile(facade.filePath), facade, 'getFacadeAccessor');
+  if (!accessor) return null;
+  const lines = context.getFileLines?.(facade.filePath) ?? context.readFile(facade.filePath)?.split(/\r?\n/) ?? [];
+  const named = /\breturn\s+(\\?[A-Za-z_][\w\\]*)::class\s*;/.exec(lines.slice(accessor.startLine - 1, accessor.endLine).join('\n'))?.[1];
+  return named ? phpTypeMethod(phpTypeQn(named, facade.filePath, context), name, context)?.method ?? null : null;
+}
+
+/** The method `name` of the PHP type qualified `qn`, its own or one it reaches; undefined when the project declares no such type. */
+function phpTypeMethod(qn: string, name: string, context: ResolutionContext): { method: Node | null } | undefined {
+  let memo = PHP_TYPE_METHODS.get(context);
+  if (!memo) PHP_TYPE_METHODS.set(context, (memo = new Map()));
+  const key = `${qn}\0${name}`;
+  if (memo.has(key)) return memo.get(key);
+  const decls = context.getNodesByQualifiedName(qn).filter((n) => n.language === 'php' && PHP_TYPE_KINDS.has(n.kind));
+  let found: { method: Node | null } | undefined = decls.length > 0 ? { method: null } : undefined;
+  for (const decl of decls) {
+    const method = findOwnMethod(fileMethodsNamed(decl.filePath, name, context), decl, name) ?? phpAncestorMethod(decl, name, context);
+    if (method) {
+      found = { method };
+      break;
+    }
+  }
+  memo.set(key, found);
+  return found;
+}
+
+const PHP_TYPE_METHODS = new WeakMap<ResolutionContext, Map<string, { method: Node | null } | undefined>>();
+
+/** Eloquent's static methods that hand back a model of the class they are called on. */
+const ELOQUENT_FACTORY_CALL = /^\s*(?:(?:\$\w+\s*=\s*)*)(\\?[A-Z][\w\\]*)::(?:query\(\)\s*->\s*)?(?:create|forceCreate|firstOrCreate|firstOrNew|updateOrCreate|find|findOrFail)\s*\(/;
+
+/**
+ * The model a PHP local holds when the nearest assignment to it above the
+ * call, in the function making it, is a static factory of an Eloquent model:
+ * `$post = PostStringPrimaryKey::query()->create([…]);` is a
+ * PostStringPrimaryKey, whatever a `Post` beside it declares.
+ */
+function phpModelFactoryLocalType(receiver: string, ref: UnresolvedRef, context: ResolutionContext): string | null {
+  if (!/^\w+$/.test(receiver)) return null;
+  const lines = context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/);
+  if (!lines) return null;
+  const from = Math.max(0, enclosingScopeStartLine(ref, context) - 1);
+  const variable = `$${receiver}`;
+  for (let i = Math.min(ref.line - 1, lines.length - 1); i >= from; i--) {
+    const line = lines[i]!;
+    const at = line.indexOf(variable);
+    if (at < 0 || line.slice(0, at).trim() !== '') continue;
+    const value = /^\s*=(?!=)\s*(.*)$/.exec(line.slice(at + variable.length))?.[1];
+    if (value === undefined) continue;
+    const named = ELOQUENT_FACTORY_CALL.exec(value)?.[1];
+    if (!named) return null;
+    const decls = context.getNodesByQualifiedName(phpTypeQn(named, ref.filePath, context)).filter((n) => n.language === 'php' && n.kind === 'class');
+    return decls.some((d) => [...phpAncestry([d.qualifiedName], context).qns].some((qn) => qn.endsWith('::Model'))) ? named : null;
+  }
+  return null;
 }
 
 /** Names the Rust prelude puts in every module; a project item of the same name needs a `use` to shadow one. */
@@ -13827,6 +14298,7 @@ export function matchByExactName(
   const cMacroCall = ref.referenceKind === 'calls' && (ref.language === 'c' || ref.language === 'cpp') &&
     sameName.some((n) => n.kind === 'constant' && CPP_DEFINE_SIGNATURE.test(n.signature ?? ''));
   const typeRef = isDotNetTypeRef(ref, context);
+  const objcDeclaredType = isObjcDeclaredTypeRef(ref);
   const rustBare = ref.language === 'rust' && /^[A-Za-z_]\w*$/.test(ref.referenceName);
   const pythonShape = pythonCallShape(ref, context);
   const javaBare = ref.language === 'java' && ref.referenceKind === 'calls' && /^[A-Za-z_$][\w$]*$/.test(ref.referenceName);
@@ -13863,6 +14335,7 @@ export function matchByExactName(
     !(objcShape === 'self-send' && !isObjcSelfSendTarget(n, ref, context)) &&
     !(objcShape === 'super-send' && !isObjcSelfSendTarget(n, ref, context, true)) &&
     !isObjcFileLocalElsewhere(n, ref) &&
+    !(objcDeclaredType && !OBJC_DECLARED_TYPE_KINDS.has(n.kind)) &&
     !(vbReceiver !== null && !isVbMemberReachable(n, vbReceiver)) &&
     !(vbReceiver && !/^(?:me|mybase|myclass)$/i.test(vbReceiver) && !isVbTypeQualifiedBy(n, vbReceiver, ref.filePath, context)) &&
     !(vbScoped && !isVbMemberInScope(n, ref, context)) &&
@@ -13958,6 +14431,7 @@ export function matchByExactName(
     // Source()` in one test class is not the previous test class's `Source`.
     !(ref.language === 'csharp' && n.language === 'csharp' && CSHARP_TYPE_KINDS.has(n.kind) && /^[A-Za-z_]\w*$/.test(ref.referenceName) &&
       (!isCsharpNestedTypeInScope(n, ref, context) || (n.filePath !== ref.filePath && !isCsharpTypeVisible(n, ref, context)))) &&
+    !((ref.language === 'csharp' || ref.language === 'razor') && !csharpTypeArityFits(n, ref, context)) &&
     // Preserve import ranking; calls reject the winner without promoting another.
     (!importRef || n.filePath === ref.filePath ||
       !ESM_FAMILY.has(n.language) || !isSealedModule(n.filePath, context)) &&
@@ -13969,7 +14443,8 @@ export function matchByExactName(
     : dartTypeRef && dartPrefix === null ? preferOwnDartLibrary(filtered, ref, context)
     : swiftShape && swiftShape.shape !== 'chained' ? nearestSwiftMembers(filtered, ref, context)
     : kotlinBare ? lexicalKotlinMembers(filtered, ref, context)
-    : rubyBare ? rubyMethodsOfCallerKind(filtered, ref, context) : cppSpecializationPool(filtered, ref, context);
+    : rubyBare ? rubyMethodsOfCallerKind(filtered, ref, context)
+    : objcDeclaredType ? objcTypeDeclarations(filtered, ref) : cppSpecializationPool(filtered, ref, context);
   // (Above the ceiling below nothing is picked, so no translation unit is read.)
   const candidates = ranked.length <= AMBIGUOUS_NAME_CEILING ? withinCppTranslationUnit(ranked, ref, context, true) : ranked;
 
@@ -14403,20 +14878,27 @@ export function objectLiteralMemberBinding(
   return objectLiteralProperty(container, member, context)?.binding ?? null;
 }
 
+/** A holder's own text from its first column to its last: comments blanked, and in `code` string contents too. */
+function holderExtent(container: Node, context: ResolutionContext): { lines: string[]; extent: string; code: string } | null {
+  const lines = context.getFileLines?.(container.filePath) ?? context.readFile(container.filePath)?.split('\n');
+  if (!lines) return null;
+  const extentLines = lines.slice(container.startLine - 1, container.endLine);
+  if (!extentLines.length) return null;
+  extentLines[extentLines.length - 1] = extentLines[extentLines.length - 1]!.slice(0, container.endColumn);
+  extentLines[0] = extentLines[0]!.slice(container.startColumn);
+  const extent = stripCommentsForRegex(extentLines.join('\n'), 'typescript');
+  return { lines, extent, code: blankStringContents(extent) };
+}
+
 /** The last own property wins; an unknown spread/computed key invalidates earlier evidence. */
 function objectLiteralProperty(
   container: Node,
   member: string,
   context: ResolutionContext,
 ): { binding: string | null; contains: (node: Node) => boolean } | null | undefined {
-  const lines = context.getFileLines?.(container.filePath) ?? context.readFile(container.filePath)?.split('\n');
-  if (!lines) return undefined;
-  const extentLines = lines.slice(container.startLine - 1, container.endLine);
-  if (!extentLines.length) return undefined;
-  extentLines[extentLines.length - 1] = extentLines[extentLines.length - 1]!.slice(0, container.endColumn);
-  extentLines[0] = extentLines[0]!.slice(container.startColumn);
-  const extent = stripCommentsForRegex(extentLines.join('\n'), 'typescript');
-  const code = blankStringContents(extent);
+  const read = holderExtent(container, context);
+  if (!read) return undefined;
+  const { lines, extent, code } = read;
   // Start at THIS declarator, including its columns, never a sibling on the same line.
   const open = /^[^=]*=\s*(?:(?:Object\.(?:freeze|seal)\s*)?\(\s*)*\{/.exec(code);
   if (!open) return undefined;
@@ -14569,27 +15051,75 @@ function isObjectLiteralOwner(n: Node): boolean {
   return (n.kind === 'constant' || n.kind === 'variable') && JS_FAMILY.has(n.language) && /^=\s*\{/.test(n.signature ?? '');
 }
 
-const OBJECT_OWNER_OF = new WeakMap<ResolutionContext, Map<string, Node | null>>();
+/** A function qualified under an object literal's holder: the holder, and the block it is written in when that is no member's place. */
+interface LiteralPlace {
+  holder: Node;
+  block: { start: number; end: number } | null;
+}
+
+const LITERAL_PLACES = new WeakMap<ResolutionContext, Map<string, LiteralPlace | null>>();
 
 /**
- * The object literal a function node is a member of — its qualified parent,
- * an owner in its file whose extent holds it — or null for every other
- * function: a declaration, a helper nested in a function, a function inside
- * an initializer that is not an object literal (a module IIFE's own helpers).
+ * Where a function qualified under an object literal's holder is written, or
+ * null for every other function: a declaration, a helper nested in a function
+ * with a node of its own, a function inside an initializer that is not an
+ * object literal (a module IIFE's own helpers).
  */
-function objectLiteralOwnerOf(n: Node, context: ResolutionContext): Node | null {
+function literalPlaceOf(n: Node, context: ResolutionContext): LiteralPlace | null {
   if (n.kind !== 'function' || !JS_FAMILY.has(n.language)) return null;
   const cut = n.qualifiedName.lastIndexOf('::');
   if (cut <= 0) return null;
-  let memo = OBJECT_OWNER_OF.get(context);
-  if (!memo) OBJECT_OWNER_OF.set(context, (memo = new Map()));
+  let memo = LITERAL_PLACES.get(context);
+  if (!memo) LITERAL_PLACES.set(context, (memo = new Map()));
   const hit = memo.get(n.id);
   if (hit !== undefined) return hit;
   const parent = n.qualifiedName.slice(0, cut);
-  const owner = context.getNodesByQualifiedName(parent).find((o) =>
+  const holder = context.getNodesByQualifiedName(parent).find((o) =>
     o.filePath === n.filePath && o.id !== n.id && isObjectLiteralOwner(o) && rangeWithin(n, o)) ?? null;
-  memo.set(n.id, owner);
-  return owner;
+  const place = holder && { holder, block: blockBelowLiteral(n, holder, context) };
+  memo.set(n.id, place);
+  return place;
+}
+
+/**
+ * The lines of the block `n` is written in, when that lies below the literal
+ * `holder` holds, and null for a member, which sits in the literal's own
+ * braces. Only a literal's direct members have nodes under it in their own
+ * right. A function deeper down — in a method of a nested object, under a
+ * computed key, in a callback a member's value passes on — is qualified under
+ * the holder too, because nothing between them has a node, and so is one in a
+ * literal behind `satisfies` or `as const`, whose methods have none. Each is
+ * an ordinary local of the block it is written in, named bare there. The
+ * holder's own text is read, not the file's: a component's template and styles
+ * are not code.
+ */
+function blockBelowLiteral(n: Node, holder: Node, context: ResolutionContext): { start: number; end: number } | null {
+  const scan = jsFileScan(holder.filePath, context);
+  const blocks = (scan.holderBlocks ??= new Map());
+  let index = blocks.get(holder.id);
+  if (index === undefined) {
+    const code = holderExtent(holder, context)?.code;
+    index = code === undefined ? null : readJsBlocks(code);
+    blocks.set(holder.id, index);
+  }
+  if (!index) return null;
+  const firstLine = n.startLine === holder.startLine;
+  const at = jsOffset(index, n.startLine - holder.startLine + 1, n.startColumn - (firstLine ? holder.startColumn : 0));
+  const block = jsBlockAt(index, at);
+  if (!block || jsBlockAt(index, block[0]) === null) return null;
+  const { lineStarts } = index;
+  const lineOf = (offset: number): number => {
+    let line = lineStarts.length - 1;
+    while (line > 0 && lineStarts[line]! > offset) line--;
+    return holder.startLine + line;
+  };
+  return { start: lineOf(block[0]), end: lineOf(block[1]) };
+}
+
+/** The object literal a function node is a member of, or null: see literalPlaceOf and blockBelowLiteral. */
+function objectLiteralOwnerOf(n: Node, context: ResolutionContext): Node | null {
+  const place = literalPlaceOf(n, context);
+  return place && !place.block ? place.holder : null;
 }
 
 /** The node a qualified name's parent names, in `n`'s file and holding it. */
@@ -14668,6 +15198,8 @@ interface JsFileScan {
   blocks?: JsBlockIndex | null;
   bindings?: Map<string, Array<[number, number]>>;
   destructured?: Map<string, Set<string>>;
+  /** Per object-literal holder, the `{…}` blocks of its own text (see blockBelowLiteral). */
+  holderBlocks?: Map<string, JsBlockIndex | null>;
 }
 
 const JS_FILE_SCANS = new WeakMap<ResolutionContext, Map<string, JsFileScan>>();
@@ -15215,6 +15747,11 @@ export function resolveMethodOnType(
     matches = matches.filter((m) => isKotlinExtensionInScope(m, ref, context));
   }
   if (matches.length === 0) {
+    // A Ruby value's supertypes are its class's real ones, or none the project has.
+    if (ref.language === 'ruby') {
+      const inherited = depth === 0 ? rubyInstanceMethodOf(typeName, methodName, ref, context) : null;
+      return inherited && { original: ref, targetNodeId: inherited.id, confidence, resolvedBy };
+    }
     // Conformance fallback: the method may be defined on a supertype `typeName`
     // extends, or on a protocol / trait it conforms to (e.g. a Swift protocol-
     // extension method, a C# default-interface or extension method, a Kotlin
@@ -21360,6 +21897,14 @@ export function clearNameMatcherMemos(context: ResolutionContext): void {
   SWIFT_HIERARCHIES.delete(context);
   KOTLIN_FILE_SCOPES.delete(context);
   RUBY_ANCESTRY.delete(context);
+  PHP_TYPE_METHODS.delete(context);
+  PHP_ANCESTRIES.delete(context);
+  RUBY_MIXINS.delete(context);
+  RUBY_METHOD_OWNERS.delete(context);
+  RUBY_FILE_SCOPES.delete(context);
+  CSHARP_TYPE_ARITY.delete(context);
+  CSHARP_EXTENSION_METHODS.delete(context);
+  JS_ASSIGNED_MEMBERS.delete(context);
   CFML_CHAINS.delete(context);
   NO_RECEIVER_LINES.delete(context);
   OBJC_SUPERS.delete(context);
@@ -21391,7 +21936,7 @@ export function clearNameMatcherMemos(context: ResolutionContext): void {
   SCALA_IMPORTS.delete(context);
   ESM_EXPORT_LISTS.delete(context);
   JS_FILE_SCANS.delete(context);
-  OBJECT_OWNER_OF.delete(context);
+  LITERAL_PLACES.delete(context);
   THIS_CALLERS.delete(context);
   GLOBAL_HOLDERS.delete(context);
   CLASSIC_SCRIPTS.delete(context);
@@ -21426,6 +21971,7 @@ export function clearNameMatcherMemos(context: ResolutionContext): void {
   TS_PASS_THROUGH_WRAPPERS.delete(context);
   TS_CREATE_INSTANCE_DECLARED.delete(context);
   TS_NAMED_TYPES.delete(context);
+  TS_ALIASED_TYPES.delete(context);
   TARGET_LANGUAGE.delete(context);
   PY_LINES.delete(context);
   PY_ATTR_MEMO.delete(context);
@@ -21538,6 +22084,7 @@ function buildLocalReceiverTypePatterns(language: Language, r: string): RegExp[]
         new RegExp(`\\b${r}\\b\\s*=\\s*new\\s+([A-Za-z_][\\w.]*)`), // = new Logger()
         new RegExp(`\\b([A-Z][\\w.]*)\\s*${TYPE_ARGS}\\??\\s+${r}\\b\\s*[=;,)]`), // Logger lg;  / List<string> names / JProperty? p
         new RegExp(`\\bforeach\\s*\\(\\s*([A-Z][\\w.]*)\\s*${TYPE_ARGS}\\??\\s+${r}\\s+in\\b`), // foreach (JProperty p in props)
+        new RegExp(`\\b(bool|byte|sbyte|char|decimal|double|float|int|uint|long|ulong|short|ushort|string)\\??\\s+${r}\\b\\s*(?:[=;,)]|in\\b)`), // int year = 0
       ];
     case 'objc':
       return [
@@ -23072,12 +23619,35 @@ function inferPhpAssignedPropertyType(
 const PY_CHAIN_GUESSING = new WeakSet<UnresolvedRef>();
 
 /**
+ * A Python call on an element of a collection, like `stats[i].write_timeline()`.
+ * The collection's name says nothing of the element's class (netbox's
+ * `context['object']` is no `ConfigContext`), so only the project's one method
+ * of the name will do, in a module the file has in hand: its own, or one it
+ * imports. netbox's `children[0].process_rhs()` is a Django lookup's, not the
+ * mixin's in a module its file never names. Nor a name a list or a dict has,
+ * or a dunder a container answers itself.
+ */
+function matchPythonElementCall(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
+  const name = ref.referenceName.slice(ref.referenceName.lastIndexOf('.') + 1);
+  if (!/^\w+$/.test(name) || /^__\w+__$/.test(name) || isStdMethodName('python', name)) return null;
+  const methods = context.getNodesByName(name).filter((n) => n.kind === 'method' && n.language === 'python');
+  const method = methods.length === 1 ? methods[0]! : null;
+  if (!method || isUnnamedTestDouble(method, '', ref, context)) return null;
+  const inHand = method.filePath === ref.filePath || context.getImportMappings(ref.filePath, 'python')
+    .some((m) => context.resolveModuleFile?.(m.source, ref.filePath, 'python') === method.filePath);
+  return inHand ? { original: ref, targetNodeId: method.id, confidence: 0.7, resolvedBy: 'instance-method', byName: true } : null;
+}
+
+/**
  * Try to resolve by method name on a class/object
  */
 export function matchMethodCall(
   ref: UnresolvedRef,
   context: ResolutionContext
 ): ResolvedRef | null {
+  if (ref.language === 'python' && ref.referenceKind === 'calls' && /\]\.\w+$/.test(ref.referenceName)) {
+    return matchPythonElementCall(ref, context);
+  }
   // Parse method call patterns like "obj.method" or "Class::method". The method
   // part allows trailing `:` keywords so Objective-C selectors resolve
   // (`SDImageCache.storeImage:`, `obj.setX:y:`); colons never appear in other
@@ -23132,6 +23702,8 @@ export function matchMethodCall(
     const [, receiver, phpMethodName] = phpThisPropMatch;
     const inferredType = inferLocalReceiverType(receiver!, ref, context);
     if (!inferredType) return null;
+    const onType = phpTypeMethod(phpTypeQn(inferredType, ref.filePath, context), phpMethodName!, context);
+    if (onType?.method) return { original: ref, targetNodeId: onType.method.id, confidence: 0.9, resolvedBy: 'instance-method' };
     return resolveMethodOnType(
       inferredType,
       phpMethodName!,
@@ -23268,6 +23840,10 @@ export function matchMethodCall(
   let localInferred = false;
   // Java: what javaReceiverDeclaredType read for the receiver, once it ran.
   let javaDeclared: ReturnType<typeof javaReceiverDeclaredType> | undefined;
+  // A declaration read for the receiver, so its name names no class (Strategy 2).
+  let declaredReceiver = false;
+  // A C# keyword type: an extension method is the only project method it has.
+  let csharpBuiltInReceiver = false;
   if (inferableReceiver) {
     // A VB.NET receiver's declared type decides the call, or that there is no
     // project method to call: SCrawler's `ThumbnailFile.Delete(…)` on an
@@ -23327,6 +23903,7 @@ export function matchMethodCall(
     if (!inferredType && ref.language === 'objc' && dotMatch) {
       inferredType = nmTimedT('mc-objcmember', ref, () => objcMemberReceiverType(objectOrClass!, ref, context));
     }
+    if (!inferredType && ref.language === 'php' && dotMatch) inferredType = phpModelFactoryLocalType(objectOrClass!, ref, context);
     // A pytest test's parameter is what its fixture returns: flaskbb's
     // `cli_runner.invoke(…)` is click's `CliRunner`, not the project's one `invoke`.
     if (!inferredType && ref.language === 'python' && dotMatch) inferredType = pythonFixtureReturnType(objectOrClass!, ref, context);
@@ -23510,7 +24087,21 @@ export function matchMethodCall(
         const known = tsKnownTypeCall(inferredType, importedFqn ?? ref.filePath, methodName!, ref, ref, context, 0.9);
         if (known) return known;
       }
-      const typedMatch = nmTimedT('mc-rmot', ref, () => resolveMethodOnType(
+      // A PHP type is the class its name means in the file, and its supertypes
+      // are read from source: the first pass has no `extends` edges yet, so
+      // `EntityInterface $entity` found no `access()` and went on to guess.
+      let phpWholeType = false;
+      if (ref.language === 'php') {
+        const qn = phpTypeQn(inferredType, ref.filePath, context);
+        const onType = phpTypeMethod(qn, methodName!, context);
+        if (onType?.method) return { original: ref, targetNodeId: onType.method.id, confidence: 0.9, resolvedBy: 'instance-method' };
+        declaredReceiver = onType !== undefined;
+        // (Laravel's Eloquent `Builder` hands what it lacks to the query builder
+        // through `__call`: a namesake's method may well be the one meant.)
+        phpWholeType = declaredReceiver && !phpAncestry([qn], context).leavesRepo && !phpTypeMethod(qn, '__call', context)?.method;
+      }
+      if (ref.language === 'csharp' && /^[a-z]/.test(inferredType)) declaredReceiver = csharpBuiltInReceiver = true;
+      const typedMatch = phpWholeType ? null : nmTimedT('mc-rmot', ref, () => resolveMethodOnType(
         inferredType,
         methodName!,
         awaited ? { ...ref, filePath: awaited.filePath } : ref,
@@ -23793,6 +24384,11 @@ export function matchMethodCall(
     // A VB.NET type declared in two projects is the caller's own project's:
     // staxrip's `FrameServerFactory.Create(…)` went to its AutoCrop tool's copy.
     if (ref.language === 'vbnet') classCandidates = preferVbProject(classCandidates, ref, context);
+    // A PHP class name is the one its namespace or a `use` gives it.
+    if (ref.language === 'php' && classCandidates.length > 1) {
+      const named = classCandidates.filter((c) => phpFileNamesClass(c, ref.filePath, context));
+      classCandidates = [...named, ...classCandidates.filter((c) => !named.includes(c))];
+    }
 
     const productionCaller = !isTestPath(ref.filePath);
     for (const classNode of classCandidates) {
@@ -23830,11 +24426,13 @@ export function matchMethodCall(
           resolvedBy: 'qualified-name',
         };
       }
+      const forwarded = ref.language === 'php' ? phpFacadeMethod(classNode, methodName!, context) : null;
+      if (forwarded) return { original: ref, targetNodeId: forwarded.id, confidence: 0.85, resolvedBy: 'qualified-name' };
     }
     // A class method the named class inherits — Horse's `THorse.Get(…)` is
     // THorseCore's, three `class(…)` heads up — before any guess by name.
-    const inherited = inheritedClassMethod(classCandidates.filter((c) => c.language === ref.language), methodName!, context,
-      ref.language === 'ruby' ? 'class' : undefined);
+    if (ref.language === 'ruby' || ref.language === 'php') return null;
+    const inherited = inheritedClassMethod(classCandidates.filter((c) => c.language === ref.language), methodName!, context);
     if (inherited) return { original: ref, targetNodeId: inherited.id, confidence: 0.8, resolvedBy: 'qualified-name' };
     return null;
   });
@@ -23908,12 +24506,20 @@ export function matchMethodCall(
   // Strategy 2: Instance variable receiver - try capitalized form to find class
   // e.g., "permissionEngine" → look for a class named "PermissionEngine"
   const capitalizedReceiver = objectOrClass!.charAt(0).toUpperCase() + objectOrClass!.slice(1);
-  if (capitalizedReceiver !== objectOrClass) {
+  if (capitalizedReceiver !== objectOrClass && !declaredReceiver) {
     const strat2 = nmTimedT('mc-capital', ref, (): ResolvedRef | null => {
-      const fuzzyClassCandidates = preferCallSiteFile(
+      let fuzzyClassCandidates = preferCallSiteFile(
         withinCppTranslationUnit(context.getNodesByName(capitalizedReceiver).filter(isMethodOwnerKind), ref, context),
         ref.filePath,
       );
+      // A class the PHP file can name comes first.
+      const phpNamed = ref.language === 'php' ? fuzzyClassCandidates.filter((c) => phpFileNamesClass(c, ref.filePath, context)) : [];
+      if (ref.language === 'php') fuzzyClassCandidates = [...phpNamed, ...fuzzyClassCandidates.filter((c) => !phpNamed.includes(c))];
+      // In Ruby, the class constant lookup finds from the call comes first.
+      if (ref.language === 'ruby' && fuzzyClassCandidates.length > 1) {
+        const looked = rubyConstantQn(capitalizedReceiver, rubyScopeAt(ref, context), context);
+        fuzzyClassCandidates = [...fuzzyClassCandidates].sort((a, b) => Number(b.qualifiedName === looked) - Number(a.qualifiedName === looked));
+      }
       const productionCaller = !isTestPath(ref.filePath);
       for (const classNode of fuzzyClassCandidates) {
         // Skip cross-language class matches
@@ -23927,7 +24533,13 @@ export function matchMethodCall(
         // instance of it (rubocop's `cop.cop_name` runs over its registry's
         // cop classes, so it is `def self.cop_name`), so neither of a class's
         // two methods of the name is preferred: the first declared is taken.
-        const methodNode = classStrategyMethod(classNode, methodName!, context);
+        // (A standard name a class only inherits, `ToString` on C#'s `year`, says
+        // nothing of a receiver that shares a word with the class.)
+        const methodNode = ref.language === 'php' && !phpNamed.includes(classNode)
+          ? phpUnnamedClassMethod(classNode, methodName!, fuzzyClassCandidates.filter((c) => c.language === 'php').length === 1, context)
+          : ref.language === 'csharp' && isStdMethodName('csharp', methodName!)
+            ? findOwnMethod(context.getNodesInFile(classNode.filePath), classNode, methodName!)
+            : classStrategyMethod(classNode, methodName!, context);
 
         if (methodNode && !(ref.language === 'kotlin' && !isKotlinExtensionInScope(methodNode, ref, context))) {
           if (throughCppNamespace()) return null;
@@ -23989,6 +24601,7 @@ export function matchMethodCall(
     // Filter to same-language candidates first
     const sameLanguageMethods = methods.filter(m => m.language === ref.language);
     let targetMethods = sameLanguageMethods.length > 0 ? sameLanguageMethods : methods;
+    if (csharpBuiltInReceiver) targetMethods = targetMethods.filter((m) => isCsharpExtensionMethod(m, context));
     // A receiver the file imports is another module's value: never a method
     // declared in the calling file. expo-camera's `CameraManager.isAvailableAsync()`
     // (`import CameraManager from './ExpoCameraManager'`) went to `CameraView`'s
@@ -24064,15 +24677,17 @@ export function matchMethodCall(
     // `node.loc` on a rubocop-ast node went to the one `loc` in the project
     // 1,201 times; lobsters' `value.to_s` to a short-id class's.
     if (targetMethods.length === 1 && !narrowed && !scopedOut && !pythonChain && targetMethods[0]!.language === ref.language &&
+        !(JS_FAMILY.has(ref.language) && targetMethods[0]!.filePath !== ref.filePath && jsFileAssignsMember(ref.filePath, methodName!, context)) &&
         // A test double is only what a test names — as in the scoring below:
         // allauth's `resp.json()` on a Django test response is not the one
         // `json` of its `MockedResponse`.
         !isUnnamedTestDouble(targetMethods[0]!, objectOrClass!, ref, context) &&
         !((ref.language === 'lua' || ref.language === 'luau') && isLuaLibraryCall(objectOrClass!, methodName!, ref, targetMethods[0]!)) &&
         // Go / Rust / Kotlin / C# / VB.NET / Dart / Python / Scala / Java /
-        // Swift: a standard-library method name on an untyped receiver
+        // Swift / Ruby: a standard-library method name on an untyped receiver
         // (`sym.map(…)`, `w.Header().Get(…)`, `reader.Value.ToString()`,
-        // `options.setdefault(…)`, `arr.sorted()`) is the library type's.
+        // `options.setdefault(…)`, `arr.sorted()`, `bad_cookies.empty?`) is the
+        // library type's.
         !(isStdMethodName(ref.language, methodName!) &&
           !/^(?:self|Self|this|base)$/.test(objectOrClass!) && !receiverNamesOwner(receiverLink(objectOrClass!), targetMethods[0]!, context)) &&
         !(UNTYPED_RECEIVER_LANGUAGES.has(ref.language) && !/^(?:self|self\.class|this|super|weak_?self|strong_?self)$/i.test(objectOrClass!) &&
@@ -24080,7 +24695,7 @@ export function matchMethodCall(
           !(ref.language === 'objc' && objcReceiverReaches(objectOrClass!, targetMethods[0]!, context)) &&
           !(ref.language === 'php' && phpReceiverReaches(objectOrClass!, targetMethods[0]!, context)))) {
       if (throughCppNamespace() && !isCppConstructorThrough(objectOrClass!, targetMethods[0]!, context)) return null;
-      if (isForeignReceiverSelfLoop(targetMethods[0]!, objectOrClass!, ref)) return null;
+      if (isForeignReceiverSelfLoop(targetMethods[0]!, objectOrClass!, ref, context)) return null;
       return {
         original: ref,
         targetNodeId: targetMethods[0]!.id,
@@ -24201,6 +24816,27 @@ function isImportedModuleReceiver(receiver: string, ref: UnresolvedRef, context:
   const binding = context.getImportMappings?.(ref.filePath, ref.language)?.find((m) => m.localName === root);
   if (!binding) return false;
   return binding.isNamespace || context.isOutOfRepoImport?.(binding.source, ref.filePath, ref.language) === true;
+}
+
+const JS_ASSIGNED_MEMBERS = new WeakMap<ResolutionContext, Map<string, ReadonlySet<string>>>();
+
+/**
+ * Whether a JS file gives an object a function member of that name itself,
+ * `Sha256.prototype.update = function…`, inside the bundle's closure where the
+ * index holds no node for it. The one method of the name elsewhere is no
+ * likelier then: rails' `buffer.update(data)` in activestorage.js is the
+ * bundled sha256's, not the guides' turbo `History#update`.
+ */
+function jsFileAssignsMember(file: string, name: string, context: ResolutionContext): boolean {
+  let memo = JS_ASSIGNED_MEMBERS.get(context);
+  if (!memo) JS_ASSIGNED_MEMBERS.set(context, (memo = new Map()));
+  let members = memo.get(file);
+  if (!members) {
+    const found = new Set<string>();
+    for (const m of (context.readFile(file) ?? '').matchAll(/\.prototype\.([\w$]+)\s*=\s*(?:async\s+)?function\b/g)) found.add(m[1]!);
+    memo.set(file, (members = found));
+  }
+  return members.has(name);
 }
 
 /** The methods React calls on a class component itself. */
@@ -24424,8 +25060,48 @@ const SELF_RECEIVERS = new Set(['this', 'self', 'Self', 'super', 'cls']);
  * children — cobra's `sub.checkCommandGroups()` over `c.commands`, etcd's
  * `child.Repr(…)` — which is real recursion.
  */
-function isForeignReceiverSelfLoop(candidate: Node, receiver: string, ref: UnresolvedRef): boolean {
-  return candidate.id === ref.fromNodeId && !SELF_RECEIVERS.has(receiver) && ref.language !== 'go';
+function isForeignReceiverSelfLoop(candidate: Node, receiver: string, ref: UnresolvedRef, context: ResolutionContext): boolean {
+  return candidate.id === ref.fromNodeId && !SELF_RECEIVERS.has(receiver) && ref.language !== 'go' &&
+    !isCsharpExtensionElementCall(candidate, receiver, ref, context);
+}
+
+/**
+ * Whether a C# extension method calls itself on an element a lambda of its
+ * body receives: serilog's `sequence.Elements.Select(e => e.LiteralValue())`
+ * inside `LiteralValue(this LogEventPropertyValue @this)` walks a value's
+ * children, as a Go range variable does (see above).
+ */
+function isCsharpExtensionElementCall(method: Node, receiver: string, ref: UnresolvedRef, context: ResolutionContext): boolean {
+  if (!isCsharpExtensionMethod(method, context)) return false;
+  const lines = context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/) ?? [];
+  const before = [...lines.slice(method.startLine - 1, ref.line - 1), (lines[ref.line - 1] ?? '').slice(0, Math.max(0, ref.column))].join('\n');
+  return new RegExp(String.raw`(?:^|[^\w.])\(?${escapeRegExp(receiver)}\)?\s*=>`).test(before);
+}
+
+const CSHARP_EXTENSION_METHODS = new WeakMap<ResolutionContext, Map<string, boolean>>();
+/** A first parameter past its attributes, written `this`: `this T x`, `ref this int x`. */
+const CSHARP_THIS_PARAMETER = /(?:(?:ref|in|scoped|readonly)\s+)*this\s/y;
+
+/**
+ * Whether a C# method is an extension method: its first parameter is written
+ * `this T x`. The list is found from the method's name, since attributes may
+ * stand above the name, the return type may be a tuple, and the list may wrap.
+ */
+function isCsharpExtensionMethod(method: Node, context: ResolutionContext): boolean {
+  if (method.language !== 'csharp') return false;
+  let memo = CSHARP_EXTENSION_METHODS.get(context);
+  if (!memo) CSHARP_EXTENSION_METHODS.set(context, (memo = new Map()));
+  const hit = memo.get(method.id);
+  if (hit !== undefined) return hit;
+  const source = csharpDeclarationSource(method, context);
+  const list = new RegExp(String.raw`\b${escapeRegExp(method.name)}\s*(?:<[^()]*>\s*)?\(`).exec(source);
+  let extension = false;
+  if (list) {
+    CSHARP_THIS_PARAMETER.lastIndex = csharpPastAttributes(source, list.index + list[0].length);
+    extension = CSHARP_THIS_PARAMETER.test(source);
+  }
+  memo.set(method.id, extension);
+  return extension;
 }
 
 /** The directory of a Go file, which is its package: Go keeps one package per directory. */
@@ -29211,15 +29887,75 @@ function tsMethodUpChain(cls: Node, name: string, at: UnresolvedRef, context: Re
 }
 
 /**
+ * The one type a TS or Flow alias's value names, as written: `Bridge` of
+ * `Bridge<A, B>`, `Bridge | null` or Flow's `?Bridge`. Null for anything else
+ * (a union of two types, an object type, a function type, `Bridge[]`).
+ */
+function tsAliasValueName(alias: Node, context: ResolutionContext): string | null {
+  const lines = (context.getFileLines?.(alias.filePath) ?? context.readFile(alias.filePath)?.split(/\r?\n/) ?? [])
+    .slice(alias.startLine - 1, alias.endLine);
+  if (lines.length === 0) return null;
+  lines[lines.length - 1] = lines[lines.length - 1]!.slice(0, alias.endColumn);
+  const text = stripCommentsForRegex(lines.join('\n').slice(alias.startColumn), 'typescript');
+  // What is outside every `<…>`, past the `=` of the declaration itself: a
+  // type parameter may have a default of its own, `type T<A = string> = …`.
+  let depth = 0;
+  let value: string | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '<') depth++;
+    else if (ch === '>' && text[i - 1] !== '=') depth--;
+    else if (depth > 0) continue;
+    else if (value !== null) value += ch;
+    else if (ch === '=' && text[i + 1] !== '>') value = '';
+    if (depth < 0) return null;
+  }
+  const parts = value?.replace(/;\s*$/, '').split('|').map((p) => p.trim()).filter((p) => p !== '' && p !== 'null' && p !== 'undefined') ?? [];
+  const name = parts.length === 1 ? parts[0]!.replace(/^\?\s*/, '') : '';
+  return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name) ? name : null;
+}
+
+/** Per-context memo: `<file>\0<name>` → tsAliasedType's answer. */
+const TS_ALIASED_TYPES = new WeakMap<ResolutionContext, Map<string, Node | null>>();
+
+/**
+ * The class or interface a type alias `file` declares stands for: react's
+ * `export type BackendBridge = Bridge<BackendEvents, FrontendEvents>`, through
+ * an alias of an alias, each name read the way the alias's own file reads it.
+ */
+function tsAliasedType(name: string, file: string, at: UnresolvedRef, context: ResolutionContext, depth = 0): Node | null {
+  let memo = TS_ALIASED_TYPES.get(context);
+  if (!memo) TS_ALIASED_TYPES.set(context, (memo = new Map()));
+  const key = file + '\0' + name;
+  const hit = memo.get(key);
+  if (hit !== undefined) return hit;
+  let found: Node | null = null;
+  const alias = (context.getNodesInFileNamed?.(file, name) ?? context.getNodesInFile(file).filter((n) => n.name === name))
+    .find((n) => n.kind === 'type_alias');
+  const written = alias && depth < 4 ? tsAliasValueName(alias, context) : null;
+  // `type Box<T> = T | null` holds whatever its argument is.
+  if (alias && written && !tsClassTypeParameter(alias, written, context)) {
+    const named = tsNamedType(written, alias, at, context);
+    if (named && named !== 'outside') found = named;
+    else if (!named) {
+      const there = { ...at, filePath: alias.filePath, language: alias.language };
+      found = tsAliasedType(written.split('.').pop()!, tsImportedTypeFile(written, there, context) ?? alias.filePath, at, context, depth + 1);
+    }
+  }
+  memo.set(key, found);
+  return found;
+}
+
+/**
  * A TS/JS member call on a value of the class or interface `typeName` that
- * `file` declares: that type's method or its nearest supertype's
- * (tsMethodUpChain); null when the whole chain is known and has none, as
- * when the method is a package's: `Emitter extends lsp.Emitter` has no
- * project `fire`, whatever other `Emitter` declares one. Undefined when
- * neither `file` nor what `at`'s file imports under the name declares the
- * type, or a supertype can't be found, for the caller's own fallback. (An
- * import may rename it: bitwarden's `MessagingService` is `export {
- * MessageSender as MessagingService }`.)
+ * `file` declares, or of a type alias of one (tsAliasedType): that type's
+ * method or its nearest supertype's (tsMethodUpChain); null when the whole
+ * chain is known and has none, as when the method is a package's: `Emitter
+ * extends lsp.Emitter` has no project `fire`, whatever other `Emitter`
+ * declares one. Undefined when neither `file` nor what `at`'s file imports
+ * under the name declares the type, or a supertype can't be found, for the
+ * caller's own fallback. (An import may rename it: bitwarden's
+ * `MessagingService` is `export { MessageSender as MessagingService }`.)
  */
 function tsKnownTypeCall(
   typeName: string,
@@ -29230,10 +29966,11 @@ function tsKnownTypeCall(
   context: ResolutionContext,
   confidence: number,
 ): ResolvedRef | null | undefined {
-  let known = tsTypeDeclaredIn(file, typeName, context);
+  let known: Node | null | undefined = tsTypeDeclaredIn(file, typeName, context);
   if (!known) {
     const named = tsNamedType(typeName, { filePath: at.filePath, language: at.language, id: '' }, at, context);
     if (named && named !== 'outside') known = named;
+    else if (!named) known = tsAliasedType(typeName, file, at, context);
   }
   if (!known) return undefined;
   const up = nmTimedT('mc-tsknown', ref, () => tsMethodUpChain(known, methodName, at, context));
@@ -29626,8 +30363,11 @@ function findOwnMethod(nodesInFile: Node[], classNode: Node, methodName: string,
  * only found because `BaseForm` contains `Form`.
  */
 function classStrategyMethod(classNode: Node, methodName: string, context: ResolutionContext, kind?: RubyMethodKind): Node | undefined {
-  return findOwnMethod(context.getNodesInFile(classNode.filePath), classNode, methodName, kind) ??
-    inheritedClassMethod([classNode], methodName, context, kind) ?? undefined;
+  const own = findOwnMethod(context.getNodesInFile(classNode.filePath), classNode, methodName, kind);
+  if (own) return own;
+  if (classNode.language === 'ruby') return rubyAncestorMethod(classNode.qualifiedName, methodName, context, kind) ?? undefined;
+  if (classNode.language === 'php') return phpAncestorMethod(classNode, methodName, context) ?? undefined;
+  return inheritedClassMethod([classNode], methodName, context, kind) ?? undefined;
 }
 
 /**

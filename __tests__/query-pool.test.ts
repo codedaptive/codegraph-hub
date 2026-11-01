@@ -17,7 +17,7 @@ import { CodeGraph } from '../src';
 import { ExploreSessionState, EXPLORE_EMISSION_KEY } from '../src/mcp/explore-session-state';
 import type { MCPEngine } from '../src/mcp/engine';
 import { QueryPool, resolvePoolSize, type PoolWorker } from '../src/mcp/query-pool';
-import type { ToolResult } from '../src/mcp/tools';
+import type { ToolHandler, ToolResult } from '../src/mcp/tools';
 import { ADMIT_ALL } from './helpers/admit-all';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -33,6 +33,8 @@ type Action = { result: ToolResult } | { crash: true } | { hang: true } | { wait
  * the pool has wired its listeners first. The pool's idle shrink posts
  * `{ type: 'retire' }`; the fake answers it as the real worker does,
  * `{ type: 'retired' }` then exit code 0 on a macrotask, unless `ignoresRetire`.
+ * The pool's trim of the last worker posts `{ type: 'trim' }`; the fake counts it
+ * and answers `{ type: 'trimmed', heldBytes }`, unless `holdsTrimReport`.
  */
 class FakeWorker implements PoolWorker {
   private msgCb?: (m: unknown) => void;
@@ -45,6 +47,12 @@ class FakeWorker implements PoolWorker {
   retireReceived = false;
   /** Ignore the pool's 'retire', to exercise its terminate fallback. */
   ignoresRetire = false;
+  /** What a trim reports: light enough to keep unless a test says otherwise. */
+  heldBytes = 0;
+  /** Hold the 'trimmed' reply until the test sends it. */
+  holdsTrimReport = false;
+  /** How many 'trim' messages the pool has posted to this worker. */
+  trims = 0;
   constructor(private behavior: (m: CallMsg) => Action, readyOk: boolean | null = true) {
     setTimeout(() => { if (this.alive && readyOk !== null) this.emitMessage({ type: 'ready', ok: readyOk }); }, 0);
   }
@@ -60,7 +68,13 @@ class FakeWorker implements PoolWorker {
     if (this.alive) this.msgCb?.({ type: 'result', id, result });
   }
   postMessage(msg: unknown): void {
-    const m = msg as CallMsg | { type: 'retire' };
+    const m = msg as CallMsg | { type: 'retire' } | { type: 'trim' };
+    if (m?.type === 'trim') {
+      // Like the real worker: shrink in place and say what is still held.
+      this.trims++;
+      if (!this.holdsTrimReport && this.alive) this.emitMessage({ type: 'trimmed', heldBytes: this.heldBytes });
+      return;
+    }
     if (m?.type === 'retire') {
       this.retireReceived = true;
       // Like the real worker: close up, answer 'retired' and exit by itself, with code 0.
@@ -234,12 +248,13 @@ describe('QueryPool', () => {
     expect(pool.liveWorkers).toBe(2);
     expect(workers.some((w) => w.retireReceived)).toBe(false);
     workers[1]!.emitMessage({ type: 'ready', ok: true });
-    // Its ready arms the shrink: the oldest idle worker retires, nothing replaces it.
+    // Its ready arms the shrink: the idle worker that did not serve last (this one, the
+    // newest idle) retires and nothing replaces it; the worker that served stays.
     await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
     expect(workers).toHaveLength(2);
-    expect(workers[0]!.retireReceived).toBe(true);
-    expect(workers[0]!.exitCode).toBe(0);
-    expect(workers[1]!.retireReceived).toBe(false);
+    expect(workers[1]!.retireReceived).toBe(true);
+    expect(workers[1]!.exitCode).toBe(0);
+    expect(workers[0]!.retireReceived).toBe(false);
     await pool.destroy();
   });
 
@@ -292,6 +307,242 @@ describe('QueryPool', () => {
     expect(retired.terminated).toBe(false); // still on its way out
     await pool.destroy();
     expect(retired.terminated).toBe(true); // the cap ended it, inside destroy()
+  });
+
+  describe('going idle keeps one worker, trimmed in place', () => {
+    const light = 1024;
+
+    /** A pool whose workers are light enough to keep, each answering with its own number. */
+    function keepingPool(size: number, ready: (index: number) => boolean | null = () => true) {
+      const workers: FakeWorker[] = [];
+      const pool = new QueryPool({
+        size, idleTimeoutMs: 5, idleKeepBytes: light,
+        createWorker: () => {
+          const index = workers.length;
+          const worker = new FakeWorker(() => ({ result: ok(`worker ${index}`) }), ready(index));
+          worker.heldBytes = light;
+          workers.push(worker);
+          return worker;
+        },
+      });
+      return { pool, workers };
+    }
+
+    it('answers the first call after idle on the worker already running, starting none', async () => {
+      const { pool, workers } = keepingPool(2);
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.alive).toBe(true);
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 0');
+      expect(workers).toHaveLength(1);
+      await pool.destroy();
+    });
+
+    it('stays ready through the trim, so a call then never falls back to in-process', async () => {
+      // Any worker started here would never report ready, as if still loading.
+      const { pool, workers } = keepingPool(2, (index) => (index === 0 ? true : null));
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      expect(pool.ready).toBe(true);
+      expect(workers).toHaveLength(1);
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 0');
+      await pool.destroy();
+    });
+
+    it('retires the workers a burst added, each by itself, and trims the last to serve', async () => {
+      const workers: FakeWorker[] = [];
+      const releases: Array<() => void> = [];
+      const pool = new QueryPool({
+        size: 3, idleTimeoutMs: 5, idleKeepBytes: light,
+        createWorker: () => {
+          const index = workers.length;
+          const worker = new FakeWorker(() => ({ wait: new Promise((resolve) => { releases[index] = () => resolve(ok('r')); }) }));
+          worker.heldBytes = light;
+          workers.push(worker);
+          return worker;
+        },
+      });
+      const calls = Promise.all(Array.from({ length: 3 }, (_, i) => pool.run('codegraph_search', { i })));
+      await vi.waitFor(() => expect(releases.filter(Boolean)).toHaveLength(3));
+      for (const index of [2, 0, 1]) {
+        releases[index]!();
+        await sleep(0); // its result lands before the next one's
+      }
+      await calls;
+      await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
+      await vi.waitFor(() => expect(workers[1]!.trims).toBe(1));
+      expect(workers).toHaveLength(3);
+      for (const retired of [workers[0]!, workers[2]!]) {
+        await vi.waitFor(() => expect(retired.exitCode).toBe(0));
+        expect(retired.terminated).toBe(false);
+        // A worker on its way out is not trimmed first, and the pool above its floor trims none.
+        expect(retired.trims).toBe(0);
+      }
+      expect(workers[1]!.alive).toBe(true);
+      await pool.destroy();
+    });
+
+    it('keeps a worker that has served over a spare that only just started', async () => {
+      // The second worker reports ready after the last result, so it is the newest idle one:
+      // the oldest-idle rule alone would retire the worker that served and keep the cold spare.
+      const { pool, workers } = keepingPool(2, (index) => (index === 0 ? true : null));
+      await vi.waitFor(() => expect(pool.ready).toBe(true));
+      await Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+      expect(workers).toHaveLength(2);
+      workers[1]!.emitMessage({ type: 'ready', ok: true });
+      await vi.waitFor(() => expect(workers[1]!.exitCode).toBe(0));
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      expect(workers[0]!.retireReceived).toBe(false);
+      expect(pool.liveWorkers).toBe(1);
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 0');
+      await pool.destroy();
+    });
+
+    it('trims once per quiet spell, and again only after serving', async () => {
+      const { pool, workers } = keepingPool(1);
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      await sleep(30); // many idle timeouts later
+      expect(workers[0]!.trims).toBe(1);
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(2));
+      await pool.destroy();
+    });
+
+    it('does not trim a worker that has served nothing', async () => {
+      const { pool, workers } = keepingPool(1);
+      await vi.waitFor(() => expect(pool.ready).toBe(true));
+      await sleep(30); // many idle timeouts
+      expect(workers[0]!.trims).toBe(0);
+      await pool.destroy();
+    });
+
+    it('does not trim while a worker above the floor is still to retire, or a call is running', async () => {
+      const workers: FakeWorker[] = [];
+      const releases: Array<() => void> = [];
+      const pool = new QueryPool({
+        size: 2, idleTimeoutMs: 5, idleKeepBytes: light,
+        createWorker: () => {
+          const index = workers.length;
+          const worker = new FakeWorker(() => ({ wait: new Promise((resolve) => { releases[index] = () => resolve(ok('r')); }) }));
+          worker.heldBytes = light;
+          workers.push(worker);
+          return worker;
+        },
+      });
+      const calls = Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+      await vi.waitFor(() => expect(releases.filter(Boolean)).toHaveLength(2));
+      releases[0]!();
+      // Worker 0 is idle past its timeout beside a busy worker 1: it retires, and nothing is trimmed.
+      await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
+      await sleep(30);
+      expect(workers[1]!.trims).toBe(0); // still running its call
+      expect(workers[0]!.trims).toBe(0);
+      releases[1]!();
+      await calls;
+      await vi.waitFor(() => expect(workers[1]!.trims).toBe(1));
+      await pool.destroy();
+    });
+
+    it('never trims or retires with idleTimeoutMs 0', async () => {
+      const workers: FakeWorker[] = [];
+      const pool = new QueryPool({
+        size: 1, idleTimeoutMs: 0, idleKeepBytes: light,
+        createWorker: () => {
+          const worker = new FakeWorker(() => ({ result: ok('r') }));
+          workers.push(worker);
+          return worker;
+        },
+      });
+      await pool.run('codegraph_search', {});
+      await sleep(30);
+      expect(workers[0]!.trims).toBe(0);
+      expect(workers[0]!.retireReceived).toBe(false);
+      await pool.destroy();
+    });
+
+    it('replaces a worker that holds more than the limit after its trim, not one at it', async () => {
+      const { pool, workers } = keepingPool(1);
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      await sleep(10);
+      expect(workers).toHaveLength(1); // exactly at the limit: kept
+
+      workers[0]!.heldBytes = light + 1;
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      await vi.waitFor(() => expect(workers[0]!.exitCode).toBe(0));
+      expect(workers[0]!.retireReceived).toBe(true); // retired by itself, not terminated
+      expect(workers[0]!.terminated).toBe(false);
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 1');
+      expect(pool.healthy).toBe(true);
+      await pool.destroy();
+    });
+
+    it('is not ready while the replacement for a heavy worker starts, so calls are served in process', async () => {
+      // The replacement (worker 1) stays starting until the test lets it report ready.
+      const { pool, workers } = keepingPool(1, (index) => (index === 0 ? true : null));
+      workers[0]!.heldBytes = light + 1;
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
+      expect(pool.ready).toBe(false);
+      expect(pool.liveWorkers).toBe(1); // the heavy one no longer counts
+      workers[1]!.emitMessage({ type: 'ready', ok: true });
+      expect(pool.ready).toBe(true);
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 1');
+      await pool.destroy();
+    });
+
+    it('leaves a heavy worker alone when a call has reached it since the trim', async () => {
+      const { pool, workers } = keepingPool(1);
+      const worker = workers[0]!;
+      worker.holdsTrimReport = true;
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(worker.trims).toBe(1));
+      let finish!: (r: ToolResult) => void;
+      const held = new Promise<ToolResult>((resolve) => { finish = resolve; });
+      (worker as unknown as { behavior: (m: CallMsg) => Action }).behavior = () => ({ wait: held });
+      const call = pool.run('codegraph_search', {});
+      worker.emitMessage({ type: 'trimmed', heldBytes: Number.MAX_SAFE_INTEGER });
+      await sleep(10);
+      expect(workers).toHaveLength(1); // no replacement, and the call is still its own
+      expect(worker.alive).toBe(true);
+      expect(worker.retireReceived).toBe(false);
+      finish(ok('still here'));
+      expect((await call).content[0].text).toBe('still here');
+      await pool.destroy();
+    });
+
+    it('serves a call that arrives in the middle of the trim', async () => {
+      const { pool, workers } = keepingPool(1);
+      workers[0]!.holdsTrimReport = true;
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 0');
+      expect(workers).toHaveLength(1);
+      await pool.destroy();
+    });
+
+    it('recovers when the kept worker dies while idle', async () => {
+      const { pool, workers } = keepingPool(1);
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      workers[0]!.alive = false;
+      workers[0]!.emitExit();
+      expect((await pool.run('codegraph_search', {})).content[0].text).toBe('worker 1');
+      expect(pool.healthy).toBe(true);
+      await pool.destroy();
+    });
+
+    it('ignores a late report from a worker it has let go of', async () => {
+      const { pool, workers } = keepingPool(2);
+      await pool.run('codegraph_search', {});
+      await vi.waitFor(() => expect(workers[0]!.trims).toBe(1));
+      await pool.destroy();
+      workers[0]!.emitMessage({ type: 'trimmed', heldBytes: Number.MAX_SAFE_INTEGER });
+      expect(workers).toHaveLength(1);
+    });
   });
 
   it('recovers from a worker crash: retries the in-flight call and respawns', async () => {
@@ -520,6 +771,8 @@ describe('QueryPool', () => {
 
 // Use the built engine so its pool loads the real compiled worker sibling.
 const BuiltEngine: typeof MCPEngine = require('../dist/mcp/engine').MCPEngine;
+const BuiltHandler: typeof ToolHandler = require('../dist/mcp/tools').ToolHandler;
+const BuiltGraph: typeof CodeGraph = require('../dist/index').default;
 
 describe('MCP query pool with real projects (#1465)', () => {
   let tempDir: string;
@@ -667,6 +920,106 @@ describe('MCP query pool with real projects (#1465)', () => {
     expect(exited[1 - r]).toBe(false);
     expect(pool.liveWorkers).toBe(1);
     expect(exits).toHaveLength(2);
+  }, 30000);
+
+  it('keeps a real worker through idle: it trims, stays up, and answers the next call', async () => {
+    const alpha = await indexProject('alpha', 'alphaSymbol');
+    const started: Worker[] = [];
+    const held: number[] = [];
+    let released = 0;
+    // The real worker script, with its handler's release reported on the way through.
+    const script = `
+      const { parentPort } = require('worker_threads');
+      const { ToolHandler } = require(${JSON.stringify(path.resolve(__dirname, '../dist/mcp/tools.js'))});
+      const release = ToolHandler.prototype.releaseIdleMemory;
+      ToolHandler.prototype.releaseIdleMemory = function () {
+        parentPort.postMessage({ type: 'released' });
+        return release.call(this);
+      };
+      require(${JSON.stringify(path.resolve(__dirname, '../dist/mcp/query-worker.js'))});
+    `;
+    pool = new QueryPool({
+      size: 2, idleTimeoutMs: 50,
+      createWorker: () => {
+        const worker = new Worker(script, { eval: true, workerData: { root: alpha } });
+        worker.on('message', (m: { type?: string; heldBytes?: number }) => {
+          if (m?.type === 'trimmed') held.push(m.heldBytes!);
+          if (m?.type === 'released') released++;
+        });
+        started.push(worker);
+        return worker;
+      },
+    });
+    const first = await pool.run('codegraph_explore', { query: 'alphaSymbol' });
+    expect(first.content[0].text).toContain('alphaSymbol');
+    await vi.waitFor(() => expect(held).toHaveLength(1), { timeout: 15000 });
+    expect(released).toBe(1);
+    expect(held[0]).toBeGreaterThan(0);
+    expect(held[0]).toBeLessThan(256 * 1024 * 1024);
+
+    const after = await pool.run('codegraph_explore', { query: 'alphaSymbol' });
+    expect(after).toEqual(first);
+    expect(started).toHaveLength(1);
+    expect(started[0]!.threadId).toBeGreaterThan(0); // -1 once a worker has exited
+  }, 30000);
+
+  it('replaces a real worker that still holds more than the limit after its trim', async () => {
+    const alpha = await indexProject('alpha', 'alphaSymbol');
+    const workers: Worker[] = [];
+    const exits: Promise<number>[] = [];
+    const retireSent: boolean[] = [];
+    pool = new QueryPool({
+      size: 1, idleTimeoutMs: 50, idleKeepBytes: 0, // a worker holds more than 0 bytes after any trim, so it is replaced
+      createWorker: () => {
+        const worker = new Worker(path.resolve(__dirname, '../dist/mcp/query-worker.js'), { workerData: { root: alpha } });
+        const i = workers.push(worker) - 1;
+        retireSent.push(false);
+        const post = worker.postMessage.bind(worker);
+        worker.postMessage = (msg: unknown) => {
+          if ((msg as { type?: string })?.type === 'retire') retireSent[i] = true;
+          post(msg);
+        };
+        exits.push(new Promise((resolve) => worker.once('exit', resolve)));
+        return worker;
+      },
+    });
+    const first = await pool.run('codegraph_search', { query: 'alphaSymbol' });
+    expect(first.isError).toBeFalsy();
+    await vi.waitFor(() => expect(workers).toHaveLength(2), { timeout: 15000 });
+    expect(retireSent[0]).toBe(true);
+    expect(await exits[0]).toBe(0); // retired by itself
+    await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 15000 });
+    expect(pool.liveWorkers).toBe(1);
+    expect(pool.healthy).toBe(true);
+    const after = await pool.run('codegraph_search', { query: 'alphaSymbol' });
+    expect(after).toEqual(first);
+  }, 30000);
+
+  it('a kept worker closes all but the last project it used, and goes on answering', async () => {
+    const alpha = await indexProject('alpha', 'alphaSymbol');
+    const beta = await indexProject('beta', 'betaSymbol');
+    const gamma = await indexProject('gamma', 'gammaSymbol');
+    const cg = BuiltGraph.openSync(alpha);
+    const handler = new BuiltHandler(cg);
+    try {
+      await handler.executeReadTool('codegraph_search', { projectPath: beta, query: 'betaSymbol' });
+      await handler.executeReadTool('codegraph_search', { projectPath: gamma, query: 'gammaSymbol' });
+      const open = (handler as unknown as { projectCache: Map<string, CodeGraph> }).projectCache;
+      const betaGraph = [...open.values()][0]!;
+      expect(open.size).toBe(2);
+
+      handler.releaseIdleMemory();
+
+      expect([...open.keys()]).toEqual([gamma]);
+      expect(() => betaGraph.searchNodes('betaSymbol')).toThrow();
+      for (const [projectPath, symbol] of [[gamma, 'gammaSymbol'], [alpha, 'alphaSymbol'], [beta, 'betaSymbol']]) {
+        const result = await handler.executeReadTool('codegraph_search', { projectPath, query: symbol });
+        expect(result.content[0].text).toContain(symbol);
+      }
+    } finally {
+      await handler.closeAll();
+      cg.close();
+    }
   }, 30000);
 
   it('never terminates a real worker before it has started', async () => {
