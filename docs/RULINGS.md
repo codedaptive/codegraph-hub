@@ -206,3 +206,10 @@ General as a RULING line. Decisions already settled by a document live in `team/
   tested on macOS only, so the maintainer can validate the other platforms.
 - Supersedes: Orc-Codegraph's todo item to validate the lock PRs on Windows and Linux before opening them.
 - Work implied: Orc-Codegraph drops that step and checks the PR texts say macOS only.
+
+## R-22. Publish the R-17 set now; no duplicate test runs
+- Date: 2026-11-01 / Bob, direct.
+- Ruling: upstream moves fast, so a duplicate test run makes the PRs stale. Kong's clear read (09:20) is the gate:
+  stop the per-branch full suites and publish now: the fork, all 14 PRs and the three issues. Upstream's CI runs
+  the suite on each PR; a failure there is fixed on that PR.
+- Supersedes: the per-branch full-suite step in the R-17 publish plan.
