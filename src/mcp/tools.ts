@@ -2274,7 +2274,12 @@ function pendingFileOf(root: string, relPath: string): PendingFile {
  * pinned project (`codegraph project pin`, the project registry) is never
  * idle-released; it closes on shutdown, or when housekeeping releases it
  * (`releaseProjectRoot`: its worktree was torn down, or its directory or
- * database is gone).
+ * database is gone). Only the machine server's engine (`openPinned`) opens
+ * pinned projects with no call, and only those with an index
+ * (src/extensions/host/worktree-lifecycle/pinned-open.ts); the time of that open
+ * is the project's last use, so once the pin is removed it closes after this
+ * timeout, at the next trim. Only that engine re-trims after each housekeeping
+ * pass; any other engine trims on the events listed at {@link ToolHandler.trimProjects}.
  */
 const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
 
@@ -3029,6 +3034,11 @@ export class ToolHandler {
    * `maxOpen` is no standing cap: it defaults to none, and only
    * {@link releaseIdleMemory} passes one, to close every project but the last
    * one used on a query worker kept through a quiet spell.
+   * Callers: the idle timer, a tool call's open and finish, a catch-up or a
+   * release settling, a release, closeAll, and (an `openPinned` engine only) the
+   * engine after each housekeeping pass ({@link trimIdleProjects}): a pinned
+   * project arms no idle timer, so one unpinned later is released by that re-trim
+   * when no call comes.
    */
   private trimProjects(maxOpen = Infinity): void {
     if (this.activeCalls > 0) return;
@@ -3118,6 +3128,47 @@ export class ToolHandler {
    */
   cachedProjectRoots(): string[] {
     return [...this.projectCache.keys()];
+  }
+
+  /**
+   * Whether this handler holds the project at `root` open now. `root` is matched
+   * canonically against the cached roots, as {@link releaseProjectRoot} does, so
+   * any spelling of it works. The pinned-project opener asks it before each open.
+   */
+  isProjectRootOpen(root: string): boolean {
+    const wanted = canonicalProjectRoot(root);
+    for (const cached of this.projectCache.keys()) {
+      if (cached === root || canonicalProjectRoot(cached) === wanted) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Open the project at `root` with no tool call: the path a call that names it
+   * takes (the builder holds it and queues its catch-up, the handler opens it
+   * read-only and caches it, then the catch-up is awaited, time-boxed), minus the
+   * session's admission check and anchor, which belong to a call. The pinned-project
+   * opener (src/extensions/host/worktree-lifecycle/pinned-open.ts) uses it, so a
+   * pinned project is held and open before anyone asks. The project is cached with
+   * the time of this open: once it is unpinned, the idle release closes it after
+   * the idle timeout like any other. Rejects with what a call would have been
+   * answered with (a sensitive path, a project the builder is still building, an
+   * index that cannot be opened). A no-op once the handler is closing.
+   */
+  async openPinnedProject(root: string): Promise<void> {
+    if (this.closing) return;
+    await this.awaitProjectGate(root);
+  }
+
+  /**
+   * Run the idle release now: close every cached, unpinned project idle past
+   * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` (see {@link trimProjects}; a no-op while a
+   * tool call is running). The engine calls it after each housekeeping pass: a
+   * project opened without a call, then unpinned, arms no idle timer while it is
+   * pinned, and no later call may come to run the trim for it.
+   */
+  trimIdleProjects(): void {
+    this.trimProjects();
   }
 
   /**

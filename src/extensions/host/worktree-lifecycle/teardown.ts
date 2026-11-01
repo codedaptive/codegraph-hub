@@ -111,6 +111,15 @@ export interface TeardownDeps {
    * index that is gone.
    */
   releaseOnly?: boolean;
+  /**
+   * Runs at the end of every pass, after the release of vanished roots. For the
+   * machine server's engine: trim the projects idle past their timeout and run a
+   * pass of the pinned-project opener (pinned-open.ts, wired in src/mcp/engine.ts). Synchronous and called inside
+   * a try, so a throw is dropped and cannot fail the pass; it must not wait on
+   * slow work, because the timer skips a tick while a pass runs. Absent for the
+   * index builder's pass.
+   */
+  afterPass?(): void;
 }
 
 /**
@@ -518,11 +527,13 @@ async function releaseVanishedRoots(deps: TeardownDeps): Promise<void> {
 /**
  * One housekeeping pass: {@link sweepWorktrees} (skipped with
  * `deps.releaseOnly`), then the release of every held root whose directory or
- * database is gone (see {@link TeardownDeps.heldRoots}). Never rejects.
+ * database is gone (see {@link TeardownDeps.heldRoots}), then
+ * {@link TeardownDeps.afterPass}. Never rejects.
  */
 export async function runHousekeepingPass(deps: TeardownDeps): Promise<void> {
   if (!deps.releaseOnly) await sweepWorktrees(deps);
   await releaseVanishedRoots(deps);
+  try { deps.afterPass?.(); } catch { /* the hook is best-effort; the pass is done */ }
 }
 
 /**

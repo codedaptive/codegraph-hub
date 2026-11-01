@@ -12,7 +12,11 @@
  * server's engine is always read-only, and the index builder
  * (src/extensions/host/builder/service.ts) is the one that sweeps, with its
  * own hold set, through an engine adapter that is not read-only. The timer is
- * unref'd.
+ * unref'd. An engine may give an `afterPass` hook, run at the end of every pass
+ * (timer or on demand): the machine server's engine uses it to re-run the idle
+ * release and to run a pass of the pinned-project opener (./pinned-open.ts, wired
+ * in src/mcp/engine.ts); the
+ * builder's adapter gives none, so its pass is unchanged.
  *
  * The roots a server's engine holds are the tool handler's cache, the roots
  * its query-pool workers may still hold (recorded here as the engine opens
@@ -44,6 +48,8 @@ export interface HousekeepingEngine {
   cachedProjectRoots(): string[];
   /** A read-only engine only releases; it never sweeps the registry. */
   readOnly: boolean;
+  /** Optional: runs at the end of every pass, see {@link TeardownDeps.afterPass}. */
+  afterPass?(): void;
 }
 
 export class EngineHousekeeping {
@@ -63,6 +69,7 @@ export class EngineHousekeeping {
       },
       heldRoots: () => this.heldRoots(),
       releaseOnly: engine.readOnly,
+      afterPass: engine.afterPass ? () => engine.afterPass?.() : undefined,
     };
   }
 
