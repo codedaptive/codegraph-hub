@@ -1,6 +1,6 @@
 # SPEC: offering our work upstream
 
-Draft 2, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
+Draft 3, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
 `colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
 
 ## 1. What Bob decided
@@ -14,8 +14,8 @@ Draft 2, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-
 
 - Refresh the `upstream` mirror (ours carries upstream through 60b0d7a9, 2026-10-29) and merge it into integration,
   so every PR and the fork start from current upstream.
-- PRs are cut from integration's per-feature commits, never from `ours`: each `sm.N` release on `ours` squashes many
-  features into one commit.
+- PRs are cut from the per-feature commits on `exchange`, never from `integration` (one squash per integrate call) or
+  `ours` (each `sm.N` release squashes many features into one commit).
 - Every PR follows upstream's own rules (upstream `AGENTS.md`): tests in upstream's `__tests__/`, a `CHANGELOG.md`
   entry under `## [Unreleased]` in its user-facing style, no version bump.
 - The team does the work with `gh` (Bob, R-17): it creates the fork under the `codedaptive` organisation, pushes
@@ -30,7 +30,7 @@ passing on upstream's suite. Smallest and least dependent first.
 |---|---|---|
 | 1 | `query-pool-idle` | Idle query workers retire down to one (upstream issue #3027, already filed) |
 | 2 | `copied-index-locks` | A copied `.codegraph/` recovers on its own instead of blocking on the source's lock |
-| 3 | `lock-race` | Stale-lock takeover removes a lock only if it is still the one judged stale |
+| 3 | `lock-takeover-race` | Stale-lock takeover removes a lock only if it is still the one judged stale |
 | 4 | `sync-mtime-refresh` | Sync stops re-hashing files whose content is unchanged |
 | 5 | `swift-builtins` | Calls on Swift standard-library values no longer link by name to project methods |
 | 6 | `swift-enum-cases` | Every case in a comma-separated Swift `case` list is indexed |
@@ -40,14 +40,16 @@ passing on upstream's suite. Smallest and least dependent first.
 | 10 | `grep-by-symbol` | `codegraph grep` and `codegraph_grep`: regex hits grouped by enclosing symbol, ranked by incoming edges |
 | 11 | `blast-base` | `codegraph blast` and `codegraph_blast`: the impact of a diff against its merge base |
 | 12 | `orphans` | `codegraph orphans` and `codegraph_orphans`: symbols added since a ref that nothing uses |
+| 13 | `node-25-support` | CodeGraph runs on Node 25 and later (upstream 60b0d7a9 still caps `engines` below 25 and exits on 25) |
 
 PRs 9-12 (Bob, R-17): their logic stands alone (`grep-core.ts`, `blast.ts`, `orphans.ts`, `suspects.ts` import no
 host code except grep's focus lookup). In each PR the command and tool are registered the way upstream registers
 its own (`src/bin/codegraph.ts`, `src/mcp/tools.ts`), not through our extension hooks, and the session-focus parts
 are left out; the questionable-call marks in grep and blast (`--strict`) follow PR 9.
 
-Not a PR: `node-25` if upstream already supports Node 25 (its guide says it does; R-17); the pinned
-tree-sitter-swift mis-parse test, which goes upstream as the drafted issue instead.
+Not a PR: the pinned tree-sitter-swift mis-parse test, which goes upstream as the drafted issue instead. (`node-25-support`
+was first left out on upstream's guide; the upstream code at 60b0d7a9 still refuses Node 25, so it is PR 13. If the
+refresh shows upstream has since fixed it, it drops.)
 
 Two Swift issues already drafted (Orc-Codegraph's todo) go upstream with the PRs: the 0.7.3 `if try await` mis-parse,
 and `declaredSupertypes` reading a nested type's inheritance clause.
@@ -86,7 +88,7 @@ Linux and Windows, if they want it.
 
 ## 6. Readings to confirm
 
-1. Settled by R-17: `node-25` is left out if upstream already has it; the fork leaves out the team's files
+1. Settled by R-17: the fork leaves out the team's files
    (`fleet/`, the codeteam Makefile, rulings, reports, graft golden files, `docs/SPEC*.md`).
 2. Settled by R-17: grep, blast, orphans and suspects are PRs (9-12).
 3. The public fork is named `codedaptive/codegraph-fork`, since `codedaptive/codegraph` is our private repository.
