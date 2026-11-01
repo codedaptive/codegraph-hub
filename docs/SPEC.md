@@ -147,10 +147,12 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 
 | Left | State |
 |---|---|
-| Builder robustness: a liveness watchdog, a git hook's `sync -q` not waiting behind a running job, a stale `rebuild.pid` after a killed builder | awaiting Bob (Q-15) |
+
 | Tests that time out at 5 s on a busy machine (index-command, watcher-replaced-db, server-command, ui-server-api elapsed-time) need a stated timeout or an event wait | host |
 
 ## 9. Out of scope (R-12)
+
+Builder robustness items closed by R-16 (watchdog, hook sync, stale `rebuild.pid`) until one surfaces.
 
 Performance targets; the upstream process (daily merge, per-feature squashes, nightly cherry-pick check, upstream
 issue) until the tool is finished; graft and anything only in MISSION.md.

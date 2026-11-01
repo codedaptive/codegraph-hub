@@ -150,3 +150,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Refines: R-14; answers Kong's K-45 (#1516).
 - Work implied: Orc-Codegraph routes both changes (host lane).
 - Confirmed 2026-10-31 (Bob): `uninit` being undone by the next query (R-12, no opt-in) is the intended behaviour.
+
+## R-16. Q-15: builder robustness items closed as non-issues
+- Date: 2026-10-31 / Bob, direct.
+- Ruling: the builder liveness watchdog, a git hook's `sync -q` waiting behind a running job, and a stale
+  `rebuild.pid` after a killed builder are closed as non-issues; they are dealt with only if one ever surfaces.
+- Basis: no hang seen in the builder log; no CodeGraph git hooks are installed in the machine's repositories; a stale
+  `rebuild.pid` is reclaimed.
+- Work implied: none. Answers Orc #1657 (host's cli-builder-route report, Open 1, 3, 4).
