@@ -30,6 +30,8 @@ The CLI commands that write an index (`init`, `index`, `sync`, `checkpoint`/`--f
 when it is running; when it is not, they write in their own process under the writer lock (R-14).
 `codegraph uninit` asks a running server to release the root before it deletes `.codegraph/`; `codegraph unlock`
 removes only a lock whose owner is dead, and with a live holder says so and removes nothing (R-15).
+Because indexing has no opt-in (R-12), `uninit` does not stay done while a session still queries that path: the next
+call rebuilds the index within seconds.
 
 While no server answers, a session is served in-process, read-only: it never writes, seeds or builds an index, and
 it moves to the server as soon as one answers.
@@ -133,19 +135,19 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-10-31)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.6** (ours b8a23dbc,
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.7** (ours 62efe36e,
 2026-10-31).
 
 | Release | What it shipped |
 |---|---|
 | sm.5 (ours 687fb5a6) | one machine server and index builder, 10-minute close with no cap, pinned standing databases, repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree hook, building guidance; the worktree lifecycle and tools carried from sm.4 |
 | sm.6 (ours b8a23dbc) | CLI index writes go to a running builder (R-14); focused context recall filtered to the focus; the out-of-focus name note (S-46) |
+| sm.7 (ours 62efe36e) | `uninit` releases through a running server first; `unlock` refuses a live holder (R-15); the out-of-focus name note's ceiling fix |
 
 | Left | State |
 |---|---|
-| `uninit` releases through a running server; `unlock` refuses a live holder (R-15) | host, for sm.7 |
-| Out-of-focus name note: ceiling fix | host, for sm.7 |
-| Focused `explore`: the flow is lost when a chain crosses the focus boundary; the no-result explanation names out-of-focus symbols (queries ledger `reports/focus-grep-blast-defects.md`, Defects 1 and 2) | queries, after sm.7 |
+| Focused `explore`: the flow is lost when a chain crosses the focus boundary; the no-result explanation names out-of-focus symbols (queries ledger `reports/focus-grep-blast-defects.md`, Defects 1 and 2) | queries |
+| `cli-builder-route` follow-ups | host |
 
 ## 9. Out of scope (R-12)
 
