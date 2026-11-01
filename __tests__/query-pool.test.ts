@@ -30,13 +30,21 @@ type Action = { result: ToolResult } | { crash: true } | { hang: true } | { wait
  * one. `behavior` decides per call whether to return a result, crash (exit≠0),
  * hang (never reply — exercises the backstop), or wait on a promise (lets a test
  * hold a call in-flight to observe concurrency). Emits 'ready' on a macrotask so
- * the pool has wired its listeners first.
+ * the pool has wired its listeners first. The pool's idle shrink posts
+ * `{ type: 'retire' }`; the fake answers it as the real worker does,
+ * `{ type: 'retired' }` then exit code 0 on a macrotask, unless `ignoresRetire`.
  */
 class FakeWorker implements PoolWorker {
   private msgCb?: (m: unknown) => void;
   private errorCb?: (e: Error) => void;
   private exitCb?: (code: number) => void;
   alive = true;
+  terminated = false;
+  exitCode: number | undefined;
+  /** Set once the pool has posted 'retire' to this worker. */
+  retireReceived = false;
+  /** Ignore the pool's 'retire', to exercise its terminate fallback. */
+  ignoresRetire = false;
   constructor(private behavior: (m: CallMsg) => Action, readyOk: boolean | null = true) {
     setTimeout(() => { if (this.alive && readyOk !== null) this.emitMessage({ type: 'ready', ok: readyOk }); }, 0);
   }
@@ -52,7 +60,15 @@ class FakeWorker implements PoolWorker {
     if (this.alive) this.msgCb?.({ type: 'result', id, result });
   }
   postMessage(msg: unknown): void {
-    const m = msg as CallMsg;
+    const m = msg as CallMsg | { type: 'retire' };
+    if (m?.type === 'retire') {
+      this.retireReceived = true;
+      // Like the real worker: close up, answer 'retired' and exit by itself, with code 0.
+      if (this.ignoresRetire) return;
+      this.alive = false;
+      setTimeout(() => { this.msgCb?.({ type: 'retired', closed: 0 }); this.exitCode = 0; this.exitCb?.(0); }, 0);
+      return;
+    }
     if (!m || m.type !== 'call') return;
     const action = this.behavior(m);
     if ('crash' in action) {
@@ -64,7 +80,7 @@ class FakeWorker implements PoolWorker {
     if ('wait' in action) { void action.wait.then((r) => this.reply(m.id, r)); return; }
     setTimeout(() => this.reply(m.id, action.result), 0);
   }
-  terminate(): Promise<number> { this.alive = false; return Promise.resolve(0); }
+  terminate(): Promise<number> { this.alive = false; this.terminated = true; return Promise.resolve(0); }
 }
 
 const ok = (text: string): ToolResult => ({ content: [{ type: 'text', text }] });
@@ -125,6 +141,157 @@ describe('QueryPool', () => {
     // One eager worker + at most the cold-start cap — never all 8.
     expect(created).toBeLessThanOrEqual(2);
     await pool.destroy();
+  });
+
+  it('retires an idle burst back to one started worker, which keeps serving', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const workers: FakeWorker[] = [];
+    const pool = new QueryPool({
+      size: 4, idleTimeoutMs: 20,
+      createWorker: () => {
+        const worker = new FakeWorker((m) => ({
+          wait: gate.then(() => ok(`r${m.id}`)),
+        }));
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    const calls = Promise.all(Array.from({ length: 4 }, (_, i) => pool.run('codegraph_search', { i })));
+    await sleep(40);
+    expect(pool.liveWorkers).toBe(4);
+    release();
+    await calls;
+    await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
+    await sleep(40); // past another idle timeout: the floor of one started worker holds
+
+    expect(pool.liveWorkers).toBe(1);
+    // The burst's memory is given back by retiring three workers; none is replaced.
+    expect(workers).toHaveLength(4);
+    const retired = workers.filter((w) => w.retireReceived);
+    expect(retired).toHaveLength(3);
+    // Each retired worker exited by itself on 'retire', with code 0; none was terminated.
+    expect(retired.every((w) => !w.alive && w.exitCode === 0 && !w.terminated)).toBe(true);
+    const survivor = workers.find((w) => !w.retireReceived)!;
+    expect(survivor.alive && !survivor.terminated).toBe(true);
+    expect(pool.ready).toBe(true);
+    expect(pool.healthy).toBe(true);
+    const again = await pool.run('codegraph_node', { symbol: 's' });
+    expect(again.isError).toBeFalsy();
+    expect(workers).toHaveLength(4); // the survivor served it: no cold start
+    await pool.destroy();
+  });
+
+  it('terminates a retired idle worker that does not exit by itself', async () => {
+    const workers: FakeWorker[] = [];
+    // Two workers, so one is above the floor and retires. `startSettleMs` is
+    // the cap a retired worker gets to exit before the pool terminates it.
+    const pool = new QueryPool({
+      size: 2, idleTimeoutMs: 20, startSettleMs: 200,
+      createWorker: () => {
+        const worker = new FakeWorker(() => ({ result: ok('r') }));
+        worker.ignoresRetire = true;
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+    expect(workers).toHaveLength(2);
+    await vi.waitFor(() => expect(pool.liveWorkers).toBe(1), { interval: 5 }); // one retired
+    const retired = workers.filter((w) => w.retireReceived);
+    expect(retired).toHaveLength(1);
+    expect(retired[0]!.terminated).toBe(false); // still has time to exit
+    await vi.waitFor(() => expect(retired[0]!.terminated).toBe(true));
+    const survivor = workers.find((w) => !w.retireReceived)!;
+    expect(survivor.terminated).toBe(false);
+    expect(pool.healthy).toBe(true);
+    await pool.destroy();
+  });
+
+  it('shrinks even when a burst worker reports ready after the last result', async () => {
+    const workers: FakeWorker[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const pool = new QueryPool({
+      size: 2, idleTimeoutMs: 20,
+      createWorker: () => {
+        // The second worker stays pending until the test lets it report ready.
+        const worker = new FakeWorker((m) => ({ wait: gate.then(() => ok(`r${m.id}`)) }), workers.length === 0 ? true : null);
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await vi.waitFor(() => expect(pool.ready).toBe(true));
+    const calls = Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+    await vi.waitFor(() => expect(workers).toHaveLength(2));
+    release();
+    await calls; // the warm worker served both while the second was still starting
+    await sleep(40);
+    // A starting worker does not count toward the floor, so nothing retired yet.
+    expect(pool.liveWorkers).toBe(2);
+    expect(workers.some((w) => w.retireReceived)).toBe(false);
+    workers[1]!.emitMessage({ type: 'ready', ok: true });
+    // Its ready arms the shrink: the oldest idle worker retires, nothing replaces it.
+    await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
+    expect(workers).toHaveLength(2);
+    expect(workers[0]!.retireReceived).toBe(true);
+    expect(workers[0]!.exitCode).toBe(0);
+    expect(workers[1]!.retireReceived).toBe(false);
+    await pool.destroy();
+  });
+
+  it('never retires the last started worker, so an idle pool does not churn', async () => {
+    const workers: FakeWorker[] = [];
+    const pool = new QueryPool({
+      size: 2, idleTimeoutMs: 5,
+      createWorker: () => {
+        const worker = new FakeWorker(() => ({ result: ok('r') }));
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    // The warm worker has served nothing and sits idle for many timeouts.
+    await vi.waitFor(() => expect(pool.ready).toBe(true));
+    await sleep(40);
+    expect(workers).toHaveLength(1);
+    expect(workers[0]!.retireReceived).toBe(false);
+    expect(pool.liveWorkers).toBe(1);
+
+    // A burst grows the pool; the shrink leaves one worker, which then stays.
+    await Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+    expect(workers).toHaveLength(2);
+    await vi.waitFor(() => expect(pool.liveWorkers).toBe(1));
+    await sleep(40);
+    expect(pool.liveWorkers).toBe(1);
+    expect(workers).toHaveLength(2); // nothing started to replace the retired one
+    expect(workers.filter((w) => w.retireReceived)).toHaveLength(1);
+    await pool.destroy();
+  });
+
+  it('destroy waits for a retired worker still on its way out', async () => {
+    const workers: FakeWorker[] = [];
+    // Two workers, so one is above the floor and retires; it never exits by
+    // itself, so only its 300 ms `startSettleMs` cap ends it.
+    const pool = new QueryPool({
+      size: 2, idleTimeoutMs: 5, startSettleMs: 300,
+      createWorker: () => {
+        const worker = new FakeWorker(() => ({ result: ok('r') }));
+        worker.ignoresRetire = true;
+        workers.push(worker);
+        return worker;
+      },
+    });
+
+    await Promise.all([pool.run('codegraph_search', { i: 0 }), pool.run('codegraph_search', { i: 1 })]);
+    await vi.waitFor(() => expect(pool.liveWorkers).toBe(1), { interval: 5 });
+    const retired = workers.find((w) => w.retireReceived)!;
+    expect(retired.terminated).toBe(false); // still on its way out
+    await pool.destroy();
+    expect(retired.terminated).toBe(true); // the cap ended it, inside destroy()
   });
 
   it('recovers from a worker crash: retries the in-flight call and respawns', async () => {
@@ -455,6 +622,51 @@ describe('MCP query pool with real projects (#1465)', () => {
       await pool.destroy();
       await Promise.all(exits);
     }
+  }, 30000);
+
+  it('retires an idle real worker that exits by itself with code 0', async () => {
+    const alpha = await indexProject('alpha', 'alphaSymbol');
+    const terminated: boolean[] = [];
+    const retireSent: boolean[] = [];
+    const exits: Promise<number>[] = [];
+    const exited: boolean[] = [];
+    // Two concurrent calls grow the pool to two real workers, so one is above
+    // the floor of one started worker and retires once idle for 50 ms.
+    pool = new QueryPool({
+      size: 2, idleTimeoutMs: 50,
+      createWorker: () => {
+        const worker = new Worker(path.resolve(__dirname, '../dist/mcp/query-worker.js'), { workerData: { root: alpha } });
+        const i = terminated.push(false) - 1;
+        retireSent.push(false);
+        exited.push(false);
+        const terminate = worker.terminate.bind(worker);
+        worker.terminate = () => {
+          terminated[i] = true;
+          return terminate();
+        };
+        const post = worker.postMessage.bind(worker);
+        worker.postMessage = (msg: unknown) => {
+          if ((msg as { type?: string })?.type === 'retire') retireSent[i] = true;
+          post(msg);
+        };
+        exits.push(new Promise((resolve) => worker.once('exit', (code) => { exited[i] = true; resolve(code); })));
+        return worker;
+      },
+    });
+    const results = await Promise.all([
+      pool.run('codegraph_search', { query: 'alphaSymbol' }),
+      pool.run('codegraph_search', { query: 'alphaSymbol' }),
+    ]);
+    for (const result of results) expect(result.isError).toBeFalsy();
+    expect(exits).toHaveLength(2);
+    await vi.waitFor(() => expect(retireSent.filter(Boolean)).toHaveLength(1), { timeout: 15000 });
+    const r = retireSent.indexOf(true);
+    expect(await exits[r]).toBe(0);
+    expect(terminated[r]).toBe(false);
+    // The other worker stays, and nothing was started to replace the retired one.
+    expect(exited[1 - r]).toBe(false);
+    expect(pool.liveWorkers).toBe(1);
+    expect(exits).toHaveLength(2);
   }, 30000);
 
   it('never terminates a real worker before it has started', async () => {

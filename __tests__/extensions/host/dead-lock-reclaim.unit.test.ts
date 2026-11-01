@@ -81,7 +81,7 @@ describe.runIf(posix)('dead-lock reclaim: records carry the holder start time', 
   });
 });
 
-// One victim per describe, about 2-3 s of vite-node startup (more under load):
+// One victim per describe, a separate node process running the real src code (more time under load):
 // it is the only way to get records written by the real code for a pid that
 // is not this worker's. The tests run in order: live first, then killed + reused.
 describe.runIf(posix)('dead-lock reclaim: a reused pid in a record the code wrote', () => {

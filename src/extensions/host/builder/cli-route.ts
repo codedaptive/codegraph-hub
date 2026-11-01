@@ -483,8 +483,14 @@ async function startRoutedWrite(
   return new RoutedWriter(route, root, answer, sink, holdsLease);
 }
 
-/** What `sync` and the `--fresh` wait drive in place of a writable CodeGraph: sync and destroy. */
-export type SyncWriter = Pick<CodeGraph, 'sync' | 'destroy'>;
+/**
+ * What `sync` and the `--fresh` wait drive in place of a writable CodeGraph: sync and destroy, and
+ * `isIndexStale` (whether the index was built by an older extraction engine), which `codegraph sync` reports
+ * after it runs. A CodeGraph answers it at once; a routed sync has no index open, so it reads the stamp.
+ */
+export type SyncWriter = Pick<CodeGraph, 'sync' | 'destroy'> & {
+  isIndexStale(): boolean | Promise<boolean>;
+};
 
 /**
  * A {@link SyncWriter} that runs each sync as a sync job on the builder, with the sync's progress events
@@ -509,6 +515,20 @@ class RoutedSync implements SyncWriter {
       return await writable.sync(options);
     } finally {
       writable.destroy();
+    }
+  }
+
+  /**
+   * The sync ran on the builder, so this process holds no index: the stamp is read through a short
+   * read-only handle (it writes nothing and starts no watcher).
+   */
+  async isIndexStale(): Promise<boolean> {
+    const { default: CodeGraph } = await import('../../../index');
+    const reader = CodeGraph.openSync(this.root, { readOnly: true });
+    try {
+      return reader.isIndexStale();
+    } finally {
+      reader.close();
     }
   }
 

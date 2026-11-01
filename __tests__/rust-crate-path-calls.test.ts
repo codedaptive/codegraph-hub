@@ -536,8 +536,9 @@ describe('Rust calls through a workspace crate path', () => {
     expect(callsFrom(CALLERS, 'via_std_traits')).toEqual([]);
   });
 
-  it('leave a path to a trait\'s function unlinked, never a namesake struct\'s method', () => {
-    expect(callsFrom(CALLERS, 'via_trait_path')).toEqual([]);
+  // The trait's own declaration (m.rs) is what the path names; the namesake struct's inherent `get` (shapes.rs) is not.
+  it('reach a path to a trait\'s function at the trait\'s own declaration, never a namesake struct\'s method', () => {
+    expect(callsFrom(CALLERS, 'via_trait_path')).toEqual([`method get ${LK}/src/m.rs`]);
   });
 
   it('leave a path through a module that does not exist unlinked', () => {
@@ -594,11 +595,10 @@ describe('Rust calls through a workspace crate path', () => {
     const bOpen = opens.filter((n) => n.startLine === 13);
     expect(aOpen.length, 'a::Cache::open at line 4').toBe(1);
     expect(bOpen.length, 'b::Cache::open at line 13').toBe(1);
-    // `a` is crate::b in caller's body: never module a's method. The path
-    // match declines a head a block's `use` binds, so no edge.
+    // `a` is crate::b in caller's body: b's method, never module a's.
     const targets = callTargets('caller');
     expect(targets).not.toContain(aOpen[0]!.id);
-    expect(targets).toEqual([]);
+    expect(targets).toEqual([bOpen[0]!.id]);
     // Where no `use` in the body binds `a`, the path is module a's (control).
     expect(callTargets('control_a')).toEqual([aOpen[0]!.id]);
   });
@@ -625,8 +625,7 @@ describe('Rust calls through a workspace crate path', () => {
     expect(callTargets('control_a')).toEqual([aOpen[0]!.id]);
   });
 
-  // Known limit: the shared module walk (rustSubmodule) takes the first same-parent `mod a` in source order, a function-local one included.
-  it.fails('reach module a\'s method when a function declared before `pub mod a` declares a `mod a` of its own', () => {
+  it('reach module a\'s method when a function declared before `pub mod a` declares a `mod a` of its own', () => {
     const file = `${ORK}/src/lib.rs`;
     const nodes = cg.getNodesInFile(file);
     const viaOrder = nodes.find((n) => n.kind === 'function' && n.name === 'via_order');
@@ -656,8 +655,8 @@ describe('Rust calls through a workspace crate path', () => {
     const targets = cg.getOutgoingEdgesFrom([caller!.id]).filter((e) => e.kind === 'calls').map((e) => e.target);
     const ids = `trait=${traitOpen[0]!.id} ref=${refOpen[0]!.id}`;
     expect(targets, ids).not.toContain(refOpen[0]!.id);
-    // No edge: no `impl` of `Cache` itself writes an `open`, and the path
-    // match leaves a trait's provided method unlinked.
+    // No edge: no `impl` of `Cache` itself writes an `open`, and a trait's
+    // provided method is no `Cache::open` the index holds.
     expect(targets, ids).toEqual([]);
   });
 
@@ -675,10 +674,9 @@ describe('Rust calls through a workspace crate path', () => {
     const targets = cg.getOutgoingEdgesFrom([caller!.id]).filter((e) => e.kind === 'calls').map((e) => e.target);
     const ids = `local=${localOpen[0]!.id} extern=${externOpen[0]!.id}`;
     expect(targets, ids).not.toContain(localOpen[0]!.id);
-    // No edge: the resolver's name pre-filter drops a `::`-rooted Rust name,
-    // and the path match declines one too (in edition 2018+, as this 2021
-    // fixture is, a leading `::` names an external crate) rather than walk it
-    // as a path to the crate's own `mod a`.
+    // No edge: in edition 2018+ (as this 2021 fixture is) a leading `::` names
+    // an external crate, so the path is not the crate's own `mod a`'s; the
+    // external crate is not walked either.
     expect(targets, ids).toEqual([]);
   });
 
