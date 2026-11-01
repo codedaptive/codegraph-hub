@@ -2139,8 +2139,17 @@ export class QueryBuilder {
     return results;
   }
 
-  /** Bounded miss diagnostics, independent of relevance filters and ranking. */
-  getExploreMissDiagnostics(query: string): {
+  /**
+   * Bounded miss diagnostics, independent of relevance filters and ranking.
+   *
+   * `pathPrefixes` is the path focus the caller passes ({@link inPathPrefixes}): under a
+   * non-empty list every source of an answer (the FTS postings, the segment
+   * vocab and both candidate lists) counts only nodes whose file lies inside
+   * it, applied before each LIMIT, so a word held only outside the focus is
+   * `unmatched`, and no name outside it is a candidate. Absent or empty = the
+   * whole index: no focus clause is added to any statement.
+   */
+  getExploreMissDiagnostics(query: string, pathPrefixes: readonly string[] = []): {
     matched: string[]; unmatched: string[]; candidates: string[]; limited: boolean;
   } {
     const words = [...new Set((query.match(/[\p{L}\p{N}]+/gu) ?? []).map(w => w.toLowerCase()))];
@@ -2149,35 +2158,58 @@ export class QueryBuilder {
     if (checked.length === 0) return { matched: [], unmatched: [], candidates: [], limited };
 
     // EXISTS uses FTS postings and the segment primary key, never source scans.
-    // Vocab rows can outlive deleted definitions, so verify them against nodes.
-    // An index from before schema v7 has no vocab: FTS alone answers (#2913).
+    // Vocab rows can outlive deleted definitions, so verify them against nodes,
+    // and the focus is checked on that same node row as its kind. An index from
+    // before schema v7 has no vocab table: FTS alone answers.
+    // Positional params follow the SQL text: every fragment below pushes into
+    // its own array and the arrays are spread in the order the text uses them.
+    // With a focus the FTS EXISTS joins nodes with CROSS JOIN, the join shape
+    // searchNodesFTS uses; without one it keeps its bare form.
     const vocab = this.hasSchema('name_segment_vocab');
+    const ftsExistsFocus: (string | number)[] = [];
+    const ftsExistsFocusSql = pathPrefixSql('n.file_path', pathPrefixes, ftsExistsFocus);
+    const vocabExistsFocus: (string | number)[] = [];
+    const vocabExistsFocusSql = vocab ? pathPrefixSql('n.file_path', pathPrefixes, vocabExistsFocus) : '';
+    const ftsExists = ftsExistsFocusSql === ''
+      ? 'EXISTS (SELECT 1 FROM nodes_fts WHERE nodes_fts MATCH pattern)'
+      : `EXISTS (SELECT 1 FROM nodes_fts CROSS JOIN nodes n ON n.rowid = nodes_fts.rowid WHERE nodes_fts MATCH pattern${ftsExistsFocusSql})`;
     const rows = this.db.prepare(`
       WITH words(word, pattern) AS (VALUES ${checked.map(() => '(?, ?)').join(', ')})
       SELECT word, (
-        EXISTS (SELECT 1 FROM nodes_fts WHERE nodes_fts MATCH pattern)${vocab ? `
+        ${ftsExists}${vocab ? `
         OR EXISTS (
           SELECT 1 FROM name_segment_vocab v WHERE v.segment = word
-          AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import'))
+          AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import')${vocabExistsFocusSql})
         )` : ''}
       ) AS matched FROM words
-    `).all(...checked.flatMap(w => [w, `{name qualified_name signature docstring} : "${w}"*`])) as
-      Array<{ word: string; matched: number }>;
+    `).all(
+      ...checked.flatMap(w => [w, `{name qualified_name signature docstring} : "${w}"*`]),
+      ...ftsExistsFocus,
+      ...vocabExistsFocus,
+    ) as Array<{ word: string; matched: number }>;
 
+    const vocabCandidateFocus: (string | number)[] = [];
+    const vocabCandidateFocusSql = vocab ? pathPrefixSql('n.file_path', pathPrefixes, vocabCandidateFocus) : '';
+    const ftsCandidateFocus: (string | number)[] = [];
+    const ftsCandidateFocusSql = pathPrefixSql('n.file_path', pathPrefixes, ftsCandidateFocus);
     const names = this.db.prepare(`${vocab ? `
       SELECT name FROM (
         SELECT v.name FROM name_segment_vocab v
         WHERE v.segment IN (${checked.map(() => '?').join(', ')})
-        AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import'))
+        AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import')${vocabCandidateFocusSql})
         LIMIT 12
       )
       UNION ALL` : ''}
       SELECT name FROM (
         SELECT n.name FROM nodes_fts JOIN nodes n ON n.rowid = nodes_fts.rowid
-        WHERE nodes_fts MATCH ? AND n.kind NOT IN ('file', 'import')
+        WHERE nodes_fts MATCH ? AND n.kind NOT IN ('file', 'import')${ftsCandidateFocusSql}
         LIMIT 12
       )
-    `).all(...(vocab ? checked : []), `name : (${checked.map(w => `"${w}"*`).join(' OR ')})`) as Array<{ name: string }>;
+    `).all(
+      ...(vocab ? [...checked, ...vocabCandidateFocus] : []),
+      `name : (${checked.map(w => `"${w}"*`).join(' OR ')})`,
+      ...ftsCandidateFocus,
+    ) as Array<{ name: string }>;
     return {
       matched: rows.filter(r => r.matched).map(r => r.word),
       unmatched: rows.filter(r => !r.matched).map(r => r.word),
@@ -2200,6 +2232,13 @@ export class QueryBuilder {
    *
    * Bounded like `getExploreMissDiagnostics`: two index probes per name (the
    * lower(name) index and FTS postings), never a source scan, at most 16 names.
+   *
+   * Takes no path focus, unlike `getExploreMissDiagnostics`: its answer is
+   * index-wide on purpose. The note it feeds (`notInIndexNote` in
+   * src/mcp/tools.ts) says no indexed symbol, file, signature or comment uses
+   * the name, so a focus-filtered answer would make that false for a name
+   * defined outside the focus; under a focus the host names such a name in its
+   * own line instead (`outOfFocusNames` in src/mcp/tools.ts).
    */
   getUnseenNames(names: readonly string[]): string[] {
     const checked = [...new Set(names)].filter((n) => n.length > 0 && n.length <= 128).slice(0, 16);
