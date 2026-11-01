@@ -16,19 +16,27 @@
  * Nothing is keyed on a project root: the server answers for any project a
  * session names, so no path here depends on one.
  *
- * Special-case: Unix domain socket paths have a hard length limit (~104 on
- * macOS, ~108 on Linux); when `<state>/server.sock` exceeds it we fall back to
- * a hash of the state dir's identity under `os.tmpdir()`. The pidfile always stays in the
- * state dir (it doesn't have a length limit) — and acts as the authoritative
- * pointer to the socket path the server chose.
+ * Special-case: Unix domain socket paths have a length limit that depends on
+ * the OS and on the libuv inside the Node running the server. Measured on
+ * Darwin 27.2 with Node 26 only: absolute paths of 100 to 253 bytes bind and
+ * connect, and 254 bytes and more fail with EINVAL. Other systems and Node
+ * versions are not measured and the limit may differ there, which is why no
+ * per-OS number is used. So when `<state>/server.sock` is over
+ * {@link POSIX_SOCKET_PATH_LIMIT} bytes we skip it, as a conservative margin and
+ * not as the OS limit, and use a hash of the state dir's identity under
+ * `os.tmpdir()`. The tmpdir candidate is never length-checked: it is always
+ * listed, a too-long one fails its bind, and when no candidate binds the
+ * SocketBindError from src/mcp/daemon.ts names it. The pidfile
+ * always stays in the state dir (it doesn't have a length limit) — and acts as
+ * the authoritative pointer to the socket path the server chose.
  *
  * Second special-case (#997, #974): some filesystems can't host an AF_UNIX node
  * AT ALL — ExFAT/FAT external volumes, certain network mounts, WSL2 DrvFs — so
  * `listen()` throws ENOTSUP/EACCES regardless of path length. We can't cheaply
  * tell those apart from a normal volume up front, so instead of guessing we
  * expose an ORDERED candidate list ({@link getServerSocketCandidates}): the
- * state-dir path first, the deterministic tmpdir path as the fallback of last
- * resort. The server binds the first that works (relocating past a capability
+ * state-dir path first, then the deterministic tmpdir path (the only candidate
+ * when the state-dir path is over the limit). The server binds the first that works (relocating past a capability
  * error); the proxy connects the first that answers. Both walk the SAME list, so
  * they still converge on whichever the server bound with zero coordination.
  */
@@ -38,8 +46,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { getStateDir, getStateDirIdentity } from '../extensions/host/server/state-dir';
 
-/** Soft upper bound for state-dir socket paths. */
-const POSIX_SOCKET_PATH_LIMIT = 100;
+/**
+ * Length, in bytes (what the kernel counts), above which the state-dir socket is
+ * skipped. A conservative margin under the OS limit (measured on Darwin 27.2 with
+ * Node 26 only; see the file header), not the limit itself. Never applied to the tmpdir candidate. Exported so the
+ * bind failure message (src/mcp/daemon.ts) can name the same number.
+ */
+export const POSIX_SOCKET_PATH_LIMIT = 100;
 
 /**
  * Short stable identifier for the state dir — used in tmpdir/pipe names. The
@@ -68,8 +81,15 @@ function stateIdHash(stateId: string): string {
  *   - Short state-dir path: `[ <state>/server.sock , <tmpdir>/codegraph-server-<hash>.sock ]`
  *     — try the state dir first, fall back to tmpdir if its FS can't host a
  *     socket (#997).
- *   - Long state-dir path: `[ <tmpdir>/... ]` only — bind would throw
- *     ENAMETOOLONG, so we skip straight to tmpdir.
+ *   - Long state-dir path (over {@link POSIX_SOCKET_PATH_LIMIT}): `[ <tmpdir>/... ]`
+ *     only — the state-dir socket is skipped, not tried, so we go straight to tmpdir.
+ *
+ * The tmpdir candidate is listed whatever its length. A SocketBindError, naming
+ * each path, its byte length and its error code, is thrown only when every
+ * candidate fails with a non-conflict error (say a tmpdir path past the OS limit
+ * and a state dir that cannot host a socket). `Daemon.start` rethrows it after
+ * releasing the lock, the serve command exits 1, and the launchers serve
+ * in-process. A racing EADDRINUSE is rethrown raw instead.
  *
  * The tmpdir socket and the pipe are the same for every spelling of one physical
  * state dir (they hash its identity). The state-dir candidate is that dir's own
@@ -94,7 +114,7 @@ export function getServerSocketCandidates(): string[] {
   }
   const inState = path.join(state, 'server.sock');
   const tmp = path.join(os.tmpdir(), `codegraph-server-${hash}.sock`);
-  if (inState.length > POSIX_SOCKET_PATH_LIMIT) return [tmp];
+  if (Buffer.byteLength(inState) > POSIX_SOCKET_PATH_LIMIT) return [tmp];
   return [inState, tmp];
 }
 
