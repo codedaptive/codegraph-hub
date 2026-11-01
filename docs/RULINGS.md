@@ -166,3 +166,6 @@ General as a RULING line. Decisions already settled by a document live in `team/
   likes; if upstream wants any of it in the main repository, we volunteer to bring it over.
 - Supersedes: R-10(a)'s "never distributed" (the fork is published) and R-12's deferral of the upstream process.
 - Expanded in `docs/SPEC-upstream.md`. Work implied: Orc-Codegraph plans it; Bob publishes.
+- Amended 2026-10-31 (Bob): the team does the work with `gh`, creating the fork under `codedaptive` and opening the
+  PRs and issues itself. `grep`, `blast`, `orphans` and `suspects` are PRs, not fork-only: their logic needs no
+  extension hooks. Readings 1-2 of SPEC-upstream draft 1 stand.
