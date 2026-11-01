@@ -120,6 +120,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-7 (graft leftovers) as work for this team; S-33's opt-in gate; S-43's publication hold; the
   performance acceptance carried from MISSION.md/R-8.
 - Work implied: Orc-Codegraph writes the two Q-12 files and plans against docs/SPEC.md draft 3.
+- Note 2026-11-01: the code also has an opt-out, `CODEGRAPH_NO_AUTO_SEED=1`, which turns automatic seeding and cold
+  builds off for the process that sets it (docs/SPEC.md §3). It is consistent with "no opt-in"; nothing sets it.
 
 ## R-13. The harness is not ours
 - Date: 2026-10-30 / Bob (#1243), standing rule.
