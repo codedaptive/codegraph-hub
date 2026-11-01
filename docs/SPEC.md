@@ -44,7 +44,8 @@ their own state directory. They never connect to, replace or write through the l
 - A database lives in its worktree's `.codegraph/` and always covers the whole repository of that worktree [B3]
   (not a subdirectory; `--focus` narrows answers, never the index).
 - Opened when a call needs it; closed after **10 minutes** with no call; no limit on how many are open [B2].
-  Closing releases handles and keeps the file.
+  Closing releases handles and keeps the file. Every pinned project that has an index is also opened without a
+  call: when the server starts and after each housekeeping pass (`pinned-open-at-start`).
 - **Pinned** databases (standing worktrees) stay open and current: never closed for idleness, always synced, so they
   are always a good copy source [B13]. Who pins: codeteam, with `codegraph project pin`, for the worktrees it
   calls standing [B14].
@@ -152,6 +153,7 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 
 | Left | State |
 |---|---|
+| Pinned projects opened at server start and after each housekeeping pass (`pinned-open-at-start`, exchange 28e6e43a) | host; lands with the next promote |
 | Tests that fail or run long under machine load (vitest's limit is 30 s and none timed out): two fail on assertions (the ui-server-api elapsed-time check, a fresh-answers race), index-command runs 25 s of its 30, and server-command's `--stop` polls a fixed 5 s. Fix: event waits, own timeouts with stated reasons, best of N (`slow-tests`) | host |
 
 ## 9. Out of scope (R-12)
