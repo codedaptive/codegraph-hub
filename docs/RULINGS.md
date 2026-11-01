@@ -149,3 +149,4 @@ General as a RULING line. Decisions already settled by a document live in `team/
   lock whose owner is dead; when a live process holds the lock it says so and removes nothing.
 - Refines: R-14; answers Kong's K-45 (#1516).
 - Work implied: Orc-Codegraph routes both changes (host lane).
+- Confirmed 2026-10-31 (Bob): `uninit` being undone by the next query (R-12, no opt-in) is the intended behaviour.
