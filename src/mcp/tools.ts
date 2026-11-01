@@ -9980,9 +9980,10 @@ export class ToolHandler {
    * The blast-radius report for one symbol, affected symbols grouped by file. With a session focus the
    * header count and the listing cover the in-focus symbols, and the others follow under
    * `## Outside focus (N)` in the same per-file shape. `prefixes` null (no focus) lists every symbol with no
-   * extra section, the same as an unfocused session's output.
+   * extra section, the same as an unfocused session's output; omitted, it is null. `[]` means nothing is in
+   * focus, so every symbol goes under the outside section.
    */
-  private formatImpact(symbol: string, impact: Subgraph, prefixes: readonly string[] | null): string {
+  private formatImpact(symbol: string, impact: Subgraph, prefixes: readonly string[] | null = null): string {
     const { inside, outside } = this.splitByFocus([...impact.nodes.values()], prefixes);
 
     // Compact format: just list affected symbols grouped by file

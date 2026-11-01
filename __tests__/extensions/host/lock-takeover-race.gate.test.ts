@@ -11,8 +11,8 @@
  * this process. `fs.unlinkSync` is spied; on the FIRST call whose argument is
  * exactly the lock path, the spy runs competitor A to completion in a separate
  * process (fixtures/lock-takeover-competitor.ts, the real code from src, run
- * by vite-node launched as `node <vite-node's JS entry>`: see
- * competitorLaunch), and only then performs B's real unlink. Acquisitions are counted
+ * by the running node binary on fixtures/run-ts.cjs: see competitorLaunch),
+ * and only then performs B's real unlink. Acquisitions are counted
  * across A and B; exactly one may succeed. A plain check-then-unlink counts
  * 2. B holds the `${lockPath}.takeover` guard while it unlinks, so A finds the
  * guard busy, does not take the lock, and the count is 1.
@@ -21,7 +21,7 @@
  * caller computes (getWriterPidPath / the FileLock path / getServerPidPath).
  * That is the contract's requirement on src/mcp/lock-takeover.ts.
  *
- * Each case spawns one vite-node process (about 2 s on an idle machine, more
+ * Each case spawns one node process that loads the real src code (longer
  * under load), so each test is given a 60 s timeout and the competitor a 45 s
  * one; a hung competitor fails the test with the execFileSync error instead
  * of hanging the run.
@@ -30,7 +30,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
-import { createRequire } from 'module';
 import * as os from 'os';
 import * as path from 'path';
 import { FileLock } from '../../../src/utils';
@@ -46,15 +45,8 @@ vi.mock('fs', async (importOriginal) => ({ ...await importOriginal<typeof import
 
 const REPO = path.resolve(__dirname, '../../..');
 
-/** vite-node's JS entry: the file its package.json `bin` names, resolved from the repo root. */
-function resolveViteNodeEntry(): string {
-  const pkgPath = createRequire(path.join(REPO, 'package.json')).resolve('vite-node/package.json');
-  const bin = (JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { bin: string | Record<string, string> }).bin;
-  const rel = typeof bin === 'string' ? bin : bin['vite-node'];
-  if (!rel) throw new Error(`vite-node's package.json names no "vite-node" bin: ${pkgPath}`);
-  return path.join(path.dirname(pkgPath), rel);
-}
-const VITE_NODE_ENTRY = resolveViteNodeEntry();
+/** The runner that loads a TypeScript fixture in a plain node process (fixtures/run-ts.cjs). */
+const TS_RUNNER = path.join(__dirname, 'fixtures', 'run-ts.cjs');
 const COMPETITOR = path.join(__dirname, 'fixtures', 'lock-takeover-competitor.ts');
 const COMPETITOR_TIMEOUT_MS = 45_000;
 const TEST_TIMEOUT_MS = 60_000;
@@ -92,11 +84,11 @@ function deadPid(): number {
 
 /**
  * The executable execFileSync runs for competitor A, and its arguments: the
- * running node binary on vite-node's JS entry. Never `node_modules/.bin/vite-node`,
- * which is a `#!` script that Windows cannot execute (see the harness test).
+ * running node binary on run-ts.cjs. Never a `#!` script or a `node_modules/.bin`
+ * shim, which Windows cannot execute (see the harness test).
  */
 function competitorLaunch(kind: string, arg: string, pid: number): { file: string; args: string[] } {
-  return { file: process.execPath, args: [VITE_NODE_ENTRY, COMPETITOR, '--', kind, arg, String(pid)] };
+  return { file: process.execPath, args: [TS_RUNNER, COMPETITOR, '--', kind, arg, String(pid)] };
 }
 
 /** The first `n` bytes of `file`, as latin1 text. */
@@ -172,7 +164,7 @@ afterEach(() => {
 });
 
 describe('stale-lock takeover race (gate)', () => {
-  // May exceed 5 s: vite-node starts a separate competitor using the real writer-lock code.
+  // May exceed 5 s: a separate node competitor loads the real writer-lock code.
   it('writer.pid: exactly one of two racing takers acquires via tryAcquireWriterLock', () => {
     const dead = deadPid();
     const pidPath = getWriterPidPath(root);
@@ -187,7 +179,7 @@ describe('stale-lock takeover race (gate)', () => {
     expect(acquisitions).toBe(1);
   }, TEST_TIMEOUT_MS);
 
-  // May exceed 5 s: a separate vite-node competitor runs inside the unlink hook.
+  // May exceed 5 s: a separate node competitor runs inside the unlink hook.
   it('codegraph.lock: exactly one of two racing takers acquires via FileLock.acquire (no owner)', () => {
     const dead = deadPid();
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
@@ -267,24 +259,22 @@ describe('stale-lock takeover race (gate)', () => {
 describe('stale-lock takeover race (harness)', () => {
   /**
    * execFileSync runs `launch.file` directly, with no shell. On Windows that
-   * is CreateProcess, which starts native executables only: npm's
-   * `node_modules/.bin/vite-node` there is a `#!/bin/sh` script beside its
-   * .cmd and .ps1 shims, and the JS bin it points at is a `#!` script too. So
-   * the launcher must be the running node binary, given vite-node's JS entry
-   * as its first argument. The `#!` check holds on every platform (macOS's
-   * `.bin` link resolves to that same `#!/usr/bin/env node` file), so it is
-   * asserted here rather than gated to Windows. The launcher is then run for
-   * real: the competitor, a separate process, takes a free lock through it.
-   * That vite-node startup can exceed 5 s under machine load.
+   * is CreateProcess, which starts native executables only: an npm
+   * `node_modules/.bin` entry there is a `#!/bin/sh` script beside its .cmd
+   * and .ps1 shims. So the launcher must be the running node binary, given
+   * run-ts.cjs as its first argument. The `#!` check holds on every platform,
+   * so it is asserted here rather than gated to Windows. The launcher is then
+   * run for real: the competitor, a separate process, takes a free lock
+   * through it. That process start can exceed 5 s under machine load.
    */
-  it('launches the competitor as the running node binary on vite-node\'s JS entry, never a #! script', () => {
+  it('launches the competitor as the running node binary on run-ts.cjs, never a #! script', () => {
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
     const launch = competitorLaunch('filelock', lockPath, 0);
 
     expect(firstBytes(launch.file, 2)).not.toBe('#!');
     expect(launch.file).toBe(process.execPath);
-    expect(launch.args).toEqual([VITE_NODE_ENTRY, COMPETITOR, '--', 'filelock', lockPath, '0']);
-    expect(fs.statSync(VITE_NODE_ENTRY).isFile()).toBe(true);
+    expect(launch.args).toEqual([TS_RUNNER, COMPETITOR, '--', 'filelock', lockPath, '0']);
+    expect(fs.statSync(TS_RUNNER).isFile()).toBe(true);
 
     expect(runCompetitor('filelock', lockPath, 0)).toEqual({ acquired: true });
     // The competitor's own pid, written by the real FileLock in that process.
@@ -293,7 +283,7 @@ describe('stale-lock takeover race (harness)', () => {
     expect(Number(holder)).not.toBe(process.pid);
   }, TEST_TIMEOUT_MS);
 
-  // May exceed 5 s: this intentionally starts and observes a failing vite-node competitor.
+  // May exceed 5 s: this intentionally starts and observes a failing node competitor.
   it('a competitor that hits an unexpected error is recorded as hook.error, with no result', () => {
     const dead = deadPid();
     const lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
