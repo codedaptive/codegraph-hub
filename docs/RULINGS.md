@@ -188,3 +188,14 @@ General as a RULING line. Decisions already settled by a document live in `team/
   `ours` as sm.9, without installing it (R-18 still holds: ask Bob before any install).
 - Work implied: Orc-Codegraph publishes per `design/Orc-Codegraph/ledger/reports/r17-publish-plan.md` once Kong's
   read and the per-branch suites are clean.
+
+## R-20. Overnight mode, 2026-11-01
+- Date: 2026-11-01 / Bob, direct.
+- Ruling: overnight mode. The team fires back up and works its backlogs through the night without waiting on Bob:
+  settle what the documents and rulings settle; anything that truly needs Bob goes into team/questions.md and work
+  continues around it. Sessions now run on a new model with slightly different guard rails, and navigate with the
+  installed CodeGraph (1.6.2-sm.8), which does the code-index work graft used to do.
+- Still binding: R-13 (the harness is not ours), R-18 (sm.8 stays installed; test in isolation; ask Bob before any
+  install or update), R-19 (the R-17 publishing answers).
+- Work implied: Orc-Codegraph restarts every lane on its backlog and finishes R-17's publication; a status for Bob
+  in the morning naming what was done, what was not, and why.
