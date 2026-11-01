@@ -84,7 +84,19 @@ function graphCounts(dir: string): { nodes: number; edges: number } {
   }
 }
 
-describe('codegraph index — full re-index keeps the graph populated (#874)', () => {
+/**
+ * Timeout for every test in the two `codegraph index` describes below. Each test
+ * spawns the CLI as a child process (init, index, or both), and the #1325 tests
+ * also run a fake release server in this process. Under heavy load those children
+ * are starved of CPU rather than stuck: at 1-minute load ~140 on 18 CPUs, one run
+ * of this file took 390 s wall for 36.5 s of CPU, and six tests hit the 30 s
+ * default. Measured on the same 18 CPUs: the #1325 release test takes
+ * 23.3 s alone at load ~101-110, and 27.2-32.0 s with four copies of this file in
+ * parallel at load ~101-104. 90 s is about three times the slowest of those runs.
+ */
+const CLI_TEST_TIMEOUT_MS = 90_000;
+
+describe('codegraph index — full re-index keeps the graph populated (#874)', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   let tempDir: string;
 
   beforeEach(() => {
@@ -199,7 +211,7 @@ describe('codegraph index — full re-index keeps the graph populated (#874)', (
  * away. The fix discards (unlinks) the database files and re-initializes a fresh
  * one — O(1) regardless of size — so `index` recovers any prior state.
  */
-describe('codegraph index — recovers a stale/oversized prior index (#1067)', () => {
+describe('codegraph index — recovers a stale/oversized prior index (#1067)', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   let tempDir: string;
   const dbPath = (dir: string) => path.join(dir, '.codegraph', 'codegraph.db');
 
