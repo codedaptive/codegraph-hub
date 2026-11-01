@@ -135,7 +135,7 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-10-31)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.7** (ours 62efe36e,
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.8** (ours a7881907,
 2026-10-31).
 
 | Release | What it shipped |
@@ -143,10 +143,10 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 | sm.5 (ours 687fb5a6) | one machine server and index builder, 10-minute close with no cap, pinned standing databases, repo anchor, required `projectPath`, session `--focus` with `scope: "repo"` (grep and blast included), the worktree hook, building guidance; the worktree lifecycle and tools carried from sm.4 |
 | sm.6 (ours b8a23dbc) | CLI index writes go to a running builder (R-14); focused context recall filtered to the focus; the out-of-focus name note (S-46) |
 | sm.7 (ours 62efe36e) | `uninit` releases through a running server first; `unlock` refuses a live holder (R-15); the out-of-focus name note's ceiling fix |
+| sm.8 (ours a7881907) | a focused `explore` keeps its Flow strip along the deepest in-focus chain, and its no-result explanation names no out-of-focus symbol (queries Defects 1 and 2) |
 
 | Left | State |
 |---|---|
-| Focused `explore`: the flow is lost when a chain crosses the focus boundary; the no-result explanation names out-of-focus symbols (queries ledger `reports/focus-grep-blast-defects.md`, Defects 1 and 2) | queries |
 | `cli-builder-route` follow-ups | host |
 
 ## 9. Out of scope (R-12)
