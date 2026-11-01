@@ -68,7 +68,7 @@ describe('a tools/call whose arguments are not an object (#2981)', () => {
     expect(s.results).toEqual([]);
   });
 
-  it('runs a call with an object, or with no arguments at all', async () => {
+  it('runs a call with an object, and answers one with no arguments as none, not malformed', async () => {
     const s = await session();
     await s.call(1, { query: 'q', projectPath: s.anchor.root });
     for (const [i, args] of NONE.entries()) await s.call(10 + i, args);
