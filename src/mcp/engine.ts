@@ -13,11 +13,15 @@
  * of a project the engine closes. An engine without a builder (the proxy's
  * in-process fallback) serves whatever the indexes hold and nothing more.
  *
- * The engine has no default project. It opens nothing at startup and a session
- * never initializes it: every tool call names its `projectPath`, and the
- * ToolHandler opens that project on its first call (see
- * `ToolHandler.getCodeGraph`), keeps it while it is in use, and closes it once
- * idle (pinned projects stay open). There is no cap on how many are open.
+ * The engine has no default project, and a session never initializes it: every
+ * tool call names its `projectPath`, and the ToolHandler opens that project on
+ * its first call (see `ToolHandler.getCodeGraph`), keeps it while it is in use,
+ * and closes it once idle (pinned projects stay open). There is no cap on how
+ * many are open. The one thing an engine may open with no call is a pinned
+ * project, and only when its owner sets `openPinned` and gives a builder (the
+ * machine server does): it opens each pinned project that has an index at
+ * startup and after each housekeeping pass
+ * (src/extensions/host/worktree-lifecycle/pinned-open.ts).
  *
  * One engine, many sessions:
  * - the machine server (daemon.ts) instantiates one engine and a new session
@@ -37,6 +41,7 @@ import { QueryPool, resolvePoolSize } from './query-pool';
 import { endFreshnessMeasurements } from './index-freshness';
 import type { BuilderClient } from '../extensions/host/builder/client';
 import { EngineHousekeeping } from '../extensions/host/worktree-lifecycle/housekeeping';
+import { PinnedProjectOpener } from '../extensions/host/worktree-lifecycle/pinned-open';
 
 export interface MCPEngineOptions {
   /**
@@ -60,6 +65,19 @@ export interface MCPEngineOptions {
    * the machine server leaves it unset and scales with the machine.
    */
   queryPoolDefaultMax?: number;
+  /**
+   * Open every project the registry marks pinned (`codegraph project pin`) that
+   * has an index, with no tool call: once right after construction, and again
+   * after each housekeeping pass, which also re-runs the idle release so a project
+   * unpinned later is closed with no call to trigger it. Effective only with a
+   * `builder` (the opens have the builder hold each project, and the engine writes
+   * nothing itself). The machine server sets it; direct mode does not: a direct
+   * stdio session is a per-session fallback, and opening every pinned root there
+   * would contend with the machine server for the writer slots. With
+   * CODEGRAPH_HOUSEKEEPING_INTERVAL_MS=0 no pass runs, so a pin made after the
+   * start is picked up at the next server start only.
+   */
+  openPinned?: boolean;
 }
 
 /**
@@ -73,6 +91,9 @@ export class MCPEngine {
   // null for the in-process fallback.
   private builder: BuilderClient | null;
   private opts: Required<Omit<MCPEngineOptions, 'queryPoolDefaultMax' | 'builder'>> & Pick<MCPEngineOptions, 'queryPoolDefaultMax'>;
+  // Opens the registry's pinned projects with no call; null unless `openPinned` was set
+  // together with a builder.
+  private pinnedOpener: PinnedProjectOpener | null = null;
   private closed = false;
   private stopPromise: Promise<void> | null = null;
   // Off-loop read-tool pool. Workers each hold their own WAL read connections,
@@ -82,13 +103,17 @@ export class MCPEngine {
   private housekeeping: EngineHousekeeping;
 
   constructor(opts: MCPEngineOptions = {}) {
-    this.opts = { queryPool: opts.queryPool ?? false, queryPoolDefaultMax: opts.queryPoolDefaultMax };
+    this.opts = { queryPool: opts.queryPool ?? false, queryPoolDefaultMax: opts.queryPoolDefaultMax, openPinned: opts.openPinned ?? false };
     this.builder = opts.builder ?? null;
+    const openPinned = this.opts.openPinned && this.builder !== null;
     this.housekeeping = new EngineHousekeeping({
       releaseProjectRoot: (root) => this.releaseProjectRoot(root),
       cachedProjectRoots: () => this.toolHandler.cachedProjectRoots(),
       // Release-only: the engine deletes no index; the builder runs the sweep.
       readOnly: true,
+      // Only an engine that opens pinned projects re-runs the idle release and the
+      // opener after a pass; every other engine's pass ends with the release.
+      ...(openPinned ? { afterPass: () => this.afterHousekeepingPass() } : {}),
     });
     this.toolHandler = new ToolHandler(null);
     // Every project the handler opens is opened read-only (ToolHandler.openProjectRoot).
@@ -127,6 +152,52 @@ export class MCPEngine {
     // Housekeeping (src/extensions/host/worktree-lifecycle/housekeeping.ts):
     // a timer, stopped in stop().
     this.housekeeping.start();
+    if (openPinned) this.startPinnedOpener();
+  }
+
+  /**
+   * Create the pinned-project opener and run its first pass. The pass starts on
+   * the next turn of the event loop and is not awaited, so the constructor, and
+   * the machine server's socket bind after it, never wait on a registry read or
+   * a builder hold. A pass never rejects.
+   */
+  private startPinnedOpener(): void {
+    const opener = new PinnedProjectOpener({
+      // Open AND held. The handler caches a root even when the builder's `ensure`
+      // answered `none` and recorded no hold (the builder not up in time, an IPC
+      // failure); such a root is open but never watched or synced, so it counts as
+      // not open and the next pass asks the builder again (ToolHandler.needsBuilderEnsure
+      // re-ensures a cached root the builder reports nothing for, and the cached
+      // handle is reused, so nothing is opened twice). `freshness` is the builder's last
+      // push: between a successful ensure and the first push it is null, which costs one
+      // more idempotent ensure on the next pass.
+      isOpen: (root) => this.toolHandler.isProjectRootOpen(root) && (this.builder?.freshness(root) ?? null) !== null,
+      open: async (root) => {
+        // The opener also stops itself in stop(); the flag covers a pass already
+        // between its check and this call.
+        if (this.closed) return;
+        await this.toolHandler.openPinnedProject(root);
+      },
+      log: (line) => process.stderr.write(`${line}\n`),
+    });
+    this.pinnedOpener = opener;
+    setImmediate(() => void opener.pass());
+  }
+
+  /**
+   * The end of each housekeeping pass of an engine that opens pinned projects:
+   * run the idle release (a project opened for a pin and unpinned since arms no
+   * idle timer and gets no call to trim it), then open any pinned project not yet
+   * open (a pin made since the last pass). A pin is picked up by the first pass
+   * that starts after the pass in flight, if any, has finished: a pass has no time
+   * bound (its ensures wait on the builder) and a call while one runs returns it
+   * instead of starting another. The opener's pass runs on its own and is not
+   * awaited: a slow hold must not make the timer skip ticks.
+   */
+  private afterHousekeepingPass(): void {
+    if (this.closed) return;
+    this.toolHandler.trimIdleProjects();
+    void this.pinnedOpener?.pass();
   }
 
   /**
@@ -134,8 +205,10 @@ export class MCPEngine {
    * says (the timer runs the same pass): the release, through
    * {@link releaseProjectRoot}, of every project this engine holds whose
    * directory or `.codegraph/codegraph.db` is gone. The registry sweep, which
-   * deletes the indexes of removed worktrees, is the builder's. Never
-   * rejects. A no-op once the engine is stopped.
+   * deletes the indexes of removed worktrees, is the builder's. On an engine
+   * that opens pinned projects the pass ends with the idle release and a new
+   * pass of the pinned-project opener (not awaited). Never rejects. A no-op
+   * once the engine is stopped.
    */
   async runHousekeepingTick(): Promise<void> {
     if (this.closed) return;
@@ -216,6 +289,9 @@ export class MCPEngine {
     if (this.stopPromise) return this.stopPromise;
     this.closed = true;
     this.housekeeping.stop();
+    // No pass starts another open from here. An open already awaiting the builder
+    // may still complete; the handler's trailing trim releases it while closing.
+    this.pinnedOpener?.stop();
 
     // Detach + terminate the worker pool first so no tool call routes to a
     // worker mid-teardown; outstanding pool calls resolve with graceful guidance.

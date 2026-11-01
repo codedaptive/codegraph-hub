@@ -17,22 +17,24 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 107 upstream files** (95 modified, 12 deleted) at exchange `3c654fc9`, 2026-11-01. An upstream file is one
-that exists in upstream `4499d007` (the upstream commit the fork last merged, `e10a983e`; before that the fork's base was
-`60b0d7a9`) and that exchange modifies or deletes. Recount with
-`git diff --name-status 4499d007 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
-files the fork added (21: 17 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
-`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`) and 13 new tests in `__tests__/`; and the fork-only
-`Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/lanes/queries.md`). 68 of the 107 are named in the rows below; the other 39 are
-flat upstream tests (30 edited, 9 deleted) that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
+**Total: 107 upstream files** (95 modified, 12 deleted) at exchange `5cd5e2f741`, 2026-11-01. An upstream file is one
+that exists in upstream `5cd8a9a8` (the upstream commit the fork last merged, `bb0a5dd3`; before that `4499d007`, merged in `e10a983e`,
+and before that the fork's base was `60b0d7a9`) and that exchange modifies or deletes. Recount with
+`git diff --name-status 5cd8a9a8 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
+files the fork added (22: 17 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
+`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`), 11 new tests and 2 new test helpers (`__tests__/fake-release-server.ts`,
+`__tests__/helpers/admit-all.ts`) in `__tests__/`; and the 5 fork-only `Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/SPEC-upstream.md`,
+`docs/lanes/queries.md`). 71 of the 107 are named in the rows below; the other 36 are
+flat upstream test files (26 edited tests, 9 deleted tests, and one edited fixture, `__tests__/fixtures/older-daemon.cjs`) that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
 of those two commits). Three upstream files named below do not exist in the tree: `src/mcp/daemon-manager.ts`,
 `src/mcp/daemon-registry.ts` and `src/mcp/project-lifecycle.ts` were deleted by the fork (`machine-server`, `index-builder`); they
 still exist in upstream, and the earlier rows that name `daemon-registry.ts` (`copied-index-locks`, `lock-takeover-race`, `worktree-lifecycle`)
-edited it before that deletion. The merge of upstream `4499d007` changed no row: every upstream file the fork edits still differs from upstream's,
+edited it before that deletion. The merges of upstream `4499d007` and `5cd8a9a8` changed no row: every upstream file the fork edits still differs from upstream's,
 and every file that differs has a row. Each row from `machine-server` on was checked on its own against its commit
 (`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
 `-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`, `-r e92dc2d2ab`, `-r 69de0412`,
-`-r 3648f06a`) and against upstream; the `upstream-refresh` row is checked against `git diff 4499d007 exchange`.
+`-r 3648f06a`, `-r 34f595a1`, `-r 3eb1b655`, `-r 77b11301`, `-r 28e6e43a`, `-r 5cd5e2f7`) and against upstream; the `upstream-refresh` row is
+checked against `git diff 4499d007 exchange`, and the whole list and total against `git diff --name-status 5cd8a9a8 exchange`.
 
 | Feature | Upstream files |
 |---|---|
@@ -73,7 +75,12 @@ and every file that differs has a row. Each row from `machine-server` on was che
 | `focus-diagnostics` (queries) | `src/db/queries.ts`, `src/index.ts` (both also named under `focus-recall`; `getExploreMissDiagnostics` takes an optional index-relative `pathPrefixes` list, so the matched words, unmatched words and retry candidates come only from in-focus code; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-diagnostics.test.ts` |
 | `focus-scope-host` (host) | `src/mcp/tools.ts` (also named in other rows; explore passes the session focus to its Flow search and its empty-result diagnostics). The only file in the commit outside fork-only trees; no deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/host/focus-scope.gate.test.ts` |
 | `rust-path-calls` (resolution, Orc commit `69de0412`, no Feature trailer) | `src/resolution/name-matcher.ts` and `CHANGELOG.md` (both also named in other rows; the fork's own `matchRustTypePathMethod` is removed in favour of upstream's mechanism, made correct for seven edge cases). No deletions, no new files in upstream's tree. The two tests are the fork's own: `__tests__/rust-crate-path-calls.test.ts` (edited; new in the fork, so not counted) and `__tests__/rust-path-call-edge-cases.test.ts` (new, not counted) |
-| `upstream-refresh` (integration, no feature; merge `e10a983e` of upstream `4499d007` and `3648f06a`) | five upstream tests the fork adapts to its machine server: `__tests__/filelock-stale-takeover.test.ts`, `__tests__/fixtures/filelock-contender.cjs` and `__tests__/mcp-stdout-failure.test.ts` (`3648f06a`: idle retirement, lock takeover, direct-mode shutdown; the same commit also edits `__tests__/query-pool.test.ts`, also edited by `machine-server`), `__tests__/mcp-index-version-warning.test.ts` and `__tests__/mcp-tool-call-arguments.test.ts` (the merge resolution; both are upstream's tests, new to the fork's base with this merge). No `src/` files beyond those already named in the rows above |
+| `upstream-refresh` (integration, no feature; merge `e10a983e` of upstream `4499d007` and `3648f06a`) | five upstream test files (four tests and the fixture `filelock-contender.cjs`) the fork adapts to its machine server: `__tests__/filelock-stale-takeover.test.ts`, `__tests__/fixtures/filelock-contender.cjs` and `__tests__/mcp-stdout-failure.test.ts` (`3648f06a`: idle retirement, lock takeover, direct-mode shutdown; the same commit also edits `__tests__/query-pool.test.ts`, also edited by `machine-server`), `__tests__/mcp-index-version-warning.test.ts` and `__tests__/mcp-tool-call-arguments.test.ts` (the merge resolution; both are upstream's tests, new to the fork's base with this merge). No `src/` files beyond those already named in the rows above |
+| `slow-tests` (host) | `__tests__/index-command.test.ts`, `__tests__/watcher-replaced-db.test.ts` (both edited, both also edited by `machine-server`: they wait on events and carry stated timeouts instead of racing the clock). No `src/` files, no deletions, no new files in upstream's tree. Fork-only: edited tests `__tests__/extensions/host/fresh-answers.checkpoint.test.ts` and `server-command.test.ts` |
+| `socket-candidate-length` (host) | `src/mcp/daemon-paths.ts`, `src/mcp/daemon.ts` (both also named in other rows; a server that cannot bind any socket candidate stops with one message naming each path, its length and the error code). No deletions, no new files in upstream's tree, no flat test edits. Fork-only: the new test `__tests__/extensions/host/socket-bind-failure.unit.test.ts` |
+| `fresh-test-bound` (host) | `__tests__/mcp-writer-lock.test.ts` (edited; also edited by `machine-server`: the `fresh: true` builder test no longer races its clock). The only file in the commit; no fork-only files |
+| `pinned-open-at-start` (host) | `src/mcp/daemon.ts`, `src/mcp/engine.ts`, `src/mcp/tools.ts` (all three also named in other rows; the machine server opens every pinned project that has an index at start and after each housekeeping pass). No deletions, no new files in upstream's tree, no flat test edits. Fork-only: `src/extensions/host/worktree-lifecycle/` (new `pinned-open`; edited `housekeeping`, `project-registry`, `teardown`) and its tests in `__tests__/extensions/host/` (new `pinned-open.gate`, `pinned-open.unit`; edited `machine-server.harness`) |
+| `pool-trim-delay` (host) | `src/mcp/query-pool.ts`, `src/mcp/query-worker.ts`, `src/mcp/tools.ts` (all also named in other rows) and the upstream test `__tests__/query-pool.test.ts` (edited; also edited by `machine-server` and `upstream-refresh`); the last query worker is trimmed after five quiet minutes (`idleShrinkMs`), separate from the 60 s retirement of spare workers. No deletions, no new files in upstream's tree. Fork-only tests in `__tests__/extensions/host/`: new `query-pool-idle-trim`, edited `query-pool-idle` |
 | docs (Designer, no feature; `52f0392a`) | `docs/AGENTS.md` (the per-root-daemon text, one line), `AGENTS.md` (the same line; also named in `node-25-support`). Fork-only in the same commit: `docs/SPEC.md` |
 
 

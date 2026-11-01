@@ -322,17 +322,29 @@ describe('computeUncommittedHash: filenames round-trip to their own blobs', () =
 });
 
 /**
+ * A gate a stub sync awaits. It stays closed until the test calls `release`, so a sync the test
+ * describes as still running is still running by construction, whatever the machine's load. The test
+ * calls `release` only after the assertions that need the sync running.
+ */
+function makeGate(): { gate: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  return { gate, release };
+}
+
+/**
  * The bounded wait's control flow, against a stub CheckpointSource: no index,
  * no SQLite. The stub's root is a directory outside git, so each checkpoint's
  * git fields are null and cost one failed git spawn each.
  */
 describe('waitForFresh against a stub source: the bound, lock retry, and a real failure', () => {
-  /** The wait's bound in the race tests: short, but far above timer granularity. */
+  /**
+   * The wait's bound in the tests that time out: short, so they stay fast. Nothing else depends on its
+   * size: the sync that loses the race waits on a gate, not on a timer.
+   */
   const BOUND_MS = 100;
   /** Node may fire a timer up to ~1 ms early by Date.now(), which waitedMs is measured with. */
   const TIMER_SLACK_MS = 2;
-  /** When the sync that lost the race rejects: well after the wait has returned. */
-  const LOSER_REJECTS_AFTER_MS = 3 * BOUND_MS;
   /** The pause between lock retries: small, so the retry tests stay fast. */
   const POLL_MS = 10;
   /** A bound the retry and failure tests never reach; reaching it would fail them on timedOut. */
@@ -376,17 +388,24 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
     process.on('unhandledRejection', onUnhandled);
     try {
       let rejected = false;
+      // The sync holds at `gate` until the test releases it, after the "not yet rejected" assertion.
+      const { gate, release } = makeGate();
+      // Opens just before the sync throws, so the test can wait for the rejection without a timer.
+      const { gate: rejecting, release: markRejecting } = makeGate();
       const src = stubSource(async () => {
-        await sleep(LOSER_REJECTS_AFTER_MS);
+        await gate;
         rejected = true;
+        markRejecting();
         throw new Error('late failure');
       });
       const out = await waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
       expect(out.timedOut).toBe(true);
       expect(out.syncError).toBeUndefined();
       expect(rejected).toBe(false);
-      // Past the loser's rejection, plus a turn for Node to report an unhandled one.
-      await sleep(LOSER_REJECTS_AFTER_MS);
+      release();
+      await rejecting;
+      // Node reports an unhandled rejection once the microtask queue drains, before the next timer
+      // fires, so one turn after the rejection is enough for it to be reported.
       await sleep(0);
       expect(rejected).toBe(true);
       expect(unhandled).toEqual([]);
@@ -432,12 +451,16 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
 /**
  * waitForFreshTracked: the same wait, plus `settled`, which resolves once no
  * sync the wait started is still running. Same stub shape as the block above.
+ *
+ * The stub sync does not sleep: it awaits a gate the test opens itself, and
+ * the test opens it only after its "still pending" assertions. A real sleep
+ * raced the probe under load (a stall longer than the sleep let the sync
+ * finish before the assertions ran); the gate keeps the same claim, that the
+ * sync has not finished when the wait's bound passes, by construction.
  */
 describe('waitForFreshTracked against a stub source: settled follows the sync that lost the race', () => {
   /** The wait's bound: short, but far above timer granularity. */
   const BOUND_MS = 50;
-  /** When the stub's sync settles: well after the wait has returned. */
-  const SYNC_SETTLES_AFTER_MS = 300;
 
   const dirs: string[] = [];
   afterEach(() => {
@@ -466,12 +489,14 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
 
   it('settled is pending when the wait times out and resolves once the late sync resolves', async () => {
     let syncDone = false;
-    const src = stubSource(async () => { await sleep(SYNC_SETTLES_AFTER_MS); syncDone = true; });
+    const { gate, release } = makeGate();
+    const src = stubSource(async () => { await gate; syncDone = true; });
     const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
     expect(checkpoint.timedOut).toBe(true);
     expect(checkpoint.fresh).toBe(false);
     expect(syncDone).toBe(false);
     expect(await isResolved(settled)).toBe(false);
+    release();
     await settled;
     expect(syncDone).toBe(true);
   });
@@ -482,15 +507,18 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
     process.on('unhandledRejection', onUnhandled);
     try {
       let rejected = false;
+      const { gate, release } = makeGate();
       const src = stubSource(async () => {
-        await sleep(SYNC_SETTLES_AFTER_MS);
+        await gate;
         rejected = true;
         throw new Error('late failure');
       });
       const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
       expect(checkpoint.timedOut).toBe(true);
       expect(checkpoint.syncError).toBeUndefined();
+      expect(rejected).toBe(false);
       expect(await isResolved(settled)).toBe(false);
+      release();
       await expect(settled).resolves.toBeUndefined();
       expect(rejected).toBe(true);
       await sleep(0);

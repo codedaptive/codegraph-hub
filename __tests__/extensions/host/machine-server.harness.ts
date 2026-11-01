@@ -451,11 +451,21 @@ export class Fixtures {
   }
 
   /**
-   * `codegraph project pin <dir>` under the same state dir and HOME the sessions
-   * use: the pin is read from the registry under HOME, so both must match.
+   * `codegraph project pin <dir>` under the same state dir the sessions use. The
+   * registry is `<state>/projects` (project-registry.ts, `registryDir`), so the pin
+   * and the sessions must share CODEGRAPH_STATE_DIR.
    */
   pin(dir: string, stateDir: string): void {
     execFileSync(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, 'project', 'pin', dir], {
+      env: gateEnv(stateDir),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000,
+    });
+  }
+
+  /** `codegraph project unpin <dir>` under the same state dir as {@link Fixtures.pin}. */
+  unpin(dir: string, stateDir: string): void {
+    execFileSync(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, 'project', 'unpin', dir], {
       env: gateEnv(stateDir),
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 60_000,

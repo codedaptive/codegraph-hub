@@ -241,6 +241,10 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
       return engine;
     }
 
+    // Own timeout. It starts a real builder process, rebuilds the index and runs a
+    // catch-up sync through it. On 18 CPUs, at 1-minute load average ~80-110, it ran
+    // 17-28 s (28.0 s once alone, 17-20 s with four copies). Re-measured after the change:
+    // 14.4-15.6 s. The 90 s limit is about three times the slowest run measured (32.0 s).
     posixOnly('reopening a replaced database runs a catch-up sync into the new file, on the builder', async () => {
       const engine = await openEngine(true);
       try {
@@ -259,7 +263,7 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
       } finally {
         await engine.stop();
       }
-    });
+    }, 90_000);
 
     posixOnly('an engine with no builder reopens but does not write', async () => {
       const engine = await openEngine(false);

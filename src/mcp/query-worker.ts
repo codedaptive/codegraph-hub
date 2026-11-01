@@ -22,7 +22,11 @@
  *
  * When the pool shrinks after a burst it sends `retire` to an idle worker: the
  * worker closes every CodeGraph it opened, collects garbage (see
- * src/worker-teardown.ts), answers `retired` and exits 0.
+ * src/worker-teardown.ts), answers `retired` and exits 0. The one worker the
+ * retirement leaves is sent `trim` once it has been idle for the pool's
+ * `idleShrinkMs` (5 min by default) and has served since its last trim: it
+ * shrinks in place (ToolHandler.releaseIdleMemory) and answers `trimmed` with the bytes it
+ * still holds, so the next call finds it warm.
  *
  * When a project goes away (the housekeeping sweep tears down a removed
  * worktree, or a pass finds a held root's directory or database gone; see
@@ -51,6 +55,8 @@ interface WorkerInit {
  * answered with `{ type: 'released', id, ok, error? }`; it is answered `ok` with nothing to
  * do when the worker never opened the project, is retiring, or failed to
  * start. A worker's default project, if it has one, is never released this way.
+ * `trim` is sent only while no call is in flight; it is answered with
+ * `{ type: 'trimmed', heldBytes }` and the worker goes on serving.
  */
 interface CallMessage {
   type: 'call';
@@ -69,7 +75,12 @@ interface ReleaseMessage {
   root: string;
 }
 
-type PoolMessage = CallMessage | RetireMessage | ReleaseMessage;
+/** The pool keeping this idle worker: give back what it can, and say what is left. */
+interface TrimMessage {
+  type: 'trim';
+}
+
+type PoolMessage = CallMessage | RetireMessage | ReleaseMessage | TrimMessage;
 
 // Mirror the engine's lazy-require of the heavy CodeGraph + tools chain. This
 // module is only ever loaded as a Worker, so the require runs once on spawn.
@@ -120,6 +131,10 @@ if (parentPort) {
       void release(msg);
       return;
     }
+    if (msg.type === 'trim') {
+      if (!retiring) trim();
+      return;
+    }
     if (msg.type !== 'call' || retiring) return;
     void serve(msg);
   });
@@ -149,6 +164,20 @@ if (parentPort) {
     collectBeforeExit();
     port.postMessage({ type: 'retired', closed });
     process.exit(0);
+  };
+
+  // Give back what an idle worker can without going cold, and say what it
+  // still holds: the handler closes every project but the last one used and
+  // its connections let go of their page cache and file mapping; compiled
+  // code, the connections' memos and the heap stay (V8 shrinks an idle
+  // thread's heap by itself). The pool replaces a worker still holding a lot.
+  const trim = (): void => {
+    try {
+      handler?.releaseIdleMemory();
+    } catch { /* a worker that can't let go still serves */ }
+    // This thread's own heap and buffers: `rss` is the whole process's.
+    const { heapUsed, external } = process.memoryUsage();
+    port.postMessage({ type: 'trimmed', heldBytes: heapUsed + external });
   };
 
   // Close one project this worker's handler holds, then ack. A retiring worker
