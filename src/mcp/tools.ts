@@ -4179,12 +4179,17 @@ export class ToolHandler {
   /**
    * Hold a resolved named-symbol flow to the session focus (`prefixes` null: returned as it is).
    *
-   * The flow search itself (`resolveNamedSymbolFlow`) takes no node filter, so the resolution runs over the
-   * whole index and this keeps what is inside the focus: the named symbols, their token lists and families,
-   * and the chain only when EVERY step of it is inside (a chain that passes through a file outside the focus is
-   * dropped whole, never cut, because a shortened chain would claim a call path the graph does not have).
-   * Limitation: a flow whose route crosses the focus boundary loses its Flow strip for a focused session; the
-   * named symbols inside still render.
+   * The flow search itself (`resolveNamedSymbolFlow`) takes the focus as `pathPrefixes` when it is non-empty and
+   * searches for the deepest chain whose every step is inside it. This filter covers the one case the search is not
+   * given a focus: a focus with no directory in this index (`[]`), which it drops whole. For a non-empty focus the
+   * search has already filtered every field kept here, so this changes nothing. The nix option-prefix scan is not
+   * covered by this filter: its 12-row read is unfocused, and this cannot restore a row beyond it. It keeps the
+   * named symbols, their token lists and families, and a chain only when EVERY step of it is inside (a chain that
+   * passes through a file outside the focus is dropped whole, never cut, because a shortened chain would claim a
+   * call path the graph does not have).
+   * A flow whose route crosses the focus boundary loses its Flow strip only when no all-in-focus chain of three or
+   * more nodes exists for it. The named symbols inside stay in `namedNodeIds`, unless `identityOnly` returns, which
+   * keeps only the precise ones.
    */
   private focusNamedFlow(flow: NamedSymbolFlow, prefixes: readonly string[] | null): NamedSymbolFlow {
     if (prefixes === null) return flow;
@@ -4223,9 +4228,12 @@ export class ToolHandler {
    * dynamic-boundary note names `codegraph_node` as a follow-up
    * (`buildDynamicBoundaries`).
    *
-   * `prefixes` is the session's focus in this index (`focusPrefixesOfCall`; null for none): the Flow is built
-   * from the named symbols inside it only, and nothing it prints (a hop, a link, a boundary, a candidate)
-   * comes from a file outside it. See `focusNamedFlow` for how the chain search is held to it.
+   * `prefixes` is the session's focus in this index (`focusPrefixesOfCall`; null for none): the flow search
+   * takes it (when non-empty), so the Flow is built from the named symbols inside it and its chain is the
+   * deepest one whose every step is inside; nothing it prints (a hop, a link, a boundary, a candidate) names
+   * a file outside it. The one figure it can print from outside the focus, a too-generic key's match count
+   * (`shortlistBoundaryCandidates`), counts the whole index. `focusNamedFlow` keeps the in-focus part of the
+   * result; for a focus with no directory in this index, which the search is not given, it empties it.
    */
   private buildFlowFromNamedSymbols(cg: CodeGraph, query: string, sessionTools: SessionToolList, prefixes: readonly string[] | null): { text: string; pathNodeIds: Set<string>; namedNodeIds: Set<string>; uniqueNamedNodeIds: Set<string>; spineCallSites: Map<string, number> } {
     // spineCallSites: for each spine node, the line where it CALLS the next hop —
@@ -4235,8 +4243,19 @@ export class ToolHandler {
     try {
       // Token resolution — parsing, overload disambiguation, the CONSTANT/
       // VARIABLE synth endpoints — is shared with `/api/flow`, so a name written
-      // in the viewer's search box resolves to the same nodes it does here.
-      const flow = this.focusNamedFlow(resolveNamedSymbolFlow(cg, query), prefixes);
+      // in the viewer's search box resolves to the same nodes it does here when
+      // the session has no focus. Under a focus this search resolves inside the
+      // focus (`pathPrefixes`); the viewer searches the whole index.
+      // A focus with at least one directory in this index goes to the search itself, which then looks for
+      // the deepest chain whose every step is in focus. `[]` (a focus with no directory in this index) is
+      // never passed: to the search it means "no filter", so it is left out and `focusNamedFlow` below
+      // (which drops everything for `[]`) answers for it.
+      const flow = this.focusNamedFlow(
+        prefixes !== null && prefixes.length > 0
+          ? resolveNamedSymbolFlow(cg, query, { pathPrefixes: prefixes })
+          : resolveNamedSymbolFlow(cg, query),
+        prefixes,
+      );
       const { named, dynNamed, tokenNodes, tokenFamily, uniqueNamedNodeIds, preciseNamedIds } =
         flow;
       if (flow.tokens.length < 2) return EMPTY;
@@ -4959,9 +4978,11 @@ export class ToolHandler {
     // with no directory in this index). Its traversal can still return out-of-focus nodes, so the candidate gather
     // is cut to in-focus nodes once, right after it is complete (see "Session focus cut" below). Every stage that
     // reaches the index on its own (named-symbol seeding, the change-surface rescue, the blast radius, the Flow)
-    // asks `inFocus` itself, and the copybook list is cut to it right after its lookup. Some reads still take the
-    // whole index, and the focus does not cut them: the candidate names behind the empty-result explanation
-    // (`getExploreMissDiagnostics`) and the unseen-name check (`getUnseenNames`); every definition of a name
+    // asks `inFocus` itself, and the copybook list is cut to it right after its lookup. The Flow search (the
+    // `pathPrefixes` of `resolveNamedSymbolFlow`) and the empty-result explanation (`getExploreMissDiagnostics`:
+    // matched words, unmatched words, retry candidates) take the focus too when it is non-empty (a `[]` focus
+    // returns before either runs). Some reads still take the
+    // whole index, and the focus does not cut them: the unseen-name check (`getUnseenNames`); every definition of a name
     // (`getNodesByName` / `findAllSymbols`), which decides whether a name is reported as not in the index (the
     // seeds still come only from in-focus definitions; the same whole-index read also decides the closing
     // out-of-focus lines (up to three), one for each bare query name defined only outside the focus,
@@ -5257,7 +5278,13 @@ export class ToolHandler {
       if (indexedNodeCount === 0) {
         explanation += '\nThis project has nothing indexed.';
       } else {
-        const miss = cg.getExploreMissDiagnostics(matchQuery);
+        // A focus with a directory in this index narrows the diagnostics to in-focus code. With no focus (null)
+        // the call takes one argument and reads the whole index; a `[]` focus returned before this branch, and
+        // is never passed (`[]` means "no filter" to the query).
+        const focusedDiag = prefixes !== null && prefixes.length > 0;
+        const miss = focusedDiag
+          ? cg.getExploreMissDiagnostics(matchQuery, prefixes)
+          : cg.getExploreMissDiagnostics(matchQuery);
         const list = (words: string[]) => words.map(w => `\`${w}\``).join(', ');
         // Separate caps preserve the retry instruction and complete candidate
         // names even with long queries or generated identifiers.
@@ -5269,7 +5296,10 @@ export class ToolHandler {
           }
           return list(kept) + (kept.length < words.length ? ' …' : '');
         };
-        explanation += '\nChecked indexed names, signatures, docstrings (FTS prefixes) and live name segments; not all source text.';
+        // The scope of the check is stated, so a focused session does not read "no match" as "not in the repository".
+        explanation += focusedDiag
+          ? "\nChecked indexed names, signatures, docstrings (FTS prefixes) and live name segments inside this session's focus (" + focusDirsText(args, prefixes) + '); not all source text. Pass scope: "repo" to check the whole repository.'
+          : '\nChecked indexed names, signatures, docstrings (FTS prefixes) and live name segments; not all source text.';
         if (miss.limited) explanation += '\nWord check limited to 16 words of at most 64 characters.';
         explanation += `\nNo lexical matches for checked words: ${cappedList(miss.unmatched, 250) || '(none)'}.`;
         if (miss.matched.length > 0) {

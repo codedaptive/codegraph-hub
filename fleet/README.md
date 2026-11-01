@@ -17,7 +17,7 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 102 upstream files** (90 modified, 12 deleted) at exchange `ef194975ef`, 2026-10-31. An upstream file is one
+**Total: 102 upstream files** (90 modified, 12 deleted) at exchange `e92dc2d2ab`, 2026-10-31. An upstream file is one
 that exists at the fork's merge-base with upstream (`60b0d7a9`; upstream `main` has since moved to `2008e2f33f`, which
 the fork has not taken) and that exchange modifies or deletes. Recount with
 `git diff --name-status 60b0d7a9 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
@@ -27,7 +27,7 @@ files the fork added (20: 16 new files in upstream's folders, such as `src/mcp/l
 flat upstream tests that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
 of those two commits). Each row from `machine-server` on was checked on its own against its commit
 (`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
-`-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`) and against upstream.
+`-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`, `-r e92dc2d2ab`) and against upstream.
 
 | Feature | Upstream files |
 |---|---|
@@ -66,6 +66,7 @@ of those two commits). Each row from `machine-server` on was checked on its own 
 | `uninit-unlock-r15` (host) | modified (3): `src/bin/codegraph.ts`, `src/mcp/engine.ts`, `src/mcp/session.ts` (all three also named under `cli-builder-route`; `uninit` releases the root through the server and builder before deleting it, `unlock` refuses a lock a live process holds, R-15). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: `src/extensions/host/` (`README.md`; new `lock-repair`, `uninit`; edited `builder/`: `cli-jobs`, `cli-relay`, `cli-route`, `cli-wire`, `client`, `fences`, `protocol`, `queue`, `seed-host`, `service`; `worktree-lifecycle/seed`) and its tests in `__tests__/extensions/host/` (new `uninit-unlock.gate`; edited `builder-queue.unit`, `cli-builder-route.unit`) |
 | `focus-flow` (queries) | `src/graph/named-symbol-flow.ts`, `src/graph/symbol-lookup.ts` (`NamedSymbolFlowOptions` takes an optional index-relative `pathPrefixes` list; named symbols and the walks stay in focus; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-flow.test.ts` |
 | `focus-diagnostics` (queries) | `src/db/queries.ts`, `src/index.ts` (both also named under `focus-recall`; `getExploreMissDiagnostics` takes an optional index-relative `pathPrefixes` list, so the matched words, unmatched words and retry candidates come only from in-focus code; no list, unchanged answers). No deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/queries/focus-diagnostics.test.ts` |
+| `focus-scope-host` (host) | `src/mcp/tools.ts` (also named in other rows; explore passes the session focus to its Flow search and its empty-result diagnostics). The only file in the commit outside fork-only trees; no deletions, no new files in upstream's tree, no edits to upstream's flat `__tests__/`. Fork-only: the new test `__tests__/extensions/host/focus-scope.gate.test.ts` |
 | docs (Designer, no feature; `52f0392a`) | `docs/AGENTS.md` (the per-root-daemon text, one line), `AGENTS.md` (the same line; also named in `node-25-support`). Fork-only in the same commit: `docs/SPEC.md` |
 
 
