@@ -213,3 +213,19 @@ General as a RULING line. Decisions already settled by a document live in `team/
   stop the per-branch full suites and publish now: the fork, all 14 PRs and the three issues. Upstream's CI runs
   the suite on each PR; a failure there is fixed on that PR.
 - Supersedes: the per-branch full-suite step in the R-17 publish plan.
+
+## R-23. Lift the stop for codegraph work; finish the PR review fixes and replies
+- Date: 2026-11-02 / Bob, direct.
+- Question: the team is stopped (Designer #1834) with the Codex review triage of the R-17 PRs half done (24 of 29
+  comments triaged and fixed locally, #3209 unverified, #3210 not started, nothing pushed or replied). Resume?
+- Ruling: yes. The team may work on codegraph again. Finish every review fix not yet pushed to its PR, push them,
+  and answer each Codex comment on its thread: what was fixed where it was right, the reason where it was wrong.
+  Test versions (development builds on their own socket and state directory, throwaway clones) are fine; the
+  installed CodeGraph on this machine is not replaced without asking Bob, because other teams use it.
+- Reason: the PRs have sat a day with 29 unanswered findings; the installed version serves every team.
+- Not chosen: keeping the full stop; a follow-up "review fixes" commit per PR instead of the planned squash and
+  force-push (Bob did not ask for it; the one-squash-per-feature rule in rules/product.md stands).
+- Still binding: R-18 (ask before any install), R-21 (macOS only), R-22 (only the changed tests run).
+- Work implied: Orc-Codegraph resumes r17-review-triage.md from its "STILL TO DO" list: #3209 verify, #3210's three
+  comments, restack, push the changed pr/* branches, edit the PR bodies, post all 29 replies, back up; reports the
+  per-PR result.
