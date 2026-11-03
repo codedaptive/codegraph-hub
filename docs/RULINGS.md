@@ -254,3 +254,19 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: a CI-approval comment; a daily reply batch.
 - Work implied: Orc-Codegraph posts no comment asking the maintainer for anything and posts R-24's round-two
   replies as each is ready.
+
+## R-26. A new lane, upstream-prs, owns our upstream pull requests
+- Date: 2026-11-03 13:27 / Bob, posted by codeteam to Orc-Codegraph and Designer-Codegraph.
+- Question: who runs the upstream PR work and the analysis of new upstream commits, now that the PRs need a
+  standing owner?
+- Ruling: a new lane, upstream-prs (Coord-upstream-prs), owns our upstream pull requests and the analysis of new
+  upstream commits. It cuts pr/<feature> branches, cherry-picks and restacks with tree and patch-id proofs, pushes,
+  and keeps PR bodies and replies current. A code change inside a PR goes as a REQUEST to the lane that owns that
+  code (host, queries, resolution), and that lane stacks the commit. It reviews new upstream commits and reports to
+  Orc-Codegraph what to pull down and what conflicts; the daily merge through integration stays Orc-Codegraph's.
+  Its home is workcrews/upstream-prs/ (the _base checkout, the rs3 worktree, BRIEF-*.md, texts/).
+- Hand-over: Orc-Codegraph finishes RS-3 itself (pre-push checks, the three pushes for #3208, #3209 and #3210, the
+  six replies), then hands the PR stack to Coord-upstream-prs in one REQUEST (open PRs, branches and heads,
+  r17-round2-results.md, notes). From then on Orc-Codegraph routes PR work and runs no leads for it.
+- Still binding: R-24 (after round two, no fixes or replies for what its pushes draw), R-25, R-21, R-22, R-18.
+- Work implied: as above; the lane's first job is the hand-over, then upstream analysis.
