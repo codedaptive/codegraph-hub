@@ -1718,7 +1718,8 @@ export interface ToolAnnotations {
 }
 
 interface PropertySchema {
-  type: string;
+  /** A JSON Schema type, or a list of types when the property accepts more than one */
+  type: string | string[];
   description: string;
   enum?: string[];
   default?: unknown;
