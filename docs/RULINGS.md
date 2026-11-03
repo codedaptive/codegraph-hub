@@ -243,3 +243,14 @@ General as a RULING line. Decisions already settled by a document live in `team/
   later comments with replies only (Bob said stop).
 - Still binding: R-18 (installed CodeGraph untouched), R-21 (macOS only), R-22 (only changed tests run).
 - Work implied: Orc-Codegraph runs round two and reports per-PR results; then the PR work waits on the maintainer.
+
+## R-25. No nudging the maintainer; replies go out as they are ready
+- Date: 2026-11-03 / Bob, direct.
+- Question: (1) comment on #3211 asking the maintainer to approve CI runs on our PRs? (2) post bot replies in a
+  daily batch?
+- Ruling: (1) no: it is their repo, so we do not press the maintainer; CI waits for him. (2) each reply is posted
+  when it is ready, not batched.
+- Reason: upstream sets the pace; a reply ready now serves the reader now.
+- Not chosen: a CI-approval comment; a daily reply batch.
+- Work implied: Orc-Codegraph posts no comment asking the maintainer for anything and posts R-24's round-two
+  replies as each is ready.
