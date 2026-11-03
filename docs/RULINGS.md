@@ -229,3 +229,17 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Work implied: Orc-Codegraph resumes r17-review-triage.md from its "STILL TO DO" list: #3209 verify, #3210's three
   comments, restack, push the changed pr/* branches, edit the PR bodies, post all 29 replies, back up; reports the
   per-PR result.
+
+## R-24. Codex bot review: one more round, then stop (answers Q-16)
+- Date: 2026-11-03 / Bob, direct.
+- Question: the Codex bot re-reviews every push (18 new comments on eight PRs after R-23, more likely on #3209 and
+  #3210); how far do we chase it?
+- Ruling: one more round, then stop. Triage every bot comment posted since the R-23 pushes (the 18, plus any on
+  #3209 and #3210), fix the real ones with tests that fail first, push once per PR, and reply on each thread: what
+  was fixed, or why it is wrong. After that round the team stops working the bot's comments: no further fixes or
+  replies for comments drawn by the round-two pushes.
+- Reason: the new comments land on our own fixes and may be real; the bot never goes quiet, so the cost needs a cap.
+- Not chosen: (a) stop now with the 18 unanswered; (c) chase until the bot is quiet; Orc's variant of answering
+  later comments with replies only (Bob said stop).
+- Still binding: R-18 (installed CodeGraph untouched), R-21 (macOS only), R-22 (only changed tests run).
+- Work implied: Orc-Codegraph runs round two and reports per-PR results; then the PR work waits on the maintainer.
