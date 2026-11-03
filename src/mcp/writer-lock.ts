@@ -25,10 +25,13 @@
  * are live (the original's server), so pid liveness alone would keep the copy
  * locked out forever. A record is FOREIGN ({@link isForeignLockRecord}) when
  * its recorded root is another project's AND neither recorded identity is this
- * project's index as it is now AND this project's database has one hard link.
- * A copy at another path (cp -R, rsync, clonefile: all make new inodes, and a
- * database with one link) has foreign records, and they are treated like a
- * dead holder: stale, cleared, retried, and invisible to readers.
+ * project's index as it is now AND the recorded root's `.codegraph` is not
+ * this project's index as it is now AND the recorded root's database is not
+ * this project's database as it is now AND this project's database has one
+ * hard link. A copy at another path (cp -R, rsync, clonefile: all make new
+ * inodes, and a database with one link) has foreign records, and they are
+ * treated like a dead holder: stale, cleared, retried, and invisible to
+ * readers.
  *
  * No other copied or moved index makes its records foreign by this rule; pid
  * liveness and the start-time check below decide them, because the live holder
@@ -39,6 +42,13 @@
  *     its live holder, which reopens the replaced database at that path;
  *   - a project moved with `mv` within one filesystem: a new root, but the
  *     same inodes;
+ *   - a project whose `.codegraph` is a symlink to the recorded root's: both
+ *     roots reach one index, so a restore of it, which the holder follows,
+ *     leaves the record's inodes obsolete for both;
+ *   - a project whose database is the same file as the recorded root's now,
+ *     e.g. two `codegraph.db` symlinks to one external file: the holder
+ *     follows the file, so a replacement of it leaves the record's inodes
+ *     obsolete for both;
  *   - any record at a project whose `codegraph.db` has more than one hard
  *     link: the file is shared by definition, whatever the record's stamp
  *     says, because a holder that followed a database restored in place keeps
@@ -62,7 +72,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { canonicalProjectRoot, getCodeGraphDir, statInode } from '../directory';
+import { canonicalProjectRoot, getCodeGraphDir, isSameIndexRoot, statInode } from '../directory';
 import {
   createLockFile,
   removeLockIfUnchanged,
@@ -95,8 +105,9 @@ export interface LockStamp {
    * `canonicalProjectRoot` of the writer's project. Alone it decides nothing,
    * because a path can name a different index than the one the writer opened;
    * it limits the copied-index rule of {@link isForeignLockRecord}: a record at
-   * the reader's own root is never a copied-in record. Such a record is still
-   * foreign when its pid was reused (see `pidStart`).
+   * the reader's own root is never a copied-in record, and neither is one
+   * whose root's `.codegraph` or database is the reader's now. Such a record
+   * is still foreign when its pid was reused (see `pidStart`).
    */
   root: string;
   /** Identity of the writer's `.codegraph` directory. Present together with `dbId`, or not at all. */
@@ -213,7 +224,11 @@ function isReusedPidRecord(record: Record<string, unknown>): boolean {
  *     succeed, not Windows);
  *   - this project's `codegraph.db` has exactly one hard link;
  *   - neither identity matches it: the directory differs AND the database
- *     differs.
+ *     differs;
+ *   - the recorded root's `.codegraph` is not this project's: it does not
+ *     resolve to the same directory now ({@link isSameIndexRoot});
+ *   - the recorded root's database is not this project's: its identity read
+ *     now is absent or differs from this project's `dbId`.
  *
  * So a copy at another path, which has a new root, a new directory and a new
  * database with one link (cp -R, rsync and clonefile all write a new file), is
@@ -221,7 +236,13 @@ function isReusedPidRecord(record: Record<string, unknown>): boolean {
  * both inodes changed: a `.codegraph/` moved aside and copied back (a restore)
  * is followed by its live holder (`CodeGraph.reopenIfReplaced` opens the
  * replaced database at the same path), so calling that holder stale would
- * start a second writer on the database it now has open. No record is a
+ * start a second writer on the database it now has open. The same holds for a
+ * record whose root's `.codegraph` is this project's index now, such as a
+ * project whose `.codegraph` is a symlink to that root's: that holder follows a
+ * restore of the index too. So does a record whose root's database is this
+ * project's database now, though their directories differ, such as two
+ * `codegraph.db` symlinks to one external file: both projects reach one
+ * database, which the holder follows when it is replaced. No record is a
  * copied-in one at a project whose database has more than one hard link: that
  * file is shared by definition, and another project's live holder may have it
  * open. A project moved within one filesystem (same inodes, new root) is not a
@@ -234,8 +255,9 @@ function isReusedPidRecord(record: Record<string, unknown>): boolean {
  *
  * Limits. A record's stamp describes the index its writer opened, and a writer
  * that later follows a database replaced in place keeps its original stamp
- * (the copied-index rule exempts same-root records and hardlinked databases,
- * which covers that; the stamp's `pid` and `pidStart` stay true of that
+ * (the copied-index rule exempts same-root records, hardlinked databases and a
+ * recorded root whose `.codegraph` or database is this project's now, which
+ * covers that; the stamp's `pid` and `pidStart` stay true of that
  * writer, so the reused-pid rule is unaffected). A filesystem alias that
  * reports different `dev:ino` for one file (some FUSE or network mounts) is
  * outside what the stamp can see.
@@ -251,7 +273,17 @@ export function isForeignLockRecord(record: unknown, projectRoot: string): boole
   // A database with a second name is shared, so the record is not a copied-in
   // one and pid liveness decides it; a reused pid was already caught above.
   if (current.dbLinks > 1n) return false;
-  return dirId !== current.dirId && dbId !== current.dbId;
+  if (dirId === current.dirId || dbId === current.dbId) return false;
+  // The recorded identities describe the index as the holder opened it, and a
+  // restore (or a replaced database behind a link) changes them while the
+  // holder follows the new files. When the recorded root's `.codegraph` is
+  // this project's index now, the holder still has it open under that other
+  // name. The same holds when the recorded root's database, read now, is this
+  // project's database: both projects reach one file, whatever their
+  // directories are.
+  const recorded = readIndexIdentity(root);
+  if (recorded !== null && recorded.dbId === current.dbId) return false;
+  return !isSameIndexRoot(root, projectRoot);
 }
 
 /** Absolute path to the writer pid lockfile for `projectRoot`. */
