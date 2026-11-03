@@ -20,7 +20,7 @@ import {
 } from '../types';
 import { QueryBuilder, NodeIdentity } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
-import { ParseWorkerPool, resolveParsePoolSize, resolveParseTimeoutMs } from './parse-pool';
+import { ParseWorkerPool, parseWindowSize, resolveParsePoolSize, resolveParseTimeoutMs } from './parse-pool';
 import { StoreWriter, StoreBundle, finalizeStoreBundle } from './store-writer';
 import { materializeKernelResult } from './kernel';
 import { detectGeneratedFile } from './generated-detection';
@@ -513,6 +513,41 @@ function resolveGitDir(repoRoot: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The sparse checkout of the repository holding `dir`, as a stamp to compare
+ * ({@link INDEXED_SPARSE_CHECKOUT_KEY}): a hash of its patterns and of the config
+ * lines that switch them, since `git sparse-checkout disable` leaves the patterns
+ * as they were. No git process, so this is safe on every `status`: a repository
+ * that has never been sparse has no patterns file, and that failed read is the
+ * whole cost and the answer, ''.
+ */
+function sparseCheckoutStamp(dir: string): string {
+  let repoRoot = path.resolve(dir);
+  while (!fs.existsSync(path.join(repoRoot, '.git'))) {
+    const parent = path.dirname(repoRoot);
+    if (parent === repoRoot) return '';
+    repoRoot = parent;
+  }
+  const gitDir = resolveGitDir(repoRoot);
+  if (!gitDir) return '';
+  let patterns: string;
+  try {
+    patterns = fs.readFileSync(path.join(gitDir, 'info', 'sparse-checkout'), 'utf8');
+  } catch {
+    return '';
+  }
+  // Which of the two git writes depends on `extensions.worktreeConfig`, and a
+  // linked worktree's git dir holds only its own `config.worktree`.
+  const switches = ['config', 'config.worktree'].flatMap((name) => {
+    try {
+      return fs.readFileSync(path.join(gitDir, name), 'utf8').split('\n').filter((line) => /sparsecheckout/i.test(line));
+    } catch {
+      return [];
+    }
+  });
+  return hashContent(`${patterns}\0${switches.join('\n')}`);
 }
 
 /** Expand a leading `~/` the way git does for `core.excludesFile`. */
@@ -1609,6 +1644,15 @@ export function getGitChangedFiles(rootDir: string, sinceCommit?: string | null)
  */
 export const INDEXED_AT_COMMIT_KEY = 'indexed_at_commit';
 
+/**
+ * Metadata key: the sparse checkout the index was last brought up to date at
+ * ({@link sparseCheckoutStamp}), written with {@link INDEXED_AT_COMMIT_KEY} by a
+ * full index and a full sync. Git says nothing when a checkout changes shape: the
+ * files that come and go are skip-worktree, or were. Absent on an index built
+ * before the stamp, which then reports no such change.
+ */
+const INDEXED_SPARSE_CHECKOUT_KEY = 'indexed_sparse_checkout';
+
 /** HEAD's commit sha, or null in a non-git repo or one with no commits yet. */
 export function getGitHeadSha(rootDir: string): string | null {
   try {
@@ -2526,16 +2570,19 @@ export class ExtractionOrchestrator {
       pool = new ParseWorkerPool({
         languages: neededLanguages,
         size: poolSize,
+        // CODEGRAPH_PARSE_WORKERS names the pool outright; otherwise it starts at
+        // what this many files are worth.
+        expectedParses: process.env.CODEGRAPH_PARSE_WORKERS ? undefined : files.length,
         workerScriptPath: parseWorkerPath,
         recycleInterval: WORKER_RECYCLE_INTERVAL,
         parseTimeoutMs: PARSE_TIMEOUT_MS,
         log,
         grammarBuffers,
       });
-      log(`Parse worker pool: ${poolSize} worker(s)`);
-      // Bulk index: every core will be needed — spawn the whole pool now so
-      // worker boot overlaps the first read batches instead of trickling in
-      // behind queue-pressure growth.
+      log(`Parse worker pool: up to ${poolSize} worker(s)`);
+      // Bulk index: spawn the workers this many files need now, so worker boot
+      // overlaps the first read batches instead of trickling in behind
+      // queue-pressure growth.
       pool.prewarm();
     } else {
       // In-process fallback: load grammars locally and parse on the main thread.
@@ -2585,7 +2632,7 @@ export class ExtractionOrchestrator {
     // to the single-worker path — instead of drifting with parse timing. The
     // `completed` buffer holds at most ~windowSize out-of-order results, so memory
     // stays bounded.
-    const windowSize = pool ? Math.max(4, pool.size * 2) : 1;
+    const windowSize = pool ? parseWindowSize(pool.size) : 1;
     const inFlight = new Set<Promise<void>>();
     const completed = new Map<number,
       | { ok: true; filePath: string; content: string; stats: fs.Stats; result: ExtractionResult }
@@ -4101,7 +4148,7 @@ export class ExtractionOrchestrator {
   }
 
   /** Capture before file reads. In-flight/failed full writes must not claim freshness. */
-  beginGitIndexState(full: boolean): { head: string; stamp: string; dirty: string[] | null } {
+  beginGitIndexState(full: boolean): { head: string; stamp: string; dirty: string[] | null; sparse: string } {
     const head = getGitHeadSha(this.rootDir) ?? '';
     const stamp = this.queries.getMetadata(INDEXED_AT_COMMIT_KEY) ?? '';
     const prior = this.indexedDirtyPaths(stamp);
@@ -4117,10 +4164,10 @@ export class ExtractionOrchestrator {
       // first write, so a crash cannot forget an indexed uncommitted edit.
       this.queries.setMetadata('indexed_dirty_paths', JSON.stringify({ commit: stamp, paths: dirty }));
     }
-    return { head, stamp, dirty };
+    return { head, stamp, dirty, sparse: full ? sparseCheckoutStamp(this.rootDir) : '' };
   }
 
-  finishGitIndexState(snapshot: { head: string; stamp: string; dirty: string[] | null }, full: boolean, retries: string[] = []): void {
+  finishGitIndexState(snapshot: { head: string; stamp: string; dirty: string[] | null; sparse: string }, full: boolean, retries: string[] = []): void {
     const after = getGitChangedFiles(this.rootDir);
     if (!snapshot.dirty || !after) return;
     const commit = full ? snapshot.head : snapshot.stamp;
@@ -4128,7 +4175,25 @@ export class ExtractionOrchestrator {
     // The embedded commit makes a torn pair fail closed: readers reject a dirty
     // set that doesn't match the separately stored commit. Write the set first.
     this.queries.setMetadata('indexed_dirty_paths', JSON.stringify({ commit, paths }));
-    if (full) this.queries.setMetadata(INDEXED_AT_COMMIT_KEY, commit);
+    if (full) {
+      this.queries.setMetadata(INDEXED_AT_COMMIT_KEY, commit);
+      this.queries.setMetadata(INDEXED_SPARSE_CHECKOUT_KEY, snapshot.sparse);
+    }
+  }
+
+  /**
+   * The files a change of the sparse checkout brought in or took away since the
+   * last full index or sync: where the scan and the index disagree. Nothing git
+   * reports can supply them, so this runs on a clean tree too. It costs a scan
+   * only when the stamp moved; a scan lists files, and reads none.
+   */
+  private sparseCheckoutChanges(): string[] {
+    const indexedAt = this.queries.getMetadata(INDEXED_SPARSE_CHECKOUT_KEY);
+    if (indexedAt === null || indexedAt === sparseCheckoutStamp(this.rootDir)) return [];
+    const scanned = new Set(scanDirectory(this.rootDir));
+    const indexed = this.queries.getAllFilePaths();
+    const known = new Set(indexed);
+    return [...[...scanned].filter((file) => !known.has(file)), ...indexed.filter((file) => !scanned.has(file))];
   }
 
   /**
@@ -4156,7 +4221,7 @@ export class ExtractionOrchestrator {
       // Git supplies candidates, never the verdict. A committed deletion may
       // have been recreated locally; a previously indexed dirty path may have
       // vanished from git status after restore. Classify current disk vs DB once.
-      const candidates = new Set([...gitChanges.deleted, ...gitChanges.modified, ...gitChanges.added, ...dirtyPaths!]);
+      const candidates = new Set([...gitChanges.deleted, ...gitChanges.modified, ...gitChanges.added, ...dirtyPaths!, ...this.sparseCheckoutChanges()]);
       const scope = this.scopedSyncMatcher();
       const overrides = loadExtensionOverrides(this.rootDir);
       for (const filePath of candidates) {
