@@ -206,3 +206,67 @@ General as a RULING line. Decisions already settled by a document live in `team/
   tested on macOS only, so the maintainer can validate the other platforms.
 - Supersedes: Orc-Codegraph's todo item to validate the lock PRs on Windows and Linux before opening them.
 - Work implied: Orc-Codegraph drops that step and checks the PR texts say macOS only.
+
+## R-22. Publish the R-17 set now; no duplicate test runs
+- Date: 2026-11-01 / Bob, direct.
+- Ruling: upstream moves fast, so a duplicate test run makes the PRs stale. Kong's clear read (09:20) is the gate:
+  stop the per-branch full suites and publish now: the fork, all 14 PRs and the three issues. Upstream's CI runs
+  the suite on each PR; a failure there is fixed on that PR.
+- Supersedes: the per-branch full-suite step in the R-17 publish plan.
+
+## R-23. Lift the stop for codegraph work; finish the PR review fixes and replies
+- Date: 2026-11-02 / Bob, direct.
+- Question: the team is stopped (Designer #1834) with the Codex review triage of the R-17 PRs half done (24 of 29
+  comments triaged and fixed locally, #3209 unverified, #3210 not started, nothing pushed or replied). Resume?
+- Ruling: yes. The team may work on codegraph again. Finish every review fix not yet pushed to its PR, push them,
+  and answer each Codex comment on its thread: what was fixed where it was right, the reason where it was wrong.
+  Test versions (development builds on their own socket and state directory, throwaway clones) are fine; the
+  installed CodeGraph on this machine is not replaced without asking Bob, because other teams use it.
+- Reason: the PRs have sat a day with 29 unanswered findings; the installed version serves every team.
+- Not chosen: keeping the full stop; a follow-up "review fixes" commit per PR instead of the planned squash and
+  force-push (Bob did not ask for it; the one-squash-per-feature rule in rules/product.md stands).
+- Still binding: R-18 (ask before any install), R-21 (macOS only), R-22 (only the changed tests run).
+- Work implied: Orc-Codegraph resumes r17-review-triage.md from its "STILL TO DO" list: #3209 verify, #3210's three
+  comments, restack, push the changed pr/* branches, edit the PR bodies, post all 29 replies, back up; reports the
+  per-PR result.
+
+## R-24. Codex bot review: one more round, then stop (answers Q-16)
+- Date: 2026-11-03 / Bob, direct.
+- Question: the Codex bot re-reviews every push (18 new comments on eight PRs after R-23, more likely on #3209 and
+  #3210); how far do we chase it?
+- Ruling: one more round, then stop. Triage every bot comment posted since the R-23 pushes (the 18, plus any on
+  #3209 and #3210), fix the real ones with tests that fail first, push once per PR, and reply on each thread: what
+  was fixed, or why it is wrong. After that round the team stops working the bot's comments: no further fixes or
+  replies for comments drawn by the round-two pushes.
+- Reason: the new comments land on our own fixes and may be real; the bot never goes quiet, so the cost needs a cap.
+- Not chosen: (a) stop now with the 18 unanswered; (c) chase until the bot is quiet; Orc's variant of answering
+  later comments with replies only (Bob said stop).
+- Still binding: R-18 (installed CodeGraph untouched), R-21 (macOS only), R-22 (only changed tests run).
+- Work implied: Orc-Codegraph runs round two and reports per-PR results; then the PR work waits on the maintainer.
+
+## R-25. No nudging the maintainer; replies go out as they are ready
+- Date: 2026-11-03 / Bob, direct.
+- Question: (1) comment on #3211 asking the maintainer to approve CI runs on our PRs? (2) post bot replies in a
+  daily batch?
+- Ruling: (1) no: it is their repo, so we do not press the maintainer; CI waits for him. (2) each reply is posted
+  when it is ready, not batched.
+- Reason: upstream sets the pace; a reply ready now serves the reader now.
+- Not chosen: a CI-approval comment; a daily reply batch.
+- Work implied: Orc-Codegraph posts no comment asking the maintainer for anything and posts R-24's round-two
+  replies as each is ready.
+
+## R-26. A new lane, upstream-prs, owns our upstream pull requests
+- Date: 2026-11-03 13:27 / Bob, posted by codeteam to Orc-Codegraph and Designer-Codegraph.
+- Question: who runs the upstream PR work and the analysis of new upstream commits, now that the PRs need a
+  standing owner?
+- Ruling: a new lane, upstream-prs (Coord-upstream-prs), owns our upstream pull requests and the analysis of new
+  upstream commits. It cuts pr/<feature> branches, cherry-picks and restacks with tree and patch-id proofs, pushes,
+  and keeps PR bodies and replies current. A code change inside a PR goes as a REQUEST to the lane that owns that
+  code (host, queries, resolution), and that lane stacks the commit. It reviews new upstream commits and reports to
+  Orc-Codegraph what to pull down and what conflicts; the daily merge through integration stays Orc-Codegraph's.
+  Its home is workcrews/upstream-prs/ (the _base checkout, the rs3 worktree, BRIEF-*.md, texts/).
+- Hand-over: Orc-Codegraph finishes RS-3 itself (pre-push checks, the three pushes for #3208, #3209 and #3210, the
+  six replies), then hands the PR stack to Coord-upstream-prs in one REQUEST (open PRs, branches and heads,
+  r17-round2-results.md, notes). From then on Orc-Codegraph routes PR work and runs no leads for it.
+- Still binding: R-24 (after round two, no fixes or replies for what its pushes draw), R-25, R-21, R-22, R-18.
+- Work implied: as above; the lane's first job is the hand-over, then upstream analysis.
