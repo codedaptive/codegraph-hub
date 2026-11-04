@@ -1846,9 +1846,15 @@ export class ReferenceResolver {
     // dotted path; no declaration is named `Kit.Runner`, so the pre-filter
     // below would drop it. It is the type that path names or nothing, as with
     // CFML's component paths above: no fallthrough on a miss, since a name
-    // match on the last segment can only guess past the qualifier.
+    // match on the last segment can only guess past the qualifier. A test-suite
+    // file's type, or another file's private type, is not what production
+    // code's supertype names, so only a target the file can see is kept, same
+    // as the name path.
     if (ref.language === 'swift' && isInheritanceRef(ref) && ref.referenceName.includes('.')) {
-      return this.gateLanguage(resolveSwiftQualifiedSupertype(ref, this.context), ref);
+      const qualified = resolveSwiftQualifiedSupertype(ref, this.context);
+      const target = qualified ? this.nodeById(qualified.targetNodeId) : null;
+      if (!qualified || !target || !isVisibleAcrossFiles(target, ref, this.context)) return null;
+      return this.gateLanguage(qualified, ref);
     }
 
     // Fast pre-filter: skip if no symbol with this name exists anywhere
