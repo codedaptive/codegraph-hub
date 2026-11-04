@@ -7,16 +7,20 @@
  * `--base` is required: "added" needs a pre-image commit, the merge base of
  * the base ref and HEAD, so there is no working-tree default as blast has.
  *
- * Both are async: the text-mention check's search runs through grep-by-symbol's `grepIndex`
- * (`../grep/grep-core.ts`), which spawns ripgrep.
+ * Both are async: the text-mention check's search runs through grep-by-symbol's search stage,
+ * `searchIndexText` (`../grep/grep-core.ts`), which spawns ripgrep.
+ *
+ * The diff runs from the merge base to the working tree, including uncommitted edits.
+ * A changed file whose index has not caught up fails the run (`./freshness.ts`).
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDatabasePath } from '../../../db';
-import { changedFiles, refExists } from '../blast/diff';
-import { GrepIndexError, grepIndex } from '../grep/grep-core';
+import { changedFiles, hasUnreadRanges, refExists } from '../blast/diff';
+import { GrepIndexError, searchIndexText } from '../grep/grep-core';
 import { git } from '../shared/git';
 import { validatePathWithinRoot } from '../../../utils';
+import { checkIndexCurrency, currencyFailure } from './freshness';
 import { findOrphans, MentionSearchIncompleteError, type OrphansIO } from './orphans';
 import { jsonReport, textReport } from './render';
 import { openOrphansStore } from './store';
@@ -37,13 +41,25 @@ export interface OrphansResult {
   stderr?: string;
 }
 
+/**
+ * Grep's 200 KB default path batch would overrun Windows' 32,767-unit command
+ * line beside the 16 KiB mention pattern. Elsewhere grep keeps its own default.
+ */
+export function mentionSearchBatchBytes(platform: NodeJS.Platform = process.platform): number | undefined {
+  return platform === 'win32' ? 8 * 1024 : undefined;
+}
+
 function fail(message: string): OrphansResult {
   return { output: '', exitCode: 1, stderr: message };
 }
 
 /**
  * Run orphans at `root` and return what the CLI would print. Checks, in order:
- * base given, format, index, base ref known, merge base, diff. Failures carry
+ * base given, format, index, base ref known, merge base, diff, readable changed
+ * lines for modified and renamed files, then index currency (a changed file the
+ * index has not caught up with fails the run before any symbol is counted;
+ * uncommitted edits are included in the diff, and a changed file with no `files`
+ * row, or missing from the working tree, is not checked for currency). Failures carry
  * their message in `stderr` and exit 1; the report goes to `output`. A
  * ripgrep that cannot be started (the text-mention check's search), or a
  * text-mention check that cannot finish for a name (`MentionSearchIncompleteError`),
@@ -71,6 +87,15 @@ export async function runOrphans(root: string, args: OrphansArgs): Promise<Orpha
   if (!mergeBase) return fail(`✗ "${base}" and HEAD have no merge base in ${absRoot}`);
   const diff = changedFiles(absRoot, base);
   if (!diff) return fail(`✗ could not read a diff in ${absRoot} — is this a git repository?`);
+  // Keep the original objects: unread ranges are marked in a WeakSet. Added files need no ranges.
+  if (diff.files.some((f) => (f.status === 'modified' || f.status === 'renamed') && hasUnreadRanges(f))) {
+    return fail('✗ git could not read the changed lines of the diff (a very large diff can exceed the buffer the read ' +
+      'allows), so no added symbol was checked; narrow the diff and run again');
+  }
+  // The diff and index must describe the same working-tree content, including uncommitted edits.
+  const currency = checkIndexCurrency(absRoot, diff.files);
+  const stale = currencyFailure(currency);
+  if (stale !== null) return fail(stale);
 
   const io: OrphansIO = {
     // Pre-image read: `./` makes the path relative to the cwd, the project root, which is
@@ -78,7 +103,7 @@ export async function runOrphans(root: string, args: OrphansArgs): Promise<Orpha
     preImage: (file) => git(absRoot, ['show', `${mergeBase}:./${file.oldPath ?? file.path}`]),
     // Source read: only a file whose real location is inside the project (the leak-safe
     // policy of the content-serving reads, #527). An indexed symlink leading outside, which
-    // the indexer follows (#935), is refused like a missing file; grepIndex refuses it too.
+    // the indexer follows (#935), is refused like a missing file; the search refuses it too.
     source: (rel) => {
       const safe = validatePathWithinRoot(absRoot, rel);
       if (safe === null) return null;
@@ -88,13 +113,15 @@ export async function runOrphans(root: string, args: OrphansArgs): Promise<Orpha
         return null;
       }
     },
-    // Text-mention check: grep-by-symbol's search over exactly the indexed files.
-    // `truncated.files` counts the ones it could not read (missing, unreadable, leading
-    // outside the project), which the report carries as `searchUnread`.
+    // Text-mention check: grep-by-symbol's search stage (`searchIndexText`, no per-hit symbol
+    // attribution) over exactly the indexed files. `truncated.files` counts the ones it refuses
+    // or cannot read (missing, unreadable, not a regular file, leading outside the project),
+    // which the report carries as `searchUnread`.
     search: async (pattern, maxHits) => {
-      const r = await grepIndex(absRoot, pattern, { maxHits });
+      const batchBytes = mentionSearchBatchBytes();
+      const r = await searchIndexText(absRoot, pattern, batchBytes === undefined ? { maxHits } : { maxHits, batchBytes });
       return {
-        hits: r.groups.flatMap((g) => g.hits.map((h) => ({ path: g.path, line: h.line, text: h.text }))),
+        hits: r.hits,
         truncated: r.truncated.hits > 0,
         unread: r.truncated.files,
       };

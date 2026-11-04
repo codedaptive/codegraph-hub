@@ -5,31 +5,37 @@
  *
  * A guessed entry's evidence (edges, unresolved references, mentions) is
  * capped per kind: JSON carries at most `JSON_EVIDENCE_CAP` of each, text
- * prints at most `TEXT_EVIDENCE_CAP` of each and then `+N more`. The
- * `edgeCount` / `unresolvedCount` / `mentionCount` fields keep the length of
- * each list as `findOrphans` built it, before these caps. For mentions that is
- * the mention lines the text-mention search kept, not every occurrence in the
- * repo: the search caps its hits, so `mentionCount` can undercount (see the
- * `./orphans.ts` header).
+ * prints at most `TEXT_EVIDENCE_CAP` of each and then `+N more`. `findOrphans`
+ * itself keeps at most `EVIDENCE_KEPT` unresolved references and mentions per
+ * entry (the same number as `JSON_EVIDENCE_CAP`), so for those two kinds the
+ * JSON cap changes nothing; edges are kept whole and the JSON cap cuts them.
+ * `edgeCount` is the length of the edge list `findOrphans` built, before these
+ * caps; `unresolvedCount` and `mentionCount` are the full counts `findOrphans`
+ * computed, which can exceed the lists it kept. For mentions the count is the
+ * distinct hit lines outside the symbol's own span that the text-mention search
+ * kept, not every occurrence in the repo: the search caps its hits, so
+ * `mentionCount` can undercount (see the `./orphans.ts` header).
  *
  * JSON always carries `searchUnread`, the indexed files the text-mention search
  * could not read. When it is above 0 the text report says so on the line right
  * after the orphaned list, the list it qualifies: a mention in such a file would
  * have made one of those symbols guessed.
  */
-import type { GuessedEntry, OrphanEntry, OrphansReport } from './orphans';
+import { EVIDENCE_KEPT, type GuessedEntry, type OrphanEntry, type OrphansReport } from './orphans';
 
 /**
- * Evidence items of each kind per guessed entry in the JSON report. Three lines keep a
- * long text list readable; twenty is enough for a tool to judge; the counts carry the rest.
+ * Evidence items of each kind per guessed entry in the JSON report. For unresolved references
+ * and mentions this is what `findOrphans` keeps (`EVIDENCE_KEPT`); `findOrphans` keeps every
+ * edge, so for edges this cap is the only one. Three lines keep a long text list readable (the
+ * text cap); twenty is enough for a tool to judge; the counts carry the rest.
  */
-export const JSON_EVIDENCE_CAP = 20;
+export const JSON_EVIDENCE_CAP = EVIDENCE_KEPT;
 /** Evidence lines of each kind per guessed entry in the text report. */
 export const TEXT_EVIDENCE_CAP = 3;
 
 /** The report with the range it was read from. */
 export interface OrphansOutput extends OrphansReport {
-  /** `<base>...HEAD`. */
+  /** `<base>...HEAD`, or `<base>...HEAD plus uncommitted changes` (merge base to the working tree). */
   basis: string;
   /** The full merge-base commit sha. */
   mergeBase: string;
@@ -79,7 +85,7 @@ export function textReport(r: OrphansOutput): string {
   out.push(`excluded: test ${r.excluded.test}, implementation ${r.excluded.implementation}, constructor ${r.excluded.constructor}, entry ${r.excluded.entry}`);
   out.push(`added symbols: ${r.added}`);
   if (r.preImageUnread > 0) {
-    out.push(`pre-image unread: ${r.preImageUnread} file(s); their symbols were taken as added by changed line alone`);
+    out.push(`pre-image unread: ${r.preImageUnread} file(s); their symbols were taken as added by changed line alone (every symbol, in a file git reported no changed lines for)`);
   }
   out.push('checked: functions, methods and types; variables, constants and fields are not (their reads are under-edged)');
   return `${out.join('\n')}\n`;
