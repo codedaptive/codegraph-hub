@@ -125,8 +125,9 @@ Linux and Windows, if they want it.
    then the hub's `main` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
    bob-codedaptive identity), and the update published as a GitHub release of the hub tagged with the build's
    version (`v1.6.2-sm.N`), the packed build attached. The first release is sm.12, the first build with R-32's
-   upgrade fix; the rename and README do not wait for it. The hub's new `main` is one commit whose parent is the
-   upstream `main` that update merged, so GitHub shows the hub 0 commits behind upstream after each update (`gh api
+   upgrade fix; the rename and README do not wait for it. Each update is one commit on the hub's `main` with two
+   parents, the upstream `main` that update merged and the hub's previous `main`, whose tree is `ours` minus §4's
+   exclusions plus the README; never a force push (S-56). GitHub then shows the hub 0 commits behind upstream (`gh api
    repos/colbymchenry/codegraph/compare/main...codedaptive:codegraph-hub:main` reports `behind_by` 0). Between
    updates the count grows as upstream moves; that is the monthly cadence, not a fault. (2026-11-04: the hub's
    `main` is 900d223b, upstream 5cd8a9a8 plus one commit, 20 behind upstream's f72c9d2e, which `ours` has carried
