@@ -193,7 +193,7 @@ Source: `handover-upstream-prs.md:40`, and `r17-round2-results.md:22` and `:26-2
 - #3206: the residual `if`-brace case, and module-blind superclass-name matching.
 - #3202: the `[lib] path` and `#[path]` limits.
 - #3203: two generic-bound readers that still count `<` and `>` inside a const block.
-- grep keeps vue, svelte, astro, razor and cfml files line-only.
+- Published grep PR #3208 keeps vue, svelte, astro, razor and cfml files line-only; canonical ours also keeps cobol, dart and xml line-only.
 
 ### 6.3 Not re-run
 
