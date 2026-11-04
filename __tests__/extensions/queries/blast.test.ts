@@ -373,11 +373,16 @@ describe('V6 working-tree basis (git only, no index)', () => {
     expect(cs!.files[0].ranges).toEqual([{ start: 6, end: 6 }]);
   });
 
-  it('V6 --base B uses B...HEAD', () => {
+  it('V6 --base B diffs B against the working tree, labelled plus uncommitted changes when the tree is dirty', () => {
+    // Dirtied here, so the test does not depend on the dirty-tree test above having run first.
+    write(root, 'src/a.ts', `${C1_FILES['src/a.ts']}// trailing note\n`);
     const cs = changedFiles(root, 'C1');
     expect(cs).not.toBeNull();
-    expect(cs!.basis).toBe('C1...HEAD');
-    expect(cs!.files.map((f) => f.path)).toEqual(['src/util.ts']);
+    expect(cs!.basis).toBe('C1...HEAD plus uncommitted changes');
+    expect(cs!.files.map((f) => [f.path, f.ranges])).toEqual([
+      ['src/a.ts', [{ start: 6, end: 6 }]],
+      ['src/util.ts', [{ start: 6, end: 6 }]],
+    ]);
   });
 
   it('V8 runBlast with no index exits 1 and the handler returns guidance, not isError', () => {

@@ -46,7 +46,8 @@ export interface BlastStore {
   /** The nodes for `ids`; ids with no node are absent from the result. */
   nodesByIds(ids: readonly string[]): BlastNode[];
   /**
-   * Per target id, the file paths of the sources of every incoming edge, of ANY
+   * Per target id, the file paths of the sources of every incoming edge whose
+   * source node is in the index, of ANY
    * kind. Feeds the area test signal, which graft computes from `graph.edges`
    * unfiltered — so `contains` and the other non-walk kinds count there.
    */
@@ -57,8 +58,10 @@ export interface BlastStore {
 }
 
 /**
- * Node kinds never offered as seeds. `file` is the fallback seed,
- * chosen separately; `import`/`export` nodes span the import statement itself,
+ * Node kinds never offered as seeds. `file` is seeded separately, by
+ * `seedsForFile` in `./blast.ts`, for a code line outside every symbol, for a
+ * deletion no symbol spans, and for a diff with no ranges; `import`/`export`
+ * nodes span the import statement itself,
  * and `parameter` nodes sit inside the function they belong to — either would win
  * the innermost rule over the symbol a reader means. `route` nodes are
  * framework-synthesized, not code a diff edits.
