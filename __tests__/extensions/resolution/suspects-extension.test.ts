@@ -23,7 +23,7 @@ import { spawnSync } from 'child_process';
 import { CodeGraph } from '../../../src';
 import { ToolHandler, getStaticTools } from '../../../src/mcp/tools';
 import { __resetExtensionsForTests, registerExtension } from '../../../src/extensions/host/registry';
-import { findSuspects, formatSuspects } from '../../../src/extensions/resolution/suspects';
+import { findSuspects, formatSuspects, suspectsToJson } from '../../../src/extensions/resolution/suspects';
 import resolutionExtension, { suspectsTool } from '../../../src/extensions/resolution/extension';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
@@ -103,6 +103,20 @@ describe('codegraph_suspects through ToolHandler (in-process)', () => {
     const props = (def!.inputSchema as { properties: Record<string, { type?: unknown; enum?: unknown }> }).properties;
     expect(Object.keys(props)).toEqual(expect.arrayContaining(['projectPath', 'limit', 'maxEdgesPerTarget', 'format']));
     expect(props.format!.enum).toEqual(['text', 'json']);
+  });
+
+  // A client that validates arguments against the published schema rejects `{ limit: 10 }`
+  // unless the schema names the integer form the handler accepts.
+  it('publishes a limit schema that admits both the numeric and the string form', async () => {
+    vi.stubEnv('CODEGRAPH_MCP_TOOLS', 'explore,suspects');
+    const def = getStaticTools().find((t) => t.name === 'codegraph_suspects');
+    const props = (def!.inputSchema as { properties: Record<string, { type?: unknown; enum?: unknown }> }).properties;
+    expect(props.limit!.type).toEqual(['string', 'integer']);
+    const res = await run({ projectPath: project, format: 'json', limit: 1 });
+    expect(res.isError).toBeFalsy();
+    expect(JSON.parse(res.content[0].text)).toEqual(
+      suspectsToJson(findSuspects(project, { limit: 1, maxEdgesPerTarget: 5 })),
+    );
   });
 
   it('describes projectPath as required: the server has no default project', () => {

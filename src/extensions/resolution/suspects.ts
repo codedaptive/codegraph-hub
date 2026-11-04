@@ -129,11 +129,11 @@ export interface Suspect {
   targetFile: string;
   targetLine: number;
   language: string;
-  /** Union over its edges, in SuspectFlag order. */
+  /** Union over all its suspect edges, listed or not, in SuspectFlag order. */
   flags: SuspectFlag[];
   /** Function/method nodes of the target's name in the same language. */
   definitions: number;
-  /** The max edge score. */
+  /** The max score over all its suspect edges, listed or not. */
   score: number;
   /** All suspect call edges to this target (before maxEdgesPerTarget). */
   edgeCount: number;
@@ -182,17 +182,29 @@ interface CandidateRow {
 }
 
 /**
+ * One key of an edge's metadata JSON as an SQL expression: NULL when the metadata is not valid
+ * JSON (`json_extract` throws on that) or has no such key. A CASE tests `json_valid` first; an
+ * AND does not guarantee that order. `alias` and `key` are interpolated: pass only literals.
+ */
+function metadataField(alias: string, key: string): string {
+  return `CASE WHEN json_valid(${alias}.metadata) THEN json_extract(${alias}.metadata, '$.${key}') END`;
+}
+
+/**
  * The CANDIDATE EDGE predicate (see the header) as an SQL boolean expression over the `edges`
  * row named `alias` (a table name or alias with `kind`, `metadata`, `source` and `target`
  * columns). Self-contained: the caller and target files come from correlated subqueries on
  * `nodes` by primary key, so the caller needs no join and can use it in a WHERE or inside
  * `SUM(CASE WHEN ... END)`. A missing node or null file_path makes the comparison NULL, which
  * COALESCE turns into "not the same file", so such an edge stays a candidate.
+ * Metadata that is not valid JSON reads as absent, as it does when an edge is read, so such an
+ * edge is never a candidate: `json_extract` throws on it, so every read of a key sits in a
+ * CASE that tests `json_valid` first (an AND does not guarantee that order).
  * Evaluates to 1 or 0 (never NULL). `alias` is interpolated into the SQL: pass only a literal
  * identifier, never input.
  */
 export function candidateEdgeSql(alias: string): string {
-  const by = `json_extract(${alias}.metadata, '$.resolvedBy')`;
+  const by = metadataField(alias, 'resolvedBy');
   const sameFile =
     `COALESCE((SELECT file_path FROM nodes WHERE id = ${alias}.source)` +
     ` = (SELECT file_path FROM nodes WHERE id = ${alias}.target), 0)`;
@@ -200,7 +212,7 @@ export function candidateEdgeSql(alias: string): string {
     `(${alias}.kind = 'calls' AND ${by} IS NOT NULL AND (${by} = 'fuzzy'` +
     ` OR (${by} = 'exact-match' AND NOT ${sameFile})` +
     ` OR (${by} = 'instance-method'` +
-    ` AND COALESCE(json_extract(${alias}.metadata, '$.confidence'), 1) < ${DECLARED_INSTANCE_CONFIDENCE})))`
+    ` AND COALESCE(${metadataField(alias, 'confidence')}, 1) < ${DECLARED_INSTANCE_CONFIDENCE})))`
   );
 }
 
@@ -232,13 +244,18 @@ export function isCandidateEdge(
   return confidence < DECLARED_INSTANCE_CONFIDENCE;
 }
 
-/** The candidate rows: every edge `candidateEdgeSql('e')` accepts, with its caller and target. */
+/**
+ * The candidate rows: every edge `candidateEdgeSql('e')` accepts, with its caller and target.
+ * The inner joins drop an edge with no caller or target row, which the foreign keys on `edges`
+ * rule out. The metadata columns are guarded the same way, though the predicate already leaves
+ * out every row whose metadata is not valid JSON.
+ */
 const CANDIDATE_SQL = `
   SELECT s.id AS callerId, s.name AS callerName, s.file_path AS callerFile, s.language AS callerLanguage,
          e.line AS line,
-         json_extract(e.metadata, '$.refName') AS refName,
-         json_extract(e.metadata, '$.resolvedBy') AS resolvedBy,
-         COALESCE(json_extract(e.metadata, '$.confidence'), 1) AS confidence,
+         ${metadataField('e', 'refName')} AS refName,
+         ${metadataField('e', 'resolvedBy')} AS resolvedBy,
+         COALESCE(${metadataField('e', 'confidence')}, 1) AS confidence,
          t.id AS targetId, t.name AS targetName, t.qualified_name AS targetQualifiedName,
          t.kind AS targetKind, t.file_path AS targetFile, t.start_line AS targetLine,
          t.language AS targetLanguage
@@ -255,14 +272,18 @@ interface CargoMember {
 
 /**
  * The Cargo workspace members of the project at `projectRoot`, longest directory first, so
- * the first member whose `dir + '/'` prefixes a path is that file's crate. Empty when the
- * project has no root workspace.
+ * the first member whose `dir + '/'` prefixes a path is that file's crate. The root member
+ * (dir '') prefixes no path and is matched by `rustCrate` instead. Empty when the project has
+ * no root workspace.
  */
 function cargoMembers(projectRoot: string): CargoMember[] {
   const root = path.resolve(projectRoot);
-  // getCargoWorkspaceCrateMap reads only `readFile` and `listDirectories` (both relative to
-  // the project root); this is a read-only index, so there is no ReferenceResolver and its
-  // context to borrow. The cast is safe for exactly those two members and nothing else.
+  // This is a read-only index, so there is no ReferenceResolver and its context to borrow.
+  // The context is partial, and the cast is safe only for what getCargoWorkspaceCrateMap
+  // (src/resolution/frameworks/cargo-workspace.ts) touches. It first probes
+  // `context.getCargoCrates?.()`, which this context does not provide, so it falls back to
+  // readCargoWorkspaceCrateMap, which reads only `readFile` and `listDirectories` (both
+  // relative to the project root).
   const context = {
     readFile: (relPath: string): string | null => {
       try {
@@ -280,7 +301,7 @@ function cargoMembers(projectRoot: string): CargoMember[] {
       }
     },
   } as unknown as ResolutionContext;
-  // The map holds both the `a-b` and `a_b` alias of each package; both name one directory.
+  // A hyphenated package is in the map under both its `a-b` and `a_b` aliases; both name one directory.
   const byDir = new Map<string, string>();
   for (const [alias, member] of getCargoWorkspaceCrateMap(context)) {
     let dir = member.replace(/^(\.\/)+/, '');
@@ -363,10 +384,21 @@ export function findSuspectsInDb(db: SqliteDatabase, projectRoot: string, option
     return !imports.includes(to.name);
   };
 
-  interface Group { suspect: Suspect; scored: Array<{ edge: SuspectEdge; score: number }> }
+  type Scored = { edge: SuspectEdge; score: number };
+  const byRank = (a: Scored, b: Scored): number =>
+    b.score - a.score
+    || compareText(a.edge.callerFile, b.edge.callerFile)
+    || (a.edge.line ?? Number.MAX_SAFE_INTEGER) - (b.edge.line ?? Number.MAX_SAFE_INTEGER)
+    || compareText(a.edge.callerId, b.edge.callerId);
+  // A cap that is not a number lists no edges, as `slice(0, NaN)` would.
+  const keep = Number.isNaN(maxEdges) ? 0 : Math.max(0, maxEdges);
+  // Rows are read one at a time. Each row updates its target's count, score and flags; its edge
+  // list is trimmed to the best `keep` edges whenever it reaches twice that, and the final sort
+  // takes the best `keep` of what remains.
+  interface Group { suspect: Suspect; flags: Set<SuspectFlag>; scored: Scored[] }
   const groups = new Map<string, Group>();
 
-  for (const row of db.prepare(CANDIDATE_SQL).all() as CandidateRow[]) {
+  for (const row of db.prepare(CANDIDATE_SQL).iterate() as IterableIterator<CandidateRow>) {
     const confidence = Number(row.confidence);
     let group = groups.get(row.targetId);
     if (!group) {
@@ -385,6 +417,7 @@ export function findSuspectsInDb(db: SqliteDatabase, projectRoot: string, option
           edgeCount: 0,
           edges: [],
         },
+        flags: new Set<SuspectFlag>(),
         scored: [],
       };
       groups.set(row.targetId, group);
@@ -395,8 +428,13 @@ export function findSuspectsInDb(db: SqliteDatabase, projectRoot: string, option
     if (group.suspect.definitions > 1) flags.add('several-definitions');
     if (confidence < LOW_CONFIDENCE) flags.add('low-confidence');
     const ordered = orderFlags(flags);
+    const score = scoreOf(ordered);
+    for (const f of ordered) group.flags.add(f);
+    group.suspect.score = Math.max(group.suspect.score, score);
+    group.suspect.edgeCount++;
+    if (keep === 0) continue;
     group.scored.push({
-      score: scoreOf(ordered),
+      score,
       edge: {
         callerId: row.callerId,
         callerName: row.callerName,
@@ -408,21 +446,13 @@ export function findSuspectsInDb(db: SqliteDatabase, projectRoot: string, option
         flags: ordered,
       },
     });
+    if (group.scored.length >= 2 * keep) group.scored = group.scored.sort(byRank).slice(0, keep);
   }
 
   const suspects: Suspect[] = [];
-  for (const { suspect, scored } of groups.values()) {
-    scored.sort((a, b) =>
-      b.score - a.score
-      || compareText(a.edge.callerFile, b.edge.callerFile)
-      || (a.edge.line ?? Number.MAX_SAFE_INTEGER) - (b.edge.line ?? Number.MAX_SAFE_INTEGER)
-      || compareText(a.edge.callerId, b.edge.callerId));
-    const union = new Set<SuspectFlag>();
-    for (const { edge } of scored) for (const f of edge.flags) union.add(f);
-    suspect.flags = orderFlags(union);
-    suspect.score = scored.reduce((max, s) => Math.max(max, s.score), 0);
-    suspect.edgeCount = scored.length;
-    suspect.edges = scored.slice(0, Math.max(0, maxEdges)).map((s) => s.edge);
+  for (const { suspect, flags, scored } of groups.values()) {
+    suspect.flags = orderFlags(flags);
+    suspect.edges = scored.sort(byRank).slice(0, keep).map((s) => s.edge);
     suspects.push(suspect);
   }
 
