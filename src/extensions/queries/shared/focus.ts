@@ -4,7 +4,7 @@
  * per call against the worktree the call is answered from): `grep` searches
  * inside it unless the call passes `scope: "repo"`, and `blast` covers the whole
  * repository and lists the dependents outside it under `## Outside focus (N)`.
- * `orphans` ignores it (docs/SPEC.md on `ours`, section 4).
+ * `orphans` ignores it.
  *
  * The rule that decides what is in focus is host's (`focusPrefixesFor`,
  * `inFocus` in src/extensions/host/server/session-scope.ts); this module only
