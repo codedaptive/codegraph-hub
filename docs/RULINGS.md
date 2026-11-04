@@ -406,6 +406,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
   (2)-(4), the gate, sm.12 promoted and packed, then the hub's first release from it. Installing sm.12 on this
   machine waits for Bob (R-18).
 
+- Done: 2026-11-04, Orc-Codegraph (#2352; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md): sm.12 (ours
+  4fdda779) carries the fix; the hub's main b1e626cb and release v1.6.2-sm.12 (Latest, the packed build attached).
 ## R-33. Install sm.12 when it is ready, with the reconnect script
 - Date: 2026-11-04 12:20 CST / Bob, direct ("install sm.12 and use the script to do the mcp reconnects").
 - Question: R-32 left installing sm.12 (the build with the hub-release upgrade fix) to Bob (R-18). sm.12 is not
@@ -421,6 +423,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Work implied: Orc-Codegraph installs sm.12 when it is packed and reports the version, the checks and any session
   the script could not reach.
 
+- Done: 2026-11-04 15:30-15:38 CST, Orc-Codegraph (#2352): 1.6.2-sm.12 installed, telemetry off; 39 sessions
+  reconnected, none left; all 8 teams answer with 10 tools; one server (48779) and one builder after a server split
+  during the install, cleared (host findings F-1, F-2, sev 3, in host's todo).
 ## R-34. Finish sm.12 and the hub's first release, then stand down
 - Date: 2026-11-04 12:58 CST / Bob, direct ("go. I would like to be done and able to set this work down for awhile
   and use the tool"), after Designer's estimate (done 15:30-16:30 CST today, about 18:00 with one redo; stable
@@ -440,6 +445,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
   and the morning check on 2026-11-05 confirms sm.12 is stable (every team answers; no error in the server and
   builder logs since the install) before the lanes go idle for good.
 
+- Done: 2026-11-04 15:4x, Orc-Codegraph (#2352): the finish list is done and the team stands down. The
+  2026-11-05 09:00 check of sm.12 is in release-gate-sm12.md. The 12-04 hub update is Q-20 for Bob.
 ## R-35. Force pushes to the hub are allowed while no one uses it
 - Date: 2026-11-04 13:58 CST / Bob, direct ("no one knows we exist right now you can do whatever you want on your
   git pushes"), on S-56 (the hub's main moved by a two-parent merge because rules/global.md rule 1 forbids force
