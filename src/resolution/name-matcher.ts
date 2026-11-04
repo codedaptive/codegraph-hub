@@ -7607,12 +7607,18 @@ function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: Unresolve
  * namesake from an SDK method (`u.appending(queryItems: [])` on a `URL`).
  * `xs.sorted()` on an `[Int]` is the stdlib's, and unreadable arguments keep
  * nothing.
+ * The first `.name` access after the ref's position must be followed by `(`:
+ * a trailing-closure call must not take a later call's labels.
  */
 function isSwiftStdNameKept(n: Node, ref: UnresolvedRef, context: ResolutionContext): boolean {
   if (n.language !== 'swift') return false;
   const cut = n.qualifiedName.lastIndexOf('::');
   const owner = cut > 0 ? n.qualifiedName.slice(0, cut).split(/::|\./).pop()! : null;
   if (owner === null || swiftDeclOf(owner, context).projectType) return false;
+  const lines = context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/) ?? [];
+  const text = lines.slice(ref.line - 1, ref.line + 11).join('\n').slice(Math.max(0, ref.column));
+  const access = new RegExp(`\\.\\s*${escapeRegExp(n.name)}(?![\\w$])`).exec(text);
+  if (!access || !/^\s*\(/.test(text.slice(access.index + access[0].length))) return false;
   return swiftCallFitsLabels(ref, n, context) === true;
 }
 

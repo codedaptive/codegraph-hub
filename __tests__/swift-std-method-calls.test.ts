@@ -269,6 +269,12 @@ struct Holder {
         let u = makeURL()
         return u.appending(queryItems: [])
     }
+    func trailingClosureSort(_ xs: [Int]) -> [Int] {
+        return xs.sorted { $0 < $1 }
+    }
+    func laterLabelledSort(_ ys: [Int]) -> [Int] {
+        return ys.sorted(limit: 1)
+    }
 }
 `,
     }));
@@ -311,6 +317,14 @@ struct Holder {
 
   it('u.appending(queryItems: []) on a URL factory result is Foundation’s, not Query.appending', () => {
     expect(callTargets(cg, CALLERS, 'urlQueryItems')).not.toContain('Query::appending');
+  });
+
+  it('xs.sorted { … } with a trailing closure does not take the labels of a later sorted(limit:) call, so it is not Array.sorted', () => {
+    expect(callTargets(cg, CALLERS, 'trailingClosureSort')).not.toContain('Array::sorted');
+  });
+
+  it('ys.sorted(limit: 1) after a trailing-closure sorted still reaches the project’s extension Array', () => {
+    expect(callTargets(cg, CALLERS, 'laterLabelledSort')).toContain('Array::sorted');
   });
 });
 
