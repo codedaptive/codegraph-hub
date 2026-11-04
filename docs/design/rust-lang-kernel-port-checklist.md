@@ -172,9 +172,9 @@ undefined; **no isConst means `const_item`/`static_item` extract as kind
 - File node: kind `file`, name basename, qualifiedName = filePath, endLine =
   `source.split('\n').length`, isExported false.
 
-### extractFunction / extractMethod for rust (1517 / 1737)
+### extractFunction / extractMethod for rust
 
-- extractFunction: receiverType present → extractMethod (1522). Name via
+- extractFunction: receiverType present → extractMethod. Name via
   `extractName` → nameField `name` (identifier). No misparse hook. Node gets
   docstring, signature, visibility, isExported:undefined, isAsync:false (bug
   above), isStatic:undefined, returnType. Then extractTypeAnnotations,
@@ -183,17 +183,15 @@ undefined; **no isConst means `const_item`/`static_item` extract as kind
   decorates refs for rust**, and the backward-sibling scan at 5013 stops at the
   first attribute_item anyway). Push node, walk `body` field (block), pop.
 - extractMethod (reached for impl fns + trait members): receiverType computed
-  again (1742). Gate at 1747: not class-like AND no methodsAreTopLevel AND no
-  receiver → back to extractFunction (trait members pass via class-like; impl
-  fns via receiver). extraProps.qualifiedName = `Type::name` when receiver
-  (1790). **Contains edge from the owner (1798-1813): only when receiver
-  present AND not class-like — finds the FIRST node in `this.nodes` with
-  `name === receiverType && filePath === this.filePath && kind ∈
-  {struct,class,enum,trait}`. Source-order dependent: an impl ABOVE its struct
-  gets no contains edge. Since #1588 `impl Trait for Generic<T>` links to the
-  implementing TYPE's node (it used to link to the TRAIT node, the receiver
-  bug).** Then type annotations, decorators
-  (no-op), body walk with the method pushed.
+  again. Gate: not class-like AND no methodsAreTopLevel AND no receiver → back
+  to extractFunction (trait members pass via class-like; impl fns via receiver).
+  extraProps.qualifiedName = `Type::name` when receiver. **Contains edge from
+  the owner: only when receiver present AND not class-like. For rust,
+  `findTypeInScope` on the enclosing impl_item uses the lookup below; the
+  implementing type must already be extracted. Other languages scan for the
+  first same-file node named receiverType of kind struct, union, class, enum or
+  trait.** Then type annotations, decorators (no-op), body walk with the method
+  pushed.
 - **Nested `fn` inside an impl-method's body**: visitFunctionBody:5245 →
   named → extractFunction → getReceiverType walks parents THROUGH the outer fn
   to the impl_item → receiver found → extractMethod → a nested helper indexes
@@ -333,27 +331,18 @@ name), so rustlang.rs has no `field_declaration` arm.
 - traitName = full text of the `trait` node (getNodeText / `self.text`), so a
   scoped path (`std::fmt::Display`) and generic args (`From<u32>`) keep their
   spelling.
-- typeName = `rustImplTypeName(typeField)` (TS, `languages/rust.ts`) /
-  `impl_type_name` (kernel): `type_identifier` / `identifier` → text;
-  `generic_type` and `reference_type` → recurse into their `type` field;
-  `scoped_type_identifier` / `scoped_identifier` → recurse into `name` (last
-  segment). Any other shape (tuple, `dyn`, pointer, primitive…) → undefined →
-  return.
-- isPath: unwrap `generic_type` / `reference_type` via their `type` field; the
-  type is a path when what remains is `scoped_type_identifier` or
-  `scoped_identifier` (`crate::X`, `self::X`, `super::X`, `m::X`, `&m::X<T>`).
-- Target lookup (TS: `findTypeInScope`; kernel: inline over `nodes_meta`):
-  candidates are nodes already extracted from THIS file (so declared earlier)
-  with that name and kind ∈ {struct, union, enum, class} — **never trait**;
-  cross-file impls emit nothing.
-  - Bare name: search the impl's enclosing scope first (nodeStack head / stack
-    top: the fn or method whose body, or the const/static whose initializer,
-    is being walked; or the file), then each scope outward to the file.
-    Within one scope the earliest-declared candidate wins. A fn-local type is
-    visible only to impls in that fn or nested deeper. An inline `mod` mints
-    no node, so its types belong to the file's scope.
-  - Path: search the file scope only (nodeStack[0] / `stack[..1]`) — a path
-    always names a module item, never a fn-local one.
+- Target lookup (TS: `findTypeInScope`; kernel: `find_type_in_scope`): read
+  the impl's `type` field as a path, unwrapping generic and reference types.
+  Search lexical AST scopes outward from the impl, then descend inline modules;
+  this includes fn-local paths. A declaration wins over a `use` in its scope.
+  Same-file `use` bindings include aliases, groups and `pub use`, with at most
+  eight rewrites. A leading `::` is external. `self::` / `super::` anchor at
+  modules; `crate::` first tries stripping the file's guessed module path, then
+  tries the path as written (a limit for `#[path]` files).
+  - The matched struct, union or enum syntax must already have an extracted
+    node: TS maps startIndex through `rustTypeIds`; the kernel matches node id
+    against `nodes_meta.type_syntax_id`. Owner kinds are {struct, union, enum,
+    class}, never trait; cross-file targets emit nothing.
 - If found: push {fromNodeId: **the TYPE's node id** (a back-reference),
   referenceName: traitName, referenceKind: 'implements', line/col of the
   trait node}. Not found → nothing.
