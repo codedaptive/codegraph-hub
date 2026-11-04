@@ -317,3 +317,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Still binding: R-18, R-21, R-22, R-24, R-25, S-52.
 - Work implied: Orc-Codegraph plans backward from 11:00 and reports at the deadline what is done, what is not, and
   why; Designer-Codegraph refreshes SPEC §8 at the promote.
+- Done: 2026-11-04 08:45 CST, Orc-Codegraph (#2176; design/Orc-Codegraph/ledger/reports/r29-status-2026-11-04.md):
+  S-52's 20 features integrated, gate green after one test-only fixture fix, ours ff092584, 1.6.2-sm.11 packed and
+  tarball-checked, the S-52 PR pushes made (#3199, #3207 to #3210, #3209 with its blast fix). SPEC §8 updated (bae49b10).
+  Not done: the install (Q-18, Bob).
