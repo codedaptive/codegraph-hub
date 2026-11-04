@@ -11158,8 +11158,10 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * one whose head a `use` takes from the standard library (`fs::read` under
  * `use std::fs;`), whatever module of that name the project has. A head a
  * `use` in a function's body binds is the path that `use` names (`use
- * crate::b as a;` makes `a::take()` `crate::b::take()`), and one a `mod`
- * declared in the body names is no module the walk reaches: null.
+ * crate::b as a;` makes `a::take()` `crate::b::take()`), following further
+ * local aliases at each import's scope. If a nearer block `mod` declares the
+ * head, expansion stops and this resolver returns null: the walk does not
+ * reach modules declared in a function body.
  */
 export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): Node | null {
   let segs = ref.referenceName.replace(/^::/, '').split('::');
@@ -11179,25 +11181,38 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
   let head = segs[0]!;
   let bare = head !== 'crate' && head !== 'self' && head !== 'super';
   if (bare) {
-    const bound = rustVisibleUse(head, ref.filePath, offset, context);
+    let bound = rustVisibleUse(head, ref.filePath, offset, context);
     if (bound && bound.std.length > 0 && bound.paths.length === 0) return null;
-    // A head a `use` in the function's body (or a block in it) binds is the
-    // path that `use` names there — `use crate::b as a;` makes `a::Cache::open()`
-    // `crate::b::Cache::open()` — never the module of that name the walk from
-    // the enclosing module would find. A head the `use`s name differently, or a
-    // type a `use` binds (`Cache::open()`, read below), is left to the walk.
-    if (bound && bound.block !== -1 && bound.paths.length > 0 && !variants && !(typed && segs.length === 2)) {
-      const via = bound.paths[0]!.segs;
-      if (bound.paths.some((p) => p.segs.join('::') !== via.join('::'))) return null;
-      segs = [...via, ...segs.slice(1)];
-      head = segs[0]!;
-      bare = head !== 'crate' && head !== 'self' && head !== 'super';
+    // A local `use`'s head can itself be a local alias. Read each at its own
+    // import site: a binding nearer the call does not change what that import
+    // names. Module-level imports and a lone imported type keep their walk.
+    // A `mod` of the head's name declared in a block around the position read,
+    // inside the `use`'s own block, is nearer than the `use`: the walk stops
+    // at that head, which the check below then declines.
+    let at = offset;
+    const modAround = (after: number): boolean => rustUsesOf(ref.filePath, context).blocks.some((b) => b.name === head &&
+      b.scope !== undefined && b.parent === from.block && b.scope.open > after && b.scope.open < at && at < b.scope.close);
+    if (!variants && !(typed && segs.length === 2)) {
+      const seen = new Set<string>();
+      while (bound && bound.block !== -1) {
+        if (modAround(bound.block)) break;
+        if (bound.paths.length === 0) return null;
+        const via = bound.paths[0]!;
+        const key = `${head}\0${via.at}`;
+        if (seen.has(key) || bound.paths.some((p) => p.segs.join('::') !== via.segs.join('::'))) return null;
+        seen.add(key);
+        segs = [...via.segs, ...segs.slice(1)];
+        at = via.at;
+        head = segs[0]!;
+        bare = head !== 'crate' && head !== 'self' && head !== 'super';
+        if (!bare) break;
+        bound = rustVisibleUse(head, ref.filePath, at, context);
+        if (bound && bound.std.length > 0 && bound.paths.length === 0) return null;
+      }
     }
-    // So does a `mod` declared in the body, or in a block in it, around the
-    // reference: `a` is that module there, which the walk does not read
-    // (rustSubmodule takes a module's own `mod`s alone).
-    if (rustUsesOf(ref.filePath, context).blocks.some((b) => b.name === head && b.scope !== undefined && b.parent === from.block &&
-        b.scope.open < offset && offset < b.scope.close)) return null;
+    // A `mod` in the block around the reference (or the expanded import) is
+    // that block's alone; rustSubmodule reads only a module's own `mod`s.
+    if (modAround(-1)) return null;
   }
   let memo = RUST_PATH_TARGETS.get(context);
   if (!memo) RUST_PATH_TARGETS.set(context, (memo = new Map()));
@@ -12005,13 +12020,26 @@ const RUST_PRIMITIVE_TYPES: ReadonlySet<string> = new Set([
 ]);
 const RUST_OWNER_KINDS: ReadonlySet<string> = new Set(['struct', 'enum', 'union']);
 
-/** The offset of the `>` closing the `<` at `open` in a type's text, or -1. */
+/**
+ * The offset of the `>` closing the `<` at `open`, or -1 if it is missing or
+ * a brace block is unbalanced. Balanced `{ … }` blocks are skipped, so const
+ * arguments and array-length blocks contribute no angle brackets. A return
+ * arrow's `>` closes no angle bracket.
+ */
 function rustAngleEnd(text: string, open: number): number {
   let depth = 0;
   for (let i = open; i < text.length; i++) {
     const c = text[i];
     if (c === '<') depth++;
     else if (c === '>' && text[i - 1] !== '-' && --depth === 0) return i;
+    else if (c === '{') {
+      let braces = 1;
+      while (braces > 0 && ++i < text.length) {
+        if (text[i] === '{') braces++;
+        else if (text[i] === '}') braces--;
+      }
+      if (braces !== 0) return -1;
+    }
   }
   return -1;
 }
@@ -13119,14 +13147,20 @@ function rustImplSelfItems(method: Node, context: ResolutionContext): Set<string
  * `Overrides<BuildArgs>` of `impl Overrides<BuildArgs>`, `Cache<T>` of
  * `impl<T> Open<T> for &'a mut Cache<T>` — and whether the header names a
  * reference to it. Read from the `impl` keyword at `block.at` to the body's
- * `{` at `block.from`: its `where` clause and `impl<…>` generics dropped, the
- * text after its first `for` when it has one, a leading `&'a mut` dropped.
- * Null when that type is no path (a tuple, a slice, `dyn Trait`, a fn
- * pointer).
+ * `{` at `block.from`: its `where` clause and balanced `impl<…>` generics
+ * dropped (a callback bound's `->` closes no generic), the text after its
+ * first `for` word when it has one, a leading `&'a mut` dropped. Null if the
+ * generics do not close or the type is no path (a tuple, a slice, `dyn Trait`,
+ * a fn pointer).
  */
 function rustImplSelfType(scopes: RustScopes, block: { at: number; from: number }): { type: { segments: string[]; name: string; args: string }; byRef: boolean } | null {
   const header = scopes.code.slice(block.at, block.from).replace(/\bwhere\b[\s\S]*$/, '');
-  const head = header.replace(/^impl\s*(?:<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)?/, '');
+  let head = header.slice('impl'.length).trimStart();
+  if (head.startsWith('<')) {
+    const end = rustAngleEnd(head, 0);
+    if (end === -1) return null;
+    head = head.slice(end + 1).trimStart();
+  }
   const self = /\bfor\s+([\s\S]+)$/.exec(head)?.[1] ?? head;
   const type = rustPathHead(self.trim().replace(/^&\s*(?:'\w+\s+)?(?:mut\s+)?/, ''));
   return type ? { type, byRef: self.trim().startsWith('&') } : null;
