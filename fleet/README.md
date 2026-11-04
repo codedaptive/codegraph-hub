@@ -17,24 +17,24 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 107 upstream files** (95 modified, 12 deleted) at exchange `5cd5e2f741`, 2026-11-01. An upstream file is one
-that exists in upstream `5cd8a9a8` (the upstream commit the fork last merged, `bb0a5dd3`; before that `4499d007`, merged in `e10a983e`,
+**Total: 111 upstream files** (99 modified, 12 deleted) at exchange `b1e53be51b`, 2026-11-04. An upstream file is one
+that exists in upstream `f72c9d2e` (the upstream commit the fork last merged, `f4f8a03f`; before that `5cd8a9a8`, merged in `bb0a5dd3`; before that `4499d007`, merged in `e10a983e`;
 and before that the fork's base was `60b0d7a9`) and that exchange modifies or deletes. Recount with
-`git diff --name-status 5cd8a9a8 exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
-files the fork added (22: 17 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
-`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`), 11 new tests and 2 new test helpers (`__tests__/fake-release-server.ts`,
-`__tests__/helpers/admit-all.ts`) in `__tests__/`; and the 5 fork-only `Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/SPEC-upstream.md`,
-`docs/lanes/queries.md`). 71 of the 107 are named in the rows below; the other 36 are
+`git diff --name-status f72c9d2e exchange`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
+files the fork added (27: 18 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
+`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`), 12 new tests and 2 new test helpers (`__tests__/fake-release-server.ts`,
+`__tests__/helpers/admit-all.ts`) in `__tests__/`; and the 9 fork-only `Makefile`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/SPEC-upstream.md`,
+`docs/lanes/queries.md`, `docs/lanes/upstream-prs.md` and three reports under `docs/upstream/`). 75 of the 111 are named in the rows below; the other 36 are
 flat upstream test files (26 edited tests, 9 deleted tests, and one edited fixture, `__tests__/fixtures/older-daemon.cjs`) that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
 of those two commits). Three upstream files named below do not exist in the tree: `src/mcp/daemon-manager.ts`,
 `src/mcp/daemon-registry.ts` and `src/mcp/project-lifecycle.ts` were deleted by the fork (`machine-server`, `index-builder`); they
 still exist in upstream, and the earlier rows that name `daemon-registry.ts` (`copied-index-locks`, `lock-takeover-race`, `worktree-lifecycle`)
-edited it before that deletion. The merges of upstream `4499d007` and `5cd8a9a8` changed no row: every upstream file the fork edits still differs from upstream's,
+edited it before that deletion. The merges of upstream `4499d007`, `5cd8a9a8` and `f72c9d2e` changed no row: every upstream file the fork edits still differs from upstream's,
 and every file that differs has a row. Each row from `machine-server` on was checked on its own against its commit
 (`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
 `-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`, `-r e92dc2d2ab`, `-r 69de0412`,
-`-r 3648f06a`, `-r 34f595a1`, `-r 3eb1b655`, `-r 77b11301`, `-r 28e6e43a`, `-r 5cd5e2f7`) and against upstream; the `upstream-refresh` row is
-checked against `git diff 4499d007 exchange`, and the whole list and total against `git diff --name-status 5cd8a9a8 exchange`.
+`-r 3648f06a`, `-r 34f595a1`, `-r 3eb1b655`, `-r 77b11301`, `-r 28e6e43a`, `-r 5cd5e2f7`, `-r cf921c51`, `-r b1e53be5`) and against upstream; the `upstream-refresh` row is
+checked against `git diff 4499d007 exchange`, and the whole list and total against `git diff --name-status f72c9d2e exchange`.
 
 | Feature | Upstream files |
 |---|---|
@@ -82,6 +82,8 @@ checked against `git diff 4499d007 exchange`, and the whole list and total again
 | `pinned-open-at-start` (host) | `src/mcp/daemon.ts`, `src/mcp/engine.ts`, `src/mcp/tools.ts` (all three also named in other rows; the machine server opens every pinned project that has an index at start and after each housekeeping pass). No deletions, no new files in upstream's tree, no flat test edits. Fork-only: `src/extensions/host/worktree-lifecycle/` (new `pinned-open`; edited `housekeeping`, `project-registry`, `teardown`) and its tests in `__tests__/extensions/host/` (new `pinned-open.gate`, `pinned-open.unit`; edited `machine-server.harness`) |
 | `pool-trim-delay` (host) | `src/mcp/query-pool.ts`, `src/mcp/query-worker.ts`, `src/mcp/tools.ts` (all also named in other rows) and the upstream test `__tests__/query-pool.test.ts` (edited; also edited by `machine-server` and `upstream-refresh`); the last query worker is trimmed after five quiet minutes (`idleShrinkMs`), separate from the 60 s retirement of spare workers. No deletions, no new files in upstream's tree. Fork-only tests in `__tests__/extensions/host/`: new `query-pool-idle-trim`, edited `query-pool-idle` |
 | docs (Designer, no feature; `52f0392a`) | `docs/AGENTS.md` (the per-root-daemon text, one line), `AGENTS.md` (the same line; also named in `node-25-support`). Fork-only in the same commit: `docs/SPEC.md` |
+| `rust-path-calls-review-fixes` (resolution) | `src/resolution/rust-scopes.ts` (impl headers: a const-generic block argument inside the `<…>` is jumped, and the body's `{` is the first one outside the header's angle brackets) and `src/resolution/name-matcher.ts` (also named in other rows; a local `use` head is expanded at its own import's scope, repeatedly and loop-guarded, and a nearer block `mod` stops the expansion). No deletions, no new files in upstream's tree. Its test, `__tests__/rust-path-call-edge-cases.test.ts` (edited), is the fork's own, so not counted |
+| `hub-upgrade` (host) | modified (3): `src/upgrade/index.ts` (`codegraph upgrade` resolves the latest release from `codedaptive/codegraph-hub`; an npm install, global or local, gets that release's packed build with `npm install --ignore-scripts <release asset URL>`; a bundle, npx, pnpm, yarn or bun install is shown a manual hub install command instead of upstream's installer; `-sm.N` prerelease parts compare by number; upstream's bundle helpers `upgradeUnixBundle` and `upgradeWindowsBundle` stay, now exported, and `runUpgrade` no longer calls them), `src/upgrade/update-check.ts` (the update check reads the same hub feed and caches in `update-check-hub.json`, apart from upstream's `update-check.json`), `__tests__/upgrade.test.ts` (edited: the npm tests expect the hub asset with `--ignore-scripts`, and the six bundle tests call the exported bundle helpers in their own describe, `upstream bundle installer helpers`; named here because neither `machine-server` nor `index-builder` touches it, so it is not one of the 36 flat tests). No deletions, no new files in upstream's tree. Fork-only: the new `src/extensions/host/hub-release/index.ts` and its tests `__tests__/extensions/host/hub-notice.unit.test.ts`, `hub-release.unit.test.ts`, `hub-upgrade.unit.test.ts` |
 
 
 Fleet adds a row for each feature that edits an upstream file, from that feature's DONE list, in a fleet push of
