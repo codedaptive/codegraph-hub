@@ -405,3 +405,18 @@ General as a RULING line. Decisions already settled by a document live in `team/
   change (`src/upgrade/` is upstream-owned: hook-in edits only, with a fork README row), red tests first for each of
   (2)-(4), the gate, sm.12 promoted and packed, then the hub's first release from it. Installing sm.12 on this
   machine waits for Bob (R-18).
+
+## R-33. Install sm.12 when it is ready, with the reconnect script
+- Date: 2026-11-04 12:20 CST / Bob, direct ("install sm.12 and use the script to do the mcp reconnects").
+- Question: R-32 left installing sm.12 (the build with the hub-release upgrade fix) to Bob (R-18). sm.12 is not
+  built yet (releases/ ends at sm.11; this machine runs 1.6.2-sm.11).
+- Ruling: install sm.12 on this machine as soon as its whole-suite gate is green and it is packed and
+  tarball-checked; no further go-ahead. By the runbook on ours (fleet/rollout/global-install.md, 4f7bfc21): install
+  and check the version, tools and telemetry off; stop the sm.11 server; run codeteam's `codeteam-type-all
+  "/mcp reconnect codegraph"` for every running session; every team answers. A failed check rolls back to sm.11
+  by the same steps.
+- Reason: Bob's word; the reconnect makes an install cheap for running sessions.
+- Not chosen: waiting for the hub's first release before installing here.
+- Still binding: R-32 (sm.12 carries the upgrade fix and is the hub's first release), R-21, R-22.
+- Work implied: Orc-Codegraph installs sm.12 when it is packed and reports the version, the checks and any session
+  the script could not reach.
