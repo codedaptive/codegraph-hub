@@ -463,3 +463,14 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: S-56 while the hub has no outside users.
 - Work implied: upstream-prs publishes sm.12's hub main as the single-parent commit (its c4ac845c has the same tree
   as f65d2441), backs up 900d223b first, and checks behind_by 0 and ahead_by 1.
+
+## R-36. Bob runs the hub's monthly updates himself (answers Q-20); the team halts
+- Date: 2026-11-04 ~17:00 CST / Bob, direct ("I'll handle the updates"; "we can halt your team and I'll run you
+  next week to practice pulling PR's").
+- Question: Q-20: the hub's monthly update falls due 2026-12-04 (S-54) while the team stands down (R-34); run it,
+  or skip it?
+- Ruling: Bob handles the hub's updates; the team does not schedule or run them. The team halts with sm.12
+  installed; Bob runs it next week to practise pulling PRs.
+- Reason: Bob's word.
+- Not chosen: the team running the 12-04 update; skipping it.
+- Supersedes: S-54's "who does it" (Orc-Codegraph and upstream-prs) while Bob handles the updates.
