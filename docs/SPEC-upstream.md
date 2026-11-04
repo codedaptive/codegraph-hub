@@ -1,7 +1,7 @@
 # SPEC: offering our work upstream
 
-Draft 5, 2026-10-31, Designer-Codegraph. Governing decision: Bob, 2026-10-31 (R-17). Upstream is
-`colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
+Draft 6, 2026-11-04, Designer-Codegraph. Governing decisions: Bob, 2026-10-31 (R-17) and 2026-11-04 (R-31, the
+hub, §7). Upstream is `colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
 
 ## 1. What Bob decided
 
@@ -63,8 +63,9 @@ and `declaredSupertypes` reading a nested type's inheritance clause.
 ## 4. The public fork and its issue
 
 **The fork** is upstream plus every feature on `ours`, under a public GitHub fork of `colbymchenry/codegraph` in the `codedaptive` organisation. `codedaptive/codegraph` is
-already taken by our private repository (not a GitHub fork), so the public fork takes another name,
-`codedaptive/codegraph-sharedserver`, public (Bob, R-17). It
+already taken by our private repository (not a GitHub fork), so the public fork takes another name:
+`codedaptive/codegraph-sharedserver` (R-17), renamed `codedaptive/codegraph-hub`, the official public fork (R-31,
+§7). It
 carries the product only: no `fleet/`, no fork-only root `Makefile` (codeteam's targets), no `docs/RULINGS.md`, team
 reports or graft golden files. (R-17) Its README opens with a section on what the fork adds and how to
 use it.
@@ -97,4 +98,20 @@ Linux and Windows, if they want it.
 1. Settled by R-17: the fork leaves out the team's files
    (`fleet/`, the codeteam Makefile, rulings, reports, graft golden files, `docs/SPEC*.md`).
 2. Settled by R-17: grep, blast, orphans and suspects are PRs (9-12).
-3. Settled by R-17: the public fork is `codedaptive/codegraph-sharedserver`.
+3. Settled by R-17: the public fork is `codedaptive/codegraph-sharedserver`; renamed `codedaptive/codegraph-hub`
+   by R-31.
+
+## 7. The hub (R-31)
+
+1. **Name.** `codedaptive/codegraph-hub` is the official public fork: `codegraph-sharedserver` renamed (one fork per
+   organisation; GitHub redirects the old name, so #3211's link and existing clones keep working).
+2. **Stance.** The README opens by saying the hub tracks `colbymchenry/codegraph` and keeps its own feature set (the
+   §4 table), is updated monthly, and takes issues. Issues are turned on.
+3. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
+   then the hub's `main` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
+   bob-codedaptive identity), and the update tagged. The first update is made now, from sm.11.
+4. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
+   cycle, through the owning lane and the same gate.
+5. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further
+   pushes, restacks or bot replies. If the maintainer himself comments on one, upstream-prs answers him.
+6. **Issue #3211.** Its body is edited to name the hub; no new comment (R-25).

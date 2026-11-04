@@ -317,3 +317,59 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Still binding: R-18, R-21, R-22, R-24, R-25, S-52.
 - Work implied: Orc-Codegraph plans backward from 11:00 and reports at the deadline what is done, what is not, and
   why; Designer-Codegraph refreshes SPEC §8 at the promote.
+- Done: 2026-11-04 08:45 CST, Orc-Codegraph (#2176; design/Orc-Codegraph/ledger/reports/r29-status-2026-11-04.md):
+  S-52's 20 features integrated, gate green after one test-only fixture fix, ours ff092584, 1.6.2-sm.11 packed and
+  tarball-checked, the S-52 PR pushes made (#3199, #3207 to #3210, #3209 with its blast fix). SPEC §8 updated (bae49b10).
+  Not done: the install (Q-18, Bob).
+
+## R-30. Install sm.11; running sessions reconnect instead of restarting (answers Q-18)
+- Date: 2026-11-04 ~10:50 CST / Bob, direct: after the upgrade is installed and the old server is stopped, run
+  codeteam's `codeteam-type-all "/mcp reconnect codegraph"`. Given after Designer explained that a running
+  session's `serve --mcp` helper keeps the version it started with, and serves in-process, read-only, when the
+  server is another version.
+- Question: Q-18, install 1.6.2-sm.11 (ours ff092584) in place of sm.8; and how do sessions already running move to
+  the new server without a restart?
+- Ruling: yes, by this procedure: (1) install the sm.11 tarball and confirm the version, the tools and telemetry
+  off (R-6); (2) stop the old sm.8 server explicitly (a newer `-sm.N` launcher never replaces an older one on its
+  own: `isOlderRelease` compares plain MAJOR.MINOR.PATCH only); (3) run Bob's `codeteam-type-all "/mcp reconnect
+  codegraph"` (codeteam's bin), which types the reconnect into every running session of every team that is up and
+  not halted, once its turn has ended and its box is empty, retries busy ones every 20 s for up to 20 minutes
+  (`--wait <min>`) and lists any it could not reach (`--teams`, `--dry-run`). Subagents share their session's
+  connection. (4) Every team answers a call. A failed check rolls back to sm.8 by the same steps. Bob checked the
+  reconnect on a scratch session ("Successfully reconnected to codegraph") and told Orc-Codeteam to add the step to
+  codeteam's install procedure.
+- Reason: the reconnect removes the one cost of the install (running sessions stuck in-process on sm.8).
+- Not chosen: restarting sessions; leaving them in-process until they end; a product change making an old helper
+  re-launch itself from a newer install.
+- Work implied: Orc-Codegraph installs sm.11 by the steps above and reports the version, the checks and any
+  session the command could not reach; fleet adds steps (2) and (3) to fleet/rollout/global-install.md and
+  rollback.md.
+- Confirmed: 2026-11-04 10:57 CST, Bob, direct ("install is approved").
+- Done: 2026-11-04, Orc-Codegraph (#2190; design/Orc-Codegraph/ledger/reports/release-gate-sm11.md, Install):
+  1.6.2-sm.11 installed, telemetry off, sm.8 server stopped, the server is sm.11; all 8 teams answer with 10 tools;
+  the reconnect reached 38 sessions (aimodel/Coord-research busy, retried); promoted features approved. Fleet's
+  rollout-doc steps went back to fleet after Kong's review.
+
+## R-31. The official public fork: codedaptive/codegraph-hub, tracking upstream monthly; the PR effort finishes
+- Date: 2026-11-04 ~11:10 CST / Bob, direct: "that project has its own agenda. I want to finish the PR effort but
+  let's make an Official public fork on codedaptive/codegraph-hub; we'll declare ourselves as tracking the main
+  project but maintaining our unique feature set, with a monthly update, unless someone reports an issue they need
+  fixed more timely."
+- Question: upstream has not answered any of the 14 PRs or 3 issues since 2026-11-01; what is our public stance?
+- Ruling: (1) The official public fork is `codedaptive/codegraph-hub`: the existing public fork
+  `codedaptive/codegraph-sharedserver` (R-17) is renamed to it, since an organisation holds one fork of a repository
+  and GitHub redirects the old name. Its README opens by saying it tracks `colbymchenry/codegraph` and keeps its own
+  feature set, is updated monthly, and takes issues (Issues turned on); a reported issue that needs a sooner fix
+  gets one out of cycle. (2) Monthly update: current upstream merged into ours, the whole-suite gate, then the hub's
+  main brought to that `ours` with SPEC-upstream §4's exclusions and R-19's rules, and the update tagged. The first
+  update is now, from sm.11. (3) The PR effort finishes: S-53's restack makes the five conflicting PRs mergeable;
+  after that the 14 PRs stay open as offered with no further pushes, restacks or bot replies; if the maintainer
+  himself comments, upstream-prs answers him. (4) Upstream issue #3211's body is edited to name the hub; no new
+  comment (R-25).
+- Reason: upstream sets its own course; the hub gives users a maintained home for the features on a stated cadence.
+- Not chosen: a second, separate repository (GitHub allows one fork per organisation; the rename keeps the fork
+  link and the old links); npm publication of the hub (not asked); continuing to chase the PRs.
+- Supersedes: R-17's fork name and its open-ended PR follow-up (R-17's PRs and issues stand as offered).
+- Expanded in docs/SPEC-upstream.md §4 and §7. Work implied: Orc-Codegraph routes the rename, README, Issues,
+  #3211 body edit and the first update (upstream-prs, which keeps the fork checkout, is the natural owner) after
+  S-53, and fixes the monthly date.
