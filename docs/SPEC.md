@@ -120,6 +120,7 @@ Ours (on `ours` since sm.2–sm.4; enabled by name in `CODEGRAPH_MCP_TOOLS`):
 | `suspects` | Name-only or low-confidence call edges, ranked; `grep`/`blast` mark them, `--strict` drops them. |
 | `checkpoint`, `fresh` | What an answer describes (HEAD, uncommitted-change hash, files pending); `fresh` waits until the index matches the tree. |
 | `project list/pin/unpin/remove` | The worktree registry; pin as in §3. |
+| `upgrade`, update notice | Install and announce the hub's releases (`codedaptive/codegraph-hub`), never upstream's package; `-sm.N` versions compared by number (R-32). |
 
 ## 7. Acceptance
 
@@ -156,7 +157,8 @@ ff092584, 2026-11-04, R-30); running sessions moved to it with `/mcp reconnect c
 
 | Left | State |
 |---|---|
-| The official public fork `codedaptive/codegraph-hub`: rename, README stance, Issues, first monthly update (R-31, SPEC-upstream §7) | after S-53's restack; upstream-prs |
+| The official public fork `codedaptive/codegraph-hub`: rename, README, Issues (R-31, SPEC-upstream §7) | after S-53's restack; upstream-prs |
+| `upgrade` and the update notice on the hub's releases (R-32); then sm.12, the hub's first release | to route |
 | Install and rollback docs: the stop-the-old-server and reconnect steps (R-30) | fleet (back after Kong's review) |
 | Findings after S-52 closed: `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); resolution's own list | next release (S-52) |
 
