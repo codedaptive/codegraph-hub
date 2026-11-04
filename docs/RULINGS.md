@@ -347,8 +347,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Confirmed: 2026-11-04 10:57 CST, Bob, direct ("install is approved").
 - Done: 2026-11-04, Orc-Codegraph (#2190; design/Orc-Codegraph/ledger/reports/release-gate-sm11.md, Install):
   1.6.2-sm.11 installed, telemetry off, sm.8 server stopped, the server is sm.11; all 8 teams answer with 10 tools;
-  the reconnect reached 38 sessions (aimodel/Coord-research busy, retried); promoted features approved. Fleet's
-  rollout-doc steps went back to fleet after Kong's review.
+  the reconnect reached 38 sessions, plus aimodel's other four on retry; promoted features approved. Not reached:
+  aimodel/Coord-research, busy through the 60-minute retry (ended 12:18, #2237), so it answers in-process on sm.8
+  until it idles and is reconnected or restarts. Fleet's runbook steps landed on ours 4f7bfc21 after Kong's review.
 
 ## R-31. The official public fork: codedaptive/codegraph-hub, tracking upstream monthly; the PR effort finishes
 - Date: 2026-11-04 ~11:10 CST / Bob, direct: "that project has its own agenda. I want to finish the PR effort but
