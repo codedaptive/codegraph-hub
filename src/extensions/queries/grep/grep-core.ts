@@ -10,22 +10,48 @@
  * stay in the in-degree and are also reported as `questionableInDegree`; under
  * `strict` they are left out of the in-degree, and so of the ranking.
  *
+ * The work is two stages on one read-only connection, opened and closed once per
+ * call. The search stage (`searchIndexText`) ends at the kept hits: index check,
+ * regex check, file list, `in` scope, focus, path ranking, rg, hit cap. Each
+ * kept hit carries the 0-based UTF-16 column of its first match when rg gave
+ * one. The grouping stage (the rest of `grepIndex`) first checks each distinct
+ * hit path once against its `files` row (`checkPaths`), then attributes each
+ * kept hit to its symbol and orders the groups. Hits in a file that changed
+ * since it was indexed are not attributed, because its indexed symbol spans no
+ * longer describe it: they form one group per file, flagged `stale`, with no
+ * symbol. `searchIndexText` stops before that check, so its hits are raw: they
+ * carry current line numbers and are never marked stale.
+ *
  * Reproduces graft 0.16 `graft grep` (dist/search/grep.js) on codegraph's
  * SQLite index. Where graft loads the whole graph and scans each file's nodes
  * in memory, this runs one indexed SQL lookup per KEPT hit (at most
- * `maxHits`), so the per-hit attribution never loads a file's nodes, and
- * holds at most 2 * maxHits hits while rg runs. Listing the files, the
- * per-path containment check and the rg search still grow with the number of
- * indexed files under the prefix.
+ * `maxHits`) outside a changed file, so the per-hit attribution never loads a
+ * file's nodes. The grouping stage adds one `files` row read and, where the row
+ * exists, one open (with a stat of the descriptor) per distinct kept path; a
+ * path whose size or mtime differs from its row is also read from that
+ * descriptor, within the size limit plus one byte, and hashed (a file over the
+ * size limit is hashed by its size stamp, unread). It adds one in-degree lookup
+ * per group with a symbol and one size lookup per distinct group path. At most
+ * 2 * maxHits hits are held while rg runs. Listing the files, the per-path
+ * containment check and the rg search still grow with the number of indexed
+ * files under the prefix.
+ *
+ * Departures from graft 0.16: a hit is attributed with its match column as
+ * well as its line, so two symbols on one line are told apart (graft goes by
+ * line alone; LINE_ONLY_LANGUAGES files still go by line); and a hit in a file
+ * changed since indexing is reported unattributed and flagged stale, where
+ * graft attributes it by the old spans.
  *
  * No CLI or MCP concerns here: grep-format.ts renders the result,
  * grep-command.ts and grep-mcp.ts wire it to the two surfaces.
  */
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseConnection, getDatabasePath } from '../../../db';
 import type { SqliteDatabase } from '../../../db/sqlite-adapter';
+import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp } from '../../../file-limits';
 import { inFocus } from '../../host/server/session-scope';
 import { candidateEdgeSql } from '../../resolution/suspects';
 
@@ -53,18 +79,42 @@ const IN_DEGREE_EDGE_KINDS = ['calls', 'references', 'imports', 'implements', 'e
 const sqlList = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(', ');
 
 /**
- * The innermost enclosing symbol of one line: the containing span with the
- * greatest start line; ties go to the tighter span (smaller end), then id so
- * the answer is deterministic. Served by idx_nodes_file_line (file_path,
- * start_line); the two trailing ORDER BY terms sort only the few rows that
- * contain the line.
+ * The innermost enclosing symbol of one hit: a span that contains its line,
+ * served by idx_nodes_file_line (file_path, start_line); the ORDER BY sorts
+ * only the few rows that contain the line. Columns never filter: some
+ * extractors extend a node's end line to a body row while keeping the node's
+ * own end column (the tree-sitter extractor for a body that is a sibling of the
+ * signature, the CFML extractor for a class closed by a later tag), and some
+ * write an end column of 0 for a multi-line node, so a column test could
+ * disown a hit that is inside the lines. The column terms only order. First
+ * come the spans whose columns also contain the match (`(start_line < L OR
+ * start_column <= C) AND (end_line > L OR end_column > C OR (end_column = 0 AND
+ * end_line > start_line))`, the end column exclusive). An end column of 0 on a
+ * multi-line node is an unknown end, not a bound: liquid's schema block is
+ * written that way, so on its end line it counts as containing the match.
+ * MyBatis xml is line-only and never reaches the column terms. Then
+ * come the greatest start line, then the tighter span (smaller end line), then
+ * the greatest start column, the smallest end column, and id so the answer is
+ * deterministic. A span the columns do not contain still owns its lines when
+ * nothing else holds the hit. A hit with no column (the parameter is NULL)
+ * skips the column terms. Parameters: path, L, L, then C, L, C, L, C for the
+ * containment term (the unknown-end test reads the row alone and takes none),
+ * then C, C for the two column tie-breaks.
  */
 const ENCLOSING_SQL = `
   SELECT id, kind, qualified_name, file_path, start_line, end_line
   FROM nodes
   WHERE file_path = ? AND start_line <= ? AND end_line >= ?
     AND kind NOT IN (${sqlList(NON_ENCLOSING_KINDS)})
-  ORDER BY start_line DESC, end_line ASC, id ASC
+  ORDER BY
+    CASE WHEN ? IS NULL THEN 0
+         WHEN (start_line < ? OR start_column <= ?) AND (end_line > ? OR end_column > ? OR (end_column = 0 AND end_line > start_line)) THEN 0
+         ELSE 1 END ASC,
+    start_line DESC,
+    end_line ASC,
+    CASE WHEN ? IS NULL THEN 0 ELSE start_column END DESC,
+    CASE WHEN ? IS NULL THEN 0 ELSE end_column END ASC,
+    id ASC
   LIMIT 1`;
 /**
  * Served by idx_edges_target_kind (target, kind). `n` counts every in-degree
@@ -75,6 +125,34 @@ const IN_DEGREE_SQL =
   `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ${candidateEdgeSql('edges')} THEN 1 ELSE 0 END), 0) AS q ` +
   `FROM edges WHERE target = ? AND kind IN (${sqlList(IN_DEGREE_EDGE_KINDS)})`;
 const FILE_SIZE_SQL = 'SELECT size FROM files WHERE path = ?';
+const FILE_STAMP_SQL = 'SELECT size, modified_at, content_hash, language FROM files WHERE path = ?';
+/**
+ * Languages whose symbol columns do not compare with a hit's column, so a hit
+ * in such a file is attributed by line alone. The gate is by language:
+ * - vue, svelte, astro, cfml: the file embeds script blocks that are parsed as
+ *   their own source and folded back by line only. On a block's first line the
+ *   symbol columns count from the end of the opening tag, while a hit's column
+ *   counts from the start of the file's line.
+ * - razor: its `@code` and `<script>` blocks fold back their references only,
+ *   by line, and the file's one symbol is the component, which spans the file
+ *   from column 0. No column can change which symbol a razor hit gets, so this
+ *   entry changes no answer.
+ * - cobol: the COBOL extractor shifts every line of a free-format program right
+ *   by 7 columns before parsing (its preParse, src/extraction/languages/cobol.ts),
+ *   so its columns drift by 7 from the text on disk that rg searched. Only a
+ *   free-format file drifts, but the check sees the language alone, so a
+ *   fixed-format program goes by line too.
+ * - dart: a method's tree-sitter node is its signature only, and the body is a
+ *   next sibling (src/extraction/languages/dart.ts). createNode
+ *   (src/extraction/tree-sitter.ts) extends the node's end line to the body's
+ *   last row but keeps the signature's end column. On a one-line arrow method
+ *   the body lies past that end column on the same line. Either way the end
+ *   column does not bound the method, and nothing in the row says so.
+ * - xml: MyBatis statements have start and end column 0; their real offset is
+ *   not in the row. A hit on a line shared by two statements goes to the later
+ *   one by line, a known limit.
+ */
+const LINE_ONLY_LANGUAGES: ReadonlySet<string> = new Set(['vue', 'svelte', 'astro', 'razor', 'cfml', 'cobol', 'dart', 'xml']);
 const ALL_FILES_SQL = 'SELECT path FROM files';
 
 export interface GrepOptions {
@@ -85,8 +163,8 @@ export interface GrepOptions {
   ignoreCase?: boolean;
   /**
    * Hits kept after sorting; the rest are counted in `truncated.hits`. Default
-   * 300. Must be a non-negative integer (grepIndex throws a TypeError
-   * otherwise); 0 keeps no hits and counts every hit as truncated.
+   * 300. Must be a non-negative integer (grepIndex and searchIndexText throw a
+   * TypeError otherwise); 0 keeps no hits and counts every hit as truncated.
    */
   maxHits?: number;
   /** ripgrep binary. Default: `$CODEGRAPH_RG`, else `rg` on PATH. */
@@ -138,6 +216,13 @@ export interface GrepGroup {
   hits: GrepHit[];
   /** How many of inDegree are questionable calls. Set only when > 0, and never under `strict`. */
   questionableInDegree?: number;
+  /**
+   * Set (true) only on a group of hits in a file that changed on disk since it
+   * was indexed, or that could not be checked against its `files` row (see
+   * checkPaths). The hit lines are current, but the indexed symbol spans may not
+   * be, so the hits are not attributed: `symbol` is null and `inDegree` 0.
+   */
+  stale?: true;
 }
 export interface GrepResult {
   pattern: string;
@@ -231,13 +316,36 @@ export function batchPaths(paths: string[], maxBytes: number = MAX_ARGV_BYTES): 
 }
 
 /** One match as rg reported it, before ranking. */
-export interface RawHit { path: string; line: number; text: string }
+export interface RawHit {
+  path: string;
+  line: number;
+  text: string;
+  /**
+   * 0-based UTF-16 code-unit offset in the line of the first match, when known.
+   * It is measured on the line as rg read it, before the hit text is trimmed
+   * and cut, so it does not index into `text`.
+   */
+  column?: number;
+}
 
 /** rg's JSON carries a path or line as `{text}` or, when not valid UTF-8, `{bytes}` (base64). */
 function rgData(d: { text?: string; bytes?: string } | undefined): string {
   if (!d) return '';
   if (typeof d.text === 'string') return d.text;
   return typeof d.bytes === 'string' ? Buffer.from(d.bytes, 'base64').toString('utf8') : '';
+}
+
+/**
+ * The UTF-16 code-unit column of a match from rg's `lines` data and the first
+ * submatch's byte offset in it, or undefined when either is missing. rg's
+ * offsets are bytes of the untrimmed line, so they are converted against that
+ * line's bytes, from `{text}` or base64 `{bytes}`.
+ */
+function matchColumn(lines: { text?: string; bytes?: string } | undefined, submatches: unknown): number | undefined {
+  const first = Array.isArray(submatches) ? (submatches[0] as { start?: unknown } | undefined) : undefined;
+  if (!lines || !first || typeof first.start !== 'number') return undefined;
+  const raw = typeof lines.text === 'string' ? Buffer.from(lines.text, 'utf8') : typeof lines.bytes === 'string' ? Buffer.from(lines.bytes, 'base64') : null;
+  return raw ? raw.subarray(0, first.start).toString('utf8').length : undefined;
 }
 
 /** graft's hit text: newline dropped, trimmed, cut to 160. */
@@ -298,7 +406,10 @@ function runRgBatch(
       if (msg.type === 'match') {
         const path = rgData(msg.data.path);
         if (!batch.has(path)) return;
-        onHit({ path, line: msg.data.line_number as number, text: hitText(rgData(msg.data.lines)) });
+        const hit: RawHit = { path, line: msg.data.line_number as number, text: hitText(rgData(msg.data.lines)) };
+        const column = matchColumn(msg.data.lines, msg.data.submatches);
+        if (column !== undefined) hit.column = column;
+        onHit(hit);
       } else if (msg.type === 'summary') {
         searches = msg.data.stats.searches as number;
       }
@@ -348,11 +459,36 @@ function runRgBatch(
 }
 
 /**
- * Search the indexed files under `opts.in` (and inside `opts.focus`, when
- * given) for `pattern` and group the hits by innermost enclosing symbol. The
- * database is opened read-only and closed on every path.
+ * What the search stage returns: the kept hits as ripgrep reported them, before
+ * any symbol is attributed to them. `hits` are the first `maxHits` in (path
+ * rank, line) order; `truncated.hits` counts the ones the cap dropped and
+ * `truncated.files` the indexed files in scope that could not be read.
  */
-export async function grepIndex(projectRoot: string, pattern: string, opts: GrepOptions = {}): Promise<GrepResult> {
+export interface RawSearchResult {
+  pattern: string;
+  filesSearched: number;
+  hits: RawHit[];
+  truncated: { files: number; hits: number };
+}
+
+/** The search stage's result, and the path ranks the grouping stage of grepIndex orders its groups by. */
+interface SearchStage {
+  raw: RawSearchResult;
+  ranks: Map<string, number>;
+}
+
+/**
+ * The checks every search starts with, then the one read-only connection the
+ * stage runs on: maxHits (TypeError), the index (GrepIndexError not-indexed),
+ * the pattern (GrepPatternError). The connection is opened after the checks and
+ * closed on every path, so a call that gets past them closes exactly once.
+ */
+async function withIndexDb<T>(
+  projectRoot: string,
+  pattern: string,
+  opts: GrepOptions,
+  run: (db: SqliteDatabase, maxHits: number) => Promise<T>,
+): Promise<T> {
   const maxHits = opts.maxHits ?? DEFAULT_MAX_HITS;
   assertMaxHits(maxHits);
   const dbPath = getDatabasePath(projectRoot);
@@ -368,52 +504,114 @@ export async function grepIndex(projectRoot: string, pattern: string, opts: Grep
 
   const conn = DatabaseConnection.open(dbPath, { readOnly: true });
   try {
-    const db = conn.getDb();
-    const prefix = opts.in ? normalizeGrepPrefix(opts.in) : '';
-    const scoped: string[] = [];
-    for (const row of db.prepare(ALL_FILES_SQL).iterate() as IterableIterator<{ path: string }>) {
-      if (pathUnderPrefix(row.path, prefix)) scoped.push(row.path);
-    }
-    if (prefix !== '' && scoped.length === 0) {
-      throw new GrepScopeError(`nothing indexed under "${prefix}/" (or any path prefix)`);
-    }
-    // After the scope check: an `in` that holds indexed files, all outside the focus, leaves nothing to search.
-    const focus = opts.focus ?? null;
-    const files = focus === null ? scoped : scoped.filter((f) => inFocus(f, focus));
+    return await run(conn.getDb(), maxHits);
+  } finally {
+    conn.close();
+  }
+}
 
-    const ranks = rankPaths(files);
-    const capped = new CappedHits(ranks, maxHits);
-    const rg = opts.rgPath ?? process.env.CODEGRAPH_RG ?? 'rg';
-    const args = ['--json', '-a', '--no-config', '--max-depth', '0'];
-    if (opts.ignoreCase) args.push('-i');
-    if (opts.fixed) args.push('-F');
-    args.push('-e', pattern);
-    const searchable = searchablePaths(projectRoot, files);
-    const batches = searchable.paths.length > 0 ? batchPaths(searchable.paths, opts.batchBytes) : [];
-    const results = await Promise.all(batches.map((b) => runRgBatch(rg, projectRoot, args, b, (h) => capped.add(h))));
-    const unreadable = searchable.skipped + results.reduce((n, r) => n + r.unreadable, 0);
+/**
+ * The search stage on an open database: the file list, the `in` scope check
+ * (GrepScopeError), the focus filter, path ranking, the searchable paths, the
+ * rg batches and the hit cap. It ends at the kept hits; nothing here looks up a
+ * symbol, an in-degree or a size.
+ */
+async function searchStage(
+  db: SqliteDatabase,
+  projectRoot: string,
+  pattern: string,
+  opts: GrepOptions,
+  maxHits: number,
+): Promise<SearchStage> {
+  const prefix = opts.in ? normalizeGrepPrefix(opts.in) : '';
+  const scoped: string[] = [];
+  for (const row of db.prepare(ALL_FILES_SQL).iterate() as IterableIterator<{ path: string }>) {
+    if (pathUnderPrefix(row.path, prefix)) scoped.push(row.path);
+  }
+  if (prefix !== '' && scoped.length === 0) {
+    throw new GrepScopeError(`nothing indexed under "${prefix}/" (or any path prefix)`);
+  }
+  // After the scope check: an `in` that holds indexed files, all outside the focus, leaves nothing to search.
+  const focus = opts.focus ?? null;
+  const files = focus === null ? scoped : scoped.filter((f) => inFocus(f, focus));
 
-    const kept = capped.kept();
+  const ranks = rankPaths(files);
+  const capped = new CappedHits(ranks, maxHits);
+  const rg = opts.rgPath ?? process.env.CODEGRAPH_RG ?? 'rg';
+  const args = ['--json', '-a', '--no-config', '--max-depth', '0'];
+  if (opts.ignoreCase) args.push('-i');
+  if (opts.fixed) args.push('-F');
+  args.push('-e', pattern);
+  const searchable = searchablePaths(projectRoot, files);
+  const batches = searchable.paths.length > 0 ? batchPaths(searchable.paths, opts.batchBytes) : [];
+  const results = await Promise.all(batches.map((b) => runRgBatch(rg, projectRoot, args, b, (h) => capped.add(h))));
+  const unreadable = searchable.skipped + results.reduce((n, r) => n + r.unreadable, 0);
+
+  const kept = capped.kept();
+  return {
+    raw: {
+      pattern,
+      filesSearched: files.length,
+      hits: kept,
+      truncated: { files: unreadable, hits: capped.total - kept.length },
+    },
+    ranks,
+  };
+}
+
+/**
+ * The search stage alone, for a caller that needs hit text and nothing else.
+ * Same index check, pattern check, `in`
+ * scope, focus filter, path ranking, rg search and `maxHits` cap as grepIndex,
+ * and the same errors, but none of the grouping lookups: no enclosing-symbol
+ * lookup per kept hit, and no in-degree or saved-bytes lookup per group. It
+ * does not check a file against its `files` row either: a hit in a file changed
+ * since indexing comes back as rg found it, with its current line number and no
+ * stale marking. Each hit carries the column of its first match when rg gave one.
+ * Paths are still ranked: the cap keeps the first `maxHits`
+ * hits by (path rank, line), and the hits come back in that order. The database
+ * is opened read-only, once, and closed on every path.
+ */
+export async function searchIndexText(projectRoot: string, pattern: string, opts: GrepOptions = {}): Promise<RawSearchResult> {
+  return withIndexDb(
+    projectRoot,
+    pattern,
+    opts,
+    async (db, maxHits) => (await searchStage(db, projectRoot, pattern, opts, maxHits)).raw,
+  );
+}
+
+/**
+ * Search the indexed files under `opts.in` (and inside `opts.focus`, when
+ * given) for `pattern` and group the hits by innermost enclosing symbol: the
+ * search stage (searchIndexText's), then the per-path check against the `files`
+ * rows (`checkPaths`), the grouping (its enclosing-symbol and in-degree lookups),
+ * the ordering, the id assignment and the saved-bytes lookup, all on the same
+ * connection. Hits in a file changed since it was indexed form one symbol-less
+ * group per file, flagged `stale`. The database is opened read-only, once, and
+ * closed on every path.
+ */
+export async function grepIndex(projectRoot: string, pattern: string, opts: GrepOptions = {}): Promise<GrepResult> {
+  return withIndexDb(projectRoot, pattern, opts, async (db, maxHits) => {
+    const { raw, ranks } = await searchStage(db, projectRoot, pattern, opts, maxHits);
     const strict = opts.strict === true;
-    const groups = groupHits(db, kept, strict);
+    const groups = groupHits(db, raw.hits, strict, checkPaths(db, projectRoot, raw.hits));
     // Stable (under strict, inDegree is already the strict count): equal in-degree and equal path rank keep creation (sorted-hit) order.
     groups.sort((a, b) => b.inDegree - a.inDegree || (ranks.get(a.path) ?? 0) - (ranks.get(b.path) ?? 0));
     assignIds(groups);
 
     const result: GrepResult = {
       pattern,
-      filesSearched: files.length,
-      totalHits: kept.length,
+      filesSearched: raw.filesSearched,
+      totalHits: raw.hits.length,
       groups,
-      truncated: { files: unreadable, hits: capped.total - kept.length },
+      truncated: raw.truncated,
     };
     const saved = savedFor(db, groups);
     if (saved) result.saved = saved;
     if (strict) result.strict = true;
     return result;
-  } finally {
-    conn.close();
-  }
+  });
 }
 
 /** maxHits must be a non-negative integer: a fraction, NaN or a negative has no meaning as a hit count. */
@@ -600,7 +798,7 @@ export class CappedHits {
   /** The kept hits, in (path rank, line) order. */
   kept(): RawHit[] {
     this.trim();
-    return this.buf.map(({ path, line, text }) => ({ path, line, text }));
+    return this.buf.map(({ path, line, text, column }) => (column === undefined ? { path, line, text } : { path, line, text, column }));
   }
 
   private trim(): void {
@@ -612,19 +810,102 @@ export class CappedHits {
 
 interface NodeRow { id: string; kind: string; qualified_name: string; file_path: string; start_line: number; end_line: number }
 
+interface PathChecks { changed: Set<string>; lineOnly: Set<string> }
+
+const FRESHNESS_READ_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * Whether the file at `abs` still matches its `files` row, on one open
+ * descriptor. The type is checked on the open descriptor (not a path lookup that
+ * a swap could outrun): anything but a regular file is changed. Equal size and
+ * equal floored mtime mean unchanged, with no read. Otherwise a file over the
+ * size limit is hashed by its size stamp, unread; any other is read in a bounded
+ * loop that never holds more than the limit plus one byte, and a read that gets
+ * past the limit means the file grew after the stat, so it is changed. The bytes
+ * are decoded as utf-8, the string the indexer hashes. Throws what a failed open
+ * or read throws.
+ */
+function matchesRow(abs: string, row: { size: number | bigint; modified_at: number | bigint; content_hash: string }): boolean {
+  const fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) return false;
+    if (st.size === Number(row.size) && Math.floor(st.mtimeMs) === Math.floor(Number(row.modified_at))) return true;
+    if (st.size > MAX_SOURCE_FILE_SIZE_BYTES) {
+      return createHash('sha256').update(oversizeStamp(st.size)).digest('hex') === row.content_hash;
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_SOURCE_FILE_SIZE_BYTES) {
+      const chunk = Buffer.allocUnsafe(Math.min(FRESHNESS_READ_CHUNK_BYTES, MAX_SOURCE_FILE_SIZE_BYTES + 1 - total));
+      const n = fs.readSync(fd, chunk, 0, chunk.length, total);
+      if (n === 0) break;
+      chunks.push(chunk.subarray(0, n));
+      total += n;
+    }
+    if (total > MAX_SOURCE_FILE_SIZE_BYTES) return false;
+    return createHash('sha256').update(Buffer.concat(chunks, total).toString('utf-8')).digest('hex') === row.content_hash;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * For the distinct paths among `kept`, one `files` row read each: `changed`
+ * holds those whose file on disk does not match its row, and `lineOnly` those
+ * whose language is in LINE_ONLY_LANGUAGES. The change check opens each path
+ * once (matchesRow): with O_NONBLOCK, so a FIFO swapped in for the file never
+ * parks the open, and the type checked on the open descriptor, so a file that is
+ * not a regular file is changed without being read. Equal size and equal floored
+ * mtime mean unchanged, with no read. A path whose stamp differs is read from the
+ * descriptor, never beyond the index's size limit plus one byte, and the sha256
+ * of its text is compared with the stored content hash; a file over the limit is
+ * hashed by its size stamp instead, unread, and a file that grew past the limit
+ * during the read is changed. A missing row, or an open, stat or read failure,
+ * counts as changed, because the indexed spans cannot be checked against a file
+ * that cannot be read. Run by grepIndex's grouping stage only; the raw text stage
+ * does not call it.
+ */
+function checkPaths(db: SqliteDatabase, projectRoot: string, kept: RawHit[]): PathChecks {
+  const stamp = db.prepare(FILE_STAMP_SQL);
+  const root = path.resolve(projectRoot);
+  const changed = new Set<string>();
+  const lineOnly = new Set<string>();
+  for (const rel of new Set(kept.map((h) => h.path))) {
+    const row = stamp.get(rel) as
+      | { size: number | bigint; modified_at: number | bigint; content_hash: string; language: string }
+      | undefined;
+    let same = false;
+    if (row) {
+      if (LINE_ONLY_LANGUAGES.has(row.language)) lineOnly.add(rel);
+      try {
+        same = matchesRow(path.resolve(root, rel), row);
+      } catch { /* unreadable: treated as changed */ }
+    }
+    if (!same) changed.add(rel);
+  }
+  return { changed, lineOnly };
+}
+
 /**
  * Group kept hits by enclosing node (or `file:<path>`), groups created in hit
- * order. Under `strict` a group's inDegree leaves out questionable calls;
- * otherwise it counts them and, when there are any, says how many in
- * questionableInDegree (set after `hits`, so the existing JSON key order holds).
+ * order. Hits in a path of `changed` are not attributed: they form one
+ * symbol-less group per path, keyed `stale:<path>` and flagged `stale`. Hits in
+ * a path of `lineOnly` are attributed by line alone, without their column;
+ * other hits are attributed with the column when the hit has one. Under
+ * `strict` a group's inDegree leaves out questionable calls; otherwise it
+ * counts them and, when there are any, says how many in questionableInDegree
+ * (set after `hits`, so the existing JSON key order holds).
  */
-function groupHits(db: SqliteDatabase, kept: RawHit[], strict: boolean): GrepGroup[] {
+function groupHits(db: SqliteDatabase, kept: RawHit[], strict: boolean, { changed, lineOnly }: PathChecks): GrepGroup[] {
   const enclosing = db.prepare(ENCLOSING_SQL);
   const inDegree = db.prepare(IN_DEGREE_SQL);
   const groups = new Map<string, GrepGroup>();
   for (const h of kept) {
-    const node = enclosing.get(h.path, h.line, h.line) as NodeRow | undefined;
-    const key = node ? node.id : `file:${h.path}`;
+    const isChanged = changed.has(h.path);
+    const c = lineOnly.has(h.path) ? null : (h.column ?? null);
+    const node = isChanged ? undefined : (enclosing.get(h.path, h.line, h.line, c, h.line, c, h.line, c, c, c) as NodeRow | undefined);
+    const key = node ? node.id : `${isChanged ? 'stale' : 'file'}:${h.path}`;
     let group = groups.get(key);
     if (!group) {
       const name = node ? node.qualified_name.split('::').join('.') : '';
@@ -640,6 +921,7 @@ function groupHits(db: SqliteDatabase, kept: RawHit[], strict: boolean): GrepGro
         hits: [],
       };
       if (!strict && questionable > 0) group.questionableInDegree = questionable;
+      if (isChanged) group.stale = true;
       groups.set(key, group);
     }
     group.hits.push({ line: h.line, text: h.text });

@@ -1,7 +1,7 @@
 /**
  * Text rendering for grep-by-symbol, as graft 0.16's grep-cli.js
  * (formatGrepHeader / formatGrepResult / zeroHitNote) minus graft's savings
- * line, with codegraph wording in the zero-hit note.
+ * line, with codegraph wording in the zero-hit note and the stale-group header.
  */
 import type { GrepGroup, GrepResult } from './grep-core';
 
@@ -13,6 +13,7 @@ function inEdges(g: GrepGroup): string {
 
 function groupHeader(g: GrepGroup): string {
   if (g.symbol) return `${g.symbol.name} · ${g.symbol.kind} · ${g.symbol.path}:${g.symbol.span} · ${inEdges(g)}`;
+  if (g.stale) return `${g.path} (changed since indexed, not attributed; run codegraph sync)`;
   return `${g.path} (module level) · ${inEdges(g)}`;
 }
 
@@ -22,7 +23,11 @@ function formatGroup(g: GrepGroup): string {
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** `"<pattern>" — N hits in G symbols across F files (searched T indexed files)`; F counts distinct group paths. */
+/**
+ * `"<pattern>" — N hits in G symbols across F files (searched T indexed files)`.
+ * G is the group count: a module-level or stale group counts as one, though it
+ * names no symbol. F counts distinct group paths.
+ */
 export function formatGrepHeader(r: GrepResult): string {
   const filesHit = new Set(r.groups.map((g) => g.path)).size;
   return `"${r.pattern}" — ${r.totalHits} hits in ${r.groups.length} symbols across ${filesHit} files (searched ${r.filesSearched} indexed files)`;
