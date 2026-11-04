@@ -542,7 +542,7 @@ func digest(_ d: Data) { _ = SHA256.hash(data: d) }
     expectQualified(onlyCall(cg, 'usePred', 'Sources/Store/Predicate.swift:Pred::literal'));
   });
 
-  // The grammar (tree-sitter-swift 0.7.3, S-29) can end a method late and
+  // The grammar (tree-sitter-swift 0.7.3; its `if try await` fix is unreleased on main) can end a method late and
   // index the type's later members under it (`Receiver::restore::receivedFacts`),
   // the same shape as a local function. Such a candidate is declined.
   it.todo("resolves a static call to a member the grammar indexes under an earlier method, once extraction indexes it on its type");
