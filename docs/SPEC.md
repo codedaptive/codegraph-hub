@@ -114,8 +114,8 @@ Ours (on `ours` since sm.2–sm.4; enabled by name in `CODEGRAPH_MCP_TOOLS`):
 
 | Tool / CLI | What it does |
 |---|---|
-| `grep` | Regex over indexed files; each hit assigned to its innermost enclosing symbol; groups ranked by incoming edges. |
-| `blast --base <ref>` | Changed ranges against the merge base; seeds are the innermost symbol per range (the file when none covers it); incoming edges to `--depth` (default 2); grouped by file. |
+| `grep` | Regex over indexed files; each hit assigned to the innermost symbol enclosing its match, or to its file when none does; hits in a file changed since it was indexed are listed unattributed, in a group marked stale; groups ranked by incoming edges. |
+| `blast --base <ref>` | Changed lines from the merge base to the working tree; each changed line seeds its innermost symbols, and a changed code line in no symbol seeds the file; a deletion seeds the symbols spanning both lines beside it, else the file; incoming edges to `--depth` (default 2); grouped by file. (S-51) |
 | `orphans --base <ref>` | Symbols added since `<ref>` with no incoming edges; implementations of protocols/traits and tests excluded. |
 | `suspects` | Name-only or low-confidence call edges, ranked; `grep`/`blast` mark them, `--strict` drops them. |
 | `checkpoint`, `fresh` | What an answer describes (HEAD, uncommitted-change hash, files pending); `fresh` waits until the index matches the tree. |

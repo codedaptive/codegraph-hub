@@ -287,3 +287,16 @@ General as a RULING line. Decisions already settled by a document live in `team/
   rows), run the whole-suite gate once on the merged integration and promote to `ours` if it passes, with no
   install; upstream-prs makes the S-47/S-50 final pushes (#3199 with its children restacked, #3209, #3210). A
   status for Bob in the morning naming what was done, what was not, and why.
+
+## R-28. Spec text that only catches up with settled behaviour is the designer's (answers Q-17)
+- Date: 2026-11-04 / Bob, direct ("Kong's finding is not a decision worthy of my time; you should be able to figure
+  it out").
+- Question: Q-17: two docs/SPEC.md §6 rows lag the carried-back PR review fixes: blast seeds per changed line from
+  the merge base to the working tree (S-51), and grep leaves a stale file's hits unattributed (R2-05, Kong K-F5).
+  Does each such text change need Bob?
+- Ruling: no. Where a SPEC line only describes behaviour already settled (a ruling or a settled.md entry, or a
+  carry-back row Kong has cleared), Designer-Codegraph rewrites the line to match and records it; Bob is not asked.
+  A change to what the product does still goes to Bob.
+- Reason: the decision was made where the behaviour was settled; the text is bookkeeping.
+- Not chosen: holding each text catch-up in team/questions.md for Bob.
+- Done: both §6 rows rewritten in the same commit; Q-17 closed.
