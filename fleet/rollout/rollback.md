@@ -24,8 +24,16 @@ python3 -I -B <fork>/fleet/rollout/pin-standing.py --undo --log <the pin-standin
 npm uninstall -g --ignore-scripts @colbymchenry/codegraph
 npm install -g @colbymchenry/codegraph@1.5.0
 codegraph --version    # 1.5.0
+#    Then move the running sessions to it, as global-install.md steps 4 to 6 do: stop the server they use,
+#    reconnect every session, and have every team answer a codegraph call. An old helper can retry and start
+#    its own entry point after the stop; check the server version rather than assuming the call proves it.
+codegraph daemon --stop    # "Stopped the CodeGraph server (pid P, vX)." or "No CodeGraph server running."
+~/devlop/codeteam/bin/codeteam-type-all --dry-run "/mcp reconnect codegraph"   # who would get it; types nothing
+~/devlop/codeteam/bin/codeteam-type-all "/mcp reconnect codegraph"             # report who it could not reach
+codegraph daemon           # after reconnect and a call: check for the version just installed
 ```
 
-Sessions read their MCP config at launch: restart them after the rollback. `mcp-json.patch` and
+The reconnect in step 1 replaces a restart for the version change. Steps 3 to 5 change MCP config, which a session
+reads at launch: after any of them, restart the sessions. `mcp-json.patch` and
 `codeteam-mcp.patch` were checked on copies of today's files: each applies, and its reverse restores the files
 byte for byte.
