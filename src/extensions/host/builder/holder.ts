@@ -86,8 +86,19 @@ interface Hold {
   /** The `open` job is queued and has not started: a release need not wait for it, since it finds the hold closed and opens nothing. */
   openJobPending: boolean;
   opening: Promise<HoldResult>;
-  /** Settles (never rejects) when the first catch-up job has run. */
+  /**
+   * Settles (never rejects) when the first catch-up job has run; at once when none was queued (another process
+   * owns `writer.pid` or a rebuild holds the root, so nothing was opened). A catch-up that found the lock held
+   * settles at that failure, before the retry it schedules (see queueCatchUp).
+   */
   caughtUp: Promise<void>;
+  /**
+   * A publication of the root's readiness threw, the catch-up's or a retry by {@link HolderSet.caughtUp} (see
+   * `publishReady`) or returned without making the record ready. False until then, and again only once the record
+   * reads ready for this process (a silent no-op does not clear it); a later {@link HolderSet.caughtUp} retries
+   * while it is set.
+   */
+  publishFailed: boolean;
   /** The retry for a root another process owns. */
   ownTimer: NodeJS.Timeout | null;
   closing: Promise<void> | null;
@@ -213,7 +224,7 @@ export class HolderSet {
     const hold: Hold = {
       key, root, cg: null, watcher: null, owner: false, closed: false, openJobPending: false,
       opening: Promise.resolve({ kind: 'held', root }), caughtUp: Promise.resolve(),
-      ownTimer: null, closing: null, lastPushed: '',
+      publishFailed: false, ownTimer: null, closing: null, lastPushed: '',
     };
     this.holds.set(key, hold);
     hold.opening = this.open(hold).then(
@@ -235,12 +246,19 @@ export class HolderSet {
     return hold.opening;
   }
 
-  /** Resolves when the root's first catch-up has run (ok or failed); at once when it is not held. Never rejects. */
+  /**
+   * Resolves when the root's first catch-up has run (ok or failed); at once when it is not held, or when no
+   * catch-up was queued (another process owns `writer.pid`, or a rebuild holds the root). A catch-up that found
+   * the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
+   * When that catch-up's readiness publication threw (logged) or returned without the record reading ready (not
+   * logged), this call tries the publication again, so a later call can still make the root ready.
+   */
   async caughtUp(root: string): Promise<void> {
     const hold = this.holds.get(canonicalProjectRoot(root));
     if (!hold) return;
     await hold.opening;
     await hold.caughtUp;
+    if (hold.publishFailed && !hold.closed) this.publishReady(hold);
   }
 
   /**
@@ -434,13 +452,15 @@ export class HolderSet {
   /**
    * The catch-up sync after a hold: one job that reconciles what changed while nobody held the root. Lock
    * contention (a CLI index run holds `codegraph.lock`) is retried with a growing wait; any other failure is
-   * logged and left to the watcher's and the callers' syncs. Settles, never rejects, when the job has run.
+   * logged and left to the watcher's and the callers' syncs. A readiness publication afterwards that throws
+   * (logged) or leaves the record not ready (not logged) is retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock
+   * contention that is at the failure, before the retry, which is not waited for.
    */
   private queueCatchUp(hold: Hold, attempt: number): Promise<void> {
     return this.deps.queue.enqueue('catch-up', hold.root, () => this.openGraph(hold).sync()).then(
       (r) => {
         if (hold.closed) return;
-        markWriterReady(hold.root);
+        this.publishReady(hold);
         const changed = r.filesAdded + r.filesModified + r.filesRemoved;
         if (changed > 0) this.deps.log(`Caught up ${changed} file(s) changed since last run in ${hold.root}`);
       },
@@ -459,6 +479,23 @@ export class HolderSet {
         this.deps.log(`Catch-up sync failed for ${hold.root}: ${messageOf(err)}`);
       },
     );
+  }
+
+  /**
+   * Publish the root's readiness; a throw is logged and recorded on the hold, never propagated. The flag clears
+   * only when the record then reads ready for this process: `markWriterReady` returns without writing when the
+   * record cannot be read or names another pid, so a silent no-op keeps the retry eligible (and logs nothing,
+   * since it would repeat on every `caughtUp`).
+   */
+  private publishReady(hold: Hold): void {
+    try {
+      markWriterReady(hold.root);
+      const info = readWriterLock(hold.root);
+      hold.publishFailed = !(info && info.pid === process.pid && info.ready === true);
+    } catch (err) {
+      hold.publishFailed = true;
+      this.deps.log(`Could not publish readiness of ${hold.root}: ${messageOf(err)}`);
+    }
   }
 
   private async teardown(hold: Hold): Promise<void> {

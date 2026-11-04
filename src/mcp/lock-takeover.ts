@@ -371,7 +371,7 @@ function releaseGuard(guard: string, mine: LockSnapshot | null): void {
   if (mine === null) return;
   const cur = snapshotForCompare(guard);
   if (!cur || !sameLock(cur, mine)) return;
-  try { fs.unlinkSync(guard); } catch { /* gone, or Windows still has it open */ }
+  try { fs.unlinkSync(guard); } catch { /* gone, or the unlink failed (Windows while the file is open; a read-only directory on POSIX) */ }
 }
 
 /**
@@ -379,8 +379,8 @@ function releaseGuard(guard: string, mine: LockSnapshot | null): void {
  * without running `fn` when another live process holds the guard after the
  * bounded retry. The guard is removed on every return path, including a throw
  * from `fn` (which is rethrown), and only if it is still ours, unless it can no
- * longer be read back or Windows refuses the unlink. Such a leftover holds this
- * pid; this process's next takeover of the lock clears it, and another
+ * longer be read back or its unlink fails (Windows while the file is open; a read-only directory on POSIX).
+ * Such a leftover holds this pid; this process's next takeover of the lock clears it, and another
  * process's does once this process has exited, or once it is older than
  * {@link STALE_GUARD_MS}. A guard left by a dead process, or older than that
  * whatever its pid, is cleared and the create tried again. So `fn` must be
