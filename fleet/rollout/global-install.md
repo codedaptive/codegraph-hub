@@ -51,8 +51,7 @@ codegraph daemon --stop        # "Stopped the CodeGraph server (pid P, vX)." or 
 codegraph daemon               # pid P  v1.6.2-sm.<N>  up ...
 ```
 
-A failed check at any step rolls back to the previous version by the same steps (adapt `rollback.md`, step 1,
-to the previous version; it specifically restores 1.5.0).
+A failed check at any step rolls back to the previous sm.N by the same steps: `rollback.md`, step 1.
 
 `npm install -g` of the tarball fetches its 10 runtime dependencies from the registry (13 packages, 2.4 s in the
 throwaway-prefix test of sm.1 from 835aaa32). No `EBADENGINE`: that ref's `engines` is `node >=20.0.0`.
@@ -68,7 +67,11 @@ to 6: check, stop the old server, reconnect, every team answers.
 
 ## Undo
 
+Back to 1.5.0 (to the previous sm.N instead: `rollback.md`, step 1). 1.5.0's `codegraph daemon` has no `--stop`,
+so stop the sm.N server first, then reconnect the sessions and check as `rollback.md` step 1 does.
+
 ```bash
+codegraph daemon --stop                                     # still sm.N: stop its server before the uninstall
 npm uninstall -g --ignore-scripts @colbymchenry/codegraph   # --ignore-scripts: keep the agents' global entries
 npm install -g @colbymchenry/codegraph@1.5.0                # from the registry (checked: 1.5.0 is published)
 codegraph --version                                         # 1.5.0
