@@ -142,7 +142,7 @@ On throwaway clones, never live team worktrees, and against a development server
 ## 8. Status (2026-11-04)
 
 Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.8** (ours a7881907,
-2026-10-31); sm.9 and sm.10 are promoted and packed, not installed (R-18).
+2026-10-31); sm.9, sm.10 and sm.11 are promoted and packed, not installed (R-18).
 
 | Release | What it shipped |
 |---|---|
@@ -152,10 +152,12 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 | sm.8 (ours a7881907) | a focused `explore` keeps its Flow strip along the deepest in-focus chain, and its no-result explanation names no out-of-focus symbol (queries Defects 1 and 2) |
 | sm.9 (ours 8ebff286) | upstream 4499d007 merged in (84 commits), keeping the machine server, builder and focus work; tool descriptions say `projectPath` is required; `CODEGRAPH_NO_AUTO_SEED` named where users see it |
 | sm.10 (ours 182c04bb) | upstream 5cd8a9a8 merged in (16 commits); pinned projects opened at server start and after each housekeeping pass (`pinned-open-at-start`); slow tests wait on events with stated timeouts (`slow-tests`); a server that cannot bind any socket says why for each candidate |
+| sm.11 (ours ff092584, 2026-11-04) | upstream f72c9d2e merged in; the review fixes from our upstream pull requests carried back (S-52, R-29): locks, sync and readiness (host); `grep` (stale files unattributed), `blast` (per-line seeds, S-51) and `orphans` (queries); `suspects`, Swift and Rust resolution (resolution) |
 
 | Left | State |
 |---|---|
-| sm.11: upstream f72c9d2e and the PR review fixes carried back to ours (the list in S-52) | integration; gate, promote and pack by 11:00 CST 2026-11-04 (R-29); install on Bob's word (Q-18) |
+| Install sm.11 in place of sm.8 | Bob (Q-18, R-18) |
+| Findings after S-52 closed: `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); resolution's own list | next release (S-52) |
 
 ## 9. Out of scope (R-12)
 
