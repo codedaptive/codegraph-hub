@@ -458,10 +458,14 @@ const EMPTY_LOCK_GRACE_MS = 10_000;
  * whose `pid` is alive but whose recorded `pidStart` differs from that
  * process's OS start time (the pid was reused by a later process), at any
  * root; or a record another project wrote: its recorded root is not this
- * project's and its recorded index identities both differ from this project's
- * index. By the copied-index rule, a record at this project's own root, or at
- * a project whose database has more than one hard link, is not foreign; only
- * the start-time check can make such a record foreign. The caller supplies both
+ * project's, its recorded index identities both differ from this project's
+ * index, and neither the recorded root's `.codegraph` nor its database is
+ * this project's now. The copied-index rule does not make a record foreign
+ * at this project's own root or at a project whose database has more than
+ * one hard link. It also exempts a record whose root's `.codegraph` is this
+ * project's index now (`isSameIndexRoot`), or whose root's database is this
+ * project's database now; only the start-time check can make any of these
+ * records foreign. The caller supplies both
  * (`lockStamp` and `isForeignLockRecord` in `mcp/writer-lock`) because this
  * module cannot import `directory` without a cycle (`utils` → `directory` →
  * `sync/watch-policy` → `utils`). The stale-lock takeover it does import,
