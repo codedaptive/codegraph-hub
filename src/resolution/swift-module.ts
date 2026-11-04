@@ -1,26 +1,34 @@
 /**
- * The SwiftPM module a Swift file belongs to, from its path alone.
+ * The SwiftPM module a Swift file belongs to, from its path and, optionally,
+ * evidence of a package manifest beside it.
  *
  * A file's module directory is the path segment after the last `Sources` or
  * `Tests` directory, when a further directory follows it (SwiftPM's layout:
- * `Sources/<Target>/…`, `Tests/<Target>/…`). Any other layout (an Xcode
- * project, a file directly under `Sources/`) has no derivable module.
+ * `Sources/<Target>/…`, `Tests/<Target>/…`). With a `HasManifest` check, the
+ * directory holding that `Sources` or `Tests` must have an indexed
+ * `Package.swift`; without the check, the path alone decides. A file directly
+ * under `Sources/`, or outside either layout, has no derivable module.
  *
  * - `swiftModule` gives that directory as `id` and the name Swift code must
  *   `import` it by (`swiftModuleName`, SwiftPM's c99name rule) as `name`.
  *   suspects' missing-import flag (src/extensions/resolution/suspects.ts)
- *   compares modules by that `id`.
+ *   compares modules by that `id` and passes no manifest check (path-only).
  * - `swiftModuleIdentity` gives the path up to and including the module
  *   directory, so `Packages/P/Sources/Core` and `Packages/Q/Sources/Core` are
  *   two modules; swift-type-visibility.ts's static-call gate compares modules
- *   by it.
+ *   by it, with a manifest check so an Xcode project's `Sources/Models/`
+ *   and `Sources/Services/` are not assumed to be separate modules.
  *
- * Known limitation: Package.swift is not read, so a target whose `path:`
- * gives it a name different from its directory is still named by the
+ * Known limitation: Package.swift's contents are not read, so a target whose
+ * `path:` gives it a name different from its directory is still named by the
  * directory.
  *
- * Index facts only: nothing here reads a file.
+ * Index facts only: nothing here reads a file. Whether a manifest is indexed
+ * is the caller's optional `HasManifest`.
  */
+
+/** Whether the index holds a `Package.swift` in the project-relative directory `dir` (`''` for the project root). */
+export type HasManifest = (dir: string) => boolean;
 
 /** A file's module: `id` decides sameness, `name` is what an import must name. */
 export interface ModuleOf {
@@ -38,12 +46,14 @@ function dirSegments(filePath: string): string[] {
 /**
  * The index in `dirs` of a SwiftPM module directory: the segment after the
  * last `Sources` or `Tests`, or -1 when no directory follows that segment (or
- * there is none).
+ * there is none). With `hasManifest`, the directory holding it must have an
+ * indexed `Package.swift`; undefined means the path alone decides.
  */
-function moduleDirIndex(dirs: readonly string[]): number {
+function moduleDirIndex(dirs: readonly string[], hasManifest?: HasManifest): number {
   let at = -1;
   for (let i = 0; i < dirs.length; i++) if (dirs[i] === 'Sources' || dirs[i] === 'Tests') at = i;
-  return at < 0 || at + 1 >= dirs.length ? -1 : at + 1;
+  if (at < 0 || at + 1 >= dirs.length) return -1;
+  return hasManifest === undefined || hasManifest(dirs.slice(0, at).join('/')) ? at + 1 : -1;
 }
 
 /**
@@ -261,11 +271,12 @@ export function swiftModuleName(directory: string): string {
 /**
  * SwiftPM module: the directory after the last `Sources`/`Tests` directory, if one follows.
  * The directory is the id (it decides sameness); the name is its c99name (`swiftModuleName`).
- * Null when the path has no such directory.
+ * With `hasManifest`, the package's `Package.swift` must be indexed; undefined
+ * keeps path-only behaviour. Null when the layout or supplied check fails.
  */
-export function swiftModule(filePath: string): ModuleOf | null {
+export function swiftModule(filePath: string, hasManifest?: HasManifest): ModuleOf | null {
   const dirs = dirSegments(filePath);
-  const at = moduleDirIndex(dirs);
+  const at = moduleDirIndex(dirs, hasManifest);
   if (at < 0) return null;
   const dir = dirs[at]!;
   return { id: dir, name: swiftModuleName(dir) };
@@ -275,10 +286,12 @@ export function swiftModule(filePath: string): ModuleOf | null {
  * A SwiftPM module's identity for sameness: the path's directories up to and
  * including the module directory (the one `swiftModule` names), joined by
  * `/`. `Packages/P/Sources/Core/A.swift` is `Packages/P/Sources/Core`, so two
- * packages' `Core` targets differ. Null when `swiftModule` is null.
+ * packages' `Core` targets differ. With `hasManifest`, the package's
+ * `Package.swift` must be indexed; undefined keeps path-only behaviour.
+ * Null when `swiftModule` with the same optional check is null.
  */
-export function swiftModuleIdentity(filePath: string): string | null {
+export function swiftModuleIdentity(filePath: string, hasManifest?: HasManifest): string | null {
   const dirs = dirSegments(filePath);
-  const at = moduleDirIndex(dirs);
+  const at = moduleDirIndex(dirs, hasManifest);
   return at < 0 ? null : dirs.slice(0, at + 1).join('/');
 }

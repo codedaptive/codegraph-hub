@@ -32406,18 +32406,45 @@ function swiftArgumentLabels(args: string): string[] {
   return args.trim() === '' ? [] : splitCppTopLevel(args).map((a) => /^\s*([A-Za-z_]\w*)\s*:(?!:)/.exec(a)?.[1] ?? '_');
 }
 
+/** A condition's body brace is not a trailing closure when its keyword starts the line. */
+const SWIFT_CONDITION_LINE = /^\s*(?:\}\s*else\s+)?(?:if|guard|while|for|switch)\b/;
+
 /**
  * Whether a Swift `Type.member(…)` or `value.member(…)` call's argument labels
  * fit `decl`'s parameter list (swiftLabelsFit); null when either list cannot be
- * read: a call with no parenthesised arguments, or a member named with
- * backticks.
+ * read (a call with no parenthesised arguments, or a member named with
+ * backticks), or the labels do not fit but a trailing closure may fill a parameter.
  */
 function swiftCallFitsLabels(ref: UnresolvedRef, decl: Node, context: ResolutionContext): boolean | null {
   const member = ref.referenceName.slice(ref.referenceName.lastIndexOf('.') + 1);
   const args = cppParenListAfter(ref.filePath, ref.line, Math.max(0, ref.column), member, context);
   if (args === null) return null;
   const params = cppParenListAfter(decl.filePath, decl.startLine, 0, decl.name, context);
-  return params === null ? null : swiftLabelsFit(swiftArgumentLabels(args), params);
+  const fits = params === null ? null : swiftLabelsFit(swiftArgumentLabels(args), params);
+  return fits === false && swiftCallHasTrailingClosure(ref, member, context) ? null : fits;
+}
+
+/**
+ * Whether the call's balanced argument list is followed by `{`, within
+ * cppParenListAfter's dozen-line window, unless the call's starting line begins
+ * with `if`, `guard`, `while`, `for` or `switch` (also after `} else`):
+ * a brace after such a condition can be the statement's body instead.
+ * Known residual: a body brace of an `if` whose condition does not start its
+ * line (`{ if T.f(a: 1) {} }`) still reads as a trailing closure.
+ */
+function swiftCallHasTrailingClosure(ref: UnresolvedRef, name: string, context: ResolutionContext): boolean {
+  const lines = context.getFileLines?.(ref.filePath) ?? context.readFile(ref.filePath)?.split(/\r?\n/) ?? [];
+  const text = lines.slice(ref.line - 1, ref.line + 11).join('\n');
+  const open = cppOpeningParenAfter(text, Math.max(0, ref.column), name);
+  if (open < 0) return false;
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')' && --depth === 0) {
+      return /^\s*\{/.test(text.slice(i + 1)) && !SWIFT_CONDITION_LINE.test(lines[ref.line - 1] ?? '');
+    }
+  }
+  return false;
 }
 
 /** Whether a Swift parameter (`_ body: @escaping (Int) -> Void`) takes a function: its type has a `->` outside any brackets of the type's own. */
@@ -32479,7 +32506,7 @@ function swiftOverloadForClosure(
   const args = written.trim() === '' ? [] : splitCppTopLevel(written);
   const labelOf = (arg: string): string => /^\s*([A-Za-z_]\w*)\s*:(?!:)/.exec(arg)?.[1] ?? '_';
   // (The `{` after a condition is the statement's own: Swift takes no trailing closure there.)
-  const trailing = /^\s*\{/.test(text.slice(close + 1)) && !/^\s*(?:\}\s*else\s+)?(?:if|guard|while|for|switch)\b/.test(lines[ref.line - 1] ?? '');
+  const trailing = /^\s*\{/.test(text.slice(close + 1)) && !SWIFT_CONDITION_LINE.test(lines[ref.line - 1] ?? '');
   if (!trailing && args.length === 0) return null;
   const closure = trailing || args[args.length - 1]!.replace(/^\s*[A-Za-z_]\w*\s*:(?!:)/, '').trim().startsWith('{');
   const labels = args.map(labelOf);

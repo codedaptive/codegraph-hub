@@ -4,15 +4,19 @@
  * A single capitalised receiver segment with a lowercase member (not `Self.`)
  * whose receiver is a project Swift type resolves on that type: its own
  * member, one declared in an `extension Type` in any file, one inherited from
- * a project supertype or a protocol extension it conforms to (of a class
- * override chain, the nearest override; of two unrelated supertypes, neither),
+ * a project supertype or a protocol extension it conforms to (the call's
+ * argument labels pick among inherited overloads first; then, of a class
+ * override chain, the nearest override; of two unrelated supertypes, neither
+ * unless a superclass has a type-level member, which wins over a protocol
+ * extension's),
  * or a member of a bare nested type named in its scope. These resolve at confidence 0.9 with
  * `resolvedBy: 'qualified-name'`, not at the lower confidence a by-name match
  * gives.
  *
  * Only a declaration in a SwiftPM module the caller can see counts: the
  * caller's own module (the path up to the directory after the last `Sources`
- * or `Tests`), one its file imports (`import M` or `@testable import M`), or
+ * or `Tests`, when an indexed `Package.swift` sits beside `Sources` or `Tests`; without one,
+ * `Sources/Models/` and `Sources/Services/` are no modules), one its file imports (`import M` or `@testable import M`), or
  * one re-exported (`@_exported import M`, in any file of a module it sees,
  * its own included, through any chain of re-exports). A declaration outside
  * any SwiftPM module is always seen; such a copy wins only where it would win
@@ -22,7 +26,8 @@
  * then nearest directory); a tie gives no edge. Of overloads in the type
  * and its extensions (in any file, a module-qualified `extension Kit.Type`
  * too), the call's argument labels pick, never one another module's copy
- * declares. When the type does not declare the member, there is no `calls`
+ * declares; another module's same-named type does not hide a member the
+ * caller's type inherits. When the type does not declare the member, there is no `calls`
  * edge, never one to another type's same-named member nor to a local function
  * of one of its methods. A receiver that names no project type is left to the
  * name matcher; an SDK type's static call (`JSONDecoder.make()`) gets no edge.
@@ -33,6 +38,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+
+/**
+ * A SwiftPM manifest at the project root: only beside one is a
+ * `Sources/<Target>/` or `Tests/<Target>/` directory a module.
+ */
+const PACKAGE_SWIFT = `// swift-tools-version:5.9
+import PackageDescription
+let package = Package(name: "Fixture")
+`;
 
 interface Call {
   /** `<file>:<qualifiedName>` of the target. */
@@ -162,6 +176,7 @@ describe('Swift: a static call on a type several modules declare', () => {
 `;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-modules-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Tests/ATests/DeterministicTestID.swift': DECL,
       'Tests/BTests/DeterministicTestID.swift': DECL,
       'Tests/BTests/UseB.swift': `func useB() { _ = DeterministicTestID.make() }
@@ -215,6 +230,103 @@ extension Right { static func pick() {} }
 struct Both: Left, Right {}
 func useBoth() { Both.pick() }
 `,
+      // Inherited overloads with different argument labels: the label picks.
+      'Sources/App/Labelled.swift': `protocol LeftChooser {}
+extension LeftChooser { static func choose(left: Int) {} }
+protocol RightChooser {}
+extension RightChooser { static func choose(right: Int) {} }
+struct BothChoosers: LeftChooser, RightChooser {}
+func useBothRight() { BothChoosers.choose(right: 1) }
+class TakeBase { class func take(left: Int) {} }
+class TakeMiddle: TakeBase { class func take(right: Int) {} }
+class TakeLeaf: TakeMiddle {}
+func useTakeLeft() { TakeLeaf.take(left: 1) }
+`,
+      // A subclass's own extension member sits beside an inherited overload with other labels.
+      'Sources/App/OwnPick.swift': `class PickBase { class func pick(left: Int) {} }
+class PickChild: PickBase {}
+extension PickChild { class func pick(right: Int) {} }
+func usePickLeft() { _ = PickChild.pick(left: 1) }
+func usePickRight() { _ = PickChild.pick(right: 1) }
+`,
+      // The same shape, with the subclass's extension in another file.
+      'Sources/App/SepChild.swift': `class SepBase { class func pick(left: Int) {} }
+class SepChild: SepBase {}
+`,
+      'Sources/App/SepChild+Pick.swift': `extension SepChild { class func pick(right: Int) {} }
+`,
+      'Sources/App/SepUse.swift': `func useSepLeft() { _ = SepChild.pick(left: 1) }
+`,
+      // A superclass's member beside a protocol extension's member of the same name, both inherited.
+      'Sources/App/MakeChild.swift': `class MakeBase { class func make() -> Int { 1 } }
+protocol MakeRunner {}
+extension MakeRunner { static func make() -> Int { 2 } }
+class MakeChild: MakeBase, MakeRunner {}
+func useMakeChild() { _ = MakeChild.make() }
+`,
+      // A trailing closure fills the subclass overload's last parameter, which the call's parenthesised labels leave out.
+      'Sources/App/Trail.swift': `class TrailBase { class func pick(left: Int) {} }
+class TrailChild: TrailBase {}
+extension TrailChild { class func pick(left: Int, completion: () -> Void) {} }
+func useTrailing() { TrailChild.pick(left: 1) { } }
+`,
+      // The `{` after an `if` condition is the statement's body, not a trailing closure.
+      'Sources/App/CondPick.swift': `class CondBase { class func pick(left: Int) -> Bool { true } }
+class CondChild: CondBase {}
+extension CondChild { class func pick(right: Int) -> Bool { false } }
+func useCondLeft() {
+    if CondChild.pick(left: 1) {}
+}
+`,
+      // An instance method of the superclass beside a static member of a protocol extension the subclass conforms to.
+      'Sources/App/Inst.swift': `class InstBase { func make() -> Int { 1 } }
+protocol InstRunner {}
+extension InstRunner { static func make() -> Int { 2 } }
+class InstChild: InstBase, InstRunner {}
+func useInstChild() { _ = InstChild.make() }
+`,
+      // The superclass's `class func` follows an attribute that spans several lines.
+      'Sources/App/AttrMake.swift': `class AttrBase {
+    @available(*, deprecated,
+        message: "x",
+        renamed: "y")
+    class func make() -> Int { 1 }
+}
+protocol AttrRunner {}
+extension AttrRunner { static func make() -> Int { 2 } }
+class AttrChild: AttrBase, AttrRunner {}
+func useAttrChild() { _ = AttrChild.make() }
+`,
+      // A comment naming `func` sits before the superclass member's modifiers.
+      'Sources/App/CmtMake.swift': `class CmtBase {
+    /* func */ class func make() -> Int { 1 }
+}
+protocol CmtRunner {}
+extension CmtRunner { static func make() -> Int { 2 } }
+class CmtChild: CmtBase, CmtRunner {}
+func useCmtChild() { _ = CmtChild.make() }
+`,
+      // The superclass member's `class` modifier stands on its own line, comment lines before its `func`.
+      'Sources/App/SplitMake.swift': `class SplitBase {
+    class
+    // the modifier above
+    // makes this type-level
+    func make() -> Int { 1 }
+}
+protocol SplitRunner {}
+extension SplitRunner { static func make() -> Int { 2 } }
+class SplitChild: SplitBase, SplitRunner {}
+func useSplitChild() { _ = SplitChild.make() }
+`,
+      // An attribute's string naming `func` sits before the superclass member's modifiers.
+      'Sources/App/StrMake.swift': `class StrBase {
+    @available(*, deprecated, message: "use func other") class func make() -> Int { 1 }
+}
+protocol StrRunner {}
+extension StrRunner { static func make() -> Int { 2 } }
+class StrChild: StrBase, StrRunner {}
+func useStrChild() { _ = StrChild.make() }
+`,
     });
     roots.push(root);
     cg = await CodeGraph.init(root, { index: true });
@@ -233,6 +345,69 @@ func useBoth() { Both.pick() }
   it('gives no calls edge when two unrelated supertypes supply the member', () => {
     // Swift rejects `Both.pick()` as ambiguous; neither extension is the target.
     expect(callsFrom(cg, 'useBoth')).toEqual([]);
+  });
+
+  it('resolves to the inherited overload whose argument label the call gives, of two protocols', () => {
+    expectQualified(onlyCall(cg, 'useBothRight', 'Sources/App/Labelled.swift:RightChooser::choose'));
+  });
+
+  it("resolves to an ancestor's overload by its label, not to a nearer class's overload with another label", () => {
+    expectQualified(onlyCall(cg, 'useTakeLeft', 'Sources/App/Labelled.swift:TakeBase::take'));
+  });
+
+  it('resolves an inherited overload whose labels the call writes past the same-file subclass extension', () => {
+    // `pick(right:)` in the subclass's extension does not fit `pick(left:)`, so the superclass's overload is the one.
+    expectQualified(onlyCall(cg, 'usePickLeft', 'Sources/App/OwnPick.swift:PickBase::pick'));
+  });
+
+  it('resolves an inherited overload whose labels the call writes past a subclass extension in another file', () => {
+    expectQualified(onlyCall(cg, 'useSepLeft', 'Sources/App/SepChild.swift:SepBase::pick'));
+  });
+
+  it('resolves a call labelled for the subclass extension member to that member', () => {
+    // The labels fit the subclass's own member, so the inherited overload is not chosen.
+    expectQualified(onlyCall(cg, 'usePickRight', 'Sources/App/OwnPick.swift:PickChild::pick'));
+  });
+
+  it('resolves a call to a superclass member over a protocol extension member of the same name', () => {
+    // Swift takes the class's inherited member; the protocol extension's `make()` is shadowed by it.
+    expectQualified(onlyCall(cg, 'useMakeChild', 'Sources/App/MakeChild.swift:MakeBase::make'));
+  });
+
+  it('resolves a call with a trailing closure to the own overload whose last parameter the closure fills', () => {
+    expectQualified(onlyCall(cg, 'useTrailing', 'Sources/App/Trail.swift:TrailChild::pick'));
+  });
+
+  // Known residual, not pinned: a `{` that is the body brace of an `if` whose
+  // condition does not start its line (`{ if T.f(a: 1) {} }`) still reads as a
+  // trailing closure, so such a call keeps the type's own overload.
+  it("resolves an inherited overload by its labels in an `if` condition, whose body brace is no trailing closure", () => {
+    expectQualified(onlyCall(cg, 'useCondLeft', 'Sources/App/CondPick.swift:CondBase::pick'));
+  });
+
+  it('never resolves a static call to a superclass instance method beside a protocol extension static member', () => {
+    // A static call never reaches an instance method; it may reach the protocol extension's static member, or nothing.
+    expect(callsFrom(cg, 'useInstChild').map((c) => c.target)).not.toContain('Sources/App/Inst.swift:InstBase::make');
+  });
+
+  it('resolves a call to a superclass member over a protocol extension member when a multi-line attribute precedes its class func', () => {
+    // Guard: the index marks an attributed `class func` static and starts it at the attribute.
+    expectQualified(onlyCall(cg, 'useAttrChild', 'Sources/App/AttrMake.swift:AttrBase::make'));
+  });
+
+  it('resolves a call to a superclass member over a protocol extension member when a comment before its class func names func', () => {
+    // Guard: the member's span starts after the comment, at `class`.
+    expectQualified(onlyCall(cg, 'useCmtChild', 'Sources/App/CmtMake.swift:CmtBase::make'));
+  });
+
+  it('resolves a call to a superclass member over a protocol extension member when an attribute string before its class func names func', () => {
+    // Guard: the index marks an attributed `class func` static.
+    expectQualified(onlyCall(cg, 'useStrChild', 'Sources/App/StrMake.swift:StrBase::make'));
+  });
+
+  it('resolves a call to a superclass member over a protocol extension member when comment lines part its class modifier from func', () => {
+    // The member is not marked static, and its `func` is more than three lines from its start.
+    expectQualified(onlyCall(cg, 'useSplitChild', 'Sources/App/SplitMake.swift:SplitBase::make'));
   });
 });
 
@@ -324,6 +499,7 @@ describe('Swift: a static call on a type member that is not a method', () => {
   let cg: CodeGraph;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-declined-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/Store/Predicate.swift': `indirect enum Pred {
     case isTrue
     case literal(Pred)
@@ -575,6 +751,7 @@ describe('Swift: a static call sees only the modules its file can see', () => {
   let cg: CodeGraph;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-visible-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/A/SHA256.swift': `import Foundation
 public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
 `,
@@ -640,6 +817,7 @@ describe('Swift: a static call sees the modules an import re-exports', () => {
   let cg: CodeGraph;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-reexport-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/Core/CoreType.swift': `public enum CoreType { public static func member() {} }
 `,
       // Facade re-exports Core from one of its files.
@@ -703,6 +881,7 @@ function edgesOfKinds(cg: CodeGraph, caller: string, target: string, kinds: stri
 describe('Swift: a copy in no module wins only where it wins with every copy kept', () => {
   it('gives no edge to a module-less copy when a copy the caller cannot see is nearer', async () => {
     const root = makeProject('cg-swift-static-trap-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/Kit/Thing.swift': `enum Thing { static func make() {} }
 `,
       'Plugins/Other/Thing.swift': `enum Thing { static func make() {} }
@@ -724,6 +903,9 @@ func useThingOther() { Thing.other() }
 
   it('resolves to a module-less copy that is the nearest with every copy kept', async () => {
     const root = makeProject('cg-swift-static-trap-ok-', {
+      'Package.swift': PACKAGE_SWIFT,
+      // Other/ is a package of its own, so its copy is in module Kit and is unseen here.
+      'Other/Package.swift': PACKAGE_SWIFT,
       'Other/Sources/Kit/Thing.swift': `enum Thing { static func make() {} }
 `,
       // Directly under Sources/: no derivable module, and nearer the caller.
@@ -748,6 +930,7 @@ describe('Swift: a module-qualified static call (known limit)', () => {
   let cg: CodeGraph;
   beforeAll(async () => {
     const root = makeProject('cg-swift-static-modqual-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/A/SHA256.swift': `import Foundation
 public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
 `,
@@ -769,3 +952,42 @@ func digestQualified(d: Data) { _ = CryptoKit.SHA256.hash(data: d) }
 
 /** The confidence a typed instance call `box.open()` resolves at. */
 const BOX_OPEN_CONFIDENCE = 0.9;
+
+describe('Swift: Sources subfolders are modules only beside a Package.swift', () => {
+  it('resolves across two Sources subfolders of a project with no Package.swift, as one target', async () => {
+    const root = makeProject('cg-swift-static-nopackage-', {
+      'Sources/Models/User.swift': `struct User { static func make() -> User { User() } }
+`,
+      'Sources/Services/Use.swift': `func useUser() { _ = User.make() }
+`,
+    });
+    roots.push(root);
+    const local = await CodeGraph.init(root, { index: true });
+    try {
+      expectQualified(onlyCall(local, 'useUser', 'Sources/Models/User.swift:User::make'));
+    } finally {
+      local.close();
+    }
+  });
+});
+
+describe("Swift: another module's same-named type does not hide an inherited member", () => {
+  it('resolves to the inherited member when an unimported module declares its own type of the name', async () => {
+    const root = makeProject('cg-swift-static-othermodule-', {
+      'Package.swift': PACKAGE_SWIFT,
+      'Sources/App/Child.swift': `class Base { class func make() -> Int { 1 } }
+class Child: Base {}
+func useChild() { _ = Child.make() }
+`,
+      'Tests/OtherTests/Child.swift': `class Child { static func make() -> Int { 2 } }
+`,
+    });
+    roots.push(root);
+    const local = await CodeGraph.init(root, { index: true });
+    try {
+      expectQualified(onlyCall(local, 'useChild', 'Sources/App/Child.swift:Base::make'));
+    } finally {
+      local.close();
+    }
+  });
+});

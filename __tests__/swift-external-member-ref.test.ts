@@ -31,6 +31,15 @@ import * as path from 'path';
 import { CodeGraph } from '../src';
 import { DatabaseConnection, getDatabasePath } from '../src/db';
 
+/**
+ * A SwiftPM manifest at the project root: the static-call module gate requires
+ * one beside a `Sources/<Target>/` or `Tests/<Target>/` layout.
+ */
+const PACKAGE_SWIFT = `// swift-tools-version:5.9
+import PackageDescription
+let package = Package(name: "Fixture")
+`;
+
 const roots: string[] = [];
 afterAll(() => {
   for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true });
@@ -410,6 +419,7 @@ enum Gates {
 describe("Swift: the external-member reference needs the type's module in view", () => {
   it("references a project type only from a file that can see its module", async () => {
     const root = makeProjectOf('cg-swift-ext-member-visible-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/A/SHA256.swift': `import Foundation
 public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
 `,
@@ -436,6 +446,7 @@ enum UseA {
 
   it('references a project type in a module an imported module re-exports', async () => {
     const root = makeProjectOf('cg-swift-ext-member-reexport-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/Core/CoreType.swift': `public enum CoreType { public static func member() {} }
 `,
       'Sources/Facade/Exports.swift': `@_exported import Core
