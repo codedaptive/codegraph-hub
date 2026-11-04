@@ -114,12 +114,21 @@ Linux and Windows, if they want it.
    - how to install and point an agent at it, and where it differs from upstream's defaults;
    - written for a stranger: no internal names, rulings, lanes or process words; every claim true of the hub's
      `main` (Kong checks it against the code);
-   - below it, upstream's README unchanged, for everything the hub does not change.
+   - upstream's README is not appended (it would contradict the hub on install, `codegraph upgrade` and indexing):
+     it is kept as `UPSTREAM-README.md` at the top level, exactly as of the upstream version the update merged, under
+     a two-line note ("This is upstream's README as of <version>. To install and run the hub, see README.md."), and
+     the README links it once near the top ("For everything else CodeGraph does, see upstream's README"). Each
+     monthly update regenerates it.
 4. **License.** The hub carries upstream's license unchanged (MIT; upstream's `LICENSE` file as is), and the README
    says so.
 5. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
    then the hub's `main` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
-   bob-codedaptive identity), and the update tagged. The first update is made now, from sm.11.
+   bob-codedaptive identity), and the update published as a GitHub release of the hub tagged with the build's
+   version (`v1.6.2-sm.N`), the packed build attached. The first release is sm.12, the first build with R-32's
+   upgrade fix; the rename and README do not wait for it.
+9. **Upgrade and update notice (R-32).** `codegraph upgrade` installs the hub's latest release (or the hub version
+   named) and never upstream's package or install script; a source checkout keeps "git pull && npm run build". The
+   update check reads the hub's releases. Versions keep the `-sm.N` suffix, compared by its number.
 6. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
    cycle, through the owning lane and the same gate.
 7. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further

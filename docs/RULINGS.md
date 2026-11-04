@@ -377,4 +377,30 @@ General as a RULING line. Decisions already settled by a document live in `team/
   added and how to use them. We carry the same license as the source." The hub's README leads with one entry per
   added feature (what it does in one sentence, then how to use it, with an example), the fixes carried ahead of
   upstream with their PR numbers, install and setup, and where it differs from upstream's defaults; upstream's
-  README follows unchanged. The hub keeps upstream's MIT `LICENSE` as is and says so (SPEC-upstream §7 items 3-4).
+  README follows unchanged (superseded the same day: kept as a linked copy, R-32). The hub keeps upstream's MIT `LICENSE` as is and says so (SPEC-upstream §7 items 3-4).
+
+## R-32. `codegraph upgrade` and the update notice use the hub's releases, never upstream's
+- Date: 2026-11-04 / Bob, direct ("I think we need to change the upgrade command to pull our version for safety?";
+  then "agreed. Go" to Designer's design below).
+- Question: our builds' `codegraph upgrade` installs upstream's package (`src/upgrade/index.ts:35-36`: npm
+  `@colbymchenry/codegraph@latest`, or upstream's `install.sh` for a bundle), and the update check reads upstream's
+  releases: a prerelease sorts below its release (`compareVersions`, :255-257), so `1.6.2-sm.11` sees upstream
+  `v1.6.2` as newer and every install with the check on tells its agents, in the MCP instructions and
+  `codegraph_status`, to run `codegraph upgrade`. The prerelease part is compared as text, so `sm.11` sorts before
+  `sm.9`. This machine is shielded only by `DO_NOT_TRACK=1`.
+- Ruling: (1) each monthly hub update is a GitHub release of `codedaptive/codegraph-hub`, tagged with the build's
+  version (`v1.6.2-sm.N`), the packed build attached; (2) `codegraph upgrade` installs the hub's latest release, or
+  the hub version named, and never installs upstream's package or runs upstream's install script; a source
+  checkout keeps "git pull && npm run build"; (3) the update check and notice read the hub's releases; (4) the
+  `-sm.N` suffix stays and its number compares as a number (sm.9 before sm.11); a rename (e.g. `-hub.N`) is not
+  made, since "hub" sorts before "sm" and an sm.11 install would never see it as newer; (5) the first hub release is
+  sm.12, the first build with this fix; the rename and README go ahead without waiting. With it, the hub README
+  question is settled as Designer recommended: upstream's README is a linked copy, `UPSTREAM-README.md`, not
+  appended (SPEC-upstream §7 item 3).
+- Reason: an agent obeying today's notice, or a user running `codegraph upgrade`, replaces the hub with upstream.
+- Not chosen: keeping upstream's upgrade path; turning the update check off by default (it would hide the hub's
+  own releases); renaming the version suffix.
+- Expanded in docs/SPEC.md §6 and SPEC-upstream §7 items 5 and 9. Work implied: Orc-Codegraph routes the code
+  change (`src/upgrade/` is upstream-owned: hook-in edits only, with a fork README row), red tests first for each of
+  (2)-(4), the gate, sm.12 promoted and packed, then the hub's first release from it. Installing sm.12 on this
+  machine waits for Bob (R-18).
