@@ -5,7 +5,7 @@
  * server (and the prompt hook alongside it) silently stays on whatever version
  * was last manually upgraded — users discover the drift only when something
  * breaks. This module gives the running server *visibility* without changing
- * behavior: a non-blocking check against the latest GitHub release, surfaced
+ * behavior: a non-blocking check against the latest hub GitHub release, surfaced
  * as a one-line notice (stderr log, MCP initialize instructions, and
  * `codegraph_status`) telling the user to run `codegraph upgrade`.
  *
@@ -21,11 +21,10 @@
  *     data plane) suppresses the network call AND the notice entirely.
  *
  * The check itself reuses `resolveLatestVersion` — the GitHub release-redirect
- * trick with the API fallback — so version resolution can't drift from what
- * `codegraph upgrade` installs. Results are cached in `~/.codegraph/` (the
- * same global state dir telemetry and the daemon registry use) with a 24h TTL
- * on success and a 1h backoff after failure, shared across every proxy /
- * daemon process on the machine.
+ * trick with the API fallback — so it uses the same default feed as an unpinned
+ * `codegraph upgrade`. Results are cached in `~/.codegraph/update-check-hub.json`,
+ * separate from upstream's `update-check.json`, with a 24h TTL on success and
+ * a 1h backoff after failure, shared by processes using that home directory.
  */
 
 import * as fs from 'fs';
@@ -33,6 +32,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { resolveLatestVersion, isUpdateAvailable, parseSemver } from './index';
 import { CodeGraphPackageVersion } from '../mcp/version';
+import { HUB_UPDATE_CHECK_CACHE_FILE } from '../extensions/host/hub-release';
 
 /** Re-check the release feed after this long (successful checks). */
 export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
@@ -91,7 +91,7 @@ export function updateCheckDisabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 export function updateCheckCachePath(dir: string): string {
-  return path.join(dir, 'update-check.json');
+  return path.join(dir, HUB_UPDATE_CHECK_CACHE_FILE);
 }
 
 export function readUpdateCheckCache(dir: string): UpdateCheckCacheFile | null {
