@@ -464,6 +464,36 @@ enum UseFacade {
       cg.close();
     }
   });
+
+  it('references the type the caller can see when an unimported module declares a member of the same name', async () => {
+    const root = makeProjectOf('cg-swift-ext-member-othermember-', {
+      'Package.swift': PACKAGE_SWIFT,
+      'Sources/Tool/MyTool.swift': `import ArgumentParser
+struct MyTool: ParsableCommand { func run() throws {} }
+`,
+      'Sources/Tool/Run.swift': `enum Run {
+    static func go() { MyTool.main() }
+}
+`,
+      // A test target the production file does not import, with a MyTool of its own that has a `main`.
+      'Tests/OtherTests/MyTool.swift': `struct MyTool { static func main() {} }
+`,
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect.soft(edgesFromMethod(cg, 'Run::go', 'main', ['calls']), 'calls').toEqual([]);
+      expect.soft(edgesFromMethod(cg, 'Run::go', 'MyTool', ['references']), 'references').toEqual(['references -> struct MyTool']);
+      const go = cg.getNodesByName('go').find((n) => n.kind === 'method' && n.qualifiedName === 'Run::go');
+      const files = cg
+        .getOutgoingEdgesFrom([go!.id], ['references'])
+        .map((e) => cg.getNode(e.target))
+        .filter((n) => n && n.language === 'swift' && n.name === 'MyTool')
+        .map((n) => n!.filePath);
+      expect.soft(files, 'reference target file').toEqual(['Sources/Tool/MyTool.swift']);
+    } finally {
+      cg.close();
+    }
+  });
 });
 
 describe('Swift: the external-member reference across a sync', () => {

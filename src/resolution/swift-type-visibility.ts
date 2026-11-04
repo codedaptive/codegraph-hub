@@ -983,20 +983,26 @@ function chainKey(owner: string, chain: ReadonlyMap<string, Node[]>, context: Re
 }
 
 /**
- * Does the project declare `member` on the type `decl` declares at `path`
- * (or an extension of it), or on one of its project supertypes and protocols
- * (or an extension of one)? A member of a type nested in it is not its
- * member: `Tool.Inner.main` is no `Tool.main`. A case whose name is a keyword
- * is indexed with its backticks (`` case `in`(…) `` is `` `in` ``) while the
- * call names it bare (`StoragePredicate.in(…)`), so both spellings are asked.
+ * Does an indexed member match `decl`'s type at `path` (filtered to its copy
+ * by ofDeclaration), or the owner path of a project supertype or protocol?
+ * The latter match is by path alone, not by declaration copy. A member of a type
+ * nested in it is not its member: `Tool.Inner.main` is no `Tool.main`. A case
+ * whose name is a keyword is indexed with its backticks (`` case `in`(…) ``
+ * is `` `in` ``) while the call names it bare (`StoragePredicate.in(…)`), so
+ * both spellings are asked.
  */
 function declaresMember(decl: Node, path: string, member: string, context: ResolutionContext): boolean {
   let chain: Map<string, Node[]> | null = null;
+  let projectTypes: Node[] | null = null;
   return [member, `\`${member}\``].some((name) => context.getNodesByName(name).some((n) => {
     if (n.language !== 'swift' || !DECLARED_MEMBER_KINDS.has(n.kind)) return false;
     const owner = memberTypePath(n, context);
     if (owner === null) return false;
-    if (isPath(owner, path, context)) return true;
+    if (isPath(owner, path, context)) {
+      projectTypes ??= context.getNodesByName(decl.name)
+        .filter((t) => t.language === 'swift' && TYPE_KINDS.has(t.kind) && !isSwiftExtension(t, context));
+      return ofDeclaration([n], decl, projectTypes, path, context).length > 0;
+    }
     chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
     return chainKey(owner, chain, context) !== undefined;
   }));
@@ -1294,9 +1300,8 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  *   the type;
  * - it is not a `typealias`: the index does not hold what an alias names, so
  *   whether that type declares the member cannot be told;
- * - and the project does not declare the member on the type, its extensions,
- *   or its project supertypes and protocols and their extensions
- *   (declaresMember).
+ * - and declaresMember finds no matching indexed member on the selected copy
+ *   or at a project supertype or protocol's owner path.
  *
  * Every rule here can only suppress an edge; none aims one anywhere but the
  * receiver's own declaration.
