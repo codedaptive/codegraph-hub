@@ -102,9 +102,7 @@ export const blastTool: ExtensionTool = {
             'changes against HEAD, or the last commit when the tree is clean.',
         },
         depth: {
-          type: 'string',
-          // PropertySchema.type is a single string, so the schema cannot say
-          // ['string', 'number']; the handler takes either, and says so here.
+          type: ['string', 'integer'],
           description: 'How many dependent hops to walk: a positive integer as a string or number, or "all" ' +
             '(also "full" or "max") for the full closure. Default 2.',
         },

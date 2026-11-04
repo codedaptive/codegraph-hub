@@ -23,7 +23,8 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { CodeGraph } from '../../../src';
 import { ToolHandler, getStaticTools } from '../../../src/mcp/tools';
-import { __resetExtensionsForTests, registerExtension } from '../../../src/extensions/host/registry';
+import type { ToolDefinition } from '../../../src/mcp/tools';
+import { __resetExtensionsForTests, findExtensionTool, registerExtension } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
@@ -172,6 +173,40 @@ describe('codegraph_blast through ToolHandler (in-process)', () => {
     const res = await new ToolHandler(cg).execute('codegraph_blast', { projectPath: child });
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain("isn't indexed with codegraph: it is its own git repository");
+  });
+
+  // The red: a client validates arguments against the published schema, so `depth` must name
+  // both forms the handler takes. Before the schema change the blast tool declared `type: 'string'`
+  // (src/extensions/queries/blast/extension.ts), so the first listing failed this assertion.
+  // Checked on each listing a client reads: the static surface, the handler's, and the
+  // registry's copy, which is what a worker's dispatch looks the tool up in.
+  it('publishes depth as a string or an integer, on every listing', () => {
+    const listings: Array<[string, ToolDefinition | undefined]> = [
+      ['getStaticTools', getStaticTools().find((t) => t.name === 'codegraph_blast')],
+      ['ToolHandler.getTools', new ToolHandler(null).getTools().find((t) => t.name === 'codegraph_blast')],
+      ['findExtensionTool', findExtensionTool('codegraph_blast')?.definition],
+    ];
+    for (const [surface, tool] of listings) {
+      expect(tool, surface).toBeDefined();
+      expect(tool?.inputSchema.properties.depth?.type, surface).toEqual(['string', 'integer']);
+    }
+  });
+
+  // Control, not the red: the numeric form already answers at depth 1 (the handler takes a number),
+  // so this passes before the schema change and must still pass after it.
+  it('control: answers depth as the number 1 at depth 1', async () => {
+    cg = await CodeGraph.open(repo);
+    const res = await new ToolHandler(cg).execute('codegraph_blast', { projectPath: repo, base: 'C1', depth: 1 });
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text.split('\n')[0]).toBe('blast radius — C1...HEAD (depth 1)');
+  });
+
+  // Control, not the red: the string form answers at depth 1 before the schema change and after it.
+  it('control: answers depth as the string "1" at depth 1', async () => {
+    cg = await CodeGraph.open(repo);
+    const res = await new ToolHandler(cg).execute('codegraph_blast', { projectPath: repo, base: 'C1', depth: '1' });
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text.split('\n')[0]).toBe('blast radius — C1...HEAD (depth 1)');
   });
 });
 

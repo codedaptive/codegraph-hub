@@ -53,9 +53,20 @@ function depthLabel(depth: number): string {
 /** The glyph carried per area test state (graft's key). */
 const TEST_GLYPH: Record<'changed' | 'stale' | 'none' | 'na', string> = { changed: '✓', stale: '⚠', none: '✗', na: '–' };
 
-/** JSON report. `depth: Infinity` serializes as null, which is what graft's JSON shows for "all". */
+/**
+ * JSON report: hunk lines carry only their number and sign, not their text. The
+ * lines are cut in a copy; the report given is not changed. Ranges and hunks
+ * keep `deletion: true` for pure deletions. `depth: Infinity` serializes as
+ * null, which is what graft's JSON shows for "all".
+ */
 export function jsonReport(r: BlastReport): string {
-  return JSON.stringify(r, null, 2);
+  return JSON.stringify({
+    ...r,
+    changed: r.changed.map((f) => ({
+      ...f,
+      hunks: f.hunks.map((h) => ({ ...h, lines: h.lines.map(({ n, sign }) => ({ n, sign })) })),
+    })),
+  }, null, 2);
 }
 
 /** The PR-comment body: headline, test line, one table, then the collapsed sections; under a focus, an uncollapsed `## Outside focus (N)` section, then the caveat lines. */
@@ -183,7 +194,7 @@ function detailSections(r: BlastReport, symbols: number): string[] {
       } else if (a.testFiles.length > 0) {
         bits.push(`${plural(a.testFiles.length, 'test file')} ${a.testFiles.length === 1 ? 'reaches' : 'reach'} it, none changed here`);
       } else if (a.behavioural > 0) bits.push('no test file reaches it');
-      else bits.push('no function, method or class changed here');
+      else bits.push('no function, method, class or component changed here');
       out.push(`- ${TEST_GLYPH[a.tests]} **${a.label}** — ${bits.join(' · ')}`);
       if (a.unreached.length > 0) {
         out.push(`  - not reached: ${a.unreached.slice(0, MAX_UNREACHED_LISTED).map((n) => `\`${n}\``).join(', ')}${a.unreached.length > MAX_UNREACHED_LISTED ? `, …${a.unreached.length - MAX_UNREACHED_LISTED} more` : ''}`);

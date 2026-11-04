@@ -3,10 +3,12 @@
  * them, which is what turns a diff into graph seeds (an enclosing-symbol lookup
  * per changed line, see `blast.ts`).
  *
- * Ports graft 0.16's `dist/blast/diff.js` to TypeScript: same text caps, same
- * `+N,0` pure-deletion rule, same basis strings, and the types plus the exports
- * of `parseNameStatus` / `applyHunks` for the unit tests. It departs from graft
- * in five places:
+ * Ports graft 0.16's `dist/blast/diff.js` to TypeScript: same text caps, the
+ * same single-line record for a `+N,0` pure deletion (now flagged, see
+ * `LineRange`), the same basis strings except that a base can add the
+ * `plus uncommitted changes` label, and the types plus the exports of
+ * `parseNameStatus` / `applyHunks` for the unit tests. It departs from graft in
+ * six places:
  *   - paths are relative to the CodeGraph project root and restricted to it
  *     (`--relative`), because the project may be a subdirectory of the repo
  *     and its file ids are project-relative;
@@ -17,7 +19,11 @@
  *     whose text looks like a file header stays content;
  *   - a C-quoted `+++` path (a name holding `"`, `\` or a control character)
  *     is decoded before it is matched, so that file keeps its ranges;
- *   - a ref beginning with `-` is refused, so it cannot reach git as an option.
+ *   - a ref beginning with `-` is refused, so it cannot reach git as an option;
+ *   - a base is diffed from its merge base with HEAD to the working tree, not
+ *     to HEAD, so the post-image line numbers are those of the files on disk,
+ *     which is what the CodeGraph index describes (see `changedFiles`). Its
+ *     basis adds `plus uncommitted changes` when tracked files differ from HEAD.
  *
  * Git is shelled out to rather than parsed from a library because the CI job
  * this feeds already has git — and `--unified=0` gives exactly the post-image
@@ -29,10 +35,15 @@
 import { resolve } from 'node:path';
 import { git } from '../shared/git';
 
-/** An inclusive post-image line span, 1-based. */
+/** An inclusive post-image line span, 1-based except for a deletion at the top of the file. */
 export interface LineRange {
   start: number;
   end: number;
+  /**
+   * Set (always to true) for a pure deletion, where start = end is the line
+   * before the gap (0 at the top). Absent otherwise.
+   */
+  deletion?: true;
 }
 
 /** One edited line of a hunk: `n` is its post-image number, null for a `-` line. */
@@ -43,9 +54,7 @@ export interface HunkLine {
 }
 
 /** A hunk's post-image range, the text kept for it, and how many lines the caps dropped. */
-export interface Hunk {
-  start: number;
-  end: number;
+export interface Hunk extends LineRange {
   lines: HunkLine[];
   dropped: number;
 }
@@ -61,6 +70,50 @@ export interface ChangedFile {
   hunks: Hunk[];
 }
 
+/**
+ * The files whose changed lines git could not read (the patch pass failed), so
+ * their `ranges` are empty because they are unknown, not because nothing
+ * changed. Kept beside the files rather than on them: `ChangedFile` objects
+ * are printed as they are in the blast report.
+ */
+const rangesUnread = new WeakSet<ChangedFile>();
+
+/** True when git could not read the changed lines of `file`. */
+export function hasUnreadRanges(file: ChangedFile): boolean {
+  return rangesUnread.has(file);
+}
+
+/**
+ * What `applyHunks` counted over EVERY line of a hunk's body, whatever the text
+ * caps kept (`MAX_HUNK_LINES`, `MAX_FILE_LINES`). Seeding reads it to set aside
+ * blank separators and to recognise a removed separator, so a long hunk, or one
+ * after earlier hunks used up the per-file cap, is judged on all its lines.
+ */
+export interface HunkShape {
+  /** `-` lines in the hunk, kept or dropped. */
+  removed: number;
+  /** Post-image numbers of the added lines that are blank (whitespace only), kept or dropped. */
+  blankAdded: number[];
+  /**
+   * True when the hunk removed at least one line and every removed line is blank.
+   * False when it removed nothing: a deletion with no removed line is not a
+   * removed separator.
+   */
+  removedAllBlank: boolean;
+}
+
+/**
+ * The shape of each hunk `applyHunks` recorded. Kept beside the hunks rather than
+ * on them, like `rangesUnread`: `Hunk` objects are spread into the JSON report, so
+ * an own property would change its shape. Absent for a hunk built by hand.
+ */
+const hunkShapes = new WeakMap<Hunk, HunkShape>();
+
+/** The shape `applyHunks` counted for `hunk`, or undefined for a hunk it did not record. */
+export function hunkShape(hunk: Hunk): HunkShape | undefined {
+  return hunkShapes.get(hunk);
+}
+
 /** The changed files and the label of the range they were read from. */
 export interface ChangedSet {
   basis: string;
@@ -70,9 +123,11 @@ export interface ChangedSet {
 /** `@@ -oldStart[,oldCount] +newStart[,newCount] @@`; a missing count is 1. */
 const HUNK_RE = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-/** Text kept per hunk, and per file. A regenerated lockfile is one hunk of 40,000
- * lines: the ranges still matter (they seed the graph), the text does not, and it
- * would otherwise ride along in `--format json`. */
+/** Text kept per hunk, and per file, in the in-memory hunk record (`Hunk.lines`). A
+ * regenerated lockfile can be one hunk of 40,000 lines: its ranges still seed the
+ * graph, while the caps bound how much of its text is retained in memory. The JSON
+ * report no longer carries the text. The caps do not decide what seeding sets aside:
+ * that reads the hunk's `HunkShape`, counted over every line. */
 const MAX_HUNK_LINES = 24;
 const MAX_FILE_LINES = 200;
 
@@ -93,19 +148,21 @@ export function refExists(root: string, ref: string): boolean {
 }
 
 /**
- * The diff arguments for a base ref, and the label to show for it.
+ * Changed files + post-image line ranges, or null when git fails. A patch pass
+ * that fails alone is not null: the files come back with no ranges, each marked
+ * for `hasUnreadRanges`.
  *
- * `<base>...HEAD` (three dots) diffs against the MERGE BASE, not the tip of the
- * base branch — the difference matters on every PR whose base branch moved after
- * it was cut: two-dot would attribute other people's merges to this PR and
- * inflate the blast radius with files the author never touched.
- */
-function rangeArgs(base: string): { args: string[]; basis: string } {
-  return { args: [`${base}...HEAD`], basis: `${base}...HEAD` };
-}
-
-/**
- * Changed files + post-image line ranges, or null when git fails.
+ * With a `base`, the diff runs from the MERGE BASE of `base` and HEAD to the
+ * WORKING TREE. The merge base, not the tip of the base branch: on a branch
+ * whose base moved after it was cut, diffing against the tip would attribute
+ * other people's merges to this branch and list files its author never
+ * touched. The working tree, not HEAD: the post-image line numbers are then
+ * those of the files on disk, which is what the CodeGraph index describes, so a range
+ * selects the symbol it edits even when the tree holds uncommitted edits. Those
+ * edits to tracked files, staged or not, are part of the diff. The basis reads
+ * `<base>...HEAD` when tracked files under the project match HEAD, and
+ * `<base>...HEAD plus uncommitted changes` when they do not. Untracked files
+ * are not in the diff.
  *
  * With no `base` this reports the working tree against HEAD (the local
  * "what am I about to push" case), falling back to the last commit when the
@@ -116,15 +173,21 @@ function rangeArgs(base: string): { args: string[]; basis: string } {
  *
  * `root` is the CodeGraph project root, which may be a subdirectory of the git
  * repository: paths come back relative to it, and changes outside it are not
- * reported. A `base` beginning with `-` returns null without running git.
+ * reported. A `base` beginning with `-` returns null without running git, and
+ * so does a `base` that shares no history with HEAD (no merge base), or a git
+ * failure in the name-status pass or in the cleanliness check.
  */
 export function changedFiles(root: string, base?: string): ChangedSet | null {
   const dir = resolve(root);
   if (base !== undefined) {
     if (isOptionLike(base)) return null;
-    const { args, basis } = rangeArgs(base);
-    const files = diffFiles(dir, args);
-    return files === null ? null : { basis, files };
+    const mergeBase = git(dir, ['merge-base', base, 'HEAD'])?.trim();
+    if (!mergeBase) return null;
+    const files = diffFiles(dir, [mergeBase]);
+    if (files === null) return null;
+    const clean = workingTreeMatchesHead(dir);
+    if (clean === null) return null;
+    return { basis: clean ? `${base}...HEAD` : `${base}...HEAD plus uncommitted changes`, files };
   }
   const working = diffFiles(dir, ['HEAD']);
   if (working === null) return null;
@@ -135,7 +198,17 @@ export function changedFiles(root: string, base?: string): ChangedSet | null {
 }
 
 /**
- * Both git passes for one range: name-status (statuses, renames) then hunks.
+ * Whether tracked content under the project root matches HEAD, staged and
+ * unstaged edits alike. Untracked files (the index directory among them) are not
+ * compared. Null means git could not compare.
+ */
+function workingTreeMatchesHead(dir: string): boolean | null {
+  const changed = git(dir, ['diff', '--name-only', '-z', '--no-ext-diff', '--no-textconv', 'HEAD', '--', '.']);
+  return changed === null ? null : changed.length === 0;
+}
+
+/**
+ * Both git passes for one revision or range: name-status (statuses, renames) then hunks.
  *
  * Both run with `--relative` from `dir`: git otherwise prints repo-relative
  * paths and every change in the repo, while CodeGraph file ids are relative to
@@ -168,8 +241,10 @@ function diffFiles(dir: string, range: string[]): ChangedFile[] | null {
     '--',
   ]);
   // A failed patch pass still leaves the statuses: the files are reported with
-  // no ranges rather than not at all.
+  // no ranges rather than not at all, and each is marked (`hasUnreadRanges`) so
+  // a caller that needs the lines can tell unknown from unchanged.
   if (patch !== null) applyHunks(files, patch);
+  else for (const file of files) rangesUnread.add(file);
   return files;
 }
 
@@ -203,9 +278,11 @@ export function parseNameStatus(out: string): ChangedFile[] {
 }
 
 /**
- * Attach each hunk's post-image range — and its text — to its file, in place.
- * Hunks for a path not in `files`, or for a `+++ /dev/null` (deleted) file, are
- * skipped.
+ * Attach each hunk's post-image range — and the text the caps keep — to its file,
+ * in place. Hunks for a path not in `files`, or for a `+++ /dev/null` (deleted)
+ * file, are skipped. For every hunk it records it also counts the removed lines
+ * and notes the blank added ones over the whole body, kept or dropped (see
+ * `hunkShape`).
  *
  * A hunk's body is read by the counts in its `@@` header: until the header's
  * pre-image lines (`-` and context) and post-image lines (`+` and context) are
@@ -218,6 +295,10 @@ export function applyHunks(files: ChangedFile[], patch: string): void {
   let current: ChangedFile | undefined;
   /** The open hunk's record; undefined while reading a hunk of a skipped file. */
   let hunk: Hunk | undefined;
+  /** The counts of the hunk last recorded; set with `hunk`, and read only while `hunk` is set. */
+  let shape: HunkShape | undefined;
+  /** True once the open hunk has removed a line that is not blank. */
+  let removedNonBlank = false;
   /** Pre- and post-image lines the open hunk has still to deliver. */
   let oldLeft = 0;
   let newLeft = 0;
@@ -260,11 +341,16 @@ export function applyHunks(files: ChangedFile[], patch: string): void {
       newLeft = count;
       next = start;
       if (!current) continue;
-      // `+N,0` is a pure deletion: nothing survives in the post-image, and git
-      // reports the line BEFORE the gap. Recording that single line is what keeps
-      // "the body of foo() lost 10 lines" attributable to foo() at all.
-      const range: LineRange = count === 0 ? { start, end: start } : { start, end: start + count - 1 };
+      // `+N,0` marks a deletion gap after line N (0 at the top), not an edited
+      // line: nothing survives in the post-image, and git reports the line BEFORE
+      // the gap. The flag tells seeding that ownership needs a symbol spanning
+      // both sides of the gap; see `seedsForFile` in blast.ts.
+      const range: LineRange =
+        count === 0 ? { start, end: start, deletion: true } : { start, end: start + count - 1 };
       hunk = { ...range, lines: [], dropped: 0 };
+      shape = { removed: 0, blankAdded: [], removedAllBlank: false };
+      removedNonBlank = false;
+      hunkShapes.set(hunk, shape);
       current.ranges.push(range);
       current.hunks.push(hunk);
     }
@@ -277,11 +363,22 @@ export function applyHunks(files: ChangedFile[], patch: string): void {
     const sign = line[0];
     if (sign === '+' && newLeft > 0) {
       newLeft -= 1;
-      if (hunk) pushLine(hunk, { n: next, sign: '+', text: line.slice(1) }, kept++ < MAX_FILE_LINES);
+      if (hunk) {
+        // Counted whether or not the caps keep the text.
+        if (shape && line.slice(1).trim() === '') shape.blankAdded.push(next);
+        pushLine(hunk, { n: next, sign: '+', text: line.slice(1) }, kept++ < MAX_FILE_LINES);
+      }
       next += 1;
     } else if (sign === '-' && oldLeft > 0) {
       oldLeft -= 1;
-      if (hunk) pushLine(hunk, { n: null, sign: '-', text: line.slice(1) }, kept++ < MAX_FILE_LINES);
+      if (hunk) {
+        if (shape) {
+          shape.removed += 1;
+          if (line.slice(1).trim() !== '') removedNonBlank = true;
+          shape.removedAllBlank = !removedNonBlank;
+        }
+        pushLine(hunk, { n: null, sign: '-', text: line.slice(1) }, kept++ < MAX_FILE_LINES);
+      }
     } else if (sign === ' ' && oldLeft > 0 && newLeft > 0) {
       // A context line: `--unified=0 --inter-hunk-context=0` asks for none, but
       // one still occupies a line of both images.

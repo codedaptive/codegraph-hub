@@ -15,6 +15,13 @@
  *     (target, kind, source) order, where graft uses graph.json order, so the
  *     relation recorded for a node reached by two edges can differ from graft's;
  *   - the walk also follows `instantiates` and `decorates` (`BLAST_WALK_KINDS`);
+ *   - seeding is per changed line, not per range: each line is owned by its
+ *     innermost containing symbols, and the file node is a seed alongside them
+ *     for a code line outside every symbol (the original seeds the file only
+ *     when no symbol matched); symbols with equal spans are both kept (the
+ *     original drops both); a pure deletion belongs to the symbols spanning its
+ *     gap; and `component` nodes count as behaviour in the test signal (the
+ *     original counts function, method and class);
  *   - a dependent that no walk reaches within the depth without crossing a
  *     questionable call edge (`calls` edges the resolver bound by name only,
  *     resolution's candidate edge, `candidateEdgeSql` in
@@ -22,12 +29,23 @@
  *     certain) is marked `questionable`, and `strict`
  *     leaves such dependents out (graft has no notion of edge certainty).
  *
- * Seeding (graft's code rather than its header comment): a changed line seeds
- * the innermost symbol whose span contains it; the file node is the walk seed
- * only when no symbol matched (an added file with no symbols, a rename with no
- * content change, an edit outside every symbol). Seeding the file alongside
- * symbols would pull in every importer of the file for a one-line edit to one
- * function.
+ * Seeding: each changed range's code lines are owned by the innermost symbols
+ * containing them (symbols with equal spans share a line). Blank lines added
+ * by a hunk that removes nothing are set aside: git includes such separators
+ * beside a new function or method. Every other line, comments included, counts
+ * as code because a line's text cannot distinguish comments from code across
+ * languages. A hunk's blank lines and removals are counted over the whole hunk,
+ * not only the text `diff.ts` keeps. A range made only of set-aside lines counts
+ * all its lines. Every owner is a seed. A pure deletion belongs to the innermost
+ * symbols containing both lines beside its gap. With no such owner it seeds the
+ * file, unless it removed at least one line and all removed lines were blank (a
+ * removed separator). The file node is also a seed when a code line lies outside
+ * every symbol, or the diff has no ranges (a rename without content changes).
+ * Edits confined to surviving
+ * symbols do not seed the file, which would pull in every importer of the file
+ * for an edit inside one function; removing a top-level function does seed it,
+ * so its importers are reached. `import`, `export`, `parameter` and `route`
+ * nodes are never seeds (`NON_SEED_KINDS` in `./store`).
  *
  * Deliberately left out: graft's concept layer (`moduleIndex`,
  * `sharedConcept`, `conceptOf`) — CodeGraph has no concept nodes, so every
@@ -35,7 +53,7 @@
  * `labelSource` is always "symbol"; reviewers/owners; LLM naming; viz export.
  */
 import { TEST_PATH } from '../shared/test-path';
-import type { ChangedFile } from './diff';
+import { hunkShape, type ChangedFile } from './diff';
 import type { BlastStore, IncomingEdge } from './store';
 
 /**
@@ -62,7 +80,11 @@ export interface BlastNode {
 }
 
 export interface Seed extends BlastNode {
-  /** True when the whole file is the unit of change (no symbol matched). */
+  /**
+   * True for a file seed: a changed code line outside every symbol, a deletion
+   * that no symbol spans (a removed blank separator excepted), or a diff with no
+   * ranges. A file seed sits alongside the symbol seeds of the same file.
+   */
   wholeFile: boolean;
 }
 
@@ -142,32 +164,111 @@ function spanBounds(span: string): { start: number; end: number } | null {
   return m ? { start: Number(m[1]), end: Number(m[2]) } : null;
 }
 
+type Span = { node: BlastNode; start: number; end: number };
+
 /**
- * The innermost symbols whose spans overlap any changed range in `path`.
- *
- * A changed line inside `Cache.get` overlaps both the class and the method;
- * seeding the class would report everyone who touches any part of `Cache`. For
- * each range, a symbol that contains another overlapping symbol is dropped.
- *
- * graft's containment test is non-strict (`o.start >= s.start && o.end <= s.end`),
- * so two overlapping symbols with identical spans drop each other; kept as is for
- * parity. When that leaves the file with no symbol seed from any range, the file
- * fallback seeds the walk.
+ * The innermost of `containing`, all of which contain the same lines: those
+ * with no other member strictly nested inside them. A changed line inside
+ * `Cache.get` is contained by both the class and the method; seeding the class
+ * would report everyone who touches any part of `Cache`. Two members with equal
+ * spans are both kept, since line numbers cannot tell them apart.
  */
-function seedsForFile(store: BlastStore, path: string, ranges: ChangedFile['ranges']): BlastNode[] {
+function innermost(containing: Span[]): Span[] {
+  return containing.filter((s) => !containing.some((o) => o !== s && o.start >= s.start && o.end <= s.end
+    && (o.start > s.start || o.end < s.end)));
+}
+
+/**
+ * The symbols that own the code lines of the changed ranges of `file`, and
+ * whether the file itself is a seed (see the header for the rule).
+ *
+ * Within a range, blank lines added by a hunk that removes nothing are set
+ * aside (the separators git includes beside a new function or method), unless
+ * that would set aside the whole range. Every other line, comments included,
+ * counts as code: a line's text cannot distinguish comments from code across
+ * languages, so a comment line between symbols seeds the file. For a hunk
+ * `diff.ts` read, the decision rests on its `HunkShape`, counted over every
+ * line of the hunk, so the text caps (`MAX_HUNK_LINES`, `MAX_FILE_LINES`)
+ * change nothing: the blank lines of a long hunk, or of one after earlier
+ * hunks filled the per-file cap, are set aside as those of a short one. For a
+ * hunk built by hand (no shape) only the text it carries can be examined: its
+ * blank `+` lines are set aside when it carries no `-` line, and lines it does
+ * not carry count as code. A pure deletion at
+ * line s belongs to the innermost symbols containing both s and s+1. With no
+ * such owner it seeds the file, unless the hunk removed at least one line and
+ * every removed line is blank (a hand-built hunk: all its removed lines kept
+ * and blank); such an all-blank deletion with no spanning symbol seeds
+ * nothing (a documented limit). Other ranges are resolved over the segments
+ * between their breakpoints (symbol edges and the set-aside lines): a range
+ * costs a segment per symbol edge and set-aside line in it, and one store
+ * query, not a lookup per line.
+ */
+function seedsForFile(store: BlastStore, file: ChangedFile): { symbols: BlastNode[]; file: boolean } {
   const hit = new Map<string, BlastNode>();
-  for (const r of ranges) {
-    const overlapping: { node: BlastNode; start: number; end: number }[] = [];
-    for (const node of store.symbolsOverlapping(path, r.start, r.end)) {
+  let wholeFile = file.ranges.length === 0;
+  file.ranges.forEach((r, i) => {
+    const hunk = file.hunks[i];
+    const spans: Span[] = [];
+    for (const node of store.symbolsOverlapping(file.path, r.start, r.end)) {
       const b = spanBounds(node.span);
-      if (b) overlapping.push({ node, ...b });
+      if (b) spans.push({ node, ...b });
     }
-    for (const s of overlapping) {
-      const containsAnother = overlapping.some((o) => o !== s && o.start >= s.start && o.end <= s.end);
-      if (!containsAnother) hit.set(s.node.id, s.node);
+    if (r.deletion) {
+      const owners = innermost(spans.filter((s) => s.start <= r.start && s.end >= r.start + 1));
+      if (owners.length > 0) for (const s of owners) hit.set(s.node.id, s.node);
+      else {
+        const matches = hunk && hunk.start === r.start && hunk.end === r.end;
+        const shape = matches ? hunkShape(hunk) : undefined;
+        // A hunk diff.ts read counts every removed line; one built by hand is
+        // judged on the text it carries.
+        const blank = matches && (shape
+          ? shape.removed > 0 && shape.removedAllBlank
+          : hunk.dropped === 0 && hunk.lines.length > 0
+            && hunk.lines.every((l) => l.sign === '-' && l.text.trim() === ''));
+        if (!blank) wholeFile = true;
+      }
+      return;
     }
-  }
-  return [...hit.values()];
+
+    const aside = new Set<number>();
+    if (hunk && hunk.start === r.start && hunk.end === r.end) {
+      const shape = hunkShape(hunk);
+      if (shape) {
+        if (shape.removed === 0) for (const n of shape.blankAdded) if (n >= r.start && n <= r.end) aside.add(n);
+      } else if (!hunk.lines.some((l) => l.sign === '-')) {
+        for (const l of hunk.lines) {
+          if (l.sign === '+' && l.n !== null && l.n >= r.start && l.n <= r.end && l.text.trim() === '') aside.add(l.n);
+        }
+      }
+    }
+    // A range of nothing but set-aside lines counts them all.
+    if (aside.size === r.end - r.start + 1) aside.clear();
+
+    spans.sort((x, y) => x.start - y.start);
+    const cuts = new Set<number>([r.start, r.end + 1]);
+    for (const s of spans) {
+      if (s.start > r.start) cuts.add(s.start);
+      if (s.end + 1 <= r.end) cuts.add(s.end + 1);
+    }
+    for (const n of aside) {
+      cuts.add(n);
+      cuts.add(n + 1);
+    }
+    const points = [...cuts].sort((x, y) => x - y);
+    let active: Span[] = [];
+    let next = 0;
+    for (let k = 0; k + 1 < points.length; k++) {
+      const from = points[k] as number;
+      // Symbols starting at or before this segment, minus those that ended before it.
+      while (next < spans.length && (spans[next] as Span).start <= from) active.push(spans[next++] as Span);
+      active = active.filter((s) => s.end >= from);
+      if (aside.has(from)) continue;
+      // Every symbol edge is a breakpoint, so a symbol contains all of a segment or none of it.
+      if (active.length === 0) wholeFile = true;
+      else for (const s of innermost(active)) hit.set(s.node.id, s.node);
+    }
+  });
+  return { symbols: [...hit.values()], file: wholeFile };
 }
 
 interface Hit {
@@ -281,14 +382,16 @@ export function blastRadius(
       unindexed.push(file.path);
       continue;
     }
-    // No hunk ranges (a rename with no content change, a mode change): the unit of change is the file.
-    const symbolSeeds = file.ranges.length > 0 ? seedsForFile(store, file.path, file.ranges) : [];
-    for (const node of symbolSeeds) seeds.push({ ...node, wholeFile: false });
-    if (symbolSeeds.length === 0) seeds.push({ ...fileNode, wholeFile: true });
+    // The file is a seed for a changed code line outside every symbol, for a deletion
+    // that no symbol spans (a removed blank separator is not), and for a diff with no
+    // hunk ranges (a rename with no content change, a mode change).
+    const selected = seedsForFile(store, file);
+    for (const node of selected.symbols) seeds.push({ ...node, wholeFile: false });
+    if (selected.file) seeds.push({ ...fileNode, wholeFile: true });
 
     // One walk PER CHANGED FILE (graft's choice), so a module's `from` names the
     // changed files that actually reach it rather than every file in the diff.
-    const walkSeeds = symbolSeeds.length > 0 ? symbolSeeds : [fileNode];
+    const walkSeeds = selected.file ? [...selected.symbols, fileNode] : selected.symbols;
     seedNodes.set(file.path, walkSeeds);
     const [reached = [], certainHits = []] = impactOfMany(store, walkSeeds, depth, strict ? [true] : [false, true]);
     for (const h of certainHits) certain.add(h.id);
@@ -331,7 +434,7 @@ export function blastRadius(
  * Group the changed files into directory areas and work out whether each one's
  * tests moved: `changed` when a test file reaching it is in the diff, `stale`
  * when one reaches it but is not, `none` when none does, `na` when the area
- * changed no function, method or class.
+ * changed no function, method, class or component.
  *
  * The two whole-graph scans graft does here (in-degree, and test-file sources
  * per target) become two batched store queries over the seed ids only, and do
@@ -382,7 +485,7 @@ function changedAreas(
       for (const node of nodes) {
         // Reach is measured over behaviour only: nothing calls a type, so counting
         // interfaces would report a fully tested area as partly unreached.
-        const behavioural = node.kind === 'function' || node.kind === 'method' || node.kind === 'class';
+        const behavioural = node.kind === 'function' || node.kind === 'method' || node.kind === 'class' || node.kind === 'component';
         const from = incoming.get(node.id) ?? new Set<string>();
         for (const t of from) {
           if (!area.testFiles.includes(t)) area.testFiles.push(t);
@@ -472,9 +575,10 @@ const MAX_AREAS = 5;
 /**
  * Fold directory groups into their parents until there are at most `max`.
  *
- * The deepest group goes first, into a parent that already exists when one
- * does; otherwise a parent is created, but never at the top level, since a
- * single `(root)` area is no grouping at all.
+ * The deepest group whose parent already exists goes first, into that parent;
+ * when no group has one, the deepest group goes into a parent created for it,
+ * but never at the top level, since a single `(root)` area is no grouping at
+ * all.
  */
 function coarsen(groups: Map<string, string[]>, max: number): void {
   const depthOf = (dir: string): number => dir.split('/').length;
