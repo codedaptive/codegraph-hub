@@ -1,7 +1,6 @@
 /**
- * Text rendering for grep-by-symbol, as graft 0.16's grep-cli.js
- * (formatGrepHeader / formatGrepResult / zeroHitNote) minus graft's savings
- * line, with codegraph wording in the zero-hit note and the stale-group header.
+ * Text rendering for grep-by-symbol: a header, grouped hits, and a zero-hit
+ * note, with changed files identified by the stale-group header.
  */
 import type { GrepGroup, GrepResult } from './grep-core';
 

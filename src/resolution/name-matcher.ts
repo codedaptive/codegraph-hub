@@ -7603,7 +7603,7 @@ function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: Unresolve
  * `extension Array { func sorted(limit:) }`), and adds that the call's argument
  * labels fit the member's parameters; that test does not check them. It does
  * not take that test's declared-label ground: label-only evidence is held
- * (S-49), since without the receiver's type a label cannot tell a project
+ * since without the receiver's type a label cannot tell a project
  * namesake from an SDK method (`u.appending(queryItems: [])` on a `URL`).
  * `xs.sorted()` on an `[Int]` is the stdlib's, and unreadable arguments keep
  * nothing.

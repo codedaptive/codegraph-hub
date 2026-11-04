@@ -1,6 +1,6 @@
 /**
- * The blast review fixes, end to end (queries lane). These cases need BOTH halves: the git side (diff.ts,
- * which marks a pure-deletion range `deletion: true`, unit 1) and the seeding (blast.ts, unit 2). Each runs
+ * End-to-end blast tests cover both git diff handling (diff.ts, which marks a pure-deletion range
+ * `deletion: true`) and seeding (blast.ts). Each runs
  * `codegraph blast` through `runBlast` on a committed C1 -> C2 diff, so the range a deletion produces comes
  * from git and not from a hand-built object (the hand-built cases are in blast-review-fixes-seeds.test.ts).
  *
@@ -114,10 +114,9 @@ describe('deleting a whole function after another (C1 -> C2 through git)', () =>
 describe('KL-03 (known-limit row, disposition after R2-08)', () => {
   it('KL-03: deleting a module-level side-effect import directly after a function closing line seeds the file, not that function', async () => {
     // Indexes a fixture repo: can pass 5 s under load.
-    // The KL-03 row in docs/upstream/pr-fixes-backport-inventory-2026-11-03.md recorded this deletion as seeding only
-    // the function before the gap, because the gap line is that function's last line. R2-08 gives a gap that no
-    // symbol spans its own seed (the file), so the known limit no longer holds for this case. This test pins that
-    // disposition; the row's "not re-checked on 63afb04a" note is answered here.
+    // The KL-03 review row recorded this deletion as seeding only the function before the gap, because the gap
+    // line is that function's last line. R2-08 gives a gap that no symbol spans its own seed (the file), so the
+    // known limit no longer holds for this case. This test pins that behaviour.
     const root = repoAtC1({
       'src/value.ts': "export function a(): number {\n  return 1;\n}\nimport './side';\nexport function b(): number {\n  return 2;\n}\n",
       'src/side.ts': 'export const side = 1;\n',

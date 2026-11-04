@@ -1,5 +1,5 @@
 /**
- * Host lane, R1-01: a port of upstream beebf1cc to ours.
+ * R1-01: a port of upstream beebf1cc to ours.
  *
  * A sync refreshes the stat of a file whose bytes did not change (a fresh
  * checkout, a copied index, `touch`) by writing its new size and mtime with

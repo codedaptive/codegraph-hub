@@ -1,6 +1,6 @@
 /**
- * The machine server's opener of pinned projects (SPEC section 3, B13 and R-11:
- * a pinned database stays open and current).
+ * The machine server's opener of pinned projects: a pinned database stays open
+ * and current.
  *
  * `codegraph project pin` only writes the project registry
  * (./project-registry.ts, flag PROJECT_FLAG_PINNED); nothing tells the server.

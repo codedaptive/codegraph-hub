@@ -1073,7 +1073,7 @@ const TYPE_CALL_INHERITED_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind'
  * (`Pred::render::literal`) is never a target. A local function of that
  * method is no member of the type, and the index cannot tell it from a later
  * member the grammar nested under an earlier method (tree-sitter-swift
- * 0.7.3, S-29: `Receiver::restore::receivedFacts`), which memberTypePath
+ * 0.7.3; its `if try await` fix is unreleased on main: `Receiver::restore::receivedFacts`), which memberTypePath
  * reads as the type's. Such a member gets no `calls` edge until extraction
  * indexes it on its type.
  *

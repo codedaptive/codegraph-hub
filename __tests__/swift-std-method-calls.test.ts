@@ -285,19 +285,19 @@ struct Holder {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it.todo('x.contains(jpeg: 1) on a factory result reaches Bag.contains(jpeg:) by its label: HELD per S-49, label-only evidence cannot tell a project namesake from an SDK method without the receiver’s type');
+  it.todo('x.contains(jpeg: 1) on a factory result reaches Bag.contains(jpeg:) by its label: not resolved, since without the receiver’s type a label cannot tell a project member from an SDK or dependency namesake');
 
   it('x.contains(n) on a factory result, with no label Bag declares, is not Bag.contains', () => {
     expect(callTargets(cg, CALLERS, 'factoryNoLabel')).not.toContain('Bag::contains');
   });
 
-  it.todo('x.contains( with jpeg: on the next line reaches Bag.contains(jpeg:) by its label: HELD per S-49 (R2-01 refines the held label branch, not claimed fixed), same reason as the label case above');
+  it.todo('x.contains( with jpeg: on the next line reaches Bag.contains(jpeg:) by its label: not resolved (R2-01 refines the label branch, not claimed fixed), same reason as the label case above');
 
   it('x.contains( with an unlabeled argument on the next line is not Bag.contains', () => {
     expect(callTargets(cg, CALLERS, 'factoryWrappedNoLabel')).not.toContain('Bag::contains');
   });
 
-  it.todo('x.contains(jpeg: 1) after xs.contains(1) on the same line reaches Bag.contains(jpeg:) by its own label: HELD per S-49 (R2-02 refines the held label branch, not claimed fixed), same reason as the label case above');
+  it.todo('x.contains(jpeg: 1) after xs.contains(1) on the same line reaches Bag.contains(jpeg:) by its own label: not resolved (R2-02 refines the label branch, not claimed fixed), same reason as the label case above');
 
   it('xs.sorted(limit: 1) on an [Int] parameter reaches the project’s extension Array', () => {
     expect(callTargets(cg, CALLERS, 'extensionParam')).toContain('Array::sorted');

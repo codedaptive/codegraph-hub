@@ -127,7 +127,7 @@ function expectCallFrom(result: ExtractionResult, from: Node, callee: string): v
 }
 
 describe('Swift `if try await f(…) {` condition', () => {
-  // tree-sitter-swift 0.7.3 parses `if try await f(…) {` as a trailing closure; fixed by a grammar bump (0.7.4 parses it), see S-29
+  // tree-sitter-swift 0.7.3 parses `if try await f(…) {` as a trailing closure; fixed on the grammar's main branch, not yet released
   it.fails('a multi-line try-await condition inside a for loop leaves the method its own span', () => {
     const result = extract(VECTOR_1);
     const restore = byQualifiedName(result, 'Kit::restore');
@@ -137,7 +137,7 @@ describe('Swift `if try await f(…) {` condition', () => {
     expectCallFrom(result, restore, 'best');
   });
 
-  // tree-sitter-swift 0.7.3 parses `if try await f(…) {` as a trailing closure; fixed by a grammar bump (0.7.4 parses it), see S-29
+  // tree-sitter-swift 0.7.3 parses `if try await f(…) {` as a trailing closure; fixed on the grammar's main branch, not yet released
   it.fails('a comment between `try` and `await` does not hide the pair', () => {
     const result = extract(VECTOR_1_COMMENT);
     const restore = byQualifiedName(result, 'Kit::restore');
@@ -147,7 +147,7 @@ describe('Swift `if try await f(…) {` condition', () => {
     expectCallFrom(result, restore, 'best');
   });
 
-  // tree-sitter-swift 0.7.3 parses `if try await f(…) {` as a trailing closure; fixed by a grammar bump (0.7.4 parses it), see S-29
+  // tree-sitter-swift 0.7.3 parses `if try await f(…) {` as a trailing closure; fixed on the grammar's main branch, not yet released
   it.fails('the restorePending shape keeps received a member of Kit', () => {
     const result = extract(VECTOR_2);
     const restore = byQualifiedName(result, 'Kit::restorePending');
