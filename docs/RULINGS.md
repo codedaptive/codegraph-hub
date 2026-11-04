@@ -321,3 +321,26 @@ General as a RULING line. Decisions already settled by a document live in `team/
   S-52's 20 features integrated, gate green after one test-only fixture fix, ours ff092584, 1.6.2-sm.11 packed and
   tarball-checked, the S-52 PR pushes made (#3199, #3207 to #3210, #3209 with its blast fix). SPEC §8 updated (bae49b10).
   Not done: the install (Q-18, Bob).
+
+## R-30. Install sm.11; running sessions reconnect instead of restarting (answers Q-18)
+- Date: 2026-11-04 ~10:50 CST / Bob, direct: after the upgrade is installed and the old server is stopped, run
+  codeteam's `codeteam-type-all "/mcp reconnect codegraph"`. Given after Designer explained that a running
+  session's `serve --mcp` helper keeps the version it started with, and serves in-process, read-only, when the
+  server is another version.
+- Question: Q-18, install 1.6.2-sm.11 (ours ff092584) in place of sm.8; and how do sessions already running move to
+  the new server without a restart?
+- Ruling: yes, by this procedure: (1) install the sm.11 tarball and confirm the version, the tools and telemetry
+  off (R-6); (2) stop the old sm.8 server explicitly (a newer `-sm.N` launcher never replaces an older one on its
+  own: `isOlderRelease` compares plain MAJOR.MINOR.PATCH only); (3) run Bob's `codeteam-type-all "/mcp reconnect
+  codegraph"` (codeteam's bin), which types the reconnect into every running session of every team that is up and
+  not halted, once its turn has ended and its box is empty, retries busy ones every 20 s for up to 20 minutes
+  (`--wait <min>`) and lists any it could not reach (`--teams`, `--dry-run`). Subagents share their session's
+  connection. (4) Every team answers a call. A failed check rolls back to sm.8 by the same steps. Bob checked the
+  reconnect on a scratch session ("Successfully reconnected to codegraph") and told Orc-Codeteam to add the step to
+  codeteam's install procedure.
+- Reason: the reconnect removes the one cost of the install (running sessions stuck in-process on sm.8).
+- Not chosen: restarting sessions; leaving them in-process until they end; a product change making an old helper
+  re-launch itself from a newer install.
+- Work implied: Orc-Codegraph installs sm.11 by the steps above and reports the version, the checks and any
+  session the command could not reach; fleet adds steps (2) and (3) to fleet/rollout/global-install.md and
+  rollback.md.
