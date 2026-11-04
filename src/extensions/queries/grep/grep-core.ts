@@ -22,9 +22,7 @@
  * symbol. `searchIndexText` stops before that check, so its hits are raw: they
  * carry current line numbers and are never marked stale.
  *
- * Reproduces graft 0.16 `graft grep` (dist/search/grep.js) on codegraph's
- * SQLite index. Where graft loads the whole graph and scans each file's nodes
- * in memory, this runs one indexed SQL lookup per KEPT hit (at most
+ * On CodeGraph's SQLite index, this runs one indexed SQL lookup per KEPT hit (at most
  * `maxHits`) outside a changed file, so the per-hit attribution never loads a
  * file's nodes. The grouping stage adds one `files` row read and, where the row
  * exists, one open (with a stat of the descriptor) per distinct kept path; a
@@ -36,11 +34,10 @@
  * containment check and the rg search still grow with the number of indexed
  * files under the prefix.
  *
- * Departures from graft 0.16: a hit is attributed with its match column as
- * well as its line, so two symbols on one line are told apart (graft goes by
- * line alone; LINE_ONLY_LANGUAGES files still go by line); and a hit in a file
- * changed since indexing is reported unattributed and flagged stale, where
- * graft attributes it by the old spans.
+ * A hit is attributed with its match column as well as its line, so two
+ * symbols on one line are told apart; LINE_ONLY_LANGUAGES files go by line.
+ * A hit in a file changed since indexing is reported unattributed and flagged
+ * stale, since its indexed spans may no longer apply.
  *
  * No CLI or MCP concerns here: grep-format.ts renders the result,
  * grep-command.ts and grep-mcp.ts wire it to the two surfaces.
@@ -55,9 +52,9 @@ import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp } from '../../../file-limits'
 import { inFocus } from '../../host/server/session-scope';
 import { candidateEdgeSql } from '../../resolution/suspects';
 
-/** graft's DEFAULT_MAX_HITS. */
+/** Default maximum number of hits retained. */
 export const DEFAULT_MAX_HITS = 300;
-/** graft's MAX_HIT_TEXT: hit text is cut to this many UTF-16 code units after trimming. */
+/** Hit text is cut to this many UTF-16 code units after trimming. */
 const MAX_HIT_TEXT = 160;
 /**
  * Upper bound on the bytes of path arguments handed to one rg process. macOS
@@ -68,12 +65,11 @@ const MAX_ARGV_BYTES = 200 * 1024;
 
 /**
  * Node kinds that never own a hit. `file` spans the whole file, and a hit
- * outside every real symbol is "module level" (graft likewise skips its file
- * nodes); import/export/parameter/enum_member/route are sub-statement or
- * synthetic nodes that graft does not have as enclosing symbols.
+ * outside every real symbol is "module level"; import/export/parameter/
+ * enum_member/route are sub-statement or synthetic nodes, not enclosing symbols.
  */
 const NON_ENCLOSING_KINDS = ['file', 'import', 'export', 'parameter', 'enum_member', 'route'] as const;
-/** graft's WALK_RELATIONS: the edge kinds that count toward a group's in-degree. */
+/** The edge kinds that count toward a group's in-degree. */
 const IN_DEGREE_EDGE_KINDS = ['calls', 'references', 'imports', 'implements', 'extends'] as const;
 
 const sqlList = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(', ');
@@ -200,7 +196,7 @@ export interface GrepOptions {
 export interface GrepSymbolRef {
   /** `<path>#<name>`, with `~2`, `~3`... on later groups that would repeat an id. */
   id: string;
-  /** qualified_name with `::` written as `.` (graft's dotted form). */
+  /** qualified_name with `::` written as `.`. */
   name: string;
   kind: string;
   path: string;
@@ -238,8 +234,8 @@ export interface GrepResult {
   truncated: { files: number; hits: number };
   /**
    * The indexed bytes of the distinct files the groups live in: what reading
-   * them whole would have cost. graft counted UTF-16 chars; this is the
-   * `files.size` byte count. The key is absent when no group path has a size.
+   * them whole would have cost. This is the `files.size` byte count, not a
+   * UTF-16 character count. The key is absent when no group path has a size.
    */
   saved?: { files: number; baselineChars: number };
   /** Present (true) only when the search ran with `strict`. */
@@ -275,19 +271,19 @@ export class GrepIndexError extends Error {
   }
 }
 
-/** graft's escapeRegExp, for validating a `fixed` pattern as a RegExp. */
+/** Escape a literal `fixed` pattern for validation as a RegExp. */
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** graft's normalizePathPrefix: posix separators, no leading `./` (repeated), no trailing `/`. */
+/** Normalize to POSIX separators, with no repeated leading `./` or trailing `/`. */
 export function normalizeGrepPrefix(p: string): string {
   let out = p.replace(/\\/g, '/');
   while (out.startsWith('./')) out = out.slice(2);
   return out.replace(/\/+$/, '');
 }
 
-/** graft's pathUnderPrefix: the empty prefix holds everything. */
+/** Match a path against a segment-aware prefix; the empty prefix holds everything. */
 function pathUnderPrefix(path: string, prefix: string): boolean {
   return prefix === '' || path === prefix || path.startsWith(`${prefix}/`);
 }
@@ -348,7 +344,7 @@ function matchColumn(lines: { text?: string; bytes?: string } | undefined, subma
   return raw ? raw.subarray(0, first.start).toString('utf8').length : undefined;
 }
 
-/** graft's hit text: newline dropped, trimmed, cut to 160. */
+/** Hit text: newline dropped, trimmed, cut to 160 UTF-16 code units. */
 function hitText(raw: string): string {
   const line = raw.endsWith('\n') ? raw.slice(0, -1) : raw;
   return line.trim().slice(0, MAX_HIT_TEXT);
@@ -739,10 +735,9 @@ function isRegularFile(p: string): boolean {
 }
 
 /**
- * Rank the searched paths in String.prototype.localeCompare order. graft
- * keeps the first `maxHits` hits in its stored file order, which matches
- * localeCompare order on the graft 0.16 golden files. The list is sorted once
- * with a default-locale Intl.Collator (the comparison localeCompare performs
+ * Rank the searched paths in String.prototype.localeCompare order so the hit
+ * cap retains hits in path order. The list is sorted once with a default-locale
+ * Intl.Collator (the comparison localeCompare performs
  * with no arguments, without re-resolving the locale per call). Paths the
  * collator calls equal (`ab.ts` and `a\u200Db.ts`, with a zero-width joiner)
  * SHARE a rank, so between them the line number decides, as a
@@ -933,8 +928,7 @@ function groupHits(db: SqliteDatabase, kept: RawHit[], strict: boolean, { change
  * Two distinct nodes can share `<path>#<name>` (overloads, a Swift extension
  * beside its type). Within one result, the second and later groups in output
  * order get `~2`, `~3`, ... The suffix depends on this result's groups, so it
- * is not a stable id across queries (graft adds its suffix once, at graph
- * build, in source order).
+ * is not a stable id across queries.
  */
 function assignIds(groups: GrepGroup[]): void {
   const seen = new Map<string, number>();

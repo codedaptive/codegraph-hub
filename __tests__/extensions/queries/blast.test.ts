@@ -1,6 +1,5 @@
 /**
- * `codegraph blast` (a port of graft 0.16's `blast`) run on a real CodeGraph
- * index of a fixture git repo.
+ * `codegraph blast` run on a real CodeGraph index of a fixture git repo.
  *
  * Two indexed repos share one base commit (tag `C1`), each with its own
  * second commit, because `C1...HEAD` is cumulative and the vectors need

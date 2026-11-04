@@ -3,16 +3,9 @@
  * (the MCP-shaped handler) and `parseBlastArgv` (an argv parser for the same
  * flags; the real CLI parses with commander, in `./extension.ts`).
  *
- * A port of graft 0.16 `dist/blast/blast-cli.js`: the same depth and format
- * grammar (`resolveDepth`, `resolveFormat`) and graft's order of checks after
- * a flag parse error, which fails first, with graft's `process.exit(1)` turned
- * into a returned exit code so the chain stays testable without a subprocess.
- * The error wording is graft's except four: a flag parse error's ("needs a
- * value") and a value given to `--strict` ("takes no value") are this port's
- * own, the no-index message points at `codegraph init`, and the format list
- * has no `mermaid`. `--strict` is this port's own (graft has no edge
- * certainty): it leaves out dependents reached only through questionable call
- * edges.
+ * Depth and format are validated after flag parsing. Failures return an exit
+ * code and message, allowing callers to test the command without a subprocess.
+ * `--strict` leaves out dependents reached only through questionable call edges.
  *
  * Under an MCP session started with `--focus`, `blastToolHandler` gives `runBlast`
  * the focus (`BlastArgs.focus`), and the report lists the dependents outside it
@@ -20,7 +13,7 @@
  * it, and prints the unsplit report.
  *
  * Deliberately left out: `--format mermaid`, `--name`, owners and
- * `--pr-author`, `--export-viz`/`--title`, and graft's `--global-dir`.
+ * `--pr-author`, `--export-viz`/`--title`, and `--global-dir`.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -63,7 +56,7 @@ export interface BlastResult {
 
 type Format = 'text' | 'json' | 'markdown';
 
-/** graft's default walk depth: direct dependents and their dependents. */
+/** Default walk depth: direct dependents and their dependents. */
 const DEFAULT_DEPTH = 2;
 
 function fail(message: string): BlastResult {
@@ -76,7 +69,7 @@ function resolveFormat(raw: string | undefined): Format | BlastResult {
   return fail(`✗ --format must be text, markdown or json, got "${raw}"`);
 }
 
-/** graft's grammar: all|full|max is the full closure; otherwise a number >= 1, floored. */
+/** all|full|max is the full closure; otherwise a number >= 1, floored. */
 function resolveDepth(raw: string | number | undefined): number | BlastResult {
   if (raw === undefined) return DEFAULT_DEPTH;
   const text = String(raw);
@@ -89,7 +82,7 @@ function resolveDepth(raw: string | number | undefined): number | BlastResult {
 /**
  * Run blast at `root` and return what the CLI would print.
  *
- * A flag parse error (`args.error`) fails first; the rest run in graft's order:
+ * A flag parse error (`args.error`) fails first; the remaining checks run in order:
  * format, depth, index, base ref, diff. Failures carry their message in
  * `stderr` and exit 1; the report goes to `output`.
  */
@@ -104,7 +97,7 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
   if (!fs.existsSync(getDatabasePath(absRoot))) {
     return fail(`✗ no CodeGraph index at ${absRoot} — run \`codegraph init\` first`);
   }
-  // An unknown base is usually a shallow CI checkout, not a typo; graft's message says so.
+  // An unknown base may be caused by a shallow CI checkout.
   if (args.base !== undefined && !refExists(absRoot, args.base)) {
     return fail(`✗ base ref "${args.base}" is not in this checkout.\n` +
       '  In CI, fetch enough history for the merge base: actions/checkout with `fetch-depth: 0`.');
@@ -116,8 +109,7 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
   try {
     const whole = blastRadius(store, diff.files, diff.basis, depth, { strict: args.strict === true });
     const report = args.focus ? splitReportByFocus(whole, args.focus.prefixes, args.focus.dirs) : whole;
-    // graft prints JSON with console.log, hence the trailing newline; text and
-    // markdown already end in one.
+    // JSON gets a trailing newline; text and markdown already end in one.
     const output = format === 'json' ? `${jsonReport(report)}\n`
       : format === 'markdown' ? markdownReport(report)
         : textReport(report);

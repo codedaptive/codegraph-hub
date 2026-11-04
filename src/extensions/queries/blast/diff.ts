@@ -3,12 +3,9 @@
  * them, which is what turns a diff into graph seeds (an enclosing-symbol lookup
  * per changed line, see `blast.ts`).
  *
- * Ports graft 0.16's `dist/blast/diff.js` to TypeScript: same text caps, the
- * same single-line record for a `+N,0` pure deletion (now flagged, see
- * `LineRange`), the same basis strings except that a base can add the
- * `plus uncommitted changes` label, and the types plus the exports of
- * `parseNameStatus` / `applyHunks` for the unit tests. It departs from graft in
- * six places:
+ * Hunk text is capped in memory, and a `+N,0` pure deletion is represented as
+ * a flagged single-line range (see `LineRange`). A base can add the
+ * `plus uncommitted changes` label. The diff is read as follows:
  *   - paths are relative to the CodeGraph project root and restricted to it
  *     (`--relative`), because the project may be a subdirectory of the repo
  *     and its file ids are project-relative;
@@ -28,7 +25,7 @@
  * Git is shelled out to rather than parsed from a library because the CI job
  * this feeds already has git — and `--unified=0` gives exactly the post-image
  * line ranges we need, with no context lines to subtract back out. It runs
- * through the zone's shared runner (`../shared/git.ts`, an argument array,
+ * through the shared git runner (`../shared/git.ts`, an argument array,
  * never a shell string), so a ref or path from the caller is never interpreted
  * by a shell. `changedFiles` and `refExists` serve `blast` and `orphans` alike.
  */
@@ -253,7 +250,7 @@ function diffFiles(dir: string, range: string[]): ChangedFile[] | null {
  * spends THREE fields (`R096`, old, new) and everything else spends two.
  * Splitting on NUL and walking with a cursor is the only way to read it — a
  * line-oriented parse silently pairs a rename's old path with the next file's
- * status. A copy is reported as `renamed`, as graft does.
+ * status. A copy is reported as `renamed`.
  */
 export function parseNameStatus(out: string): ChangedFile[] {
   const fields = out.split('\0').filter((f) => f !== '');
