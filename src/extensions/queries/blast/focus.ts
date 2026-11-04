@@ -2,8 +2,8 @@
  * Splits a `BlastReport` by the session focus (`serve --mcp --focus <dir>`): the
  * dependents inside the focus stay in `modules`, the rest move to
  * `outsideFocus`, so blast still covers the whole repository and an agent sees
- * what lies beyond the focus, as host's callers and impact do (`## Outside
- * focus (N)`, docs/SPEC.md on `ours`, section 4).
+ * dependents outside the focus under `## Outside focus (N)`, as the built-in
+ * callers and impact tools do.
  *
  * The focus is read only through host's `inFocus`, on prefixes
  * `focusPrefixesOfTool` (../shared/focus.ts) computed from host's
