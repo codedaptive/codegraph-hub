@@ -1,5 +1,5 @@
 /**
- * The uninit and unlock gates (R-15): `codegraph uninit` releases the project's index in the machine server before it
+ * The uninit and unlock gates: `codegraph uninit` releases the project's index in the machine server before it
  * deletes the index, and `codegraph unlock` takes a lock out only when its holder is not running.
  *
  *   UG1   uninit --force under a running server and builder: the index is deleted, and neither process holds a file
