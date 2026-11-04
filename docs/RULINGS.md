@@ -344,3 +344,4 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Work implied: Orc-Codegraph installs sm.11 by the steps above and reports the version, the checks and any
   session the command could not reach; fleet adds steps (2) and (3) to fleet/rollout/global-install.md and
   rollback.md.
+- Confirmed: 2026-11-04 10:57 CST, Bob, direct ("install is approved").
