@@ -141,8 +141,8 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-11-04)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.8** (ours a7881907,
-2026-10-31); sm.9, sm.10 and sm.11 are promoted and packed, not installed (R-18).
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.11** (ours
+ff092584, 2026-11-04, R-30); running sessions moved to it with `/mcp reconnect codegraph`, no restart.
 
 | Release | What it shipped |
 |---|---|
@@ -156,7 +156,8 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 
 | Left | State |
 |---|---|
-| Install sm.11 in place of sm.8 | Bob (Q-18, R-18) |
+| The official public fork `codedaptive/codegraph-hub`: rename, README stance, Issues, first monthly update (R-31, SPEC-upstream §7) | after S-53's restack; upstream-prs |
+| Install and rollback docs: the stop-the-old-server and reconnect steps (R-30) | fleet (back after Kong's review) |
 | Findings after S-52 closed: `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); resolution's own list | next release (S-52) |
 
 ## 9. Out of scope (R-12)

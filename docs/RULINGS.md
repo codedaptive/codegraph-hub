@@ -345,3 +345,31 @@ General as a RULING line. Decisions already settled by a document live in `team/
   session the command could not reach; fleet adds steps (2) and (3) to fleet/rollout/global-install.md and
   rollback.md.
 - Confirmed: 2026-11-04 10:57 CST, Bob, direct ("install is approved").
+- Done: 2026-11-04, Orc-Codegraph (#2190; design/Orc-Codegraph/ledger/reports/release-gate-sm11.md, Install):
+  1.6.2-sm.11 installed, telemetry off, sm.8 server stopped, the server is sm.11; all 8 teams answer with 10 tools;
+  the reconnect reached 38 sessions (aimodel/Coord-research busy, retried); promoted features approved. Fleet's
+  rollout-doc steps went back to fleet after Kong's review.
+
+## R-31. The official public fork: codedaptive/codegraph-hub, tracking upstream monthly; the PR effort finishes
+- Date: 2026-11-04 ~11:10 CST / Bob, direct: "that project has its own agenda. I want to finish the PR effort but
+  let's make an Official public fork on codedaptive/codegraph-hub; we'll declare ourselves as tracking the main
+  project but maintaining our unique feature set, with a monthly update, unless someone reports an issue they need
+  fixed more timely."
+- Question: upstream has not answered any of the 14 PRs or 3 issues since 2026-11-01; what is our public stance?
+- Ruling: (1) The official public fork is `codedaptive/codegraph-hub`: the existing public fork
+  `codedaptive/codegraph-sharedserver` (R-17) is renamed to it, since an organisation holds one fork of a repository
+  and GitHub redirects the old name. Its README opens by saying it tracks `colbymchenry/codegraph` and keeps its own
+  feature set, is updated monthly, and takes issues (Issues turned on); a reported issue that needs a sooner fix
+  gets one out of cycle. (2) Monthly update: current upstream merged into ours, the whole-suite gate, then the hub's
+  main brought to that `ours` with SPEC-upstream §4's exclusions and R-19's rules, and the update tagged. The first
+  update is now, from sm.11. (3) The PR effort finishes: S-53's restack makes the five conflicting PRs mergeable;
+  after that the 14 PRs stay open as offered with no further pushes, restacks or bot replies; if the maintainer
+  himself comments, upstream-prs answers him. (4) Upstream issue #3211's body is edited to name the hub; no new
+  comment (R-25).
+- Reason: upstream sets its own course; the hub gives users a maintained home for the features on a stated cadence.
+- Not chosen: a second, separate repository (GitHub allows one fork per organisation; the rename keeps the fork
+  link and the old links); npm publication of the hub (not asked); continuing to chase the PRs.
+- Supersedes: R-17's fork name and its open-ended PR follow-up (R-17's PRs and issues stand as offered).
+- Expanded in docs/SPEC-upstream.md §4 and §7. Work implied: Orc-Codegraph routes the rename, README, Issues,
+  #3211 body edit and the first update (upstream-prs, which keeps the fork checkout, is the natural owner) after
+  S-53, and fixes the monthly date.
