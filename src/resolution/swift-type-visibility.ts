@@ -320,6 +320,16 @@ function sharedDirs(a: string, b: string): number {
  * the unfiltered winner too, else nothing is found (a module-less copy is
  * kept only because its module is unknown, which is no evidence the caller
  * sees it over the dropped one).
+ *
+ * A qualified inheritance entry (`class D: Right.Box.Base`) is read more
+ * strictly, and only it, so the annotation and static-call callers keep their
+ * reading. Its type's path is also read through the extension it is declared
+ * in, from that extension's own header (withExtendedPath): `Base` in
+ * `extension Right.Box` is `Right::Box::Base`, not the `Base` in
+ * `extension Left.Box`, though both are indexed as `Box::Base`. And a type
+ * whose qualified name is the written path, or ends in it (depth 1), wins over
+ * one that fits only through fitsPath's fallbacks: `Kit.Base` is the `Base` in
+ * `enum Kit`, not a top-level `Base` of the same file.
  */
 function declarationFor(
   name: string,
@@ -330,7 +340,8 @@ function declarationFor(
   visible?: (decl: Node) => boolean,
 ): Node | null {
   const memo = memoFor(context).declaration;
-  const key = `${ref.filePath}\0${from?.qualifiedName ?? ''}\0${written}\0${name}\0${visible ? 'visible' : ''}`;
+  const inheritance = isInheritanceRef(ref);
+  const key = `${ref.filePath}\0${from?.qualifiedName ?? ''}\0${written}\0${name}\0${visible ? 'visible' : ''}\0${inheritance ? 'inherits' : ''}`;
   if (memo.has(key)) return memo.get(key)!;
 
   const bare = !written.includes('.');
@@ -339,7 +350,15 @@ function declarationFor(
   for (const node of context.getNodesByName(name)) {
     if (node.language !== 'swift' || !TYPE_KINDS.has(node.kind) || isSwiftExtension(node, context)) continue;
     if (path !== null) {
-      if (fitsPath(node, path, context)) scored.push({ node, depth: 0 });
+      if (!fitsPath(node, path, context)) continue;
+      if (!inheritance) {
+        scored.push({ node, depth: 0 });
+        continue;
+      }
+      const read = withExtendedPath(node, context);
+      if (!fitsPath(read, path, context)) continue;
+      const exact = read.qualifiedName === path || read.qualifiedName.endsWith(`::${path}`);
+      scored.push({ node, depth: exact ? 1 : 0 });
       continue;
     }
     const depth = bare ? bareScopeDepth(node, from, context) : 0;
@@ -359,9 +378,15 @@ function declarationFor(
   return found;
 }
 
-/** Of scored declarations, the one a site means: innermost scope, then same file, then nearest directory; a tie is none. */
+/**
+ * Of scored declarations, the one a site means: innermost scope (for a
+ * qualified inheritance entry, an exact fit of the written path), then same
+ * file, then nearest directory; a tie is none.
+ */
 function pickDeclaration(scored: ReadonlyArray<{ node: Node; depth: number }>, ref: UnresolvedRef): Node | null {
-  // Swift looks a bare name up innermost scope first.
+  // Swift looks a bare name up innermost scope first (bareScopeDepth). A
+  // qualified inheritance entry's depth is 1 only for an exact fit of its
+  // written path (declarationFor), so the deepest fit wins there too.
   const deepest = Math.max(-1, ...scored.map((s) => s.depth));
   // One declaration per file: a framework resolver's one-line twin of a
   // declaration (`@main struct App`) is the same type.
@@ -603,11 +628,13 @@ export function resolveSwiftTypePathCall(ref: UnresolvedRef, context: Resolution
 /**
  * A qualified Swift inheritance entry, `class QC: Kit.Runner`, whose ref is
  * the dotted path the parse tree gives (`Kit.Runner`): the project's own
- * declaration of the type on that path (declarationFor, by the last segment),
+ * declaration of the type on that path (declarationFor, by the last segment
+ * and, for a type declared in an extension, the extension's written path),
  * or null. ResolveOne's gates still run on the result: gateSwiftTypeTarget
- * drops it when no qualifier segment names a project type. (createEdges later
- * writes an `extends` onto a protocol as `implements` when the source is not
- * itself an interface or protocol.)
+ * drops it when no qualifier segment names a project type, and
+ * ReferenceResolver drops a target the reference's file cannot see.
+ * (createEdges later writes an `extends` onto a protocol as `implements` when
+ * the source is not itself an interface or protocol.)
  */
 export function resolveSwiftQualifiedSupertype(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
   const name = ref.referenceName;
@@ -636,12 +663,12 @@ function moduleQualified(owner: string, path: string, context: ResolutionContext
 }
 
 /**
- * The full path of the type a member is declared on. Its qualified name
- * starts at the outermost declaration in its file, and an extension is named
- * by its last segment — the members of `extension API.PackageController {
- * enum GetRoute { … } }` are `PackageController::GetRoute::…` — so the
- * outermost extension's written path is read back from its line. Null for a
- * top-level function.
+ * The full path of the type a member, or a nested type, is declared on. Its
+ * qualified name starts at the outermost declaration in its file, and an
+ * extension is named by its last segment — the members of
+ * `extension API.PackageController { enum GetRoute { … } }` are
+ * `PackageController::GetRoute::…` — so the outermost extension's written
+ * path is read back from its line. Null for a top-level function or type.
  */
 function ownerPath(member: Node, context: ResolutionContext): string | null {
   const memo = memoFor(context).owners;
@@ -666,6 +693,64 @@ function writtenOwnerPath(path: string, member: Node, context: ResolutionContext
     .reduce<Node | null>((out, t) => (!out || t.startLine < out.startLine ? t : out), null);
   const extended = outer ? extendedPath(outer, context) : null;
   return extended ? extended + path.slice(first.length) : path;
+}
+
+/**
+ * A type node with its qualified name read through the extension it is
+ * declared in: `Base` in `extension Right.Box { class Base {} }` is indexed as
+ * `Box::Base` and read as `Right::Box::Base`. Any other type node keeps its
+ * qualified name.
+ *
+ * Only a qualified inheritance entry reads a type this way (declarationFor),
+ * and it does not go through ownerPath. The enclosing type is the outermost
+ * type in the node's file, named by the first segment of its qualified name,
+ * that encloses the node by position, line and column, so two extensions that
+ * share a line or a last segment are told apart. When that type is an
+ * extension whose header writes a dotted path, the header gives the path
+ * (extensionHeaderPath); otherwise the node keeps its qualified name.
+ */
+function withExtendedPath(node: Node, context: ResolutionContext): Node {
+  const cut = node.qualifiedName.indexOf('::');
+  if (cut < 0) return node;
+  const first = node.qualifiedName.slice(0, cut);
+  const before = (aLine: number, aColumn: number, bLine: number, bColumn: number): boolean =>
+    aLine < bLine || (aLine === bLine && aColumn < bColumn);
+  const outer = context
+    .getNodesInFile(node.filePath)
+    .filter(
+      (t) =>
+        t.name === first &&
+        TYPE_KINDS.has(t.kind) &&
+        t.id !== node.id &&
+        !before(node.startLine, node.startColumn, t.startLine, t.startColumn) &&
+        !before(t.endLine, t.endColumn, node.endLine, node.endColumn),
+    )
+    .reduce<Node | null>((out, t) => (!out || before(t.startLine, t.startColumn, out.startLine, out.startColumn) ? t : out), null);
+  if (!outer || !isSwiftExtension(outer, context)) return node;
+  const written = extensionHeaderPath(outer, context);
+  return written === null ? node : { ...node, qualifiedName: `${written}${node.qualifiedName.slice(first.length)}` };
+}
+
+/**
+ * The dotted path an extension's own header writes, `extension Left.Crate<T>:
+ * P {` → `Left::Crate`; null for a single-segment header (`extension Box`).
+ * Unlike extendedPath, it reads only from the extension's start to the first
+ * `{` (the header may wrap over a few lines) and takes the path that directly
+ * follows the first `extension` keyword there, so a neighbouring extension's
+ * header is never read.
+ */
+function extensionHeaderPath(extension: Node, context: ResolutionContext): string | null {
+  const lines = linesOf(extension.filePath, context);
+  if (!lines) return null;
+  const span = [(lines[extension.startLine - 1] ?? '').slice(extension.startColumn), ...lines.slice(extension.startLine, extension.startLine + 4)]
+    .join(' ')
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  const open = span.indexOf('{');
+  const header = open < 0 ? span : span.slice(0, open);
+  const keyword = /\bextension\s/.exec(header);
+  if (!keyword) return null;
+  const written = /^\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)+)/.exec(header.slice(keyword.index + 'extension'.length))?.[1];
+  return written ? written.replace(/\s+/g, '').split('.').join('::') : null;
 }
 
 /** `extension API.PackageController {` → `API::PackageController`; null for anything but an extension of a nested type. */

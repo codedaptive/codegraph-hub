@@ -8,11 +8,18 @@
  * extracted ref is the dotted path of those `type_identifier`s, `Kit.Runner`
  * (generic arguments dropped), at the `user_type`'s position, and the
  * resolver places it on the declaration that path names rather than on
- * `enum Kit`. No source text is read back to recover the qualifier.
+ * `enum Kit`. The ref's qualifier is never recovered from source text. A
+ * declaration inside an extension is matched by that extension's written path
+ * (`extension Right.Box`), which is read from that extension's own header, and
+ * only for that candidate.
  *
  * Both extraction paths are covered: the wasm arm always, the kernel arm when
  * a kernel is staged. Each arm indexes one real temp project holding every
  * vector, so the index cost is paid once per arm.
+ *
+ * The placement blocks at the end (a same-named type in one file, a `#if`-split
+ * member, a supertype across the test-suite boundary, extensions that share a
+ * line or a last segment) index their own projects on the wasm path.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -38,6 +45,20 @@ const FILES: Record<string, string> = {
 `,
   // Shadows Foundation's Operation by its last segment.
   'Sources/App/Operation.swift': `class Operation {}
+`,
+  // Two types named Base, each declared in an extension of a different
+  // nested Box: both are indexed as Box::Base, so only the extension's
+  // written path tells them apart.
+  'Sources/App/Boxes.swift': `enum Left { enum Box {} }
+enum Right { enum Box {} }
+extension Left.Box {
+    class Base {}
+}
+extension Right.Box {
+    class Base {}
+}
+class FromRight: Right.Box.Base {}
+class FromLeft: Left.Box.Base {}
 `,
   'Sources/App/Uses.swift': `class QC: Kit.Runner {}
 class QG: Kit.Runner<Int> {}
@@ -179,10 +200,24 @@ function vectors(env: Record<(typeof ENV_KEYS)[number], string | undefined>): vo
     expect(targets, JSON.stringify(targets)).toContain('View2::y');
   });
 
+  // Two Base types share the path Box::Base; the extension's written path
+  // (`Right.Box` or `Left.Box`) decides which one each class extends.
+  it('j. lands `Right.Box.Base` on the Base in `extension Right.Box`, not on its twin in `extension Left.Box`', () => {
+    const at = (name: string): string[] => {
+      const ids = cg.getNodesByName(name).filter((n) => n.language === 'swift').map((n) => n.id);
+      return cg.getOutgoingEdgesFrom(ids, ['extends', 'implements']).map((e) => {
+        const t = cg.getNode(e.target);
+        return `${t?.qualifiedName} (${t ? path.basename(t.filePath) : ''}:${t?.startLine})`;
+      });
+    };
+    expect(at('FromRight')).toEqual(['Box::Base (Boxes.swift:7)']);
+    expect(at('FromLeft')).toEqual(['Box::Base (Boxes.swift:4)']);
+  });
+
   // The extraction itself carries the qualifier: the ref is the user_type's
   // dotted type_identifier path, generic arguments dropped, at the user_type's
   // position (line 1-based, column 0-based).
-  it('j. extracts a qualified entry as its dotted path at the entry\'s position', () => {
+  it('k. extracts a qualified entry as its dotted path at the entry\'s position', () => {
     const rel = 'Sources/App/Uses.swift';
     const result = extractFromSource(path.join(root, rel), FILES[rel]!, 'swift');
     const fromName = new Map(result.nodes.map((n) => [n.id, n.name]));
@@ -205,4 +240,148 @@ describe('Swift qualified inheritance, wasm arm', () => {
 
 describe.skipIf(!fs.existsSync(KERNEL_PATH))('Swift qualified inheritance, kernel arm', () => {
   vectors({ CODEGRAPH_KERNEL: undefined, CODEGRAPH_KERNEL_LANGS: 'all' });
+});
+
+/** Index a temp project of `files` under the current env; the caller closes it and removes `root`. */
+async function indexProject(files: Record<string, string>): Promise<{ cg: CodeGraph; root: string }> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-swift-qual-place-'));
+  for (const [rel, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), content);
+  }
+  return { cg: await CodeGraph.init(root, { index: true }), root };
+}
+
+describe('Swift qualified inheritance placement, wasm arm', () => {
+  let saved: Record<string, string | undefined> = {};
+
+  beforeAll(() => {
+    saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+    process.env.CODEGRAPH_KERNEL = '0';
+    delete process.env.CODEGRAPH_KERNEL_LANGS;
+    resetKernelForTests();
+  });
+
+  afterAll(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    resetKernelForTests();
+  });
+
+  describe('same-file placement, top-level Base declared first', () => {
+    let cg: CodeGraph;
+    let root: string;
+
+    beforeAll(async () => {
+      ({ cg, root } = await indexProject({
+        // The top-level Base and Kit.Base are the same shape and share a file;
+        // the nested one must win on its own path, not on which is declared first.
+        'Sources/App/Nesting.swift': 'class Base {}\nenum Kit { class Base {} }\nclass Child: Kit.Base {}\n',
+        // The `#if` right inside `enum Frame {` leaves `Deep` without a parent
+        // in the index, so it is indexed at the top level. Nothing else declares `Deep`.
+        'Sources/App/Recovery.swift': 'enum Frame {\n#if os(Linux)\n    protocol Deep {}\n#endif\n}\nclass Lower: Frame.Deep {}\n',
+      }));
+    });
+
+    afterAll(() => {
+      cg?.close();
+      if (root) fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    it('lands `Kit.Base` on the nested class, not on the top-level Base declared first in the file', () => {
+      const s = supers(cg, 'Child');
+      expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Kit::Base (Nesting.swift)']);
+    });
+
+    it('lands `Frame.Deep` on the top-level protocol that has no parent in the index, beside its enum', () => {
+      expect(cg.getNodesByName('Deep').map((n) => n.qualifiedName)).toEqual(['Deep']);
+      const s = supers(cg, 'Lower');
+      expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Deep (Recovery.swift)']);
+    });
+  });
+
+  describe('test-suite placement', () => {
+    let cg: CodeGraph;
+    let root: string;
+
+    beforeAll(async () => {
+      ({ cg, root } = await indexProject({
+        'Sources/App/Child.swift': 'class Child: Kit.Base {}\n',
+        // The only project declaration of Kit.Base is this test-suite fixture.
+        'Tests/AppTests/Fixture.swift': 'enum Kit { class Base {} }\n',
+        // A test file may use the fixture.
+        'Tests/AppTests/UsesFixture.swift': 'class TestChild: Kit.Base {}\n',
+      }));
+    });
+
+    afterAll(() => {
+      cg?.close();
+      if (root) fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    it('gives no supertype edge from production code to a nested type that only a test-suite file declares', () => {
+      const s = supers(cg, 'Child');
+      expect(s, JSON.stringify(s)).toEqual([]);
+    });
+
+    it('lands a test class\'s `Kit.Base` on the nested type its test-suite fixture declares', () => {
+      const s = supers(cg, 'TestChild');
+      expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Kit::Base (Fixture.swift)']);
+    });
+  });
+
+  describe('extension placement', () => {
+    // A single-segment extension directly above an extension of a nested type
+    // of the same last name must not borrow the next line's path: `extension
+    // Box` on line 3 would read `Outer.Box` from line 4 and claim that Base.
+    const ADJACENT = 'enum Box {}\nenum Outer { enum Box {} }\nextension Box { class Base {} }\nextension Outer.Box { class Base {} }\nclass FromNested: Outer.Box.Base {}\n';
+    // The enums, extensions and Items are all on one line, so only columns
+    // tell which extension encloses each Item.
+    const ONE_LINE = 'enum Left { enum Crate {} }; enum Right { enum Crate {} }; extension Left.Crate { class Item {} }; extension Right.Crate { class Item {} }\nclass FromRightItem: Right.Crate.Item {}\nclass FromLeftItem: Left.Crate.Item {}\n';
+
+    let cg: CodeGraph;
+    let root: string;
+
+    beforeAll(async () => {
+      ({ cg, root } = await indexProject({
+        'Sources/App/Adjacent.swift': ADJACENT,
+        'Sources/App/OneLine.swift': ONE_LINE,
+      }));
+    });
+
+    afterAll(() => {
+      cg?.close();
+      if (root) fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    /** Each extends/implements edge leaving the Swift type `name`, as `target (file:line:column)`. */
+    const landings = (name: string): string[] => {
+      const ids = cg.getNodesByName(name).filter((n) => n.language === 'swift').map((n) => n.id);
+      return cg.getOutgoingEdgesFrom(ids, ['extends', 'implements']).map((e) => {
+        const t = cg.getNode(e.target);
+        return `${t?.qualifiedName} (${t ? path.basename(t.filePath) : ''}:${t?.startLine}:${t?.startColumn})`;
+      });
+    };
+
+    it('lands `Outer.Box.Base` on the Base in `extension Outer.Box` on line 4, not on the Base in `extension Box` above it', () => {
+      // The column of `class Base` inside `extension Outer.Box`, read from the source line.
+      const line4 = ADJACENT.split('\n')[3]!;
+      const column = line4.indexOf('class Base', line4.indexOf('extension Outer.Box'));
+      expect(landings('FromNested')).toEqual([`Box::Base (Adjacent.swift:4:${column})`]);
+    });
+
+    it('lands `Right.Crate.Item` and `Left.Crate.Item` on the Item in their own extension, told apart by column', () => {
+      // The column of `class Item` inside each extension, read from the source line.
+      const line1 = ONE_LINE.split('\n')[0]!;
+      const rightColumn = line1.indexOf('class Item', line1.indexOf('extension Right.Crate'));
+      const leftColumn = line1.indexOf('class Item', line1.indexOf('extension Left.Crate'));
+      // One assertion over both classes, so a failure shows each one's actual landing.
+      expect({ FromRightItem: landings('FromRightItem'), FromLeftItem: landings('FromLeftItem') }).toEqual({
+        FromRightItem: [`Crate::Item (OneLine.swift:1:${rightColumn})`],
+        FromLeftItem: [`Crate::Item (OneLine.swift:1:${leftColumn})`],
+      });
+    });
+  });
 });
