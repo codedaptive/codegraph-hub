@@ -270,3 +270,20 @@ General as a RULING line. Decisions already settled by a document live in `team/
   r17-round2-results.md, notes). From then on Orc-Codegraph routes PR work and runs no leads for it.
 - Still binding: R-24 (after round two, no fixes or replies for what its pushes draw), R-25, R-21, R-22, R-18.
 - Work implied: as above; the lane's first job is the hand-over, then upstream analysis.
+
+## R-27. Overnight mode, 2026-11-04
+- Date: 2026-11-04 00:3x / Bob, direct ("keep the project moving forward overnight").
+- Question: Bob is offline overnight with the carry-back and the S-47/S-50 PR pushes under way; does the team wait
+  for him or keep working?
+- Ruling: keep working through the night without waiting on Bob, as under R-20: settle what the documents and
+  rulings settle; anything that truly needs Bob goes into team/questions.md and work continues around it.
+- Reason: the open work needs no new decision from Bob; it is already ruled (R-24, R-26, S-47 to S-51).
+- Not chosen: pausing the lanes until morning.
+- Still binding: R-13 (the harness is not ours), R-18 (sm.8 stays installed; no install or update without Bob),
+  R-21 (macOS only), R-22 (only changed tests; one whole-suite gate), R-24 (no bot-comment work), R-25 (nothing asks
+  the maintainer for anything). Spec text changes wait for Bob (Q-17).
+- Work implied: Orc-Codegraph keeps every lane on its backlog: finish the carry-back (queries' grep and orphans
+  fixes with O-01 to O-11; resolution's qualified-supertype feature on exchange and its remaining Swift and Rust
+  rows), run the whole-suite gate once on the merged integration and promote to `ours` if it passes, with no
+  install; upstream-prs makes the S-47/S-50 final pushes (#3199 with its children restacked, #3209, #3210). A
+  status for Bob in the morning naming what was done, what was not, and why.
