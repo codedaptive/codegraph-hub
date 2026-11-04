@@ -31,6 +31,15 @@ import * as path from 'path';
 import { CodeGraph } from '../src';
 import { DatabaseConnection, getDatabasePath } from '../src/db';
 
+/**
+ * A SwiftPM manifest at the project root: the static-call module gate requires
+ * one beside a `Sources/<Target>/` or `Tests/<Target>/` layout.
+ */
+const PACKAGE_SWIFT = `// swift-tools-version:5.9
+import PackageDescription
+let package = Package(name: "Fixture")
+`;
+
 const roots: string[] = [];
 afterAll(() => {
   for (const r of roots.splice(0)) fs.rmSync(r, { recursive: true, force: true });
@@ -410,6 +419,7 @@ enum Gates {
 describe("Swift: the external-member reference needs the type's module in view", () => {
   it("references a project type only from a file that can see its module", async () => {
     const root = makeProjectOf('cg-swift-ext-member-visible-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/A/SHA256.swift': `import Foundation
 public enum SHA256 { public static func hash(data: Data) -> Int { 0 } }
 `,
@@ -436,6 +446,7 @@ enum UseA {
 
   it('references a project type in a module an imported module re-exports', async () => {
     const root = makeProjectOf('cg-swift-ext-member-reexport-', {
+      'Package.swift': PACKAGE_SWIFT,
       'Sources/Core/CoreType.swift': `public enum CoreType { public static func member() {} }
 `,
       'Sources/Facade/Exports.swift': `@_exported import Core
@@ -449,6 +460,36 @@ enum UseFacade {
     const cg = await CodeGraph.init(root, { index: true });
     try {
       expect(edgesFromMethod(cg, 'UseFacade::go', 'CoreType', ['references'])).toEqual(['references -> enum CoreType']);
+    } finally {
+      cg.close();
+    }
+  });
+
+  it('references the type the caller can see when an unimported module declares a member of the same name', async () => {
+    const root = makeProjectOf('cg-swift-ext-member-othermember-', {
+      'Package.swift': PACKAGE_SWIFT,
+      'Sources/Tool/MyTool.swift': `import ArgumentParser
+struct MyTool: ParsableCommand { func run() throws {} }
+`,
+      'Sources/Tool/Run.swift': `enum Run {
+    static func go() { MyTool.main() }
+}
+`,
+      // A test target the production file does not import, with a MyTool of its own that has a `main`.
+      'Tests/OtherTests/MyTool.swift': `struct MyTool { static func main() {} }
+`,
+    });
+    const cg = await CodeGraph.init(root, { index: true });
+    try {
+      expect.soft(edgesFromMethod(cg, 'Run::go', 'main', ['calls']), 'calls').toEqual([]);
+      expect.soft(edgesFromMethod(cg, 'Run::go', 'MyTool', ['references']), 'references').toEqual(['references -> struct MyTool']);
+      const go = cg.getNodesByName('go').find((n) => n.kind === 'method' && n.qualifiedName === 'Run::go');
+      const files = cg
+        .getOutgoingEdgesFrom([go!.id], ['references'])
+        .map((e) => cg.getNode(e.target))
+        .filter((n) => n && n.language === 'swift' && n.name === 'MyTool')
+        .map((n) => n!.filePath);
+      expect.soft(files, 'reference target file').toEqual(['Sources/Tool/MyTool.swift']);
     } finally {
       cg.close();
     }

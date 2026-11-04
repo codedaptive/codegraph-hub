@@ -34,7 +34,7 @@ function mixedReport(): BlastReport {
   return {
     basis: 'working tree vs HEAD',
     depth: 2,
-    changed: [{ path: 'src/core/target.ts', status: 'modified', ranges: [{ start: 2, end: 2 }] }],
+    changed: [{ path: 'src/core/target.ts', status: 'modified', ranges: [{ start: 2, end: 2 }], hunks: [] }],
     unindexed: [],
     deleted: [],
     seeds: [],

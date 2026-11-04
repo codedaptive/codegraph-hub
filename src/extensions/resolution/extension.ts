@@ -48,7 +48,7 @@ const DEFAULT_MAX_EDGES = 5;
 type Parsed = { ok: true; value: number | undefined } | { ok: false };
 
 /**
- * A target limit: a positive integer (number or decimal string) or "all"
+ * A target limit: a positive integer (number or digit string) or "all"
  * (case-insensitive), which means no limit and yields undefined, never
  * Infinity or NaN.
  */
@@ -63,7 +63,7 @@ function parseLimit(v: unknown): Parsed {
   return { ok: false };
 }
 
-/** A per-target edge count: a non-negative integer (number or decimal string). */
+/** A per-target edge count: a non-negative integer (number or digit string). */
 function parseEdges(v: unknown): Parsed {
   if (typeof v === 'string') {
     const s = v.trim();
@@ -170,9 +170,9 @@ export const suspectsTool: ExtensionTool = {
             'answered "missing argument: root path to the code you wish to query".',
         },
         limit: {
-          type: 'string',
-          // PropertySchema.type is a single string, so the schema cannot say
-          // ['string', 'number']; the handler takes either, and says so here.
+          // integer, not number: parseLimit takes a positive safe integer, a
+          // digit string, or "all", so a fractional number is refused.
+          type: ['string', 'integer'],
           description: `How many targets to list: a positive integer as a string or number, or "all". Default ${MCP_DEFAULT_LIMIT}.`,
         },
         maxEdgesPerTarget: {

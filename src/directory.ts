@@ -348,9 +348,12 @@ export function canonicalProjectRoot(projectRoot: string): string {
 }
 
 /**
- * Whether two resolved index roots are one index spelled two ways — a symlinked
- * checkout, or a case-variant on a case-insensitive mount (macOS, NTFS, WSL
- * DrvFs `/mnt/c`), where `realpathSync` keeps the caller's casing (#1057).
+ * Whether two project roots reach the same index directory — a symlinked
+ * checkout, a `.codegraph` symlink between different roots, or a case-variant
+ * on a case-insensitive mount (macOS, NTFS, WSL DrvFs `/mnt/c`), where
+ * `realpathSync` keeps the caller's casing (#1057). `isForeignLockRecord`
+ * uses this check when the recorded root still reaches this project's index
+ * after a restore has changed the recorded identities.
  * Compares the identity of both data directories as they are NOW, so an inode
  * reused after a delete can't match: the deleted root no longer stats. Windows
  * has no usable inode, so it compares the on-disk-cased native realpaths.

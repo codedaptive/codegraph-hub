@@ -55,7 +55,7 @@ import type { ResolutionContext, ResolvedRef, UnresolvedRef } from './types';
 import { isInheritanceRef } from './types';
 import { escapeRegExp } from '../utils';
 import { SWIFT_RAW_VALUE_TYPES } from './swift-builtins';
-import { swiftModule, swiftModuleIdentity } from './swift-module';
+import { swiftModule, swiftModuleIdentity, type HasManifest } from './swift-module';
 
 const TYPE_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['class', 'struct', 'enum', 'interface', 'protocol', 'type_alias']);
 
@@ -75,16 +75,35 @@ interface Memo {
   seen: Map<string, ReadonlySet<string>>;
   /** The project's `@_exported import`s, read once (swiftReExports). */
   reExports: SwiftReExports | null;
+  /** Per project-relative directory: whether the index holds a `Package.swift` there (manifestIndexed). */
+  manifests: Map<string, boolean>;
 }
 const memos = new WeakMap<ResolutionContext, Memo>();
 
 function memoFor(context: ResolutionContext): Memo {
   let memo = memos.get(context);
   if (!memo) {
-    memo = { extension: new Map(), declaration: new Map(), conformances: new Map(), clauses: new Map(), inherited: new Map(), owners: new Map(), typeOwners: new Map(), imports: new Map(), seen: new Map(), reExports: null };
+    memo = { extension: new Map(), declaration: new Map(), conformances: new Map(), clauses: new Map(), inherited: new Map(), owners: new Map(), typeOwners: new Map(), imports: new Map(), seen: new Map(), reExports: null, manifests: new Map() };
     memos.set(context, memo);
   }
   return memo;
+}
+
+/**
+ * Whether the index holds a SwiftPM manifest, `Package.swift`, in a
+ * project-relative directory (`''` for the project root): the evidence
+ * swift-module.ts needs before a `Sources/<Target>/` directory is a module.
+ */
+function manifestIndexed(context: ResolutionContext): HasManifest {
+  const memo = memoFor(context).manifests;
+  return (dir) => {
+    let hit = memo.get(dir);
+    if (hit === undefined) {
+      hit = context.getNodesInFile(dir === '' ? 'Package.swift' : `${dir}/Package.swift`).length > 0;
+      memo.set(dir, hit);
+    }
+    return hit;
+  };
 }
 
 /** Drop the memos (see ReferenceResolver.clearCaches). */
@@ -320,6 +339,16 @@ function sharedDirs(a: string, b: string): number {
  * the unfiltered winner too, else nothing is found (a module-less copy is
  * kept only because its module is unknown, which is no evidence the caller
  * sees it over the dropped one).
+ *
+ * A qualified inheritance entry (`class D: Right.Box.Base`) is read more
+ * strictly, and only it, so the annotation and static-call callers keep their
+ * reading. Its type's path is also read through the extension it is declared
+ * in, from that extension's own header (withExtendedPath): `Base` in
+ * `extension Right.Box` is `Right::Box::Base`, not the `Base` in
+ * `extension Left.Box`, though both are indexed as `Box::Base`. And a type
+ * whose qualified name is the written path, or ends in it (depth 1), wins over
+ * one that fits only through fitsPath's fallbacks: `Kit.Base` is the `Base` in
+ * `enum Kit`, not a top-level `Base` of the same file.
  */
 function declarationFor(
   name: string,
@@ -330,7 +359,8 @@ function declarationFor(
   visible?: (decl: Node) => boolean,
 ): Node | null {
   const memo = memoFor(context).declaration;
-  const key = `${ref.filePath}\0${from?.qualifiedName ?? ''}\0${written}\0${name}\0${visible ? 'visible' : ''}`;
+  const inheritance = isInheritanceRef(ref);
+  const key = `${ref.filePath}\0${from?.qualifiedName ?? ''}\0${written}\0${name}\0${visible ? 'visible' : ''}\0${inheritance ? 'inherits' : ''}`;
   if (memo.has(key)) return memo.get(key)!;
 
   const bare = !written.includes('.');
@@ -339,7 +369,15 @@ function declarationFor(
   for (const node of context.getNodesByName(name)) {
     if (node.language !== 'swift' || !TYPE_KINDS.has(node.kind) || isSwiftExtension(node, context)) continue;
     if (path !== null) {
-      if (fitsPath(node, path, context)) scored.push({ node, depth: 0 });
+      if (!fitsPath(node, path, context)) continue;
+      if (!inheritance) {
+        scored.push({ node, depth: 0 });
+        continue;
+      }
+      const read = withExtendedPath(node, context);
+      if (!fitsPath(read, path, context)) continue;
+      const exact = read.qualifiedName === path || read.qualifiedName.endsWith(`::${path}`);
+      scored.push({ node, depth: exact ? 1 : 0 });
       continue;
     }
     const depth = bare ? bareScopeDepth(node, from, context) : 0;
@@ -351,7 +389,7 @@ function declarationFor(
   } else {
     const seen = scored.filter((s) => visible(s.node));
     found = pickDeclaration(seen, ref);
-    if (found && seen.length < scored.length && swiftModuleIdentity(found.filePath) === null) {
+    if (found && seen.length < scored.length && swiftModuleIdentity(found.filePath, manifestIndexed(context)) === null) {
       if (pickDeclaration(scored, ref)?.id !== found.id) found = null;
     }
   }
@@ -359,9 +397,15 @@ function declarationFor(
   return found;
 }
 
-/** Of scored declarations, the one a site means: innermost scope, then same file, then nearest directory; a tie is none. */
+/**
+ * Of scored declarations, the one a site means: innermost scope (for a
+ * qualified inheritance entry, an exact fit of the written path), then same
+ * file, then nearest directory; a tie is none.
+ */
 function pickDeclaration(scored: ReadonlyArray<{ node: Node; depth: number }>, ref: UnresolvedRef): Node | null {
-  // Swift looks a bare name up innermost scope first.
+  // Swift looks a bare name up innermost scope first (bareScopeDepth). A
+  // qualified inheritance entry's depth is 1 only for an exact fit of its
+  // written path (declarationFor), so the deepest fit wins there too.
   const deepest = Math.max(-1, ...scored.map((s) => s.depth));
   // One declaration per file: a framework resolver's one-line twin of a
   // declaration (`@main struct App`) is the same type.
@@ -385,7 +429,9 @@ function pickDeclaration(scored: ReadonlyArray<{ node: Node; depth: number }>, r
 
 /**
  * Can code in `callerFile` name the type `decl` declares, by Swift's module
- * rule? Yes when `decl`'s SwiftPM module is not derivable (not gated), when
+ * rule? Yes when `decl`'s SwiftPM module is not derivable (not gated: no
+ * `Sources/<Target>/` or `Tests/<Target>/` directory, or no indexed
+ * `Package.swift` beside that `Sources` or `Tests`), when
  * the caller is in that module (swiftModuleIdentity, the path up to the
  * module directory), or when the module's c99name is one the caller's file
  * sees (seenModules): one an `import` node of the file names, by the import's
@@ -396,10 +442,10 @@ function pickDeclaration(scored: ReadonlyArray<{ node: Node; depth: number }>, r
  * Index facts only: the import nodes' names and signatures, never file text.
  */
 function swiftStaticCallVisible(decl: Node, callerFile: string, context: ResolutionContext): boolean {
-  const target = swiftModuleIdentity(decl.filePath);
+  const target = swiftModuleIdentity(decl.filePath, manifestIndexed(context));
   if (target === null) return true;
-  if (swiftModuleIdentity(callerFile) === target) return true;
-  const name = swiftModule(decl.filePath)!.name;
+  if (swiftModuleIdentity(callerFile, manifestIndexed(context)) === target) return true;
+  const name = swiftModule(decl.filePath, manifestIndexed(context))!.name;
   return seenModules(callerFile, context).has(name);
 }
 
@@ -441,13 +487,13 @@ function swiftReExports(context: ResolutionContext): SwiftReExports {
   const imports = context.iterateNodesByKind?.('import') ?? context.getNodesByKind('import');
   for (const node of imports) {
     if (node.language !== 'swift' || !isSwiftExportedImport(node)) continue;
-    const identity = swiftModuleIdentity(node.filePath);
+    const identity = swiftModuleIdentity(node.filePath, manifestIndexed(context));
     if (identity === null) continue;
     let names = found.byIdentity.get(identity);
     if (!names) {
       names = new Set();
       found.byIdentity.set(identity, names);
-      const own = swiftModule(node.filePath)!.name;
+      const own = swiftModule(node.filePath, manifestIndexed(context))!.name;
       let ids = found.byName.get(own);
       if (!ids) found.byName.set(own, (ids = new Set()));
       ids.add(identity);
@@ -481,7 +527,7 @@ function seenModules(filePath: string, context: ResolutionContext): ReadonlySet<
       pending.push(name);
     }
   };
-  const own = swiftModuleIdentity(filePath);
+  const own = swiftModuleIdentity(filePath, manifestIndexed(context));
   if (own !== null) add(own);
   while (pending.length > 0) {
     for (const identity of reExports.byName.get(pending.pop()!) ?? []) add(identity);
@@ -603,11 +649,13 @@ export function resolveSwiftTypePathCall(ref: UnresolvedRef, context: Resolution
 /**
  * A qualified Swift inheritance entry, `class QC: Kit.Runner`, whose ref is
  * the dotted path the parse tree gives (`Kit.Runner`): the project's own
- * declaration of the type on that path (declarationFor, by the last segment),
+ * declaration of the type on that path (declarationFor, by the last segment
+ * and, for a type declared in an extension, the extension's written path),
  * or null. ResolveOne's gates still run on the result: gateSwiftTypeTarget
- * drops it when no qualifier segment names a project type. (createEdges later
- * writes an `extends` onto a protocol as `implements` when the source is not
- * itself an interface or protocol.)
+ * drops it when no qualifier segment names a project type, and
+ * ReferenceResolver drops a target the reference's file cannot see.
+ * (createEdges later writes an `extends` onto a protocol as `implements` when
+ * the source is not itself an interface or protocol.)
  */
 export function resolveSwiftQualifiedSupertype(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
   const name = ref.referenceName;
@@ -636,12 +684,12 @@ function moduleQualified(owner: string, path: string, context: ResolutionContext
 }
 
 /**
- * The full path of the type a member is declared on. Its qualified name
- * starts at the outermost declaration in its file, and an extension is named
- * by its last segment — the members of `extension API.PackageController {
- * enum GetRoute { … } }` are `PackageController::GetRoute::…` — so the
- * outermost extension's written path is read back from its line. Null for a
- * top-level function.
+ * The full path of the type a member, or a nested type, is declared on. Its
+ * qualified name starts at the outermost declaration in its file, and an
+ * extension is named by its last segment — the members of
+ * `extension API.PackageController { enum GetRoute { … } }` are
+ * `PackageController::GetRoute::…` — so the outermost extension's written
+ * path is read back from its line. Null for a top-level function or type.
  */
 function ownerPath(member: Node, context: ResolutionContext): string | null {
   const memo = memoFor(context).owners;
@@ -666,6 +714,64 @@ function writtenOwnerPath(path: string, member: Node, context: ResolutionContext
     .reduce<Node | null>((out, t) => (!out || t.startLine < out.startLine ? t : out), null);
   const extended = outer ? extendedPath(outer, context) : null;
   return extended ? extended + path.slice(first.length) : path;
+}
+
+/**
+ * A type node with its qualified name read through the extension it is
+ * declared in: `Base` in `extension Right.Box { class Base {} }` is indexed as
+ * `Box::Base` and read as `Right::Box::Base`. Any other type node keeps its
+ * qualified name.
+ *
+ * Only a qualified inheritance entry reads a type this way (declarationFor),
+ * and it does not go through ownerPath. The enclosing type is the outermost
+ * type in the node's file, named by the first segment of its qualified name,
+ * that encloses the node by position, line and column, so two extensions that
+ * share a line or a last segment are told apart. When that type is an
+ * extension whose header writes a dotted path, the header gives the path
+ * (extensionHeaderPath); otherwise the node keeps its qualified name.
+ */
+function withExtendedPath(node: Node, context: ResolutionContext): Node {
+  const cut = node.qualifiedName.indexOf('::');
+  if (cut < 0) return node;
+  const first = node.qualifiedName.slice(0, cut);
+  const before = (aLine: number, aColumn: number, bLine: number, bColumn: number): boolean =>
+    aLine < bLine || (aLine === bLine && aColumn < bColumn);
+  const outer = context
+    .getNodesInFile(node.filePath)
+    .filter(
+      (t) =>
+        t.name === first &&
+        TYPE_KINDS.has(t.kind) &&
+        t.id !== node.id &&
+        !before(node.startLine, node.startColumn, t.startLine, t.startColumn) &&
+        !before(t.endLine, t.endColumn, node.endLine, node.endColumn),
+    )
+    .reduce<Node | null>((out, t) => (!out || before(t.startLine, t.startColumn, out.startLine, out.startColumn) ? t : out), null);
+  if (!outer || !isSwiftExtension(outer, context)) return node;
+  const written = extensionHeaderPath(outer, context);
+  return written === null ? node : { ...node, qualifiedName: `${written}${node.qualifiedName.slice(first.length)}` };
+}
+
+/**
+ * The dotted path an extension's own header writes, `extension Left.Crate<T>:
+ * P {` → `Left::Crate`; null for a single-segment header (`extension Box`).
+ * Unlike extendedPath, it reads only from the extension's start to the first
+ * `{` (the header may wrap over a few lines) and takes the path that directly
+ * follows the first `extension` keyword there, so a neighbouring extension's
+ * header is never read.
+ */
+function extensionHeaderPath(extension: Node, context: ResolutionContext): string | null {
+  const lines = linesOf(extension.filePath, context);
+  if (!lines) return null;
+  const span = [(lines[extension.startLine - 1] ?? '').slice(extension.startColumn), ...lines.slice(extension.startLine, extension.startLine + 4)]
+    .join(' ')
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  const open = span.indexOf('{');
+  const header = open < 0 ? span : span.slice(0, open);
+  const keyword = /\bextension\s/.exec(header);
+  if (!keyword) return null;
+  const written = /^\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)+)/.exec(header.slice(keyword.index + 'extension'.length))?.[1];
+  return written ? written.replace(/\s+/g, '').split('.').join('::') : null;
 }
 
 /** `extension API.PackageController {` → `API::PackageController`; null for anything but an extension of a nested type. */
@@ -877,20 +983,26 @@ function chainKey(owner: string, chain: ReadonlyMap<string, Node[]>, context: Re
 }
 
 /**
- * Does the project declare `member` on the type `decl` declares at `path`
- * (or an extension of it), or on one of its project supertypes and protocols
- * (or an extension of one)? A member of a type nested in it is not its
- * member: `Tool.Inner.main` is no `Tool.main`. A case whose name is a keyword
- * is indexed with its backticks (`` case `in`(…) `` is `` `in` ``) while the
- * call names it bare (`StoragePredicate.in(…)`), so both spellings are asked.
+ * Does an indexed member match `decl`'s type at `path` (filtered to its copy
+ * by ofDeclaration), or the owner path of a project supertype or protocol?
+ * The latter match is by path alone, not by declaration copy. A member of a type
+ * nested in it is not its member: `Tool.Inner.main` is no `Tool.main`. A case
+ * whose name is a keyword is indexed with its backticks (`` case `in`(…) ``
+ * is `` `in` ``) while the call names it bare (`StoragePredicate.in(…)`), so
+ * both spellings are asked.
  */
 function declaresMember(decl: Node, path: string, member: string, context: ResolutionContext): boolean {
   let chain: Map<string, Node[]> | null = null;
+  let projectTypes: Node[] | null = null;
   return [member, `\`${member}\``].some((name) => context.getNodesByName(name).some((n) => {
     if (n.language !== 'swift' || !DECLARED_MEMBER_KINDS.has(n.kind)) return false;
     const owner = memberTypePath(n, context);
     if (owner === null) return false;
-    if (isPath(owner, path, context)) return true;
+    if (isPath(owner, path, context)) {
+      projectTypes ??= context.getNodesByName(decl.name)
+        .filter((t) => t.language === 'swift' && TYPE_KINDS.has(t.kind) && !isSwiftExtension(t, context));
+      return ofDeclaration([n], decl, projectTypes, path, context).length > 0;
+    }
     chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
     return chainKey(owner, chain, context) !== undefined;
   }));
@@ -942,9 +1054,13 @@ const TYPE_CALL_INHERITED_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind'
  *   of the name at all, the parked failure then gets
  *   swiftUnresolvedTypeMemberEdges' `references` edge to the type;
  * - the type does not declare it and two supertypes supply it, neither
- *   overriding the other (two protocols' extensions) → null; of an override
- *   chain (`Leaf: Middle: Base`, each class declaring it but `Leaf`), the
- *   nearest override, `Middle`'s, is the target (nearestOverrides);
+ *   overriding the other (two protocols' extensions) → null; a superclass's
+ *   type-level member is taken over a protocol extension's. Of an override chain
+ *   (`Leaf: Middle: Base`, each class declaring it but `Leaf`), the nearest
+ *   override, `Middle`'s, is the target (nearestOverrides). The call's
+ *   argument labels narrow the inherited members first, when any fit:
+ *   `Both.pick(right: 1)` reaches `Right.pick(right:)` beside a
+ *   `Left.pick(left:)`;
  * - the only types of the name are nested types outside the caller's scope
  *   → null (Swift cannot name them bare there);
  * - every declaration of the type is in a module the caller's file neither
@@ -969,6 +1085,15 @@ const TYPE_CALL_INHERITED_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind'
  * Of the type's own overloads, those of `decl`'s copy (ofDeclaration): its
  * body's, and its extensions' in any file, but none in the body of another
  * module's copy of the type or nearer that copy by directory than `decl`.
+ * When `decl`'s copy has none, or each of its overloads' labels is known not
+ * to fit the call while an inherited one's do, the inherited members are the
+ * candidates.
+ *
+ * Known limit: a superclass named in an inheritance clause resolves
+ * by name and directory proximity with no module rule, so a same-named class
+ * in an unimported module can still be chosen and a static call follows that
+ * edge. This resolver does not fix that superclass selection.
+ *
  * Of several overloads left, those whose parameter lists the call's argument
  * labels fit (`fitsLabels`, the name matcher's label reading); when it finds
  * none, all of them. Then `decl`'s body's before its extensions', and the
@@ -1017,18 +1142,31 @@ export function resolveSwiftTypeCall(
     chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
     if (chainKey(owner, chain, context) !== undefined) inherited.push(n);
   }
-  let fit: Node[];
-  if (own.length > 0) {
-    // Every owner here is the type's path, as written or module-qualified
-    // (`extension Kit.Cache`), so the owners are not compared.
-    fit = ofDeclaration(own, decl, projectTypes, path, context);
-  } else {
-    // A member of the type itself shadows one it inherits, and so does an
-    // override down the chain: of `Base.make` and `Middle.make` for
-    // `Leaf: Middle: Base`, an owner another candidate's owner inherits from
-    // (Base, under Middle) drops out. Owners left that are not related this
-    // way (two protocols' extensions) cannot be told apart: no edge.
-    fit = chain ? nearestOverrides(inherited, chain, context) : [];
+  // Every owner of `own` is the type's path, as written or module-qualified
+  // (`extension Kit.Cache`), so the owners are not compared. Only `decl`'s
+  // copy's members count: another module's unrelated `Child.make()` does not
+  // hide the `Base.make()` that `decl`'s `Child: Base` inherits. A member of
+  // the type itself shadows an inherited one, so the inherited members are used
+  // only when the type has none, or when every one of its overloads is known
+  // not to fit the call and an inherited one's labels do.
+  let fit = own.length > 0 ? ofDeclaration(own, decl, projectTypes, path, context) : [];
+  if (fit.length === 0 || (fit.every((n) => fitsLabels(n) === false) && inherited.some((n) => fitsLabels(n) === true))) {
+    // An override down the chain shadows an inherited member: of `Base.make`
+    // and `Middle.make` for `Leaf: Middle: Base`, an owner another candidate's
+    // owner inherits from (Base, under Middle) drops out. The call's argument
+    // labels pick first, since overloads with other labels neither override
+    // nor clash: `Both.pick(right: 1)` is `Right.pick(right:)` beside
+    // `Left.pick(left:)`, and `Leaf.pick(left: 1)` is `Base.pick(left:)` under
+    // a `Middle.pick(right:)`.
+    const labelled = inherited.filter((n) => fitsLabels(n) === true);
+    fit = chain ? nearestOverrides(labelled.length > 0 ? labelled : inherited, chain, context) : [];
+    // A superclass's static member takes precedence over a protocol extension's.
+    // With no static class member, unrelated owners remain ambiguous.
+    const classMembers = fit.filter((n) => {
+      const owner = chainKey(memberTypePath(n, context)!, chain!, context)!;
+      return isSwiftTypeLevelMember(n, context) && chain!.get(owner)!.some((t) => t.kind === 'class' && !isSwiftExtension(t, context));
+    });
+    if (classMembers.length > 0) fit = classMembers;
     if (new Set(fit.map((n) => memberTypePath(n, context))).size > 1) return null;
     // A supertype several modules declare: its members nearest `decl` by directory.
     const near = Math.max(...fit.map((n) => sharedDirs(n.filePath, decl.filePath)));
@@ -1043,6 +1181,61 @@ export function resolveSwiftTypeCall(
   }
   const target = fit.reduce((a, b) => (a.filePath < b.filePath || (a.filePath === b.filePath && a.startLine <= b.startLine) ? a : b));
   return { original: ref, targetNodeId: target.id, confidence: 0.9, resolvedBy: 'qualified-name' };
+}
+
+/**
+ * Whether this member is type-level. The grammar does not mark every
+ * `class func` as static in the index, so read its declaration up to `func`,
+ * within the member's span rather than a fixed number of lines. Comments
+ * (including nested block comments) and string literals in attributes are
+ * skipped, so neither their keywords nor their line count change the answer.
+ */
+function isSwiftTypeLevelMember(member: Node, context: ResolutionContext): boolean {
+  if (member.isStatic === true) return true;
+  const lines = linesOf(member.filePath, context);
+  if (!lines) return false;
+  const head = [(lines[member.startLine - 1] ?? '').slice(member.startColumn), ...lines.slice(member.startLine, member.endLine)].join('\n');
+  let typeLevel = false;
+  for (let i = 0; i < head.length;) {
+    if (head.startsWith('//', i)) {
+      const end = head.indexOf('\n', i + 2);
+      i = end < 0 ? head.length : end + 1;
+      continue;
+    }
+    if (head.startsWith('/*', i)) {
+      let depth = 1;
+      i += 2;
+      while (i < head.length && depth > 0) {
+        if (head.startsWith('/*', i)) { depth++; i += 2; }
+        else if (head.startsWith('*/', i)) { depth--; i += 2; }
+        else i++;
+      }
+      continue;
+    }
+    // Swift's ordinary, multiline and raw strings have matching quote/hash
+    // delimiters; an escaped quote cannot end the literal.
+    const string = head[i] === '"' || head[i] === '#' ? /^(#*)("""|")/.exec(head.slice(i)) : null;
+    if (string) {
+      const hashes = string[1]!;
+      const close = string[2]! + hashes;
+      const escape = '\\' + hashes;
+      i += string[0].length;
+      while (i < head.length) {
+        if (head.startsWith(close, i)) { i += close.length; break; }
+        if (head.startsWith(escape, i)) i += escape.length + 1;
+        else i++;
+      }
+      continue;
+    }
+    const word = /^[A-Za-z_]\w*/.exec(head.slice(i))?.[0];
+    if (word) {
+      // No parameter list or body is read: the first real `func` settles it.
+      if (word === 'func') return typeLevel;
+      if (word === 'static' || word === 'class') typeLevel = true;
+      i += word.length;
+    } else i++;
+  }
+  return false;
 }
 
 /** Whether `member` lies in the body of the type declaration `type`. */
@@ -1107,9 +1300,8 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  *   the type;
  * - it is not a `typealias`: the index does not hold what an alias names, so
  *   whether that type declares the member cannot be told;
- * - and the project does not declare the member on the type, its extensions,
- *   or its project supertypes and protocols and their extensions
- *   (declaresMember).
+ * - and declaresMember finds no matching indexed member on the selected copy
+ *   or at a project supertype or protocol's owner path.
  *
  * Every rule here can only suppress an edge; none aims one anywhere but the
  * receiver's own declaration.
@@ -1136,8 +1328,9 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  *   (swift-qualified-inheritance.test.ts, test i, `it.fails`);
  * - the module rule reads the index's `import` nodes (the caller file's, and
  *   every `@_exported import` of a module it sees) and the SwiftPM directory
- *   layout, never Package.swift, so a SwiftPM target whose Package.swift
- *   `path:` gives it a module name different from its directory is matched
+ *   layout, requiring an indexed Package.swift beside Sources or Tests but not
+ *   reading its contents. A target whose Package.swift `path:` gives it a
+ *   module name different from its directory is matched
  *   by its directory's name: an import of its real name does not see it, so
  *   a genuine edge is dropped (silent beats wrong). Not pinned.
  *

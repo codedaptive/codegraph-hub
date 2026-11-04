@@ -10,16 +10,19 @@
  * `.codegraph` directory and of `codegraph.db` it had open. A record is
  * foreign, and stale exactly like a dead pid, when its recorded root is
  * another project's AND it carries both identities AND NEITHER matches this
- * project's index as it is now AND this project's database has one hard link.
- * A copy at another path has a new root, a new directory and a new database
- * with one link, so its records are foreign. Not foreign, so pid liveness
- * decides: a record at this same root (also a `.codegraph/` moved aside and
- * copied back in place, with both inodes new: its live holder follows the
- * replaced database there), a move within one filesystem (both inodes kept),
- * any record at a project whose database has more than one hard link (shared,
- * whatever the record's stamp says), and a record with no root or no identity
- * (older formats, including one that names only a root). A root alone never
- * decides.
+ * project's index as it is now AND the recorded root's `.codegraph` and
+ * database are not this project's now AND this project's database has one
+ * hard link. A copy at another path has a new root, a new directory and a new
+ * database with one link, so its records are foreign. Not foreign, so pid
+ * liveness decides: a record at this same root (also a `.codegraph/` moved
+ * aside and copied back in place, with both inodes new: its live holder
+ * follows the replaced database there), a move within one filesystem (both
+ * inodes kept), a project whose `.codegraph` is a symlink to the recorded
+ * root's or whose database is the recorded root's database now (two
+ * `codegraph.db` symlinks to one external file), any record at a project whose
+ * database has more than one hard link (shared, whatever the record's stamp
+ * says), and a record with no root or no identity (older formats, including
+ * one that names only a root). A root alone never decides.
  *
  * Inode identity is POSIX-only: on Windows no record carries one, so every
  * record is decided by pid liveness there. Tests that need a foreign record
@@ -495,6 +498,73 @@ describe('copied-index-locks: lock records carry the identity of their index', (
     expect(isForeignLockRecord(stampA, b)).toBe(false);
     fs.rmSync(second);
     expect(isForeignLockRecord(stampA, b)).toBe(true);
+  });
+
+  // ------------------- symlinked indexes
+
+  it.runIf(posix)('keeps a live record for a project whose .codegraph is a symlink to the recorded index, after that index is restored', () => {
+    // alias/.codegraph -> source/.codegraph. The source's index directory is
+    // moved aside and copied back in place (new directory and database
+    // inodes, one link), which the live source writer follows. The record
+    // names the old inodes and the source's root; the alias has another root
+    // but reaches this same index, so the record is still held there.
+    const source = makeProject('a');
+    const h = liveOtherPid();
+    const record = writerRecord(h, source);
+    plantWriter(source, record);
+    const alias = freshPath('alias');
+    fs.mkdirSync(alias, { recursive: true });
+    fs.symlinkSync(path.join(source, '.codegraph'), path.join(alias, '.codegraph'));
+    restoreInPlace(source);
+
+    const aliasStamp = lockStamp(alias);
+    expect(aliasStamp.root).not.toBe(record.root);
+    expect(aliasStamp.dirId).not.toBe(record.dirId);
+    expect(aliasStamp.dbId).not.toBe(record.dbId);
+
+    expect(isForeignLockRecord(record, alias)).toBe(false);
+    expect(readWriterLock(alias)?.pid).toBe(h);
+    expect(tryAcquireWriterLock(alias, 'fallback').kind).toBe('taken');
+    expect(readWriterLock(source)).toMatchObject(record);
+    // A real copy of the restored index is still foreign: the recorded root
+    // reaches the source's index, not the copy's.
+    const copy = copyProject(source, 'copy');
+    expect(isForeignLockRecord(record, copy)).toBe(true);
+  });
+
+  it.runIf(posix)('keeps a live record for a copy whose codegraph.db links to an external database replaced by rename, and keeps an independent copy foreign', () => {
+    // source/.codegraph/codegraph.db is a symlink to a database outside the
+    // project. cp keeps that link as a link, so the copy reaches the same
+    // file. The external database is then replaced by rename, which gives its
+    // path a new inode; the copy's link follows it, as the source's live writer
+    // does. An independent copy with its own database file is still foreign.
+    const source = makeProject('a');
+    const external = freshPath('external');
+    fs.mkdirSync(external, { recursive: true });
+    const externalDb = path.join(external, 'external.db');
+    fs.writeFileSync(externalDb, 'fixture');
+    fs.unlinkSync(path.join(source, '.codegraph', 'codegraph.db'));
+    fs.symlinkSync(externalDb, path.join(source, '.codegraph', 'codegraph.db'));
+    const h = liveOtherPid();
+    const record = writerRecord(h, source);
+    plantWriter(source, record);
+    const target = copyProject(source, 'target');
+    expect(fs.lstatSync(path.join(target, '.codegraph', 'codegraph.db')).isSymbolicLink()).toBe(true);
+
+    const inodeBefore = inodeOf(externalDb);
+    const replacement = path.join(external, 'external.db.next');
+    fs.writeFileSync(replacement, 'replaced');
+    fs.renameSync(replacement, externalDb);
+    expect(inodeOf(externalDb)).not.toBe(inodeBefore);
+
+    expect(isForeignLockRecord(record, target)).toBe(false);
+    expect(readWriterLock(target)?.pid).toBe(h);
+    expect(tryAcquireWriterLock(target, 'fallback').kind).toBe('taken');
+    expect(readWriterLock(source)).toMatchObject(record);
+
+    const independent = freshPath('independent');
+    fs.cpSync(source, independent, { recursive: true, dereference: true });
+    expect(isForeignLockRecord(record, independent)).toBe(true);
   });
 });
 

@@ -1,7 +1,8 @@
 /**
  * Unit vectors for src/mcp/lock-takeover.ts:
  * compare-and-remove of a lock file under a `${lockPath}.takeover` guard, and
- * the callers' behaviour when the guard is held or the lock cannot be read.
+ * the callers' behaviour when the guard is held or the lock cannot be read,
+ * and the guard a failed release leaves behind (the next takeover clears it).
  *
  * "Unchanged" means the same bytes AND (off Windows) the same inode and
  * device, so a lock removed and rewritten with identical bytes is a new lock.
@@ -20,6 +21,7 @@ import {
   createLockFile,
   removeLockIfUnchanged,
   snapshotLock,
+  takeoverGuardHolder,
   withTakeoverGuard,
 } from '../../../src/mcp/lock-takeover';
 import { getWriterPidPath, markWriterReady, tryAcquireWriterLock } from '../../../src/mcp/writer-lock';
@@ -180,6 +182,31 @@ describe('withTakeoverGuard', () => {
     expect(() => withTakeoverGuard(lock, () => { throw new Error('boom'); })).toThrow('boom');
     expect(fs.existsSync(guard)).toBe(false);
   });
+
+  it.runIf(!isWin && !isRoot)(
+    'a guard whose release failed is this pid\'s leftover: not busy, and the next takeover clears it (POSIX, non-root)',
+    () => {
+      // A read-only directory makes releaseGuard's unlink fail with EACCES, which it swallows: the guard stays,
+      // naming this pid. The directory is writable again before the next takeover needs it.
+      let outcome: unknown;
+      try {
+        outcome = withTakeoverGuard(lock, () => { fs.chmodSync(dir, 0o555); return 'ran'; });
+      } finally {
+        fs.chmodSync(dir, 0o755);
+      }
+      expect(outcome).toEqual({ kind: 'ran', value: 'ran' });
+      expect(fs.readFileSync(guard, 'utf8')).toBe(String(process.pid));
+      expect(takeoverGuardHolder(lock)).toBeUndefined();
+
+      // A stale lock judged from one snapshot is removed: the own-pid leftover is cleared, the guard is taken,
+      // the lock is unlinked and the guard released.
+      fs.writeFileSync(lock, String(deadPid()));
+      const judged = snapshotLock(lock)!;
+      expect(removeLockIfUnchanged(lock, judged)).toBe('removed');
+      expect(fs.existsSync(lock)).toBe(false);
+      expect(fs.existsSync(guard)).toBe(false);
+    },
+  );
 });
 
 describe('callers honour the guard and fail closed', () => {

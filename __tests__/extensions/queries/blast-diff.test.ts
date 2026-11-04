@@ -55,9 +55,9 @@ describe('V7 applyHunks', () => {
       '',
     ].join('\n');
     applyHunks(files, patch);
-    expect(files[0].ranges).toEqual([{ start: 4, end: 4 }]);
+    expect(files[0].ranges).toEqual([{ start: 4, end: 4, deletion: true }]);
     expect(files[0].hunks).toHaveLength(1);
-    expect(files[0].hunks[0]).toMatchObject({ start: 4, end: 4, dropped: 0 });
+    expect(files[0].hunks[0]).toMatchObject({ start: 4, end: 4, dropped: 0, deletion: true });
     expect(files[0].hunks[0].lines).toEqual([
       { n: null, sign: '-', text: 'gone one' },
       { n: null, sign: '-', text: 'gone two' },
