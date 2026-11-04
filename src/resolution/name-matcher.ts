@@ -7596,6 +7596,27 @@ function isSwiftCallTarget(n: Node, shape: SwiftCallShape | null, ref: Unresolve
 }
 
 /**
+ * Whether a Swift member called by a standard-library name on an untyped
+ * receiver that does not name its owner (`xs.sorted(limit: 1)` on an `[Int]`)
+ * is kept. It takes the outside-type ground `isSwiftCallTarget` keeps a chained
+ * call on (its owner an outside type the project only extends:
+ * `extension Array { func sorted(limit:) }`), and adds that the call's argument
+ * labels fit the member's parameters; that test does not check them. It does
+ * not take that test's declared-label ground: label-only evidence is held
+ * (S-49), since without the receiver's type a label cannot tell a project
+ * namesake from an SDK method (`u.appending(queryItems: [])` on a `URL`).
+ * `xs.sorted()` on an `[Int]` is the stdlib's, and unreadable arguments keep
+ * nothing.
+ */
+function isSwiftStdNameKept(n: Node, ref: UnresolvedRef, context: ResolutionContext): boolean {
+  if (n.language !== 'swift') return false;
+  const cut = n.qualifiedName.lastIndexOf('::');
+  const owner = cut > 0 ? n.qualifiedName.slice(0, cut).split(/::|\./).pop()! : null;
+  if (owner === null || swiftDeclOf(owner, context).projectType) return false;
+  return swiftCallFitsLabels(ref, n, context) === true;
+}
+
+/**
  * Methods of Rust's Option / Result / iterators / collections / strings /
  * smart pointers — names a project type rarely carries itself. Ones it often
  * does (`get`, `set`, `insert`, `next`, `call`, `read`) are left out: serde's
@@ -25362,9 +25383,12 @@ export function matchMethodCall(
         // Swift / Ruby: a standard-library method name on an untyped receiver
         // (`sym.map(…)`, `w.Header().Get(…)`, `reader.Value.ToString()`,
         // `options.setdefault(…)`, `arr.sorted()`, `bad_cookies.empty?`) is the
-        // library type's.
+        // library type's — unless, in Swift, the member is of an outside type
+        // the project extends and the call's argument labels fit it
+        // (`xs.sorted(limit: 1)`).
         !(isStdMethodName(ref.language, methodName!) &&
-          !/^(?:self|Self|this|base)$/.test(objectOrClass!) && !receiverNamesOwner(receiverLink(objectOrClass!), targetMethods[0]!, context)) &&
+          !/^(?:self|Self|this|base)$/.test(objectOrClass!) && !receiverNamesOwner(receiverLink(objectOrClass!), targetMethods[0]!, context) &&
+          !isSwiftStdNameKept(targetMethods[0]!, ref, context)) &&
         !(UNTYPED_RECEIVER_LANGUAGES.has(ref.language) && !/^(?:self|self\.class|this|super|weak_?self|strong_?self)$/i.test(objectOrClass!) &&
           !sharesReceiverWord(objectOrClass!, targetMethods[0]!) &&
           !(ref.language === 'objc' && objcReceiverReaches(objectOrClass!, targetMethods[0]!, context)) &&
@@ -32383,9 +32407,10 @@ function swiftArgumentLabels(args: string): string[] {
 }
 
 /**
- * Whether a Swift `Type.member(…)` call's argument labels fit `decl`'s
- * parameter list (swiftLabelsFit); null when either list cannot be read: a
- * call with no parenthesised arguments, or a member named with backticks.
+ * Whether a Swift `Type.member(…)` or `value.member(…)` call's argument labels
+ * fit `decl`'s parameter list (swiftLabelsFit); null when either list cannot be
+ * read: a call with no parenthesised arguments, or a member named with
+ * backticks.
  */
 function swiftCallFitsLabels(ref: UnresolvedRef, decl: Node, context: ResolutionContext): boolean | null {
   const member = ref.referenceName.slice(ref.referenceName.lastIndexOf('.') + 1);
