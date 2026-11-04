@@ -420,3 +420,22 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Still binding: R-32 (sm.12 carries the upgrade fix and is the hub's first release), R-21, R-22.
 - Work implied: Orc-Codegraph installs sm.12 when it is packed and reports the version, the checks and any session
   the script could not reach.
+
+## R-34. Finish sm.12 and the hub's first release, then stand down
+- Date: 2026-11-04 12:58 CST / Bob, direct ("go. I would like to be done and able to set this work down for awhile
+  and use the tool"), after Designer's estimate (done 15:30-16:30 CST today, about 18:00 with one redo; stable
+  Thursday 2026-11-05 about 09:00 after a night on sm.12).
+- Question: what is left before the team stops, and what happens after?
+- Ruling: finish only what is in flight: host's hub-upgrade (R-32), the hub scrub (S-55), the hub README, the gate,
+  sm.12 promoted and packed, installed with the reconnect script (R-33), and the hub's first release
+  `v1.6.2-sm.12` (S-54). Nothing else enters: a finding made on the way is filed in the owning lane's todo for
+  later, as under S-52, unless it breaks sm.12's gate or install. Then the team stands down: no new work, no daily
+  upstream merge, no upstream analysis, no PR work (the 14 PRs wait on the maintainer; a comment from the
+  maintainer himself goes to team/questions.md, not to a lead). The deferred findings (K-F4, K-F6, K-F7 and the
+  lanes' own lists) wait in the lanes' todo lists. When the hub's 2026-12-04 update falls due (S-54), or someone
+  reports an issue on the hub, it is one line in team/questions.md for Bob, not work started.
+- Reason: Bob wants a finished, stable tool to use, and the work set down.
+- Not chosen: continuing the daily merge and analysis while stood down; starting the deferred findings now.
+- Work implied: Orc-Codegraph drives the in-flight list to done, reports done and the stand-down in one message,
+  and the morning check on 2026-11-05 confirms sm.12 is stable (every team answers; no error in the server and
+  builder logs since the install) before the lanes go idle for good.
