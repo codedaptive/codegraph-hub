@@ -1,6 +1,6 @@
 /**
- * The blast review fixes, end to end (queries lane). These cases need BOTH halves: the git side (diff.ts,
- * which marks a pure-deletion range `deletion: true`, unit 1) and the seeding (blast.ts, unit 2). Each runs
+ * End-to-end blast tests cover both git diff handling (diff.ts, which marks a pure-deletion range
+ * `deletion: true`) and seeding (blast.ts). Each runs
  * `codegraph blast` through `runBlast` on a committed C1 -> C2 diff, so the range a deletion produces comes
  * from git and not from a hand-built object (the hand-built cases are in blast-review-fixes-seeds.test.ts).
  *

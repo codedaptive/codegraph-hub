@@ -5,10 +5,7 @@
  * reuses `symbolsOverlapping` and `nodesByIds` through `storeOver`, on the
  * connection it opens for its own queries.
  *
- * graft 0.16 has no counterpart file. Its `blast.js` and `graph/traverse.js`
- * scan an in-memory `graph.json` (`graph.nodes`, `graph.edges`); CodeGraph's
- * graph is a SQLite index, so each of those scans is replaced here by an
- * indexed, batched query that reads only the rows the walk reaches. Nothing
+ * Indexed, batched SQLite queries read only the rows the walk reaches. Nothing
  * loads the whole nodes or edges table.
  *
  * Indexes relied on (src/db/schema.sql):
@@ -48,11 +45,10 @@ export interface BlastStore {
   /**
    * Per target id, the file paths of the sources of every incoming edge whose
    * source node is in the index, of ANY
-   * kind. Feeds the area test signal, which graft computes from `graph.edges`
-   * unfiltered — so `contains` and the other non-walk kinds count there.
+   * kind. Feeds the area test signal, including `contains` and other non-walk kinds.
    */
   incomingSourcePaths(targetIds: readonly string[]): Map<string, Set<string>>;
-  /** Per target id, the number of incoming edges of any kind (graft's hub ranking). */
+  /** Per target id, the number of incoming edges of any kind for hub ranking. */
   inDegree(targetIds: readonly string[]): Map<string, number>;
   close(): void;
 }
@@ -77,7 +73,7 @@ interface NodeRow {
   end_line: number;
 }
 
-/** graft's span notation, `L<start>-L<end>`, which every report field and renderer uses. */
+/** The span notation, `L<start>-L<end>`, used by report fields and renderers. */
 function toNode(row: NodeRow): BlastNode {
   return { id: row.id, name: row.name, kind: row.kind, path: row.file_path, span: `L${row.start_line}-L${row.end_line}` };
 }
@@ -115,8 +111,8 @@ export function storeOver(conn: DatabaseConnection): BlastStore {
 
   const fileStmt = db.prepare(`SELECT ${NODE_COLUMNS} FROM nodes WHERE id = ? AND kind = 'file'`);
   // Ordered by position, outermost first at a shared start line, so the seed
-  // list reads top to bottom. graft keeps graph.json's order; the index stores
-  // no extraction order, so position order stands in for it.
+  // list reads top to bottom. The index stores no extraction order, so
+  // position order stands in for it.
   const overlapStmt = db.prepare(
     `SELECT ${NODE_COLUMNS} FROM nodes
      WHERE file_path = ? AND start_line <= ? AND end_line >= ?
@@ -166,8 +162,7 @@ export function storeOver(conn: DatabaseConnection): BlastStore {
     incomingSourcePaths(targetIds) {
       const out = new Map<string, Set<string>>();
       for (const ids of chunks(targetIds, MAX_IDS_PER_QUERY)) {
-        // The join drops edges whose source node is missing, as graft's
-        // `nodeById.get(e.source)?.path` does.
+        // The join drops edges whose source node is missing.
         const stmt = db.prepare(
           `SELECT DISTINCT e.target AS target, n.file_path AS path
            FROM edges e JOIN nodes n ON n.id = e.source

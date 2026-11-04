@@ -1,6 +1,6 @@
 /**
- * CLI-shaped entry for grep-by-symbol, as graft 0.16's grep-cli.js
- * runGrepCommand. It returns the output instead of printing and exiting, so
+ * CLI-shaped entry for grep-by-symbol. It returns the output instead of
+ * printing and exiting, so
  * the caller only writes the streams and sets the exit code.
  */
 import * as path from 'path';

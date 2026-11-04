@@ -1,8 +1,7 @@
 /**
  * grep-by-symbol: an rg search over the files the index has, with every hit
  * attributed to its innermost enclosing symbol and the groups ranked by
- * in-degree. Reproduces graft 0.16 `graft grep` (dist/search/grep.js and
- * grep-cli.js) on codegraph's SQLite index.
+ * in-degree, using CodeGraph's SQLite index.
  *
  * One fixture repo is indexed once in beforeAll. Its line numbers, spans and
  * edges were checked against the real indexer: Worker::run is L5-L7, helper is

@@ -1,5 +1,5 @@
 /**
- * Unit 1 of blast-base-review-fixes (queries lane), the diff side of the contract:
+ * Git diff handling for blast:
  *   - `changedFiles(root, base)` diffs the base's merge base against the working
  *     tree, so staged and unstaged tracked edits count and the ranges are in
  *     working-tree lines. Its basis label says when the tree is dirty. The check

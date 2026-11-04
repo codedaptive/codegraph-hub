@@ -1,5 +1,5 @@
 /**
- * `blast/diff.ts`, a port of graft 0.16's `blast/diff.js`.
+ * Tests for `blast/diff.ts`: reading changed files and line ranges from git diffs.
  *
  * The parser vectors take the literal text `git diff --name-status -z` and
  * `git diff --unified=0` print, with no git. The `changedFiles` vectors run

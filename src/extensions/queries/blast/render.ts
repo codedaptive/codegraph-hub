@@ -1,21 +1,17 @@
 /**
  * Renderers for a `BlastReport`: terminal text, a PR-comment markdown body, and JSON.
  *
- * A port of graft 0.16 `dist/blast/render.js`. `textReport` is byte-compatible
- * with graft's for a report with no questionable marks; it has no "who to
- * tag" block because this port computes no reviewers. `markdownReport` keeps
- * graft's headline, test line, impact table, collapsed sections and caveats. One difference: the
- * collapsed symbol list's "…N further symbols not listed" counts the rows it
- * left out and is omitted when none were. graft's count is one short when the
- * 60-row cap falls inside an area's list, and with exactly 60 rows graft prints
- * "…0 further symbols not listed."
+ * The text report has no "who to tag" block because it computes no reviewers.
+ * The markdown report has a headline, test line, impact table, collapsed
+ * sections and caveats. The collapsed symbol list's "…N further symbols not
+ * listed" counts omitted rows even when the 60-row cap falls inside an area's
+ * list, and is omitted when none were, including when exactly 60 are listed.
  *
- * Deliberately left out: the mermaid diagram and `mermaidDiagram`,
- * the tag line, the owner section, and the per-symbol evidence snippets
- * (graft's `evidence.js`, which reads the checkout). The markdown header is
- * "### blast radius" and the footer names `codegraph blast`.
+ * The report omits a diagram, tag line, owner section and per-symbol evidence
+ * snippets. The markdown header is "### blast radius" and the footer names
+ * `codegraph blast`.
  *
- * Added here (graft has no edge certainty): a dependent marked `questionable`
+ * A dependent marked `questionable`
  * says so on its line in text and markdown, and one caveat line counts the
  * marked dependents. A report with no marks renders no questionable text.
  *
@@ -31,17 +27,17 @@
 import { outsideFocusHeading } from '../shared/focus';
 import type { BlastReport, Module } from './blast';
 
-/** Table rows under the headline; the rest fold into one "smaller areas" row (graft's value). */
+/** Table rows under the headline; the rest fold into one "smaller areas" row. */
 const MAX_TABLE_ROWS = 6;
-/** Symbols listed in the collapsed list of every dependent (graft's value). */
+/** Symbols listed in the collapsed list of every dependent. */
 const MAX_SYMBOLS_LISTED = 60;
-/** Symbols listed per module in the text report before a "…N more" line (graft's value). */
+/** Symbols listed per module in the text report before a "…N more" line. */
 const MAX_TEXT_SYMBOLS = 25;
-/** Unreached seed names listed per area in the test signal before a "…N more" (graft's value). */
+/** Unreached seed names listed per area in the test signal before a "…N more". */
 const MAX_UNREACHED_LISTED = 8;
-/** Test suite files listed in the collapsed test-suite section before a "…N more" line (graft's value). */
+/** Test suite files listed in the collapsed test-suite section before a "…N more" line. */
 const MAX_TEST_FILES_LISTED = 20;
-/** Deleted or unindexed paths named in a caveat line (graft's value). */
+/** Deleted or unindexed paths named in a caveat line. */
 const MAX_CAVEAT_PATHS = 5;
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
@@ -50,14 +46,14 @@ function depthLabel(depth: number): string {
   return Number.isFinite(depth) ? `depth ${depth}` : 'full closure';
 }
 
-/** The glyph carried per area test state (graft's key). */
+/** The glyph carried per area test state. */
 const TEST_GLYPH: Record<'changed' | 'stale' | 'none' | 'na', string> = { changed: '✓', stale: '⚠', none: '✗', na: '–' };
 
 /**
  * JSON report: hunk lines carry only their number and sign, not their text. The
  * lines are cut in a copy; the report given is not changed. Ranges and hunks
  * keep `deletion: true` for pure deletions. `depth: Infinity` serializes as
- * null, which is what graft's JSON shows for "all".
+ * null, representing the full closure.
  */
 export function jsonReport(r: BlastReport): string {
   return JSON.stringify({
@@ -240,8 +236,8 @@ function symbolList(modules: readonly Module[], total: number): string[] {
     out.push('');
     if (listed >= MAX_SYMBOLS_LISTED) {
       // `listed` counts printed rows only, so `total - listed` is the rows not printed.
-      // graft increments before its cap check, so its count is one short when the cap
-      // falls inside an area's list, and with exactly 60 rows it prints "…0 further symbols".
+      // This avoids an off-by-one when the cap falls inside an area's list and
+      // avoids printing "…0 further symbols" when exactly 60 rows are listed.
       if (total > listed) {
         out.push(`…${plural(total - listed, 'further symbol')} not listed.`);
         out.push('');
@@ -318,7 +314,7 @@ export function textReport(r: BlastReport): string {
     const files = new Set(r.testModules.flatMap((m) => m.files));
     lines.push(`${plural(files.size, 'test suite')} also ${files.size === 1 ? 'references' : 'reference'} this code (not listed)`, '');
   }
-  // graft prints the caveats with the text-presentation sign (no emoji selector) in a terminal.
+  // Print caveats with the text-presentation sign (no emoji selector) in a terminal.
   for (const line of caveatLines(r)) lines.push(line.replace(/⚠️ /, '⚠ '), '');
   return lines.join('\n').replace(/\n+$/, '\n');
 }

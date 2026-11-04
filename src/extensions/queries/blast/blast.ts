@@ -2,32 +2,22 @@
  * Blast radius of a diff: what else in the repo depends on the lines a change
  * touched.
  *
- * A port of graft 0.16 `dist/blast/blast.js` (with `impactOfMany` from
- * `dist/graph/traverse.js`, `dirLabel`/`parentDir`/`shortLabel` from
- * `dist/blast/modules.js`, and `hubLabel` from `blast.js` itself), run on
- * CodeGraph's SQLite index through `store.ts` instead of an in-memory
- * graph.json. The per-file walks, the module grouping, the test split, the
- * area folding, the test signal and the module and area sorts are graft's.
- * Where this port differs:
- *   - seeds exclude `import`, `export`, `parameter` and `route` nodes as well as
- *     `file` (store.ts `NON_SEED_KINDS`); graft excludes only `file`;
- *   - seeds come in position order and the edges within a walk level in
- *     (target, kind, source) order, where graft uses graph.json order, so the
- *     relation recorded for a node reached by two edges can differ from graft's;
- *   - the walk also follows `instantiates` and `decorates` (`BLAST_WALK_KINDS`);
- *   - seeding is per changed line, not per range: each line is owned by its
- *     innermost containing symbols, and the file node is a seed alongside them
- *     for a code line outside every symbol (the original seeds the file only
- *     when no symbol matched); symbols with equal spans are both kept (the
- *     original drops both); a pure deletion belongs to the symbols spanning its
- *     gap; and `component` nodes count as behaviour in the test signal (the
- *     original counts function, method and class);
- *   - a dependent that no walk reaches within the depth without crossing a
- *     questionable call edge (`calls` edges the resolver bound by name only,
- *     resolution's candidate edge, `candidateEdgeSql` in
- *     src/extensions/resolution/suspects.ts; a same-file exact-match call is
- *     certain) is marked `questionable`, and `strict`
- *     leaves such dependents out (graft has no notion of edge certainty).
+ * Walks CodeGraph's SQLite index per changed file, groups dependents into
+ * modules, splits out test modules, folds changed files into areas, computes
+ * the test signal, and sorts modules and areas. Seeds come in position order;
+ * edges within a walk level follow (target, kind, source) order, determining
+ * the relation recorded when a node is reached by multiple edges.
+ * Symbol seeds exclude `file`, `import`, `export`, `parameter` and `route`
+ * nodes (`NON_SEED_KINDS` in `store.ts`). Seeding is per changed line, not
+ * per range: each line belongs to its innermost containing symbols, and equal
+ * spans are both kept. A code line outside every symbol seeds the file alongside
+ * any symbol seeds; a pure deletion belongs to symbols spanning its gap.
+ * A dependent reached within the depth only across questionable call edges is
+ * marked `questionable`; `strict` leaves it out. These are `calls` edges the
+ * resolver bound by name only (see `candidateEdgeSql` in
+ * src/extensions/resolution/suspects.ts); a same-file exact-match call is certain.
+ * Components count as behaviour in the test signal alongside functions, methods
+ * and classes.
  *
  * Seeding: each changed range's code lines are owned by the innermost symbols
  * containing them (symbols with equal spans share a line). Blank lines added
@@ -47,24 +37,22 @@
  * so its importers are reached. `import`, `export`, `parameter` and `route`
  * nodes are never seeds (`NON_SEED_KINDS` in `./store`).
  *
- * Deliberately left out: graft's concept layer (`moduleIndex`,
- * `sharedConcept`, `conceptOf`) — CodeGraph has no concept nodes, so every
- * module and area is keyed by directory and labelled by `hubLabel`, and
- * `labelSource` is always "symbol"; reviewers/owners; LLM naming; viz export.
+ * CodeGraph has no concept nodes, so modules and areas are keyed by directory
+ * and labelled by `hubLabel`;
+ * `labelSource` is always "symbol". The report does not assign reviewers or
+ * owners, generate names with an LLM, or export visualizations.
  */
 import { TEST_PATH } from '../shared/test-path';
 import { hunkShape, type ChangedFile } from './diff';
 import type { BlastStore, IncomingEdge } from './store';
 
 /**
- * Incoming edge kinds the walk follows. graft's graph has six relations and its
- * walk follows all but `contains`: calls, references, imports, implements and
- * extends. CodeGraph also records `instantiates` and `decorates`, which are
- * dependencies of the same kind (the dependent breaks when the target changes),
- * so they are followed too. Not followed: `contains` and `exports` (a file
- * contains or exports everything in it, so walking either reports the whole
- * file), and `type_of`, `returns`, `overrides` and `navigates`, which graft has
- * no relation for; leaving them out keeps the reach close to graft's.
+ * Incoming dependency edge kinds the walk follows: `calls`, `references`,
+ * `imports`, `implements`, `extends`, `instantiates` and `decorates`. The last
+ * two are dependencies where the dependent can break when the target changes.
+ * It does not follow `contains` or `exports`: a file contains or exports
+ * everything in it, so walking either reports the whole file. It also excludes
+ * `type_of`, `returns`, `overrides` and `navigates` to limit the walk's reach.
  */
 export const BLAST_WALK_KINDS: readonly string[] = [
   'calls', 'references', 'imports', 'implements', 'extends', 'instantiates', 'decorates',
@@ -75,7 +63,7 @@ export interface BlastNode {
   name: string;
   kind: string;
   path: string;
-  /** graft's span notation, `L<start>-L<end>`. */
+  /** Line span in `L<start>-L<end>` notation. */
   span: string;
 }
 
@@ -128,7 +116,7 @@ export interface Area {
 
 export interface BlastReport {
   basis: string;
-  /** `Infinity` for `--depth all`; JSON.stringify prints it as null, as graft's JSON does. */
+  /** `Infinity` for `--depth all`; JSON.stringify prints it as null. */
   depth: number;
   changed: ChangedFile[];
   unindexed: string[];
@@ -279,9 +267,8 @@ interface Hit {
 }
 
 /**
- * graft's `impactOfMany` with direction "in", frontier-batched: one
- * `incomingEdges` query per depth level and one `nodesByIds` for the ids that
- * level discovered, instead of graft's whole-graph adjacency build.
+ * Walk incoming edges in frontier batches: one `incomingEdges` query per depth
+ * level and one `nodesByIds` query for the ids that level discovered.
  *
  * Runs one walk per entry of `skipQuestionable` from the same seeds, in
  * lockstep: each level's query covers the union of the walks' frontiers, so
@@ -294,8 +281,8 @@ interface Hit {
  * was first reached. The visited set is also what ends a `depth = Infinity`
  * walk: the frontier empties once no unvisited node points into it.
  *
- * Within a level the frontier is expanded in order, as graft's loop does, but
- * each node's edges come in the store's (kind, source) order, not graph.json's.
+ * Within a level the frontier is expanded in order, and each node's edges come
+ * in the store's (kind, source) order.
  */
 function impactOfMany(
   store: BlastStore,
@@ -389,14 +376,14 @@ export function blastRadius(
     for (const node of selected.symbols) seeds.push({ ...node, wholeFile: false });
     if (selected.file) seeds.push({ ...fileNode, wholeFile: true });
 
-    // One walk PER CHANGED FILE (graft's choice), so a module's `from` names the
+    // One walk per changed file, so a module's `from` names the
     // changed files that actually reach it rather than every file in the diff.
     const walkSeeds = selected.file ? [...selected.symbols, fileNode] : selected.symbols;
     seedNodes.set(file.path, walkSeeds);
     const [reached = [], certainHits = []] = impactOfMany(store, walkSeeds, depth, strict ? [true] : [false, true]);
     for (const h of certainHits) certain.add(h.id);
     for (const h of reached) {
-      // A dangling endpoint has no location to group or open; graft drops it too.
+      // A dangling endpoint has no location to group or open.
       if (h.node === null) continue;
       const hit: Impacted = { ...h.node, relation: h.relation, depth: h.depth };
       const prev = merged.get(hit.id);
@@ -436,11 +423,9 @@ export function blastRadius(
  * when one reaches it but is not, `none` when none does, `na` when the area
  * changed no function, method, class or component.
  *
- * The two whole-graph scans graft does here (in-degree, and test-file sources
- * per target) become two batched store queries over the seed ids only, and do
- * not go through `incomingEdges`: they count every edge kind, as graft's
- * unfiltered `graph.edges` loop does. Neither is filtered by `strict`: they are
- * side counts about the seeds (hub ranking and the test signal), not the walk,
+ * Two batched store queries over the seed ids count in-degree and test-file
+ * sources per target. They count every edge kind and are not filtered by
+ * `strict`: these counts serve hub ranking and the test signal, not the walk,
  * so a questionable call edge still counts there.
  */
 function changedAreas(
@@ -519,7 +504,7 @@ function changedAreas(
             : 'none';
   }
 
-  // Ordered by how many affected modules each area reaches, then size, then label (graft's order).
+  // Ordered by how many affected modules each area reaches, then size, then label.
   const reach = (a: Area): number => modules.filter((m) => m.from.some((f) => a.files.includes(f))).length;
   return [...byKey.values()].sort(
     (a, b) => reach(b) - reach(a) || b.files.length - a.files.length || a.label.localeCompare(b.label),
@@ -569,7 +554,7 @@ function groupByModule(
   };
 }
 
-/** Directory groups the diff is folded to: roughly what a reviewer holds in their head (graft's value). */
+/** Directory groups the diff is folded to: roughly what a reviewer holds in their head. */
 const MAX_AREAS = 5;
 
 /**
@@ -601,12 +586,12 @@ function isTestOnly(mod: Module): boolean {
   return mod.files.length > 0 && mod.files.every((f) => TEST_PATH.test(f));
 }
 
-// --- graft's label helpers: dirLabel/parentDir/shortLabel from dist/blast/modules.js, hubLabel from dist/blast/blast.js ---
+// --- Directory and symbol label helpers ---
 
-/** Longest label before shortLabel cuts it (graft's value). */
+/** Longest label before shortLabel cuts it. */
 const MAX_LABEL = 30;
 
-/** Clause breaks a long name can be cut at without an ellipsis (graft's pattern, verbatim). */
+/** Clause breaks a long name can be cut at without an ellipsis. */
 const CLAUSE_BREAK = /\s(?:\(|—|-\s)|:\s|\s(?:via|and|for|with|using|in|across|over|from|of|by|to)\s/i;
 
 /** A name trimmed to fit a node: cut at a clause break, else at a word boundary with an ellipsis. */

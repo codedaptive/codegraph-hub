@@ -1,5 +1,5 @@
 /**
- * The one git runner the queries zone uses: `blast/diff.ts` reads diffs with
+ * Shared git runner: `blast/diff.ts` reads diffs with
  * it, and `orphans/` reads the merge base and pre-image files with it.
  *
  * Git is run through `spawnSync` with an argument array, never a shell string,
@@ -15,7 +15,7 @@ export function git(root: string, args: string[]): string | null {
     cwd: root,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    // 64 MiB, graft's value: room for `git diff --unified=0` on a large diff or
+    // 64 MiB: room for `git diff --unified=0` on a large diff or
     // `git show` of a large file (spawnSync's default is 1 MiB, and an overflow
     // returns null here).
     maxBuffer: 64 * 1024 * 1024,

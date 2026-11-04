@@ -1,10 +1,9 @@
 /**
- * Unit 2 of the blast review fixes (queries lane): what `codegraph blast` seeds from a changed line, the
- * test signal for a component and for an area with no behaviour, and the hunk lines of the JSON report.
+ * Tests for what `codegraph blast` seeds from a changed line, the test signal for a component and for an
+ * area with no behaviour, and the hunk lines of the JSON report.
  *
- * These tests need only the seeding and rendering changes (blast.ts, render.ts). Unit 1's change to
- * diff.ts (it sets `deletion: true` on a pure-deletion range) is not needed: the deletion cases build
- * their ChangedFile by hand (R2-08), and the git-driven cases use only non-deletion ranges.
+ * The deletion cases build their ChangedFile by hand (R2-08), including the `deletion: true` marker;
+ * the git-driven cases use only non-deletion ranges.
  *
  * Every test indexes a fixture repository, which can take more than 5 s on the loaded machine, so the
  * tests that index carry a comment and run under the 30 s testTimeout of vitest.config.mts.
