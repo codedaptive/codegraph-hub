@@ -347,8 +347,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Confirmed: 2026-11-04 10:57 CST, Bob, direct ("install is approved").
 - Done: 2026-11-04, Orc-Codegraph (#2190; design/Orc-Codegraph/ledger/reports/release-gate-sm11.md, Install):
   1.6.2-sm.11 installed, telemetry off, sm.8 server stopped, the server is sm.11; all 8 teams answer with 10 tools;
-  the reconnect reached 38 sessions (aimodel/Coord-research busy, retried); promoted features approved. Fleet's
-  rollout-doc steps went back to fleet after Kong's review.
+  the reconnect reached 38 sessions, plus aimodel's other four on retry; promoted features approved. Not reached:
+  aimodel/Coord-research, busy through the 60-minute retry (ended 12:18, #2237), so it answers in-process on sm.8
+  until it idles and is reconnected or restarts. Fleet's runbook steps landed on ours 4f7bfc21 after Kong's review.
 
 ## R-31. The official public fork: codedaptive/codegraph-hub, tracking upstream monthly; the PR effort finishes
 - Date: 2026-11-04 ~11:10 CST / Bob, direct: "that project has its own agenda. I want to finish the PR effort but
@@ -373,3 +374,68 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Expanded in docs/SPEC-upstream.md §4 and §7. Work implied: Orc-Codegraph routes the rename, README, Issues,
   #3211 body edit and the first update (upstream-prs, which keeps the fork checkout, is the natural owner) after
   S-53, and fixes the monthly date.
+- Amended 2026-11-04 (Bob): "The main readme should simply and clearly communicate exactly what features we have
+  added and how to use them. We carry the same license as the source." The hub's README leads with one entry per
+  added feature (what it does in one sentence, then how to use it, with an example), the fixes carried ahead of
+  upstream with their PR numbers, install and setup, and where it differs from upstream's defaults; upstream's
+  README follows unchanged (superseded the same day: kept as a linked copy, R-32). The hub keeps upstream's MIT `LICENSE` as is and says so (SPEC-upstream §7 items 3-4).
+
+## R-32. `codegraph upgrade` and the update notice use the hub's releases, never upstream's
+- Date: 2026-11-04 / Bob, direct ("I think we need to change the upgrade command to pull our version for safety?";
+  then "agreed. Go" to Designer's design below).
+- Question: our builds' `codegraph upgrade` installs upstream's package (`src/upgrade/index.ts:35-36`: npm
+  `@colbymchenry/codegraph@latest`, or upstream's `install.sh` for a bundle), and the update check reads upstream's
+  releases: a prerelease sorts below its release (`compareVersions`, :255-257), so `1.6.2-sm.11` sees upstream
+  `v1.6.2` as newer and every install with the check on tells its agents, in the MCP instructions and
+  `codegraph_status`, to run `codegraph upgrade`. The prerelease part is compared as text, so `sm.11` sorts before
+  `sm.9`. This machine is shielded only by `DO_NOT_TRACK=1`.
+- Ruling: (1) each monthly hub update is a GitHub release of `codedaptive/codegraph-hub`, tagged with the build's
+  version (`v1.6.2-sm.N`), the packed build attached; (2) `codegraph upgrade` installs the hub's latest release, or
+  the hub version named, and never installs upstream's package or runs upstream's install script; a source
+  checkout keeps "git pull && npm run build"; (3) the update check and notice read the hub's releases; (4) the
+  `-sm.N` suffix stays and its number compares as a number (sm.9 before sm.11); a rename (e.g. `-hub.N`) is not
+  made, since "hub" sorts before "sm" and an sm.11 install would never see it as newer; (5) the first hub release is
+  sm.12, the first build with this fix; the rename and README go ahead without waiting. With it, the hub README
+  question is settled as Designer recommended: upstream's README is a linked copy, `UPSTREAM-README.md`, not
+  appended (SPEC-upstream §7 item 3).
+- Reason: an agent obeying today's notice, or a user running `codegraph upgrade`, replaces the hub with upstream.
+- Not chosen: keeping upstream's upgrade path; turning the update check off by default (it would hide the hub's
+  own releases); renaming the version suffix.
+- Expanded in docs/SPEC.md §6 and SPEC-upstream §7 items 5 and 9. Work implied: Orc-Codegraph routes the code
+  change (`src/upgrade/` is upstream-owned: hook-in edits only, with a fork README row), red tests first for each of
+  (2)-(4), the gate, sm.12 promoted and packed, then the hub's first release from it. Installing sm.12 on this
+  machine waits for Bob (R-18).
+
+## R-33. Install sm.12 when it is ready, with the reconnect script
+- Date: 2026-11-04 12:20 CST / Bob, direct ("install sm.12 and use the script to do the mcp reconnects").
+- Question: R-32 left installing sm.12 (the build with the hub-release upgrade fix) to Bob (R-18). sm.12 is not
+  built yet (releases/ ends at sm.11; this machine runs 1.6.2-sm.11).
+- Ruling: install sm.12 on this machine as soon as its whole-suite gate is green and it is packed and
+  tarball-checked; no further go-ahead. By the runbook on ours (fleet/rollout/global-install.md, 4f7bfc21): install
+  and check the version, tools and telemetry off; stop the sm.11 server; run codeteam's `codeteam-type-all
+  "/mcp reconnect codegraph"` for every running session; every team answers. A failed check rolls back to sm.11
+  by the same steps.
+- Reason: Bob's word; the reconnect makes an install cheap for running sessions.
+- Not chosen: waiting for the hub's first release before installing here.
+- Still binding: R-32 (sm.12 carries the upgrade fix and is the hub's first release), R-21, R-22.
+- Work implied: Orc-Codegraph installs sm.12 when it is packed and reports the version, the checks and any session
+  the script could not reach.
+
+## R-34. Finish sm.12 and the hub's first release, then stand down
+- Date: 2026-11-04 12:58 CST / Bob, direct ("go. I would like to be done and able to set this work down for awhile
+  and use the tool"), after Designer's estimate (done 15:30-16:30 CST today, about 18:00 with one redo; stable
+  Thursday 2026-11-05 about 09:00 after a night on sm.12).
+- Question: what is left before the team stops, and what happens after?
+- Ruling: finish only what is in flight: host's hub-upgrade (R-32), the hub scrub (S-55), the hub README, the gate,
+  sm.12 promoted and packed, installed with the reconnect script (R-33), and the hub's first release
+  `v1.6.2-sm.12` (S-54). Nothing else enters: a finding made on the way is filed in the owning lane's todo for
+  later, as under S-52, unless it breaks sm.12's gate or install. Then the team stands down: no new work, no daily
+  upstream merge, no upstream analysis, no PR work (the 14 PRs wait on the maintainer; a comment from the
+  maintainer himself goes to team/questions.md, not to a lead). The deferred findings (K-F4, K-F6, K-F7 and the
+  lanes' own lists) wait in the lanes' todo lists. When the hub's 2026-12-04 update falls due (S-54), or someone
+  reports an issue on the hub, it is one line in team/questions.md for Bob, not work started.
+- Reason: Bob wants a finished, stable tool to use, and the work set down.
+- Not chosen: continuing the daily merge and analysis while stood down; starting the deferred findings now.
+- Work implied: Orc-Codegraph drives the in-flight list to done, reports done and the stand-down in one message,
+  and the morning check on 2026-11-05 confirms sm.12 is stable (every team answers; no error in the server and
+  builder logs since the install) before the lanes go idle for good.

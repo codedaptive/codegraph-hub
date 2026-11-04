@@ -107,11 +107,30 @@ Linux and Windows, if they want it.
    organisation; GitHub redirects the old name, so #3211's link and existing clones keep working).
 2. **Stance.** The README opens by saying the hub tracks `colbymchenry/codegraph` and keeps its own feature set (the
    §4 table), is updated monthly, and takes issues. Issues are turned on.
-3. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
+3. **The README says simply and clearly exactly what we added and how to use it** (Bob, R-31 amended):
+   - one entry per added feature, each with one plain sentence of what it does and then how to use it: the command,
+     argument, setting or file, with a short example; nothing we did not add, nothing left out;
+   - fixes we carry ahead of upstream in a short list, each with its upstream PR number;
+   - how to install and point an agent at it, and where it differs from upstream's defaults;
+   - written for a stranger: no internal names, rulings, lanes or process words; every claim true of the hub's
+     `main` (Kong checks it against the code);
+   - upstream's README is not appended (it would contradict the hub on install, `codegraph upgrade` and indexing):
+     it is kept as `UPSTREAM-README.md` at the top level, exactly as of the upstream version the update merged, under
+     a two-line note ("This is upstream's README as of <version>. To install and run the hub, see README.md."), and
+     the README links it once near the top ("For everything else CodeGraph does, see upstream's README"). Each
+     monthly update regenerates it.
+4. **License.** The hub carries upstream's license unchanged (MIT; upstream's `LICENSE` file as is), and the README
+   says so.
+5. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
    then the hub's `main` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
-   bob-codedaptive identity), and the update tagged. The first update is made now, from sm.11.
-4. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
+   bob-codedaptive identity), and the update published as a GitHub release of the hub tagged with the build's
+   version (`v1.6.2-sm.N`), the packed build attached. The first release is sm.12, the first build with R-32's
+   upgrade fix; the rename and README do not wait for it.
+9. **Upgrade and update notice (R-32).** `codegraph upgrade` installs the hub's latest release (or the hub version
+   named) and never upstream's package or install script; a source checkout keeps "git pull && npm run build". The
+   update check reads the hub's releases. Versions keep the `-sm.N` suffix, compared by its number.
+6. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
    cycle, through the owning lane and the same gate.
-5. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further
+7. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further
    pushes, restacks or bot replies. If the maintainer himself comments on one, upstream-prs answers him.
-6. **Issue #3211.** Its body is edited to name the hub; no new comment (R-25).
+8. **Issue #3211.** Its body is edited to name the hub; no new comment (R-25).
