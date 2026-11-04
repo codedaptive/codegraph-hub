@@ -33,7 +33,7 @@ import {
 import { DatabaseConnection, getDatabasePath, removeDatabaseFiles } from './db';
 import { WalCheckpointValve, resolveWalValveMb } from './db/wal-valve';
 import { logWarn } from './errors';
-import { QueryBuilder, type DeprioritizedPathMatcher } from './db/queries';
+import { QueryBuilder, inPathPrefixes, type DeprioritizedPathMatcher } from './db/queries';
 import { importPathKeys, moduleReferenceKeys } from './db/reference-tail';
 import {
   isInitialized,
@@ -54,6 +54,7 @@ import type { FileWatcher, WatchOptions, PendingFile } from './sync';
 import { LockUnavailableError } from './errors';
 import { EXTRACTION_VERSION } from './extraction/extraction-version';
 import { getCodeGraphDir } from './directory';
+import { isForeignLockRecord, lockStamp } from './mcp/writer-lock';
 import { deriveProjectNameTokens } from './search/query-utils';
 import ignore from 'ignore';
 import { loadDeprioritizePatterns } from './project-config';
@@ -220,8 +221,17 @@ export class CodeGraph {
     this.db = db;
     this.queries = queries;
     this.projectRoot = projectRoot;
+    // The lock body carries this project's lock stamp (its root, the identity
+    // of its physical index, and the writer's pid and OS start time), so a
+    // codegraph.lock is stale here even if its pid lives when it is foreign by
+    // isForeignLockRecord: copied in with another project's .codegraph/, or
+    // naming a pid now held by a process that started at another time than
+    // the recorded one. Any other lock is decided by pid liveness, including
+    // one at this root after a .codegraph/ restored in place, which a live
+    // holder follows (reopenIfReplaced).
     this.fileLock = new FileLock(
-      path.join(getCodeGraphDir(projectRoot), 'codegraph.lock')
+      path.join(getCodeGraphDir(projectRoot), 'codegraph.lock'),
+      { stamp: () => lockStamp(projectRoot), isForeign: (r) => isForeignLockRecord(r, projectRoot) }
     );
     this.wireLayers();
   }
@@ -2629,9 +2639,14 @@ export class CodeGraph {
     return this.queries.searchNodes(query, options);
   }
 
-  /** Lexical evidence for an empty explore result; does not alter retrieval. */
-  getExploreMissDiagnostics(query: string) {
-    return this.queries.getExploreMissDiagnostics(query);
+  /**
+   * Lexical evidence for an empty explore result; does not alter retrieval.
+   * `pathPrefixes` is the path focus (absent or empty = the whole index): only
+   * nodes whose file is inside it count as matched or as candidates. A file or
+   * import node can make a word matched; it is never a candidate.
+   */
+  getExploreMissDiagnostics(query: string, pathPrefixes: readonly string[] = []) {
+    return this.queries.getExploreMissDiagnostics(query, pathPrefixes);
   }
 
   /**
@@ -2666,8 +2681,16 @@ export class CodeGraph {
    * Every candidate is re-verified against `nodes` before being returned
    * (vocab rows are proposals; deletions leave orphans by design), so a
    * returned symbol is guaranteed to exist right now.
+   *
+   * `pathPrefixes` (a path focus, as {@link inPathPrefixes}; absent or empty =
+   * none) restricts the matches to names with a definition in focus, decided
+   * before every cap: the co-occurrence and single-word queries only return
+   * in-focus names, and the representative definition is chosen among in-focus
+   * nodes, so `limit` counts in-focus names only. Rarity is counted over the
+   * whole index; under a focus the single-word tier takes the two rarest
+   * segments that have an in-focus name, not the two rarest overall.
    */
-  getSegmentMatches(words: string[], limit: number = 6): SegmentMatch[] {
+  getSegmentMatches(words: string[], limit: number = 6, pathPrefixes: readonly string[] = []): SegmentMatch[] {
     if (words.length === 0) return [];
     // Variant → original word (plural folding), for coverage accounting.
     const variantToWord = new Map<string, string>();
@@ -2685,7 +2708,7 @@ export class CodeGraph {
     // the fold from live segments as the honesty layer.
     const variantPairs = [...variantToWord.entries()].map(([segment, word]) => ({ segment, word }));
     const candidates: Array<{ name: string; matchedWords: Set<string> }> = [];
-    for (const hit of this.queries.getSegmentCoOccurrence(variantPairs, 2, 24)) {
+    for (const hit of this.queries.getSegmentCoOccurrence(variantPairs, 2, 24, pathPrefixes)) {
       const matched = this.wordsMatchingName(hit.name, variantToWord);
       if (matched.size >= 2) candidates.push({ name: hit.name, matchedWords: matched });
     }
@@ -2700,16 +2723,26 @@ export class CodeGraph {
     // matchesNonProductionDir); and the candidate name must have ≥2 segments
     // (a bare common verb matching a bare function name — "write" → `write` —
     // is prose coincidence, not the user naming a symbol).
+    // Rarity is counted over the whole index (a naming statistic), in the same
+    // order with or without a focus. Under a path focus, tier A returned
+    // in-focus names only, so this tier runs when none of those exist even if
+    // out-of-focus names co-occur; and it takes the two rarest segments that
+    // have at least one in-focus name, so a rarer segment whose names all lie
+    // outside the focus cannot use up a slot and hide an in-focus one.
     if (candidates.length === 0) {
       const singleWordVariants = variants.filter((v) => variantToWord.get(v)!.length >= 5);
       const counts = this.queries.getSegmentNameCounts(singleWordVariants);
-      const rare = [...counts.entries()]
+      const rarityOrder = [...counts.entries()]
         .filter(([, n]) => n >= 2 && n <= CodeGraph.SEGMENT_RARITY_CEILING)
-        .sort((a, b) => a[1] - b[1])
-        .slice(0, 2);
-      for (const [variant] of rare) {
+        .sort((a, b) => a[1] - b[1]);
+      let taken = 0;
+      for (const [variant] of rarityOrder) {
+        if (taken >= 2) break;
+        const names = this.queries.getNamesForSegment(variant, 12, pathPrefixes);
+        if (pathPrefixes.length > 0 && names.length === 0) continue;
+        taken++;
         const word = variantToWord.get(variant)!;
-        for (const name of this.queries.getNamesForSegment(variant, 12)) {
+        for (const name of names) {
           if (splitIdentifierSegments(name).length < 2) continue;
           candidates.push({ name, matchedWords: new Set([word]) });
         }
@@ -2720,9 +2753,10 @@ export class CodeGraph {
     // definition per name. A name whose only nodes are file/import kind has
     // no real definition to point at — surfacing the import statement instead
     // reads as a matched symbol but isn't one (#1144) — so it's skipped, the
-    // same way an orphaned vocab row is. (Import names no longer enter the
-    // vocab at write time, but rows written before that exclusion persist
-    // until the next full index.)
+    // same way an orphaned vocab row is. (A vocab row can still name only an
+    // import until a full index rebuilds it; it is skipped here.) Under a path
+    // focus the representative is chosen among the name's in-focus nodes, and
+    // a name with none is skipped here, before the `limit` cap below counts it.
     const out: SegmentMatch[] = [];
     const seen = new Set<string>();
     candidates.sort((a, b) => b.matchedWords.size - a.matchedWords.size || a.name.length - b.name.length);
@@ -2732,7 +2766,9 @@ export class CodeGraph {
       seen.add(candidate.name);
       const nodes = this.queries.getNodesByName(candidate.name);
       if (nodes.length === 0) continue; // orphaned vocab row — name no longer exists
-      const rep = nodes.find((n) => n.kind !== 'file' && n.kind !== 'import');
+      const rep = nodes.find(
+        (n) => n.kind !== 'file' && n.kind !== 'import' && inPathPrefixes(n.filePath, pathPrefixes),
+      );
       if (!rep) continue; // no real definition — don't surface an import/file as one
       out.push({
         name: candidate.name,
@@ -3249,11 +3285,13 @@ export class CodeGraph {
     // against name_segment_vocab (same precision rules as the prompt hook:
     // co-occurrence, else rare singles, verified against live nodes) and hand
     // the names down as dampened exact-name seeds. Callers that pass their
-    // own seedNames keep them; failures degrade to no supplement.
+    // own seedNames keep them; failures degrade to no supplement. Under a
+    // path focus (`options.pathPrefixes`) the seeds are drawn from the focus,
+    // so the cap of 8 counts in-focus names only.
     let seedNames = options?.seedNames;
     if (seedNames === undefined) {
       try {
-        seedNames = this.getSegmentMatches(extractSegmentSearchWords(query), 8)
+        seedNames = this.getSegmentMatches(extractSegmentSearchWords(query), 8, options?.pathPrefixes ?? [])
           .map((m) => m.name);
       } catch {
         seedNames = [];

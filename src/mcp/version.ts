@@ -1,10 +1,11 @@
 /**
  * Resolved package version, computed once at module load.
  *
- * The version string is the rendezvous datum between cooperating daemon and
- * proxy processes: the daemon advertises its version in the hello line, and
- * the proxy refuses to share IPC across a mismatch (falls back to direct
- * mode), or replaces a daemon of an older release ({@link isOlderRelease}).
+ * The version string is the rendezvous datum between cooperating server and
+ * proxy processes: the server advertises its version in the hello line, and
+ * the proxy never pipes through a server of another version; the launcher
+ * replaces an older one ({@link isOlderRelease}), and a newer one leaves the
+ * session in-process.
  * Keeping the resolution in one place avoids drift between the CLI
  * `--version` output (which reads `package.json` directly) and the daemon
  * handshake.
@@ -13,8 +14,9 @@
  * this file — same relative position whether we're loaded from `src/mcp/` or
  * the `dist/mcp/` output, since `tsc` preserves the layout. If reading fails
  * (e.g. the package was unpacked oddly), fall back to "0.0.0-unknown" — a
- * sentinel that will never match a real version, so the proxy harmlessly
- * falls back to direct mode.
+ * sentinel that will never match a real version, so the proxy never pipes
+ * through a server of another version; the launcher replaces an older one, and
+ * a newer one leaves the session in-process.
  */
 
 import * as fs from 'fs';

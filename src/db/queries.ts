@@ -298,25 +298,70 @@ function prepareNodeStatement(db: SqliteDatabase, sql: string): NodeStatement {
 }
 
 /**
- * A search's `path:` and `name:` filters, lowercased once. The values of one
- * family are OR'd and the two families AND'd, and each value is a literal,
- * case-insensitive substring of the file path or the symbol's name, as the
- * query parser documents. JavaScript decides each row a statement returns,
- * since `toLowerCase` folds Unicode, where SQLite's `lower()` and LIKE fold
- * ASCII only, and LIKE would read a `%` or `_` in the value as a wildcard; the
- * statement's own SQL only narrows the rows (see fieldFilterSql).
+ * A search's `path:` and `name:` filters, lowercased once, and its path focus
+ * (`pathPrefixes`). The values of one family are OR'd and the families AND'd,
+ * and each `path:`/`name:` value is a literal, case-insensitive substring of
+ * the file path or the symbol's name, as the query parser documents. A prefix
+ * is not: it is index-relative and matches a whole path segment boundary,
+ * case-sensitively (see {@link inPathPrefixes}). JavaScript decides each row a
+ * statement returns, since `toLowerCase` folds Unicode, where SQLite's
+ * `lower()` and LIKE fold ASCII only, and LIKE would read a `%` or `_` in the
+ * value as a wildcard; the statement's own SQL only narrows the rows (see
+ * fieldFilterSql).
  */
 interface FieldFilters {
   paths: string[];
   names: string[];
+  /** The path focus; empty = none. Kept as the caller wrote it (no normalising). */
+  pathPrefixes: readonly string[];
 }
 
-/** The query's `path:`/`name:` filters, or undefined when it has none. */
-function fieldFiltersOf(parsed: ParsedQuery): FieldFilters | undefined {
-  if (parsed.pathFilters.length === 0 && parsed.nameFilters.length === 0) return undefined;
+/**
+ * Whether an index-relative file path is inside the path focus `prefixes`:
+ * it equals a prefix or lies below one, on whole segments, case-sensitively
+ * (`src/app` holds `src/app/x.ts`, not `src/application/x.ts`). An empty list
+ * is no focus and holds every path. On a non-empty list this is the rule of
+ * the host's `inFocus` (src/extensions/host/server/session-scope.ts); the
+ * host's `inFocus` reads an empty list as "nothing is in focus" and this one
+ * as "no filter", the one deliberate difference. A prefix is compared as
+ * written: no trailing-slash or empty-string normalising.
+ */
+export function inPathPrefixes(filePath: string, prefixes: readonly string[]): boolean {
+  if (prefixes.length === 0) return true;
+  return prefixes.some((p) => filePath === p || filePath.startsWith(`${p}/`));
+}
+
+/**
+ * ` AND (...)` holding the rows whose `column` is inside the path focus (the
+ * SQL form of {@link inPathPrefixes}), or '' for an empty focus. Equality plus
+ * a `substr` comparison on the prefix and its `/`, never LIKE: LIKE folds
+ * ASCII case, which the focus must not, and reads `_` and `%` in a path as
+ * wildcards. `substr` counts characters, so the length is the code-point
+ * count of `prefix + '/'`. Exact, so a caller with no JavaScript re-check
+ * (the exact-name and substring lookups) can rely on it alone.
+ */
+function pathPrefixSql(column: string, prefixes: readonly string[], params: (string | number)[]): string {
+  if (prefixes.length === 0) return '';
+  const terms: string[] = [];
+  for (const prefix of prefixes) {
+    const below = `${prefix}/`;
+    terms.push(`(${column} = ? OR substr(${column}, 1, ?) = ?)`);
+    params.push(prefix, [...below].length, below);
+  }
+  return ` AND (${terms.join(' OR ')})`;
+}
+
+/**
+ * The query's `path:`/`name:` filters and the path focus, or undefined when
+ * there are none of either (so a search with neither runs its unfiltered
+ * statements, byte for byte).
+ */
+function fieldFiltersOf(parsed: ParsedQuery, pathPrefixes: readonly string[] = []): FieldFilters | undefined {
+  if (parsed.pathFilters.length === 0 && parsed.nameFilters.length === 0 && pathPrefixes.length === 0) return undefined;
   return {
     paths: parsed.pathFilters.map((p) => p.toLowerCase()),
     names: parsed.nameFilters.map((n) => n.toLowerCase()),
+    pathPrefixes,
   };
 }
 
@@ -331,6 +376,7 @@ function passesFieldFilters(name: string, filePath: string, filters: FieldFilter
     const lowered = filePath.toLowerCase();
     if (!filters.paths.some((p) => lowered.includes(p))) return false;
   }
+  if (!inPathPrefixes(filePath, filters.pathPrefixes)) return false;
   return passesNameFilters(name, filters);
 }
 
@@ -344,6 +390,7 @@ const PRINTABLE_ASCII = /^[ -~]*$/;
  * `toLowerCase()` and `includes()`, so a printable ASCII value is tested in
  * SQL. Text holding any other character goes on to JavaScript whatever it
  * holds, and that is the only text a value with another character can match.
+ * The path focus has no such split: its SQL term is exact (pathPrefixSql).
  */
 function fieldFilterSql(filters: FieldFilters, params: (string | number)[]): string {
   let sql = '';
@@ -358,6 +405,7 @@ function fieldFilterSql(filters: FieldFilters, params: (string | number)[]): str
     terms.push(`${column} GLOB '*[^ -~]*'`);
     sql += ` AND (${terms.join(' OR ')})`;
   }
+  sql += pathPrefixSql('nodes.file_path', filters.pathPrefixes, params);
   return sql;
 }
 
@@ -1116,20 +1164,29 @@ export class QueryBuilder {
    * of a single word tie with genuine two-word matches and — because ORDER
    * BY/LIMIT run here, before any JS-side re-check — crowd a real match past
    * the LIMIT on vocab-heavy repos (#1146).
+   *
+   * `pathPrefixes` (a path focus, as {@link inPathPrefixes}) keeps only names
+   * that have a definition (a node that is not a file or import) in focus,
+   * decided before the LIMIT so the limit counts in-focus names. The vocab is
+   * keyed by name, not path, hence the EXISTS on `nodes`. Empty or absent =
+   * every name.
    */
   getSegmentCoOccurrence(
     variants: Array<{ segment: string; word: string }>,
     minWords: number,
     limit: number,
+    pathPrefixes: readonly string[] = [],
   ): Array<{ name: string; matches: number }> {
     if (variants.length === 0 || !this.hasSchema('name_segment_vocab')) return [];
     const placeholders = variants.map(() => '?').join(', ');
     const whens = variants.map(() => 'WHEN ? THEN ?').join(' ');
+    const focusParams: (string | number)[] = [];
+    const focusSql = this.inFocusDefinitionSql('name_segment_vocab.name', pathPrefixes, focusParams);
     const rows = this.db
       .prepare(
         `SELECT name, COUNT(DISTINCT CASE segment ${whens} END) AS matches
          FROM name_segment_vocab
-         WHERE segment IN (${placeholders})
+         WHERE segment IN (${placeholders})${focusSql}
          GROUP BY name
          HAVING matches >= ?
          ORDER BY matches DESC, length(name) ASC
@@ -1138,6 +1195,7 @@ export class QueryBuilder {
       .all(
         ...variants.flatMap((v) => [v.segment, v.word]),
         ...variants.map((v) => v.segment),
+        ...focusParams,
         minWords,
         limit,
       ) as Array<{ name: string; matches: number }>;
@@ -1145,7 +1203,10 @@ export class QueryBuilder {
   }
 
   /** How many distinct names each segment appears in — the rarity signal that
-   *  separates a discriminative word ("checkout") from a ubiquitous one ("state"). */
+   *  separates a discriminative word ("checkout") from a ubiquitous one ("state").
+   *  Whole-index on purpose, with no path focus: it is a naming statistic (is this
+   *  word discriminative in this codebase), not a top-N list, so a focus does not
+   *  spend a limit here and narrowing it would change what "rare" means. */
   getSegmentNameCounts(segments: string[]): Map<string, number> {
     if (segments.length === 0 || !this.hasSchema('name_segment_vocab')) return new Map();
     const placeholders = segments.map(() => '?').join(', ');
@@ -1158,13 +1219,34 @@ export class QueryBuilder {
     return new Map(rows.map((r) => [r.segment, r.n]));
   }
 
-  /** Names containing the given segment (rare-single-word tier). */
-  getNamesForSegment(segment: string, limit: number): string[] {
+  /**
+   * Names containing the given segment (rare-single-word tier). `pathPrefixes`
+   * (a path focus, as {@link inPathPrefixes}) keeps only names with a
+   * definition in focus, before the LIMIT; empty or absent = every name.
+   */
+  getNamesForSegment(segment: string, limit: number, pathPrefixes: readonly string[] = []): string[] {
     if (!this.hasSchema('name_segment_vocab')) return [];
+    const params: (string | number)[] = [segment];
+    const focusSql = this.inFocusDefinitionSql('name_segment_vocab.name', pathPrefixes, params);
     const rows = this.db
-      .prepare('SELECT name FROM name_segment_vocab WHERE segment = ? ORDER BY length(name) ASC LIMIT ?')
-      .all(segment, limit) as Array<{ name: string }>;
+      .prepare(`SELECT name FROM name_segment_vocab WHERE segment = ?${focusSql} ORDER BY length(name) ASC LIMIT ?`)
+      .all(...params, limit) as Array<{ name: string }>;
     return rows.map((r) => r.name);
+  }
+
+  /**
+   * ` AND EXISTS (...)`: `nameColumn` names a symbol that has a definition
+   * (kind not file or import, the kinds getSegmentMatches skips) in the path
+   * focus, or '' for an empty focus. The segment vocab is keyed by name and
+   * holds no path, so focus is read from `nodes`.
+   */
+  private inFocusDefinitionSql(nameColumn: string, pathPrefixes: readonly string[], params: (string | number)[]): string {
+    if (pathPrefixes.length === 0) return '';
+    const inner: (string | number)[] = [];
+    const focus = pathPrefixSql('nodes.file_path', pathPrefixes, inner);
+    params.push(...inner);
+    return ` AND EXISTS (SELECT 1 FROM nodes WHERE nodes.name = ${nameColumn}`
+      + ` AND nodes.kind NOT IN ('file', 'import')${focus})`;
   }
 
   /**
@@ -1892,10 +1974,16 @@ export class QueryBuilder {
     // applies them before its own limit and offset. Applied only to the final
     // list, they found nothing whenever the rows that filled the limit all
     // lay elsewhere, so a match was shown only at a larger limit (#2254).
-    const filters = fieldFiltersOf(parsed);
+    // The caller's path focus (`options.pathPrefixes`) travels in the same
+    // object and is held to the same rule: it is a hard filter every source
+    // applies before its limit. With no `path:`/`name:` and no focus this is
+    // undefined, and every source runs its unfiltered statements.
+    const filters = fieldFiltersOf(parsed, options.pathPrefixes);
     // When no symbol's name passes `name:`, or no symbol's file passes `path:`,
     // nothing can: answer now, rather than let every source below read all
-    // its candidates to find none.
+    // its candidates to find none. (The focus is not part of this check: it is
+    // case-sensitive and whole-segment, and the lowered path list answers
+    // neither.)
     if (filters && !this.fieldFiltersCanMatch(filters)) return [];
     // The text portion drives FTS/LIKE; if all the user typed was
     // filters (`kind:function`), we still need *some* candidate set,
@@ -2110,11 +2198,11 @@ export class QueryBuilder {
     // separate `SELECT * FROM nodes WHERE name = ?`; without this cap
     // a project with many similar names (`getUser1`, `getUser2`...)
     // could fan out far beyond `limit` queries before the inner-loop
-    // limit kicks in. With `path:`/`name:` filters the cap could be spent on
-    // names whose symbols all lie outside them, ahead of the one that
-    // matches (#2254), so a filtered search looks names up until it has
-    // `limit` results, skipping without a lookup each name `name:` rules out.
-    // Every lookup is an index seek on one name.
+    // limit kicks in. With the filters (the `path:`/`name:` filters and any
+    // path focus) the cap could be spent on names whose symbols all lie outside
+    // them, ahead of the one that matches, so a filtered search looks names up
+    // until it has `limit` results, skipping without a lookup each name
+    // `name:` rules out. Every lookup is an index seek on one name.
     const FUZZY_FOLLOWUP_CAP = Math.max(limit * 2, 50);
     const cappedCandidates = filters ? candidates : candidates.slice(0, FUZZY_FOLLOWUP_CAP);
 
@@ -2149,8 +2237,17 @@ export class QueryBuilder {
     return results;
   }
 
-  /** Bounded miss diagnostics, independent of relevance filters and ranking. */
-  getExploreMissDiagnostics(query: string): {
+  /**
+   * Bounded miss diagnostics, independent of relevance filters and ranking.
+   *
+   * `pathPrefixes` is the path focus the caller passes ({@link inPathPrefixes}): under a
+   * non-empty list every source of an answer (the FTS postings, the segment
+   * vocab and both candidate lists) counts only nodes whose file lies inside
+   * it, applied before each LIMIT, so a word held only outside the focus is
+   * `unmatched`, and no name outside it is a candidate. Absent or empty = the
+   * whole index: no focus clause is added to any statement.
+   */
+  getExploreMissDiagnostics(query: string, pathPrefixes: readonly string[] = []): {
     matched: string[]; unmatched: string[]; candidates: string[]; limited: boolean;
   } {
     const words = [...new Set((query.match(/[\p{L}\p{N}]+/gu) ?? []).map(w => w.toLowerCase()))];
@@ -2159,35 +2256,58 @@ export class QueryBuilder {
     if (checked.length === 0) return { matched: [], unmatched: [], candidates: [], limited };
 
     // EXISTS uses FTS postings and the segment primary key, never source scans.
-    // Vocab rows can outlive deleted definitions, so verify them against nodes.
-    // An index from before schema v7 has no vocab: FTS alone answers (#2913).
+    // Vocab rows can outlive deleted definitions, so verify them against nodes,
+    // and the focus is checked on that same node row as its kind. An index from
+    // before schema v7 has no vocab table: FTS alone answers.
+    // Positional params follow the SQL text: every fragment below pushes into
+    // its own array and the arrays are spread in the order the text uses them.
+    // With a focus the FTS EXISTS joins nodes with CROSS JOIN, the join shape
+    // searchNodesFTS uses; without one it keeps its bare form.
     const vocab = this.hasSchema('name_segment_vocab');
+    const ftsExistsFocus: (string | number)[] = [];
+    const ftsExistsFocusSql = pathPrefixSql('n.file_path', pathPrefixes, ftsExistsFocus);
+    const vocabExistsFocus: (string | number)[] = [];
+    const vocabExistsFocusSql = vocab ? pathPrefixSql('n.file_path', pathPrefixes, vocabExistsFocus) : '';
+    const ftsExists = ftsExistsFocusSql === ''
+      ? 'EXISTS (SELECT 1 FROM nodes_fts WHERE nodes_fts MATCH pattern)'
+      : `EXISTS (SELECT 1 FROM nodes_fts CROSS JOIN nodes n ON n.rowid = nodes_fts.rowid WHERE nodes_fts MATCH pattern${ftsExistsFocusSql})`;
     const rows = this.db.prepare(`
       WITH words(word, pattern) AS (VALUES ${checked.map(() => '(?, ?)').join(', ')})
       SELECT word, (
-        EXISTS (SELECT 1 FROM nodes_fts WHERE nodes_fts MATCH pattern)${vocab ? `
+        ${ftsExists}${vocab ? `
         OR EXISTS (
           SELECT 1 FROM name_segment_vocab v WHERE v.segment = word
-          AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import'))
+          AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import')${vocabExistsFocusSql})
         )` : ''}
       ) AS matched FROM words
-    `).all(...checked.flatMap(w => [w, `{name qualified_name signature docstring} : "${w}"*`])) as
-      Array<{ word: string; matched: number }>;
+    `).all(
+      ...checked.flatMap(w => [w, `{name qualified_name signature docstring} : "${w}"*`]),
+      ...ftsExistsFocus,
+      ...vocabExistsFocus,
+    ) as Array<{ word: string; matched: number }>;
 
+    const vocabCandidateFocus: (string | number)[] = [];
+    const vocabCandidateFocusSql = vocab ? pathPrefixSql('n.file_path', pathPrefixes, vocabCandidateFocus) : '';
+    const ftsCandidateFocus: (string | number)[] = [];
+    const ftsCandidateFocusSql = pathPrefixSql('n.file_path', pathPrefixes, ftsCandidateFocus);
     const names = this.db.prepare(`${vocab ? `
       SELECT name FROM (
         SELECT v.name FROM name_segment_vocab v
         WHERE v.segment IN (${checked.map(() => '?').join(', ')})
-        AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import'))
+        AND EXISTS (SELECT 1 FROM nodes n WHERE n.name = v.name AND n.kind NOT IN ('file', 'import')${vocabCandidateFocusSql})
         LIMIT 12
       )
       UNION ALL` : ''}
       SELECT name FROM (
         SELECT n.name FROM nodes_fts JOIN nodes n ON n.rowid = nodes_fts.rowid
-        WHERE nodes_fts MATCH ? AND n.kind NOT IN ('file', 'import')
+        WHERE nodes_fts MATCH ? AND n.kind NOT IN ('file', 'import')${ftsCandidateFocusSql}
         LIMIT 12
       )
-    `).all(...(vocab ? checked : []), `name : (${checked.map(w => `"${w}"*`).join(' OR ')})`) as Array<{ name: string }>;
+    `).all(
+      ...(vocab ? [...checked, ...vocabCandidateFocus] : []),
+      `name : (${checked.map(w => `"${w}"*`).join(' OR ')})`,
+      ...ftsCandidateFocus,
+    ) as Array<{ name: string }>;
     return {
       matched: rows.filter(r => r.matched).map(r => r.word),
       unmatched: rows.filter(r => !r.matched).map(r => r.word),
@@ -2210,6 +2330,13 @@ export class QueryBuilder {
    *
    * Bounded like `getExploreMissDiagnostics`: two index probes per name (the
    * lower(name) index and FTS postings), never a source scan, at most 16 names.
+   *
+   * Takes no path focus, unlike `getExploreMissDiagnostics`: its answer is
+   * index-wide on purpose. The note it feeds (`notInIndexNote` in
+   * src/mcp/tools.ts) says no indexed symbol, file, signature or comment uses
+   * the name, so a focus-filtered answer would make that false for a name
+   * defined outside the focus; under a focus the host names such a name in its
+   * own line instead (`outOfFocusNames` in src/mcp/tools.ts).
    */
   getUnseenNames(names: readonly string[]): string[] {
     const checked = [...new Set(names)].filter((n) => n.length > 0 && n.length <= 128).slice(0, 16);
@@ -2409,13 +2536,14 @@ export class QueryBuilder {
    * Returns high-confidence matches for known symbol names extracted from query.
    *
    * @param names - Array of symbol names to look up
-   * @param options - Search options (kinds, languages, limit)
+   * @param options - Search options (kinds, languages, limit, pathPrefixes: only rows in the path focus, counted
+   *   toward both passes' own limits)
    * @returns SearchResult array with exact matches scored at 1.0
    */
   findNodesByExactName(names: string[], options: SearchOptions = {}): SearchResult[] {
     if (names.length === 0) return [];
 
-    const { kinds, languages, limit = 50 } = options;
+    const { kinds, languages, limit = 50, pathPrefixes = [] } = options;
 
     // Two-pass approach to handle common names (e.g., "run" has 40+ matches):
     // Pass 1: Find which files contain distinctive (rare) symbols from the query.
@@ -2437,6 +2565,9 @@ export class QueryBuilder {
         sql += ` AND kind IN (${kinds.map(() => '?').join(',')})`;
         params.push(...kinds);
       }
+      // The path focus, before the LIMIT: out-of-focus files must not fill the
+      // 100 files that decide which names are distinctive.
+      sql += pathPrefixSql('file_path', pathPrefixes, params);
       sql += ' LIMIT 100';
       const rows = this.db.prepare(sql).all(...params) as { file_path: string }[];
       nameToFiles.set(name.toLowerCase(), new Set(rows.map(r => r.file_path)));
@@ -2472,6 +2603,10 @@ export class QueryBuilder {
         sql += ` AND language IN (${languages.map(() => '?').join(',')})`;
         params.push(...languages);
       }
+
+      // The path focus, before the LIMIT: the fetch below must be filled by
+      // in-focus rows, or a common name's out-of-focus rows crowd them out.
+      sql += pathPrefixSql('nodes.file_path', pathPrefixes, params);
 
       // Fetch enough to find co-located results among common names
       sql += ' LIMIT ?';
@@ -2511,7 +2646,7 @@ export class QueryBuilder {
     substring: string,
     options: SearchOptions & { excludePrefix?: boolean } = {}
   ): SearchResult[] {
-    const { kinds, languages, limit = 30, excludePrefix } = options;
+    const { kinds, languages, limit = 30, excludePrefix, pathPrefixes = [] } = options;
 
     let sql = `
       SELECT nodes.*, 1.0 as score
@@ -2536,6 +2671,8 @@ export class QueryBuilder {
       params.push(...languages);
     }
 
+    sql += pathPrefixSql('nodes.file_path', pathPrefixes, params);
+
     sql += ' ORDER BY length(name) ASC LIMIT ?';
     params.push(limit);
 
@@ -2545,8 +2682,9 @@ export class QueryBuilder {
     // in length come out in the order SQLite's plan for this very statement
     // reads rows, the kind index's or the table's. Anything it can't answer
     // exactly (no kind filter, a language filter, a `%` in the word, another
-    // plan, a transaction) is asked of SQLite.
-    if (kinds && kinds.length > 0 && !(languages && languages.length > 0)) {
+    // plan, a transaction, a path focus: the index holds names and rowids, not
+    // paths) is asked of SQLite.
+    if (kinds && kinds.length > 0 && !(languages && languages.length > 0) && pathPrefixes.length === 0) {
       const index = this.memoizedRead('nameSubstringIndex', () => this.readNameSubstringIndex());
       const order = index ? this.substringScanOrder(index, sql, params, excludePrefix ? 2 : 1) : null;
       const rowids = order ? searchNameSubstring(index!.index, substring, kinds, excludePrefix === true, limit, order) : null;

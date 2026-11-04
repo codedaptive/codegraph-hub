@@ -1,25 +1,53 @@
 /**
- * Unit coverage for the daemon-side client-liveness primitives (#692, Layer 2).
+ * Unit coverage for the machine server's client-hello parsing and its
+ * client-liveness primitives (#692, Layer 2).
  *
- * These back the daemon's defense against a phantom client — one whose process
- * died without the socket ever signalling close (a Windows named-pipe hazard).
- * The wire parsing and the liveness decision are pure, so they're tested here;
- * the full handshake + sweep is exercised end-to-end in `mcp-daemon.test.ts`.
+ * The client hello carries the proxy's pids, which back the server's defense
+ * against a phantom client — one whose process died without the socket ever
+ * signalling close (a Windows named-pipe hazard) — and the directory the
+ * session was launched in, which fixes the session's repo anchor. The wire
+ * parsing and the liveness decision are pure, so they're tested here; the full
+ * handshake + sweep is exercised end-to-end in `mcp-daemon.test.ts`.
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Daemon, parseClientHelloLine, peerIsDead } from '../src/mcp/daemon';
 
 describe('parseClientHelloLine', () => {
   it('parses a well-formed client-hello', () => {
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":1234,"hostPid":56}'))
-      .toEqual({ pid: 1234, hostPid: 56 });
+      .toEqual({ pid: 1234, hostPid: 56, launchDir: null, hasLaunchDir: false, control: false });
   });
 
   it('accepts a null host pid and a missing host pid', () => {
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":1234,"hostPid":null}'))
-      .toEqual({ pid: 1234, hostPid: null });
+      .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":1234}'))
-      .toEqual({ pid: 1234, hostPid: null });
+      .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
+  });
+
+  it('keeps an absolute launch directory', () => {
+    const launchDir = path.resolve(os.tmpdir(), 'some project');
+    expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 1234, hostPid: 56, launchDir })))
+      .toEqual({ pid: 1234, hostPid: 56, launchDir, hasLaunchDir: true, control: false });
+  });
+
+  it('reads the control marker only as the number 1', () => {
+    expect(parseClientHelloLine('{"codegraph_client":1,"control":1,"pid":1234,"hostPid":null}'))
+      .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: false, control: true });
+    for (const control of [true, '1', 2, 0, null]) {
+      expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, control, pid: 1234, hostPid: null }))?.control)
+        .toBe(false);
+    }
+  });
+
+  it('reads a relative, empty or non-string launch directory as absent', () => {
+    for (const launchDir of ['relative/dir', './here', '', 42, null]) {
+      expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 1234, hostPid: null, launchDir })))
+        .toEqual({ pid: 1234, hostPid: null, launchDir: null, hasLaunchDir: true, control: false }); // the key is present, whatever it holds
+    }
   });
 
   it('returns null for a JSON-RPC message (no marker) so it is treated as data', () => {
@@ -69,17 +97,42 @@ describe('peerIsDead', () => {
 });
 
 describe('Daemon.reapDeadClients', () => {
-  // Construct with idleTimeoutMs:0 so dropping the last client doesn't arm a real
-  // idle timer. The constructor opens no sockets/DB, so this stays a fast unit test.
-  const makeDaemon = () => new Daemon('/tmp/codegraph-reap-unit-test', { idleTimeoutMs: 0 }) as any;
-  const fakeSession = () => ({ stopped: false, stop() { this.stopped = true; } });
+  // The constructor binds nothing and opens no project; it only reads its socket
+  // and lock paths from the state dir, pointed at a throwaway one here. Its
+  // engine would start a query pool, so the pool is turned off and the engine
+  // stopped after each case, keeping this a fast unit test.
+  let stateDir: string;
+  const savedEnv = { state: process.env.CODEGRAPH_STATE_DIR, pool: process.env.CODEGRAPH_QUERY_POOL_SIZE };
+  const made: any[] = [];
+
+  beforeEach(() => {
+    stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-reap-state-')));
+    process.env.CODEGRAPH_STATE_DIR = stateDir;
+    process.env.CODEGRAPH_QUERY_POOL_SIZE = '0';
+  });
+
+  afterEach(async () => {
+    for (const d of made.splice(0)) await d.engine.stop();
+    for (const [key, value] of [['CODEGRAPH_STATE_DIR', savedEnv.state], ['CODEGRAPH_QUERY_POOL_SIZE', savedEnv.pool]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  const makeDaemon = () => {
+    const d = new Daemon() as any;
+    made.push(d);
+    return d;
+  };
+  const fakeSession = () => ({ stopped: false, stop() { this.stopped = true; }, releaseLeases() { /* no leases */ } });
 
   it('drops clients with a dead peer and leaves live ones attached', () => {
     const d = makeDaemon();
     const dead = fakeSession();
     const live = fakeSession();
-    d.clients.add(dead); d.clientPeers.set(dead, { pid: 111, hostPid: null });
-    d.clients.add(live); d.clientPeers.set(live, { pid: 222, hostPid: null });
+    d.clients.add(dead); d.clientPeers.set(dead, { pid: 111, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
+    d.clients.add(live); d.clientPeers.set(live, { pid: 222, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
 
     const reaped = d.reapDeadClients((pid: number) => pid !== 111); // 111 dead, 222 alive
 
@@ -88,12 +141,13 @@ describe('Daemon.reapDeadClients', () => {
     expect(d.clients.has(dead)).toBe(false);
     expect(d.clientPeers.has(dead)).toBe(false); // peer record cleaned up too
     expect(d.clients.has(live)).toBe(true);
+    expect(d.getClientCount()).toBe(1);
   });
 
   it('never reaps a client with an unknown pid (no client-hello)', () => {
     const d = makeDaemon();
     const s = fakeSession();
-    d.clients.add(s); d.clientPeers.set(s, { pid: null, hostPid: null });
+    d.clients.add(s); d.clientPeers.set(s, { pid: null, hostPid: null, launchDir: null, hasLaunchDir: false, control: false });
 
     expect(d.reapDeadClients(() => false)).toBe(0); // everything "dead", but pid unknown
     expect(d.clients.has(s)).toBe(true);
@@ -102,80 +156,16 @@ describe('Daemon.reapDeadClients', () => {
   it('reaps a client whose host pid is gone even if its proxy pid is alive', () => {
     const d = makeDaemon();
     const s = fakeSession();
-    d.clients.add(s); d.clientPeers.set(s, { pid: 100, hostPid: 42 });
+    d.clients.add(s); d.clientPeers.set(s, { pid: 100, hostPid: 42, launchDir: '/some/launch/dir' });
 
     expect(d.reapDeadClients((pid: number) => pid !== 42)).toBe(1); // proxy 100 alive, host 42 dead
     expect(d.clients.has(s)).toBe(false);
   });
-});
 
-// The inactivity backstop (#692) must reap a phantom daemon but NEVER a
-// live-but-quiet session — reaping the latter silently degraded that session
-// (and any others sharing the daemon) to an in-process engine, and on a real
-// machine it fired far more often on live sessions than on actual phantoms.
-describe('Daemon.backstopShouldExit', () => {
-  // maxIdleMs small; idleTimeoutMs:0 so a sweep that empties the set doesn't arm
-  // a real timer. Force the inactivity window open by backdating lastActivityAt.
-  const makeDaemon = () => {
-    const d = new Daemon('/tmp/codegraph-backstop-unit-test', { idleTimeoutMs: 0, maxIdleMs: 1000 }) as any;
-    d.lastActivityAt = Date.now() - 60_000; // long past the 1000ms window
-    return d;
-  };
-  const fakeSession = () => ({ stopped: false, stop() { this.stopped = true; } });
-
-  it('does NOT reap while a provably-alive client stays connected (the fix)', () => {
+  it('reaps nothing, and keeps running, with no clients connected', () => {
+    // The server has no idle exit: an empty client set is just an empty sweep.
     const d = makeDaemon();
-    const live = fakeSession();
-    d.clients.add(live); d.clientPeers.set(live, { pid: 222, hostPid: null });
-
-    expect(d.backstopShouldExit(() => true)).toBe(false); // 222 alive → keep the daemon
-    expect(d.clients.has(live)).toBe(true);
-  });
-
-  it('reaps when only an unknown-pid client remains (the phantom the sweep cannot catch)', () => {
-    const d = makeDaemon();
-    const phantom = fakeSession();
-    d.clients.add(phantom); d.clientPeers.set(phantom, { pid: null, hostPid: null });
-
-    // Unknown pid → the sweep leaves it, and after the window it's a probable phantom.
-    expect(d.backstopShouldExit(() => false)).toBe(true);
-  });
-
-  it('protects a live session even when a phantom is also connected', () => {
-    const d = makeDaemon();
-    const live = fakeSession();
-    const phantom = fakeSession();
-    d.clients.add(live); d.clientPeers.set(live, { pid: 222, hostPid: null });
-    d.clients.add(phantom); d.clientPeers.set(phantom, { pid: null, hostPid: null });
-
-    // 222 alive, phantom unknown → ANY alive keeps the daemon; the live one wins.
-    expect(d.backstopShouldExit((pid: number) => pid === 222)).toBe(false);
-    expect(d.clients.has(live)).toBe(true);
-  });
-
-  it('sweeps a dead-peer client first; if that empties the set it does not exit', () => {
-    const d = makeDaemon();
-    const dead = fakeSession();
-    d.clients.add(dead); d.clientPeers.set(dead, { pid: 111, hostPid: null });
-
-    // 111 dead → swept by backstopShouldExit; empty set → idle timer owns it, no backstop exit.
-    expect(d.backstopShouldExit(() => false)).toBe(false);
-    expect(d.clients.has(dead)).toBe(false);
-    expect(dead.stopped).toBe(true);
-  });
-
-  it('does not exit before the inactivity window elapses', () => {
-    const d = makeDaemon();
-    d.lastActivityAt = Date.now(); // fresh — inside the 1000ms window
-    const phantom = fakeSession();
-    d.clients.add(phantom); d.clientPeers.set(phantom, { pid: null, hostPid: null });
-
-    expect(d.backstopShouldExit(() => false)).toBe(false);
-    expect(d.clients.has(phantom)).toBe(true); // not even swept yet
-  });
-
-  it('does not exit with zero clients (the idle timer owns that case)', () => {
-    const d = makeDaemon();
-    expect(d.backstopShouldExit(() => false)).toBe(false);
+    expect(d.reapDeadClients(() => false)).toBe(0);
+    expect(d.stopping).toBe(false);
   });
 });

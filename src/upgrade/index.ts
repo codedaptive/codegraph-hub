@@ -1,29 +1,24 @@
 /**
  * `codegraph upgrade`
  *
- * Self-update for the CLI, whatever way it was installed:
+ * Self-update for the CLI from the hub's GitHub releases:
  *
- *   - **bundle** — the self-contained runtime+app installed by `install.sh`
- *     (Linux/macOS) or `install.ps1` (Windows). Upgrading re-runs the SAME
- *     canonical installer script (single source of truth) so the download /
- *     version-resolution / PATH logic never drifts between first-install and
- *     upgrade.
- *   - **npm** — installed via `npm i -g @colbymchenry/codegraph`, or into a
- *     project. Upgrading shells out to npm (for a project, in that project).
- *     A pnpm, yarn or bun install is named, with that manager's command.
- *   - **npx** — ephemeral; nothing to upgrade (next `npx` fetches latest).
+ *   - **npm** — installs the release's packed build with `--ignore-scripts`,
+ *     globally or in the project that owns the local install.
+ *   - **bundle** — cannot be replaced in place with the hub build; prints the
+ *     manual npm command instead. pnpm, yarn and bun installs get a manual
+ *     command for their own manager and detected scope.
+ *   - **npx** — ephemeral; nothing to upgrade, with the hub install command
+ *     offered for a persistent install.
  *   - **source** — a git checkout running its own `dist/`; `git pull` + rebuild.
  *
  * Detection is structural (see `detectInstallMethod`): a bundle carries a
  * vendored `node` binary and a `bin/codegraph` launcher next to its `lib/`, so
  * we can recognize it from the running file's path without a marker file.
  *
- * Windows wrinkle: a running `node.exe` and a loaded `.node` addon are locked —
- * they can't be overwritten or deleted, by this process or by the MCP servers
- * of open agent sessions. They CAN be renamed, so the Windows upgrade unpacks
- * the new bundle next to `current\` and swaps it in file by file, renaming each
- * replaced file aside and rolling every step back on failure (see
- * `WINDOWS_SWAP_FUNCTION`, shared verbatim with `install.ps1`).
+ * The upstream bundle helpers remain here for compatibility, including the
+ * Windows file-swap script shared with `install.ps1`; runUpgrade does not
+ * dispatch to those installer paths.
  */
 
 import * as fs from 'fs';
@@ -31,6 +26,7 @@ import * as path from 'path';
 import * as https from 'https';
 import { spawnSync } from 'child_process';
 import { ansiColorsEnabled } from '../ui/color';
+import { HUB_REPO, comparePrerelease, hubNpmInstallArgs, hubManualInstallCommand, hubPackageManagerCommand } from '../extensions/host/hub-release';
 
 export const REPO = 'colbymchenry/codegraph';
 export const NPM_PACKAGE = '@colbymchenry/codegraph';
@@ -51,7 +47,7 @@ export type InstallMethod =
       root?: string;
     }
   | { kind: 'npx' }
-  /** Installed by another package manager, which has to upgrade it (npm can't). */
+  /** Installed by another package manager; the upgrade command offers a manual hub install. */
   | { kind: 'package-manager'; manager: 'pnpm' | 'yarn' | 'bun'; global: boolean }
   | { kind: 'source'; root: string }
   | { kind: 'unknown'; reason: string };
@@ -74,10 +70,9 @@ function toPosix(p: string): string {
 }
 
 /**
- * Where the bundle installer keeps its install root, derived from the bundle
- * dir so an upgrade reuses a custom `CODEGRAPH_INSTALL_DIR`. Returns null when
- * the layout isn't the one the installer creates (then the installer falls
- * back to its own default).
+ * Derive the install root from a bundle's directory, including a custom
+ * `CODEGRAPH_INSTALL_DIR`. Returns null for an unrecognized layout. The
+ * retained Unix bundle helper uses this root; runUpgrade does not call it.
  *
  *   unix:    <installDir>/versions/<vX.Y.Z>   (bundleRoot)  → <installDir>
  *   windows: <installDir>\current             (bundleRoot)  → <installDir>
@@ -120,11 +115,9 @@ export function detectInstallMethod(input: DetectInput): InstallMethod {
   // package (@colbymchenry/codegraph-<platform>-<arch>) is itself a complete
   // bundle — vendored node + bin/ launcher — living inside node_modules, so
   // the layout sniff below would misread every npm install as a standalone
-  // bundle. `upgrade` would then curl install.sh into ~/.codegraph: a SECOND
-  // install that never wins the PATH race against npm's shim, leaving
-  // `codegraph -v` permanently on the old version (the #1071 shadow,
-  // self-inflicted). A path under node_modules is authoritative about HOW the
-  // user installed, whatever the artifact inside looks like.
+  // bundle. Misclassifying it would now offer a manual install instead of
+  // updating the npm copy. A path under node_modules identifies how the user
+  // installed, whatever the artifact inside looks like.
 
   // npx cache: <…>/_npx/<hash>/node_modules/@colbymchenry/codegraph/…
   // (checked before npm — the npx cache path also contains /node_modules/).
@@ -255,7 +248,7 @@ export function compareVersions(a: string, b: string): number {
   // A prerelease is "less than" its release (1.0.0-rc < 1.0.0).
   if (sa.pre && !sb.pre) return -1;
   if (!sa.pre && sb.pre) return 1;
-  if (sa.pre && sb.pre) return sa.pre < sb.pre ? -1 : sa.pre > sb.pre ? 1 : 0;
+  if (sa.pre && sb.pre) return comparePrerelease(sa.pre, sb.pre);
   return 0;
 }
 
@@ -312,15 +305,13 @@ function httpsGet(
 }
 
 /**
- * Resolve the latest release tag (e.g. `v0.9.9`).
+ * Resolve the latest release tag from the hub by default, adding `v` if needed.
  *
- * Primary: read the redirect `Location` from `github.com/<repo>/releases/latest`
- * — same trick install.sh uses, because the unauthenticated GitHub API is
- * rate-limited to 60 req/h/IP and 403s on shared/cloud hosts (issue #325). The
- * redirect has no such limit. Fall back to the API only if the redirect can't
- * be read.
+ * First read the redirect `Location` from `github.com/<repo>/releases/latest`;
+ * fall back to the API if no tag can be read. The redirect avoids relying on
+ * the unauthenticated API's tighter rate limit on shared hosts.
  */
-export async function resolveLatestVersion(repo = REPO, timeoutMs = 12000): Promise<string> {
+export async function resolveLatestVersion(repo = HUB_REPO, timeoutMs = 12000): Promise<string> {
   try {
     const res = await httpsGet(
       `https://github.com/${repo}/releases/latest`,
@@ -450,34 +441,25 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
     return 0;
   }
 
-  // Dispatch by install method. bundle/npm perform a real binary update, so
-  // after they succeed we self-heal the front-load hook (below); npx/source/
-  // unknown don't update anything here, so they return directly.
+  // Only npm installs are updated in place with the hub's packed build; after
+  // success we self-heal the front-load hook below. Other install methods
+  // return directly without running an installer.
   let code: number;
   switch (method.kind) {
     case 'bundle':
-      code = await (method.os === 'windows'
-        ? upgradeWindowsBundle(method, latest, deps)
-        : upgradeUnixBundle(method, opts.version ? latest : undefined, deps));
-      break;
+      deps.warn("This CodeGraph is a standalone bundle that `codegraph upgrade` can't replace with the hub build.");
+      deps.log(c.dim(`Install the hub build manually with: ${hubManualInstallCommand(latest)}`));
+      return 1;
     case 'npm':
-      // npm version specs have no leading "v" (`@0.9.8`, not `@v0.9.8` — the
-      // latter resolves as a nonexistent dist-tag).
-      code = await upgradeNpm(method, opts.version ? stripV(latest) : 'latest', deps);
+      code = await upgradeNpm(method, latest, deps);
       break;
     case 'npx':
-      deps.log(c.green('npx always runs the latest version on demand — nothing to upgrade.'));
-      deps.log(c.dim(`Force a fresh fetch with: npx ${NPM_PACKAGE}@latest`));
+      deps.log(c.green('This is an ephemeral npx install — nothing to upgrade.'));
+      deps.log(c.dim(`Install the hub build with: ${hubManualInstallCommand(latest)}`));
       return 0;
     case 'package-manager': {
-      const pkg = `${NPM_PACKAGE}@${opts.version ? stripV(latest) : 'latest'}`;
-      const command = {
-        pnpm: method.global ? `pnpm add -g ${pkg}` : `pnpm add ${pkg}`,
-        yarn: method.global ? `yarn global add ${pkg}` : `yarn add ${pkg}`,
-        bun: method.global ? `bun add -g ${pkg}` : `bun add ${pkg}`,
-      }[method.manager];
       deps.warn(`This CodeGraph was installed with ${method.manager}, so npm can't upgrade it.`);
-      deps.log(c.dim(`Upgrade it with:  ${command}`));
+      deps.log(c.dim(`Upgrade it with:  ${hubPackageManagerCommand(method.manager, method.global, latest)}`));
       return 1;
     }
     case 'source':
@@ -486,7 +468,7 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
       return 0;
     default:
       deps.error(`Couldn’t determine how CodeGraph was installed (${method.reason}).`);
-      deps.log(c.dim(`Reinstall manually — see https://github.com/${REPO}#install`));
+      deps.log(c.dim(`Reinstall manually — see https://github.com/${HUB_REPO}`));
       return 1;
   }
 
@@ -521,10 +503,9 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
     } else {
       deps.log(c.dim('Skipped refreshing agent instructions/config — run `codegraph install --refresh` once the PATH is fixed.'));
     }
-    // Reached only after a real binary update (check/up-to-date/npx/source
-    // all returned earlier) — the one place the upgrade path may offer the
-    // beta opt-in. The hook self-gates on TTY + the stored once-per-machine
-    // choice, so an already-answered user never sees it again.
+    // Only a successful npm install reaches this opt-in; all other methods
+    // and the check/up-to-date paths return earlier. The hook self-gates on
+    // TTY and the stored once-per-machine choice.
     try {
       await deps.offerBetaSignup?.();
     } catch {
@@ -643,7 +624,8 @@ async function selfHealPromptHook(deps: UpgradeDeps): Promise<void> {
   }
 }
 
-function upgradeUnixBundle(
+// runUpgrade no longer dispatches here; kept and exported to preserve upstream's code for merges.
+export function upgradeUnixBundle(
   method: Extract<InstallMethod, { kind: 'bundle' }>,
   pinned: string | undefined,
   deps: UpgradeDeps
@@ -670,8 +652,7 @@ function upgradeUnixBundle(
     return 1;
   }
   deps.log('');
-  // No "open a new terminal" hedge here — after the swap, runUpgrade probes
-  // the PATH-resolved `codegraph --version` and reports the real outcome.
+  // This retained helper does not probe PATH; runUpgrade no longer calls it.
   deps.log(c.green('✓ Upgrade complete.'));
   deps.log(reindexAdvisory());
   return 0;
@@ -680,8 +661,8 @@ function upgradeUnixBundle(
 /**
  * The PowerShell function that moves an unpacked Windows bundle into the
  * install's `current\` dir. Shared VERBATIM with `install.ps1` (a test pins the
- * two copies equal), so a first install, a re-run of the installer, and
- * `codegraph upgrade` all replace files the same way.
+ * two copies equal). The retained Windows upgrade helper uses the same swap;
+ * `runUpgrade` no longer dispatches to it.
  *
  * Why file-by-file renames (#2185): every open agent session runs a CodeGraph
  * MCP server from `current\`, which keeps `node.exe` and the native kernel
@@ -813,7 +794,8 @@ export function buildWindowsUpgradeScript(bundleRoot: string, version: string, a
   ].join('\n');
 }
 
-function upgradeWindowsBundle(
+// runUpgrade no longer dispatches here; kept and exported to preserve upstream's code for merges.
+export function upgradeWindowsBundle(
   method: Extract<InstallMethod, { kind: 'bundle' }>,
   latest: string,
   deps: UpgradeDeps
@@ -839,8 +821,7 @@ function upgradeWindowsBundle(
     return 1;
   }
   deps.log('');
-  // The running node.exe was renamed aside, so the version probe in
-  // runUpgrade already exercises the NEW binary — no terminal hedge needed.
+  // This retained helper does not probe PATH; runUpgrade no longer calls it.
   deps.log(c.green('✓ Upgrade complete.'));
   deps.log(reindexAdvisory());
   return 0;
@@ -863,12 +844,10 @@ export function npmInvocation(platform: NodeJS.Platform, npmArgs: string[]): { c
 
 function upgradeNpm(
   method: Extract<InstallMethod, { kind: 'npm' }>,
-  versionSpec: string,
+  version: string,
   deps: UpgradeDeps
 ): number {
-  const args = method.scope === 'global'
-    ? ['install', '-g', `${NPM_PACKAGE}@${versionSpec}`]
-    : ['install', `${NPM_PACKAGE}@${versionSpec}`];
+  const args = hubNpmInstallArgs(method.scope, version);
   // A local install is upgraded in the project it belongs to: npm run from
   // any other folder would install a second, stray copy there.
   const where = method.scope === 'local' ? method.root : undefined;
@@ -926,7 +905,7 @@ export function defaultRun(cmd: string, args: string[], env?: NodeJS.ProcessEnv,
   return r.status ?? -1;
 }
 
-/** The CodeGraph version installed in `root/node_modules`, or null. */
+/** The version in `root/node_modules/@colbymchenry/codegraph/package.json`, or null. */
 function readInstalledVersion(root: string): string | null {
   try {
     const manifest = path.join(root, 'node_modules', ...NPM_PACKAGE.split('/'), 'package.json');

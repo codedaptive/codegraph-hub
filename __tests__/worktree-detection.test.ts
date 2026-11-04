@@ -25,7 +25,7 @@ import {
   gitCommonDir,
 } from '../src/sync/worktree';
 import CodeGraph from '../src/index';
-import { ToolHandler } from '../src/mcp/tools';
+import { ToolHandler, __setLoadCodeGraphForTests } from '../src/mcp/tools';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: ['ignore', 'ignore', 'ignore'] });
@@ -196,8 +196,8 @@ describe('a linked worktree spelled with a lowercase drive letter (#2517)', () =
  * The detection above only helps if it reaches the agent. Agents call the read
  * tools (search/context/trace/…), almost never status — so the mismatch notice
  * has to ride on every read tool's result, not just status. These tests drive
- * the real `ToolHandler.execute` chokepoint against a real index whose default
- * project resolves UP from a nested worktree to the main checkout.
+ * the real `ToolHandler.execute` chokepoint against a real index that a
+ * `projectPath` inside a nested worktree resolves UP to: the main checkout's.
  */
 describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
   let mainRepo: string;
@@ -234,8 +234,7 @@ describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
   });
 
   it('prefixes a compact notice on codegraph_search run from a nested worktree', async () => {
-    handler.setDefaultProjectHint(worktree);
-    const res = await handler.execute('codegraph_search', { query: 'mainOnly' });
+    const res = await handler.execute('codegraph_search', { query: 'mainOnly', projectPath: worktree });
     const text = res.content[0].text;
     expect(res.isError).toBeFalsy();
     expect(text).toContain('different git worktree');
@@ -243,15 +242,13 @@ describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
     expectAgentAdvice(text);
   });
 
-  it('does NOT prefix when the default project is the main checkout itself', async () => {
-    handler.setDefaultProjectHint(mainRepo);
-    const res = await handler.execute('codegraph_search', { query: 'mainOnly' });
+  it('does NOT prefix when the projectPath is the main checkout itself', async () => {
+    const res = await handler.execute('codegraph_search', { query: 'mainOnly', projectPath: mainRepo });
     expect(res.content[0].text).not.toContain('different git worktree');
   });
 
   it('still shows the verbose warning on codegraph_status', async () => {
-    handler.setDefaultProjectHint(worktree);
-    const res = await handler.execute('codegraph_status', {});
+    const res = await handler.execute('codegraph_status', { projectPath: worktree });
     const text = res.content[0].text;
     expect(text).toContain('different git working tree');
     expect(text).toContain(real(worktree));
@@ -259,9 +256,8 @@ describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
   });
 
   it('caches detection — a later tool call needs no further git spawn', async () => {
-    handler.setDefaultProjectHint(worktree);
     // First call computes + caches the mismatch (this is the only git spawn).
-    const first = await handler.execute('codegraph_search', { query: 'mainOnly' });
+    const first = await handler.execute('codegraph_search', { query: 'mainOnly', projectPath: worktree });
     expect(first.content[0].text).toContain('different git worktree');
 
     // Make git unreachable. A fresh detection would now return null (no notice);
@@ -269,7 +265,7 @@ describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
     const savedPath = process.env.PATH;
     process.env.PATH = '';
     try {
-      const second = await handler.execute('codegraph_explore', { query: 'mainOnly' });
+      const second = await handler.execute('codegraph_explore', { query: 'mainOnly', projectPath: worktree });
       expect(second.content[0].text).toContain('different git worktree');
     } finally {
       process.env.PATH = savedPath;
@@ -278,11 +274,11 @@ describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
 });
 
 /**
- * A long-lived MCP server (the shared daemon) cached its worktree-mismatch
+ * A long-lived MCP server (the machine server) cached its worktree-mismatch
  * verdict keyed only by the start path, and that cache was cleared only on
  * shutdown. So once the server decided "this worktree borrows the main
  * checkout's index" — true while the worktree had no `.codegraph/` of its own —
- * the verdict was pinned for the daemon's whole life. After the worktree got
+ * the verdict was pinned for the server's whole life. After the worktree got
  * its own index (the resolved index root flipped from the main checkout to the
  * worktree itself), the CLI saw the worktree's index but the MCP server kept
  * emitting the stale false warning until a restart (issue #926).
@@ -290,14 +286,14 @@ describe('worktree mismatch surfaces on hot read tools (issue #155)', () => {
  * The verdict depends on BOTH the start path and the resolved index root, so it
  * must be cached under both — a changed index root has to invalidate it. This
  * drives the real `ToolHandler` worktree-notice path across exactly that change
- * (the resolved index root flips when the server's default project is re-opened
- * onto the worktree's own index), with no mocking.
+ * (the same `projectPath` resolves to the main checkout's index, then to the
+ * worktree's own once it has one), with no mocking.
  */
 describe('worktree mismatch verdict re-resolves when the index root changes (issue #926)', () => {
   let mainRepo: string;
   let worktree: string;
   let mainCg: CodeGraph;
-  let worktreeCg: CodeGraph;
+  let worktreeCg: CodeGraph | null;
   let handler: ToolHandler;
 
   beforeEach(async () => {
@@ -311,43 +307,44 @@ describe('worktree mismatch verdict re-resolves when the index root changes (iss
     git(mainRepo, 'add', '.');
     git(mainRepo, 'commit', '-q', '-m', 'init');
 
-    // The long-lived server's default project starts as the MAIN checkout.
+    // The handler starts with the MAIN checkout's index.
     mainCg = CodeGraph.initSync(mainRepo);
     await mainCg.indexAll();
 
-    // Nested worktree that later gains its own index.
+    // Nested worktree that later gains its own index (inside the test).
     worktree = path.join(mainRepo, 'wt');
     git(mainRepo, 'worktree', 'add', '-q', '-b', 'feature', worktree);
-    worktreeCg = CodeGraph.initSync(worktree);
-    await worktreeCg.indexAll();
+    worktreeCg = null;
 
     handler = new ToolHandler(mainCg);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    __setLoadCodeGraphForTests(null);
+    await handler.closeAll();
     try { mainCg.destroy(); } catch { /* best effort */ }
-    try { worktreeCg.destroy(); } catch { /* best effort */ }
+    try { worktreeCg?.destroy(); } catch { /* best effort */ }
     try { git(mainRepo, 'worktree', 'remove', '--force', worktree); } catch { /* best effort */ }
     fs.rmSync(mainRepo, { recursive: true, force: true });
   });
 
   it('drops the stale "borrowed the main index" warning once the index root flips to the worktree', async () => {
-    // The server runs from inside the worktree, default project = main checkout.
-    handler.setDefaultProjectHint(worktree);
-
-    // Phase 1: the index genuinely belongs to a different working tree (the main
-    // checkout) → warn, and cache that verdict.
-    const before = await handler.execute('codegraph_status', {});
+    // Phase 1: the worktree has no index of its own, so its projectPath resolves
+    // up to the main checkout's: the index genuinely belongs to a different
+    // working tree → warn, and cache that verdict.
+    const before = await handler.execute('codegraph_status', { projectPath: worktree });
     expect(before.content[0].text).toContain('different git working tree');
     expect(before.content[0].text).toContain(real(mainRepo));
 
-    // Phase 2: the worktree's own index is now the server's default project
-    // (engine re-open → setDefaultCodeGraph). The resolved index root for the
+    // Phase 2: the worktree gets its own index. The resolved index root for the
     // SAME start path flipped to the worktree itself, so the verdict must be
-    // recomputed to "no mismatch" — not served stale from before.
-    handler.setDefaultCodeGraph(worktreeCg);
+    // recomputed to "no mismatch" — not served stale from before. (The handler
+    // opens the worktree's index itself; under vitest it needs the src CodeGraph.)
+    __setLoadCodeGraphForTests(CodeGraph);
+    worktreeCg = CodeGraph.initSync(worktree);
+    await worktreeCg.indexAll();
 
-    const after = await handler.execute('codegraph_status', {});
+    const after = await handler.execute('codegraph_status', { projectPath: worktree });
     expect(after.content[0].text).not.toContain('different git working tree');
   });
 });

@@ -7,7 +7,8 @@
  * It takes the lock with the built `FileLock`, writes `<name>.acquired` (and
  * holds the lock until `<name>.release` appears) or `<name>.refused`, then
  * exits. With `<pause>` = `pause`, it stops right after its first read of the
- * lock file, with whatever that read returned in hand, writes `<name>.read`,
+ * lock file (by path or through an fd opened on it), with whatever that read
+ * returned in hand, writes `<name>.read`,
  * and waits for `go`: the moment a slow process has decided a lock is stale
  * but has not acted on it yet. Every wait is on a marker file the test writes,
  * so the interleaving is the same on every run. A contender gives up after
@@ -30,11 +31,27 @@ const waitFor = (file) => {
 
 if (pause === 'pause') {
   const target = path.resolve(lockPath);
+  // `FileLock.acquire` reads the lock once, through an fd it opens on the lock
+  // path (`snapshotLock`), and judges staleness from that read alone. Track
+  // the fds opened on the lock path so the pause lands right after that read.
+  const open = fs.openSync;
+  const close = fs.closeSync;
+  const lockFds = new Set();
+  fs.openSync = function openTracked(file, ...rest) {
+    const fd = open.call(this, file, ...rest);
+    if (typeof file === 'string' && path.resolve(file) === target) lockFds.add(fd);
+    return fd;
+  };
+  fs.closeSync = function closeTracked(fd, ...rest) {
+    lockFds.delete(fd);
+    return close.call(this, fd, ...rest);
+  };
   const read = fs.readFileSync;
   let paused = false;
   fs.readFileSync = function readThenPause(file, ...rest) {
     const content = read.call(this, file, ...rest);
-    if (!paused && typeof file === 'string' && path.resolve(file) === target) {
+    const isLock = typeof file === 'number' ? lockFds.has(file) : typeof file === 'string' && path.resolve(file) === target;
+    if (!paused && isLock) {
       paused = true;
       mark('read', String(content));
       waitFor(path.join(markers, 'go'));

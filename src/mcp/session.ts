@@ -1,27 +1,33 @@
 /**
  * MCP per-connection session — speaks the JSON-RPC protocol (initialize,
  * tools/list, tools/call) over a single {@link JsonRpcTransport}. It owns
- * per-client state only (which protocol version the client asked for, whether
- * it advertised `roots`, the one-shot roots/list latch); the heavyweight
- * resources (CodeGraph, watcher, ToolHandler) live in the shared
- * {@link MCPEngine} so daemon mode can collapse N inotify sets / DB handles
- * to one.
+ * per-client state only (the client's clientInfo, the repo anchor of its
+ * launch directory, and its focus and tool allowlist, which are the client's
+ * own; a legacy client whose hello carries no tool list falls back to the server
+ * process's CODEGRAPH_MCP_TOOLS); the heavyweight resources (CodeGraph handles, ToolHandler)
+ * live in the shared {@link MCPEngine}, and the watchers live in the index
+ * builder, so the machine server holds one set of handles for all its sessions.
  *
- * The state-machine itself mirrors what `MCPServer` used to do inline before
- * issue #411 split it out — the same regression tests in
- * `__tests__/mcp-initialize.test.ts` still drive this code path.
+ * A session has no default project: every tool call names its `projectPath`
+ * and goes through {@link dispatchToolCall} (tool-name checks, required
+ * projectPath, repo anchor, index admission, the session's tool allowlist) before the engine's handler runs it. The engine is never initialized by the handshake.
+ *
+ * Speaks JSON-RPC for one MCP client; `__tests__/mcp-initialize.test.ts` drives
+ * it end to end through `serve --mcp`.
  */
 
-import * as path from 'path';
 import { JsonRpcRequest, JsonRpcNotification, JsonRpcTransport, ErrorCodes } from './transport';
 import { MCPEngine } from './engine';
-import { tools } from './tools';
-import { SERVER_INSTRUCTIONS, SERVER_INSTRUCTIONS_NO_ROOT_INDEX } from './server-instructions';
+import { SERVER_INSTRUCTIONS } from './server-instructions';
 import { CodeGraphPackageVersion } from './version';
-import { resolveServerRoot } from '../directory';
+import type { RepoAnchor } from '../extensions/host/server/repo-anchor';
+import { dispatchToolCall } from '../extensions/host/server/tool-call';
+import type { SessionToolList } from '../extensions/host/server/session-scope';
 import { getTelemetry, ClientInfo } from '../telemetry';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { ExploreSessionState } from './explore-session-state';
+import { CliRelay } from '../extensions/host/builder/cli-relay';
+import { INDEX_WRITE_END_METHOD, INDEX_WRITE_METHOD } from '../extensions/host/builder/cli-wire';
 import { IndexVersionWarningState } from './index-version-warning';
 
 /**
@@ -47,7 +53,7 @@ const SERVER_ICON_SVG =
  * did, would fail the whole handshake on the array the spec settled on.
  */
 // Exported so the proxy can answer `initialize` locally with the IDENTICAL
-// payload the daemon would send — no drift between the two handshake paths.
+// payload the machine server would send — no drift between the two handshake paths.
 export const SERVER_INFO = {
   name: 'codegraph',
   title: 'CodeGraph',
@@ -84,79 +90,58 @@ export function initializeInstructions(base: string, notice: string | null = get
 /** MCP Protocol Version (latest the server claims). */
 export const PROTOCOL_VERSION = '2024-11-05';
 
-/** The invalid-params message for {@link toolCallArguments}' null. */
-export const TOOL_ARGUMENTS_NOT_OBJECT = 'Tool arguments must be an object';
-
-/**
- * The arguments a `tools/call` passes, or null when they are not an object.
- * A string, number or array there is a malformed request, the client's to
- * fix, so it is answered with a JSON-RPC invalid-params error, as a call that
- * names no tool is, and never run: run, a string made the tool handler throw,
- * which came back as an internal codegraph error to retry (#2981). Exported so
- * the proxy, serving in process while the daemon is unavailable, answers it
- * the same way. No arguments (missing, null or another empty value) are none.
- */
-export function toolCallArguments(params: { arguments?: unknown }): Record<string, unknown> | null {
-  const args = params.arguments || {};
-  return typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : null;
-}
-
-/**
- * How long to wait for the client's `roots/list` response before giving up
- * and falling back to the process cwd.
- */
-const ROOTS_LIST_TIMEOUT_MS = 5000;
-
-/**
- * Convert a file:// URI to a filesystem path. Handles URL encoding and
- * Windows drive letter paths.
- */
-function fileUriToPath(uri: string): string {
-  try {
-    const url = new URL(uri);
-    let filePath = decodeURIComponent(url.pathname);
-    if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(filePath)) {
-      filePath = filePath.slice(1);
-    }
-    return path.resolve(filePath);
-  } catch {
-    return uri.replace(/^file:\/\/\/?/, '');
-  }
-}
-
-/** First usable filesystem path from a `roots/list` result, or null. */
-function firstRootPath(result: unknown): string | null {
-  if (!result || typeof result !== 'object') return null;
-  const roots = (result as { roots?: unknown }).roots;
-  if (!Array.isArray(roots) || roots.length === 0) return null;
-  const first = roots[0] as { uri?: unknown };
-  if (typeof first?.uri !== 'string') return null;
-  return fileUriToPath(first.uri);
-}
-
 export interface MCPSessionOptions {
   /**
-   * Explicit project path from the `--path` CLI flag. When set, the session
-   * will not bother asking the client for `roots/list` — we already know
-   * where the project lives.
+   * The repository this session answers for, resolved from the directory the
+   * client was launched in (`resolveRepoAnchor`). Null when the client reported
+   * no launch directory: every tool call is then answered with guidance to
+   * restart the session, never with a guess from the server's own cwd.
    */
-  explicitProjectPath?: string | null;
+  anchor: RepoAnchor | null;
+  /**
+   * The session's focus: directories relative to the repository root
+   * (`sessionFocusEntries`) that search and explore results stay inside, in
+   * every worktree of the repository; `[]` or omitted for none. It
+   * reaches every tool call as an internal argument (see `dispatchToolCall`).
+   */
+  focus?: readonly string[];
+  /**
+   * The session's tool allowlist, which decides what `tools/list` shows and
+   * what a call may run ({@link SessionToolList}): an array of short names,
+   * null when the session was told it has none, undefined when it was never
+   * told (a legacy client's hello), which falls back to the server process's
+   * own CODEGRAPH_MCP_TOOLS.
+   */
+  toolAllowlist?: SessionToolList;
+  /**
+   * Whether this connection sent the control-client hello (the `control: 1` marker and no `launchDir`; the
+   * daemon decides, from `ClientPeers`). Only such a connection may send `codegraph/indexWrite` /
+   * `codegraph/indexWriteEnd`; every other session (an agent's proxy, a legacy client with no hello, a
+   * direct-mode stdio session) is refused. Absent means false. The hello is a protocol shape, not an
+   * identity: any process of this user can send it.
+   */
+  controlClient?: boolean;
 }
 
 /**
  * One MCP client's view of the server. Created fresh per stdio launch
- * (direct mode) or per socket connection (daemon mode).
+ * (direct mode) or per socket connection (machine server).
  */
 export class MCPSession {
-  private clientSupportsRoots = false;
   /** From the initialize handshake — attributes usage rollups to the agent host. */
   private clientInfo: ClientInfo | undefined;
-  private rootsAttempted = false;
-  private resolvePromise: Promise<void> | null = null;
-  private explicitProjectPath: string | null;
+  private readonly anchor: RepoAnchor | null;
+  private readonly focus: readonly string[];
+  private readonly toolAllowlist: SessionToolList;
+  private readonly controlClient: boolean;
+  /**
+   * The relay of this connection's CLI index writes (`codegraph/indexWrite`): holds the index leases the
+   * connection took, which {@link releaseLeases} lets go of when the connection goes.
+   */
+  private readonly cliRelay: CliRelay;
   /**
    * What `codegraph_explore` has already returned to THIS client, per project
-   * (CG-17). Owned by the session, not the engine: the daemon shares one engine
+   * (CG-17). Owned by the session, not the engine: the machine server shares one engine
    * (and one ToolHandler, and a pool of worker threads) across every connected
    * client, so state kept over there would blend two agents' histories and let
    * one session's calls suppress source the other has never seen. It dies with
@@ -169,9 +154,13 @@ export class MCPSession {
   constructor(
     private transport: JsonRpcTransport,
     private engine: MCPEngine,
-    opts: MCPSessionOptions = {},
+    opts: MCPSessionOptions,
   ) {
-    this.explicitProjectPath = opts.explicitProjectPath ?? null;
+    this.anchor = opts.anchor;
+    this.focus = opts.focus ?? [];
+    this.toolAllowlist = opts.toolAllowlist;
+    this.controlClient = opts.controlClient === true;
+    this.cliRelay = new CliRelay(transport, engine);
   }
 
   /**
@@ -184,20 +173,31 @@ export class MCPSession {
 
   /**
    * Tear down the session. Does NOT touch the engine (the engine may serve
-   * other sessions) or call `process.exit` (the daemon decides when to exit).
+   * other sessions) or call `process.exit` (the server process decides when to exit).
    */
   stop(): void {
     this.transport.stop();
   }
 
-  /** Underlying transport — exposed for daemon-side close hooks. */
+  /**
+   * Let go of the index leases this connection holds (a `codegraph/indexWrite` `index` or `release` that was
+   * not ended by `codegraph/indexWriteEnd`). The daemon calls it when the connection's client is dropped, on a peer
+   * close and on the reaper's stop; the transport's own stop skips close handlers, so the close handler
+   * alone is not enough. Fire-and-forget: the builder answers once the lease's jobs have settled. Never
+   * throws.
+   */
+  releaseLeases(): void {
+    this.cliRelay.releaseLeases();
+  }
+
+  /** Underlying transport — exposed for the server's close hooks. */
   getTransport(): JsonRpcTransport {
     return this.transport;
   }
 
   /**
    * This session's explore call history (CG-17). Exposed so tests can assert
-   * that two sessions on one daemon keep separate state; nothing in the server
+   * that two sessions on one server keep separate state; nothing in the server
    * reaches for another session's copy.
    */
   getExploreSessionState(): ExploreSessionState {
@@ -218,6 +218,20 @@ export class MCPSession {
         break;
       case 'tools/call':
         if (isRequest) await this.handleToolsCall(message as JsonRpcRequest);
+        break;
+      case 'codegraph/releaseProject':
+        // Not a tool call, so it sits outside the repo anchor: it is the
+        // server's own control surface (the release the in-process `codegraph index`
+        // requests when no builder serves it), which names the root it wants closed
+        // and may be any project the server holds.
+        if (isRequest) await this.handleReleaseProject(message as JsonRpcRequest);
+        break;
+      case INDEX_WRITE_METHOD:
+      case INDEX_WRITE_END_METHOD:
+        // The codegraph CLI's index writes, relayed to the index builder (cli-relay.ts). Control surface
+        // like releaseProject, so outside the repo anchor, and for control clients alone: an agent's
+        // session could otherwise start a rebuild of any directory it names.
+        if (isRequest) await this.handleIndexWrite(message as JsonRpcRequest);
         break;
       case 'ping':
         if (isRequest) this.transport.sendResult((message as JsonRpcRequest).id, {});
@@ -248,13 +262,9 @@ export class MCPSession {
 
   private async handleInitialize(request: JsonRpcRequest): Promise<void> {
     const params = request.params as {
-      rootUri?: string;
-      workspaceFolders?: Array<{ uri: string; name: string }>;
-      capabilities?: { roots?: unknown };
       clientInfo?: { name?: unknown; version?: unknown };
     } | undefined;
 
-    this.clientSupportsRoots = !!params?.capabilities?.roots;
     if (params?.clientInfo) {
       this.clientInfo = {
         name: typeof params.clientInfo.name === 'string' ? params.clientInfo.name : undefined,
@@ -262,169 +272,91 @@ export class MCPSession {
       };
     }
 
-    // Explicit project signal, strongest first: client-provided rootUri /
-    // workspaceFolders (LSP-style), else the --path the server was launched
-    // with. cwd is NOT used here — we defer it so a roots/list answer can
-    // win over it. See issue #196.
-    let explicitPath: string | null = null;
-    if (params?.rootUri) {
-      explicitPath = fileUriToPath(params.rootUri);
-    } else if (params?.workspaceFolders?.[0]?.uri) {
-      explicitPath = fileUriToPath(params.workspaceFolders[0].uri);
-    } else if (this.explicitProjectPath) {
-      explicitPath = this.explicitProjectPath;
-    }
-
-    // Pick the instructions variant by the root's index state — synchronous
-    // and bounded (an existsSync walk-up plus, when that misses, the depth- and
-    // count-bounded workspace down-scan; no DB open, so the #172 respond-fast
-    // contract holds). This is the SAME resolution the engine's doInitialize
-    // runs (#1606), so the variant matches what the engine will actually adopt
-    // — a workspace whose single indexed sub-project becomes the default gets
-    // the full single-project playbook, race-free by construction (both sides
-    // compute it independently; no ordering between handshake and engine init
-    // is assumed). When the root ISN'T indexed (and nothing was adopted), send
-    // the per-project variant (tools are still exposed — see handleToolsList):
-    // it tells the agent there is no default project and to pass `projectPath`
-    // to any project that has a `.codegraph/`. Gating tool AVAILABILITY on
-    // whether `./` is indexed was the #964 bug — it broke monorepos (only
-    // sub-projects indexed) and never surfaced the tools after a mid-session
-    // `codegraph init`. When no explicit path is known yet (roots/list dance
-    // pending), cwd is the best predictor of where the default will resolve.
-    // A root in a sensitive folder resolves to null here as in the engine, so
-    // that session gets the no-default-project variant too.
-    const indexed = resolveServerRoot(explicitPath ?? process.cwd()).root !== null;
-
-    // Respond to the handshake BEFORE doing any heavy init — see issue #172.
+    // The handshake resolves no root and opens nothing (#172 respond-fast): a
+    // session has no default project, so the one instructions text applies to
+    // every client (its focus and tool list included: the text describes the
+    // focus argument and section for every session, whether or not it has one)
+    // and the engine initializes nothing here. rootUri,
+    // workspaceFolders and roots/list are deliberately ignored; the launch
+    // directory fixed the anchor when the session was created.
     this.transport.sendResult(request.id, {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: { tools: {} },
       serverInfo: SERVER_INFO,
-      instructions: initializeInstructions(indexed ? SERVER_INSTRUCTIONS : SERVER_INSTRUCTIONS_NO_ROOT_INDEX),
+      instructions: initializeInstructions(SERVER_INSTRUCTIONS),
     });
-
-    if (explicitPath) {
-      // Kick off engine init in the background. If another session in the
-      // same daemon already opened the project, `ensureInitialized` is a
-      // ~free no-op — N concurrent clients pay exactly one open.
-      this.resolvePromise = this.engine.ensureInitialized(explicitPath);
-    }
   }
 
   private async handleToolsList(request: JsonRpcRequest): Promise<void> {
-    await this.retryInitIfNeeded();
-    // Always expose the tools — even when the server root has no index. Gating
-    // availability on whether `./` is indexed (the old behavior) breaks the
-    // monorepo case where only sub-projects carry a `.codegraph/` (the agent
-    // saw zero tools and couldn't even reach an indexed sub-project by
-    // `projectPath`), and it hides the tools from a session that started before
-    // the user ran `codegraph init` (most hosts request the list once, so the
-    // freshly-built index never surfaces). #964. The not-indexed case is still
-    // safe: a call against an un-indexed path returns SUCCESS-shaped guidance
-    // ("pass projectPath / run codegraph init"), never `isError`, so it can't
-    // teach the agent to abandon codegraph. `getTools()` returns the default
-    // surface even before a project is open.
+    // Always expose the tools: whether a project is indexed is not the list's
+    // business. A call against an un-indexed path returns SUCCESS-shaped guidance, never
+    // `isError`, so it can't teach the agent to abandon codegraph. `getTools()`
+    // marks `projectPath` required on every tool. The list is THIS session's:
+    // its own allowlist. Only a legacy client that was never told one gets the
+    // server process's CODEGRAPH_MCP_TOOLS.
     this.transport.sendResult(request.id, {
-      tools: this.engine.getToolHandler().getTools(),
+      tools: this.engine.getToolHandler().getTools({ allowlist: this.toolAllowlist }),
     });
   }
 
   private async handleToolsCall(request: JsonRpcRequest): Promise<void> {
-    const params = request.params as {
-      name: string;
-      arguments?: Record<string, unknown>;
-    };
-
-    if (!params || !params.name) {
-      this.transport.sendError(request.id, ErrorCodes.InvalidParams, 'Missing tool name');
+    // Everything between the wire and the handler (tool-name checks, the
+    // required-projectPath and repo-anchor guard, index admission) is
+    // dispatchToolCall's, shared with the proxy's in-process fallback; this
+    // method only replies and counts.
+    const debug = !!process.env.CODEGRAPH_MCP_DEBUG;
+    if (debug) process.stderr.write(`[mcp-debug] toolsCall id=${String(request.id)} dispatch\n`);
+    const outcome = await dispatchToolCall({
+      handler: this.engine.getToolHandler(),
+      anchor: this.anchor,
+      exploreSession: this.exploreSession,
+      focus: this.focus,
+      toolAllowlist: this.toolAllowlist,
+      indexVersionWarnings: this.indexVersionWarnings,
+      params: request.params,
+    });
+    if (debug) process.stderr.write(`[mcp-debug] toolsCall id=${String(request.id)} done\n`);
+    if ('error' in outcome) {
+      this.transport.sendError(request.id, outcome.error.code, outcome.error.message);
       return;
     }
-
-    const toolName = params.name;
-    const toolArgs = toolCallArguments(params);
-    if (!toolArgs) {
-      this.transport.sendError(request.id, ErrorCodes.InvalidParams, TOOL_ARGUMENTS_NOT_OBJECT);
-      return;
-    }
-
-    const tool = tools.find((t) => t.name === toolName);
-    if (!tool) {
-      this.transport.sendError(
-        request.id,
-        ErrorCodes.InvalidParams,
-        `Unknown tool: ${toolName}`,
-      );
-      return;
-    }
-
-    if (process.env.CODEGRAPH_MCP_DEBUG) process.stderr.write(`[mcp-debug] toolsCall ${toolName} id=${String(request.id)} pre-init\n`);
-    await this.retryInitIfNeeded();
-
-    if (process.env.CODEGRAPH_MCP_DEBUG) process.stderr.write(`[mcp-debug] toolsCall ${toolName} id=${String(request.id)} dispatch\n`);
-    const result = await this.engine.getToolHandler().execute(
-      toolName,
-      toolArgs,
-      this.exploreSession,
-      this.indexVersionWarnings,
-    );
-    if (process.env.CODEGRAPH_MCP_DEBUG) process.stderr.write(`[mcp-debug] toolsCall ${toolName} id=${String(request.id)} done\n`);
-    this.transport.sendResult(request.id, result);
+    this.transport.sendResult(request.id, outcome.result);
     // After the reply is on the wire — telemetry must never delay a tool
     // response (in-memory increment only; see src/telemetry).
-    getTelemetry().recordUsage('mcp_tool', toolName, !result.isError, this.clientInfo);
+    getTelemetry().recordUsage('mcp_tool', outcome.toolName, !outcome.result.isError, this.clientInfo);
   }
 
   /**
-   * Lazy default-project resolution. Three layers:
-   *   1. await the in-flight init kicked off from `handleInitialize` (if any);
-   *   2. if still uninitialized and we never asked the client for its roots,
-   *      do so now (one-shot); fall back to cwd if the client lacks roots;
-   *   3. last-resort: re-walk from the best candidate — picks up projects
-   *      that were `codegraph init`'d *after* the server started.
+   * `codegraph/indexWrite` and `codegraph/indexWriteEnd`: refused unless this is the CLI's control
+   * connection; otherwise relayed to the index builder by the {@link CliRelay}, which answers the request.
    */
-  private async retryInitIfNeeded(): Promise<void> {
-    if (this.resolvePromise) {
-      try { await this.resolvePromise; } catch { /* fall through to retry */ }
-      this.resolvePromise = null;
+  private async handleIndexWrite(request: JsonRpcRequest): Promise<void> {
+    if (!this.controlClient) {
+      this.transport.sendError(request.id, ErrorCodes.InvalidRequest, `${request.method} is only for the codegraph CLI`);
+      return;
     }
-
-    if (this.engine.hasDefaultCodeGraph()) return;
-
-    const hint = this.explicitProjectPath ?? this.engine.getProjectPath();
-    if (!hint && !this.rootsAttempted) {
-      this.rootsAttempted = true;
-      this.resolvePromise = this.clientSupportsRoots
-        ? this.initFromRoots()
-        : this.engine.ensureInitialized(process.cwd());
-      try { await this.resolvePromise; } catch { /* fall through */ }
-      this.resolvePromise = null;
-      if (this.engine.hasDefaultCodeGraph()) return;
-    }
-
-    // Last resort: walk from the best candidate (sync open). Picks up
-    // projects that appeared after the server started.
-    const candidate = hint ?? process.cwd();
-    this.engine.retryInitializeSync(candidate);
+    if (request.method === INDEX_WRITE_END_METHOD) await this.cliRelay.handleIndexWriteEnd(request);
+    else await this.cliRelay.handleIndexWrite(request);
   }
 
   /**
-   * Ask the client for its workspace root via `roots/list` and open the
-   * first one. Falls back to `process.cwd()` on timeout or empty answer.
+   * `codegraph/releaseProject {root}`: close the server's handle on one project
+   * and have the builder drop its hold (its watcher and writer lock), so a CLI
+   * that wants to take its writer lock can. 'released' is answered only after
+   * the builder has let go (`releaseProjectRoot` awaits it). The root names a project
+   * the server may hold for any session, so it is not checked against this
+   * session's anchor. An in-process `codegraph index` sends it when no builder
+   * serves the write; with a builder, `codegraph/indexWrite` is the route. The in-process `codegraph uninit`
+   * sends it for the same reason, before it deletes the index (with a builder, the `release` op of
+   * `codegraph/indexWrite` is its route).
    */
-  private async initFromRoots(): Promise<void> {
-    let target = process.cwd();
-    try {
-      const result = await this.transport.request('roots/list', undefined, ROOTS_LIST_TIMEOUT_MS);
-      const rootPath = firstRootPath(result);
-      if (rootPath) {
-        target = rootPath;
-      } else {
-        process.stderr.write('[CodeGraph MCP] Client returned no workspace roots; falling back to process cwd.\n');
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[CodeGraph MCP] roots/list request failed (${msg}); falling back to process cwd.\n`);
+  private async handleReleaseProject(request: JsonRpcRequest): Promise<void> {
+    const root = (request.params as { root?: unknown } | undefined)?.root;
+    if (typeof root !== 'string' || root.trim() === '') {
+      this.transport.sendError(request.id, ErrorCodes.InvalidParams, 'Missing root');
+      return;
     }
-    await this.engine.ensureInitialized(target);
+    await this.engine.releaseProjectRoot(root);
+    this.transport.sendResult(request.id, { released: true });
   }
 }

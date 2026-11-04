@@ -10,14 +10,15 @@
  * reported as codegraph's own, with advice to stop using it. An array went
  * through as if it were the arguments. No arguments, or null, still mean none.
  *
- * Both ways a call is served are covered: the session (the direct stdio server
- * and every client of the shared daemon), and the stdio proxy serving in
- * process while the daemon is unavailable.
+ * Both ways a call is served are covered: the session (every client of the
+ * machine server), and the stdio proxy serving in process while the server is
+ * unavailable. Both reach the answer through dispatchToolCall.
  */
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import { MCPSession } from '../src/mcp/session';
+import { resolveRepoAnchor } from '../src/extensions/host/server/repo-anchor';
 import type { MCPEngine } from '../src/mcp/engine';
 import type { JsonRpcTransport, JsonRpcRequest, JsonRpcNotification } from '../src/mcp/transport';
 
@@ -25,7 +26,7 @@ const MALFORMED: unknown[] = ['alpha', 42, true, [1], [{ query: 'q' }]];
 const NONE: unknown[] = [undefined, null, ''];
 
 describe('a tools/call whose arguments are not an object (#2981)', () => {
-  function session() {
+  async function session() {
     let handle: ((m: JsonRpcRequest | JsonRpcNotification) => Promise<void>) | null = null;
     const results: Array<{ id: unknown; result: unknown }> = [];
     const errors: Array<{ id: unknown; code: number; message: string }> = [];
@@ -40,10 +41,6 @@ describe('a tools/call whose arguments are not an object (#2981)', () => {
       sendError(id, code, message) { errors.push({ id, code, message }); },
     };
     const engine = {
-      ensureInitialized: async () => { /* already open */ },
-      hasDefaultCodeGraph: () => true,
-      getProjectPath: () => '/repo',
-      retryInitializeSync: () => { /* nothing to retry */ },
       getToolHandler: () => ({
         getTools: () => [],
         execute: async (_name: string, args: unknown) => {
@@ -52,44 +49,49 @@ describe('a tools/call whose arguments are not an object (#2981)', () => {
         },
       }),
     } as unknown as MCPEngine;
-    new MCPSession(transport, engine).start();
+    // A session in the repository the object-argument calls name: the guard lets the path through.
+    const anchor = await resolveRepoAnchor(process.cwd());
+    new MCPSession(transport, engine, { anchor }).start();
     const call = (id: number, args: unknown) =>
       handle!({
         jsonrpc: '2.0', id, method: 'tools/call',
         params: args === undefined ? { name: 'codegraph_explore' } : { name: 'codegraph_explore', arguments: args },
       } as JsonRpcRequest);
-    return { call, results, errors, executed };
+    return { call, results, errors, executed, anchor };
   }
 
   it('is answered with invalid params, and never reaches a tool', async () => {
-    const s = session();
+    const s = await session();
     for (const [i, args] of MALFORMED.entries()) await s.call(i, args);
     expect(s.errors).toEqual(MALFORMED.map((_, i) => ({ id: i, code: -32602, message: 'Tool arguments must be an object' })));
     expect(s.executed).toEqual([]);
     expect(s.results).toEqual([]);
   });
 
-  it('runs a call with an object, or with no arguments at all', async () => {
-    const s = session();
-    await s.call(1, { query: 'q' });
+  it('runs a call with an object, and answers one with no arguments as none, not malformed', async () => {
+    const s = await session();
+    await s.call(1, { query: 'q', projectPath: s.anchor.root });
     for (const [i, args] of NONE.entries()) await s.call(10 + i, args);
     expect(s.errors).toEqual([]);
-    expect(s.executed).toEqual([{ query: 'q' }, {}, {}, {}]);
+    // The object call reached the tool; the calls with no arguments are none, not malformed:
+    // each is answered (the server has no default project, so with the success-shaped
+    // "missing projectPath" guidance), never with invalid params.
+    expect(s.executed).toHaveLength(1);
+    expect(s.executed[0]).toMatchObject({ query: 'q' });
+    expect(s.results).toHaveLength(1 + NONE.length);
   });
 
-  it('is answered the same way by the proxy while the daemon is unavailable', async () => {
+  it('is answered the same way by the proxy while the server is unavailable', async () => {
     const proxyModule = path.resolve(__dirname, '../dist/mcp/proxy.js');
-    // The real proxy entry point, with no daemon and an engine that says when
+    // The real proxy entry point, with no server and an engine that says when
     // a tool runs.
     const script = `
       const { runLocalHandshakeProxy } = require(${JSON.stringify(proxyModule)});
       const say = (s) => require('fs').writeSync(1, s + '\\n');
       runLocalHandshakeProxy({
-        root: process.cwd(),
+        launchDir: process.cwd(),
         getDaemonSocket: async () => null,
         makeEngine: () => ({
-          ensureInitialized: async () => {},
-          isReadOnly: () => true,
           getToolHandler: () => ({ execute: async (name, args) => {
             say('EXECUTED ' + JSON.stringify(args));
             return { content: [{ type: 'text', text: 'ok' }] };
@@ -131,8 +133,11 @@ describe('a tools/call whose arguments are not an object (#2981)', () => {
       await until(() => !!reply(2) && !!reply(3) && !!reply(4));
       expect(reply(2).error).toEqual({ code: -32602, message: 'Tool arguments must be an object' });
       expect(reply(3).error).toEqual({ code: -32602, message: 'Tool arguments must be an object' });
-      expect(reply(4).result).toEqual({ content: [{ type: 'text', text: 'ok' }] });
-      expect(out.match(/^EXECUTED .*$/gm)).toEqual(['EXECUTED {}']);
+      // No arguments at all are none, not malformed: answered with the success-shaped
+      // "missing projectPath" guidance (no default project), and the tool never ran.
+      expect(reply(4).error).toBeUndefined();
+      expect(reply(4).result.isError).toBeFalsy();
+      expect(out.match(/^EXECUTED .*$/gm)).toBeNull();
     } finally {
       child.stdin!.end();
       child.kill('SIGKILL');

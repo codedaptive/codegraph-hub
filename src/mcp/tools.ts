@@ -6,7 +6,11 @@
 
 import type CodeGraph from '../index';
 import type { QueryPool } from './query-pool';
-import { findNearestCodeGraphRoot, isSameIndexRoot } from '../directory';
+import { canonicalProjectRoot, isSameIndexRoot } from '../directory';
+import { isPinned } from '../extensions/host/worktree-lifecycle/project-registry';
+import { worktreeSeedMayApply } from '../extensions/host/worktree-lifecycle/seed-check';
+import { gitRootByStat, selectIndexRoot, selectOwnIndexRoot } from '../extensions/host/server/index-root';
+import type { BuilderClient, BuilderFreshness } from '../extensions/host/builder/client';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
 import { DatabaseOpenError, isDatabaseOpenFailure } from '../db/open-error';
 import type { NodeSqliteUnavailableError } from '../db/node-sqlite';
@@ -65,10 +69,12 @@ import {
   findAllSymbols,
   resolveNamedSymbolFlow,
   type FlowStep,
+  type NamedSymbolFlow,
 } from '../graph/named-symbol-flow';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { measurePendingChanges } from './index-freshness';
 import { validateAnswerFiles, type AnswerFile } from './answer-freshness';
+import { appendCheckpointFooter, waitForFresh } from '../extensions/host/fresh/checkpoint';
 import { ExploreDiagnostics } from './explore-diagnostics';
 import {
   IndexVersionWarningState,
@@ -151,7 +157,20 @@ function wslSharedIndexGuidance(err: WslSharedIndexError): string {
 export { PathRefusalError } from '../errors';
 import { PathRefusalError } from '../errors';
 import { indexedHashInput } from '../file-limits';
-import { resolve as resolvePath, relative as relativePath, dirname } from 'path';
+import { resolve as resolvePath, dirname } from 'path';
+import { MISSING_PROJECT_PATH_TEXT } from '../extensions/host/server/repo-anchor';
+import { extensionTools, findExtensionTool, isExtensionTool, setBuiltins } from '../extensions/host/registry';
+import {
+  focusPrefixesForIndex,
+  inFocus,
+  parseToolAllowlist,
+  resolveFocusForRoot,
+  sessionFocusFromArgs,
+  sessionToolsFromArgs,
+  withoutSessionArgs,
+  worktreeRootOf,
+  type SessionToolList,
+} from '../extensions/host/server/session-scope';
 
 /** Maximum output length to prevent context bloat (characters) */
 const MAX_OUTPUT_LENGTH = 15000;
@@ -1263,6 +1282,76 @@ export const EXPLORE_FALLBACK_NOTES = {
 } as const;
 
 /**
+ * Where the final hard-ceiling cut of an explore answer aims, given what is appended to the answer after the cut.
+ *
+ * The cut runs on text that still holds the summary sentinel, and two things are added after it: the sentinel is
+ * replaced by the real summary line, which grows the text by at most `summaryGrowth` characters, and the out-of-focus
+ * block (`blockLength` characters, zero when there are none) is appended last. With a block, both must fit under
+ * `hardCeiling` too, and the cut reserves room for them (see the bullets below).
+ *
+ * - No block: `{ ceiling: hardCeiling, sliceLimit: hardCeiling }`, with nothing reserved for the summary growth or for
+ *   the truncation note. The render loop aims its text at `hardCeiling` less an epilogue floor that reserves the
+ *   summary line, so this cut runs only when that aim overshoots, and an answer it cuts can then exceed
+ *   `hardCeiling` by up to the note's length (about 210 characters) plus the growth.
+ * - A block: the cut aims at `hardCeiling` less the block and the growth, so the answer with both added stays within
+ *   `hardCeiling`. A section cut also appends its truncation note after slicing, so `sliceLimit` sits below the
+ *   ceiling by the longer of the two truncation notes: whichever wording is chosen, slice plus note fits the ceiling.
+ *
+ * `summaryGrowth` is the summary line's growth only, WITHOUT the block (the caller's `summaryReserve` includes the
+ * block, so the caller subtracts it): the block is subtracted here, and counting it twice would cut answers that fit.
+ */
+export function exploreCutLimits(
+  hardCeiling: number,
+  blockLength: number,
+  summaryGrowth: number,
+): { ceiling: number; sliceLimit: number } {
+  if (blockLength === 0) return { ceiling: hardCeiling, sliceLimit: hardCeiling };
+  const ceiling = hardCeiling - blockLength - summaryGrowth;
+  const longestTruncatedNote = Math.max(
+    EXPLORE_FALLBACK_NOTES.truncated.complete.length,
+    EXPLORE_FALLBACK_NOTES.truncated.trimmed.length,
+  );
+  return { ceiling, sliceLimit: ceiling - longestTruncatedNote };
+}
+
+/**
+ * The final hard-ceiling cut of an explore answer, at the limits `exploreCutLimits` gave.
+ *
+ * - Not over `ceiling`: the answer is returned as it is.
+ * - Over, and an epilogue-only cut exists whose text plus its cut note fits `ceiling`: that is used. The epilogue
+ *   costs less than a file section, so it goes first (CG-31); dropping a trailing section throws away source the
+ *   render loop had set that file's reservation aside for. An epilogue-only cut that fits only the hard ceiling and
+ *   not the smaller block ceiling is not used: the block and the summary growth would push it past the hard ceiling.
+ * - Otherwise: slice at `sliceLimit` and cut at a FILE-SECTION boundary (the last ``**` `` file header before it),
+ *   dropping whole trailing file sections rather than slicing through a method body, since a half-rendered method
+ *   forces the Read this tool exists to prevent. A line boundary is the fallback when no section header sits in the
+ *   back half of the slice (the degenerate single-giant-section case). The truncation note follows, in the wording
+ *   `trimmedIn` picks for the surviving text.
+ *
+ * `trimmedIn` says whether a section that was trimmed (see `elidedWantedSpans`) is still present in a text, which
+ * picks the `trimmed` or `complete` wording of the note.
+ */
+export function cutExploreToCeiling(input: {
+  output: string;
+  epilogueOnlyCut: string | null;
+  ceiling: number;
+  sliceLimit: number;
+  trimmedIn: (text: string) => boolean;
+}): string {
+  const { output, epilogueOnlyCut, ceiling, sliceLimit, trimmedIn } = input;
+  if (output.length <= ceiling) return output;
+  if (epilogueOnlyCut !== null) {
+    const cutNote = EXPLORE_FALLBACK_NOTES.cut[trimmedIn(epilogueOnlyCut) ? 'trimmed' : 'complete'];
+    if (epilogueOnlyCut.length + cutNote.length <= ceiling) return epilogueOnlyCut + cutNote;
+  }
+  const cut = output.slice(0, sliceLimit);
+  const lastSection = cut.lastIndexOf('\n' + FILE_SECTION_PREFIX);
+  const boundary = lastSection > sliceLimit * 0.5 ? lastSection : cut.lastIndexOf('\n');
+  const safe = boundary > 0 ? cut.slice(0, boundary) : cut;
+  return safe + EXPLORE_FALLBACK_NOTES.truncated[trimmedIn(safe) ? 'trimmed' : 'complete'];
+}
+
+/**
  * One symbol a file section set out to deliver: a cluster member, or a symbol
  * of the per-symbol (focused/skeleton) view. Completeness is judged against
  * these, not against the file — explore never promises whole files, only the
@@ -1629,7 +1718,8 @@ export interface ToolAnnotations {
 }
 
 interface PropertySchema {
-  type: string;
+  /** A JSON Schema type, or a list of types when the property accepts more than one */
+  type: string | string[];
   description: string;
   enum?: string[];
   default?: unknown;
@@ -1662,16 +1752,77 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'Absolute path to the project to query (or any directory inside it) — codegraph uses the nearest .codegraph/ index at or above that path. Omit to use this session\'s default project. Pass it to query a second codebase, or when the server root has no index of its own (e.g. a monorepo where only sub-projects are indexed, so there is no default project).',
+  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a directory outside git with no index is built in the background at the directory the session was launched in.',
 };
 
 /**
- * EVERY codegraph tool is query-only: it reads the pre-built index and never
- * mutates the workspace (indexing is the user's explicit CLI call, never the
- * agent's). Advertising this read-only contract lets clients that gate on it run
- * the tools where a possibly-mutating tool would be blocked — most concretely,
+ * The `scope` property of `codegraph_search` and `codegraph_explore`: whether a session started with
+ * `--focus <dir>` keeps their results inside those directories (the default) or lets one call search the
+ * whole repository. The handlers read it through `focusPrefixesOfCall`; a session with no focus ignores it.
+ */
+const scopeProperty: PropertySchema = {
+  type: 'string',
+  description: 'Results stay inside the directories this session was started with (--focus). Pass "repo" to search the whole repository for this call. Has no effect when the session has no focus.',
+  enum: ['focus', 'repo'],
+};
+
+/**
+ * How the session's focus applies to this call, in the index the call resolved to (`focusPrefixesForIndex`:
+ * the session's repo-relative entries read against the root of the worktree that index sits in, so a call on a
+ * sibling worktree is held to that worktree's own directories): `null` filters nothing, `[]` means no file of
+ * this index is in focus, otherwise the index-relative directories a file must sit under.
+ *
+ * The focus comes from the internal `SESSION_FOCUS_ARG` the one dispatch sets (never from the wire). A call
+ * whose session has no focus returns `null` without touching `cg`, so the focus step never reads the index's
+ * `getProjectRoot`. `scopable` is true for the tools that take `scope` (search, explore): `scope: "repo"` lifts
+ * the filter for that call and any other value keeps it. Callers and impact pass false: they cover the whole
+ * repository, and for them the focus decides which results are counted and listed first and which go under
+ * `## Outside focus`.
+ */
+export function focusPrefixesOfCall(cg: Pick<CodeGraph, 'getProjectRoot'>, args: Record<string, unknown>, scopable: boolean): string[] | null {
+  if (scopable && args.scope === 'repo') return null;
+  const focus = sessionFocusFromArgs(args);
+  if (focus.length === 0) return null;
+  return focusPrefixesForIndex(cg.getProjectRoot(), focus);
+}
+
+/**
+ * The answer for a search or explore whose focus left nothing: a success-shaped sentence (never an error, so
+ * the agent keeps using the tool) that names the focus and how to widen the call. `prefixes` is non-null.
+ * The directories are index-relative (the repository root for the usual one-index repository); when no
+ * focus directory lies inside this index they are the session's focus entries, relative to the repository root.
+ */
+function nothingInFocusText(args: Record<string, unknown>, prefixes: readonly string[]): string {
+  return `No results inside this session's focus (${focusDirsText(args, prefixes)}). Pass scope: "repo" to search the whole repository.`;
+}
+
+/**
+ * The focus directories as the agent reads them in a sentence: the index-relative `prefixes`, or, when no focus
+ * directory lies inside this index, the session's own focus entries (already relative to the repository root).
+ */
+function focusDirsText(args: Record<string, unknown>, prefixes: readonly string[]): string {
+  return (prefixes.length > 0 ? [...prefixes] : sessionFocusFromArgs(args)).join(', ');
+}
+
+/**
+ * EVERY codegraph tool leaves the workspace files untouched: it answers from
+ * the index under `.codegraph/` and never touches a source file. An index
+ * changes in two cases, and the index builder writes it, not the tool. `fresh:
+ * true` syncs an existing index before answering. And a query may CREATE an
+ * index: a git worktree with no index of its own is seeded from an indexed
+ * sibling worktree of the same repository or, when no sibling is indexed, built
+ * from scratch in the background; a directory outside git with no index is built
+ * from scratch in the background at the session's anchor root (queued on the
+ * builder, with no opt-in). Either way only that root's `.codegraph/` is written,
+ * and its record in the
+ * project registry (`<state dir>/projects/`, `~/.codegraph` by default; see
+ * src/extensions/host/worktree-lifecycle/seed.ts). That is an index a call
+ * asked for, not a change to the workspace, so readOnlyHint (about the user's
+ * workspace) stays true. Advertising this read-only contract lets clients that
+ * gate on it run the tools where a possibly-mutating tool would be blocked — most concretely,
  * Cursor's Ask mode, which rejects any MCP tool lacking `readOnlyHint: true`
- * (issue #1018). `idempotentHint`: a repeated query has no additional effect.
+ * (issue #1018). `idempotentHint`: a repeated call has no further effect (a
+ * repeated `fresh` sync finds nothing pending).
  * `openWorldHint: false`: the domain is the closed local index, not an open
  * external world. Shared so the contract is declared once; a hypothetical
  * mutating tool would simply not reference it.
@@ -1690,7 +1841,9 @@ const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
  * (one call usually answers the whole question), and only use other tools for
  * targeted follow-up queries.
  *
- * All tools support cross-project queries via the optional `projectPath` parameter.
+ * All tools support cross-project queries via the optional `projectPath` parameter,
+ * and the optional `fresh` / `checkpoint` parameters (added in allToolDefinitions,
+ * handled in ToolHandler.execute).
  */
 export const tools: ToolDefinition[] = [
   {
@@ -1713,6 +1866,7 @@ export const tools: ToolDefinition[] = [
           description: 'Maximum results (default: 10)',
           default: 10,
         },
+        scope: scopeProperty,
         projectPath: projectPathProperty,
       },
       required: ['query'],
@@ -1850,6 +2004,7 @@ export const tools: ToolDefinition[] = [
           type: 'number',
           description: 'Maximum number of files to return source from, 1–20. Omit it to use a default sized to the project (4 files below 150 indexed files, 5 below 500, 8 otherwise). Total output is also capped by characters (about 13K–24K by project size), so a higher maxFiles spreads that budget over more files rather than returning more text.',
         },
+        scope: scopeProperty,
         projectPath: projectPathProperty,
       },
       required: ['query'],
@@ -1906,17 +2061,47 @@ export const tools: ToolDefinition[] = [
   },
 ];
 
+// Extension tools (src/extensions/host) may not take a built-in's name, and carry the built-ins' annotations.
+setBuiltins(() => tools.map(t => t.name), READ_ONLY_ANNOTATIONS);
+
+/**
+ * Optional on every tool; handled in ToolHandler.execute, never by a tool's own handler.
+ * `fresh` waits for the index to catch up, `checkpoint` only reports where it stands.
+ */
+const ANSWER_CHECKPOINT_PROPERTIES: Record<string, PropertySchema> = {
+  fresh: {
+    type: 'boolean',
+    description: 'Wait (bounded) until the index matches the working tree, then answer; ends a successful answer with a Checkpoint line.',
+  },
+  checkpoint: {
+    type: 'boolean',
+    description: 'End the answer with a Checkpoint line (git HEAD, hash of uncommitted changes, files the index has not caught up with) without waiting.',
+  },
+};
+
+/**
+ * Built-in tool definitions followed by the loaded extensions' tools (src/extensions/host),
+ * each schema cloned with the optional `fresh` and `checkpoint` properties (`required` untouched).
+ */
+function allToolDefinitions(): ToolDefinition[] {
+  return [...tools, ...extensionTools().map(t => t.definition)].map(tool => ({
+    ...tool,
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: { ...tool.inputSchema.properties, ...ANSWER_CHECKPOINT_PROPERTIES },
+    },
+  }));
+}
+
 /**
  * Return `defs` with `projectPath` marked `required` in each tool's inputSchema.
  *
- * Used for the NO-DEFAULT-PROJECT tool surface (issue #993): when the MCP server
- * has no default project to fall back to — a gateway server started outside any
- * repo, or a monorepo root whose `.codegraph/` indexes live only in sub-projects
- * — every call MUST carry an explicit `projectPath`, so the schema should say so.
- * A `required` field is a HIGH-salience channel (MCP clients surface and often
- * validate it), unlike the instructions text the reporter found too weak to stop
- * the agent omitting the param. When a default project IS open, callers leave
- * projectPath optional and never call this.
+ * Applied to every tool surface the MCP server lists (`getTools`,
+ * `getStaticTools`): the server has no default project to fall back to, so
+ * every call MUST carry an explicit `projectPath` and the schema says so
+ * (issue #993). A `required` field is a HIGH-salience channel (MCP clients
+ * surface and often validate it), unlike the instructions text the reporter
+ * found too weak to stop the agent omitting the param.
  *
  * Pure: clones each tool's schema rather than mutating the shared module-level
  * `tools` array (reused by every session and the static surface). A tool that
@@ -1999,16 +2184,41 @@ function withRequiredProjectPath(defs: ToolDefinition[]): ToolDefinition[] {
 /**
  * Allowlist-filtered tool definitions WITHOUT an engine — the static surface the
  * proxy answers `tools/list` with before any project is open. Mirrors
- * `ToolHandler.getTools()` in the no-CodeGraph case (the dynamic per-repo budget
- * note in a description only adds once `cg` is loaded; the schemas are static).
+ * `ToolHandler.getTools()` of the MCP engine's handler (which has no CodeGraph
+ * of its own): `projectPath` is required on every tool, and the dynamic per-repo
+ * budget note in a description is a CLI-handler-only addition.
+ * Extension tools are listed only when CODEGRAPH_MCP_TOOLS names them.
+ *
+ * The allowlist is read from THIS process's environment, and the proxy that
+ * calls it is the client's own launcher, so each client already lists its own
+ * tools. The server's session-side list (`MCPSession` -> `getTools`) and its
+ * call gate read the same client value, carried in the client hello and parsed
+ * by `parseToolAllowlist`. The two readings differ on a value with no names in
+ * it, such as `,` or a bare `codegraph_`: this function finds no names and lists
+ * every built-in, while `parseToolAllowlist` finds none and gives no allowlist,
+ * so the session gets the default surface. On every value with a name in it they
+ * agree.
  */
 export function getStaticTools(): ToolDefinition[] {
+  const all = allToolDefinitions();
   const raw = process.env.CODEGRAPH_MCP_TOOLS;
   if (!raw || !raw.trim()) {
-    return tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
+    return withRequiredProjectPath(all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, ''))));
   }
   const allow = new Set(raw.split(',').map(s => s.trim().replace(/^codegraph_/, '')).filter(Boolean));
-  return allow.size ? tools.filter(t => allow.has(t.name.replace(/^codegraph_/, ''))) : tools;
+  return withRequiredProjectPath(allow.size ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, ''))) : tools);
+}
+
+/**
+ * Whether `name` is a tool this server can run: a built-in or a loaded
+ * extension's tool (src/extensions/host). The one definition of "known":
+ * `ToolHandler.execute` refuses anything else before it opens or waits for
+ * anything, and the shared call dispatch (src/extensions/host/server/tool-call.ts)
+ * refuses it before the repo guard. Not the allowlist question
+ * (CODEGRAPH_MCP_TOOLS), which `execute` answers separately.
+ */
+export function isKnownTool(name: string): boolean {
+  return tools.some((t) => t.name === name) || isExtensionTool(name);
 }
 
 /**
@@ -2016,7 +2226,7 @@ export function getStaticTools(): ToolDefinition[] {
  * — the single tool that reliably earns its place: one capped call returns the
  * verbatim source of the relevant symbols grouped by file. Every other tool is a
  * narrower slice of what explore already does, and presence itself steers
- * mis-picks, so they are no longer LISTED to agents.
+ * mis-picks, so they are not listed to agents.
  *
  * The other defined tools (`node`, `search`, `callers`, plus callees/impact/files/
  * status) remain fully functional — handlers stay, the library API and CLI are
@@ -2037,23 +2247,73 @@ function canonicalPath(p: string): string {
 }
 
 /**
- * How many explicit-`projectPath` projects a handler keeps open at once
- * (#1835). Each cached project may hold a file watcher, a writer lock and a
- * SQLite connection, so the cache is bounded LRU: opening one more than this
- * closes the least recently used. Small on purpose — a session that queries
- * many repositories still leaks nothing; it only pays a reopen + catch-up.
+ * A pending file as the staleness banner and `codegraph_status` list it, from
+ * the bare project-relative path the builder pushes. "Edited N ms ago" is read
+ * from the file's own mtime (the moment of its last edit); a file that is gone
+ * (a pending removal) counts as edited now.
  */
-export const MAX_CACHED_PROJECTS = 8;
+function pendingFileOf(root: string, relPath: string): PendingFile {
+  let lastSeenMs = Date.now();
+  try {
+    lastSeenMs = statSync(resolvePath(root, relPath)).mtimeMs;
+  } catch {
+    /* removed since: keep "now" */
+  }
+  return { path: relPath, firstSeenMs: lastSeenMs, lastSeenMs, indexing: false };
+}
 
 /**
  * How long an explicit-`projectPath` project may go unused before the handler
- * releases it (#2087). Releasing frees its SQLite handle, its watcher and the
- * writer lock the engine may hold on that project — which otherwise stays held
- * for the whole life of this daemon, locking the project's own daemon and
- * `codegraph index` out. The next call reopens it and catches up.
- * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases.
+ * releases it (#2087). Releasing frees its SQLite handle and, through the
+ * engine, the builder's hold on it (its watcher and writer lock) — which
+ * otherwise stays held for the whole life of the machine server, locking
+ * `codegraph index` out. The next call has the builder hold it again, and it
+ * catches up. This idle close is the ONLY bound on
+ * how many projects stay open: there is no count cap (a repository with many
+ * worktrees keeps all of them open while they are in use).
+ * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases. A
+ * pinned project (`codegraph project pin`, the project registry) is never
+ * idle-released; it closes on shutdown, or when housekeeping releases it
+ * (`releaseProjectRoot`: its worktree was torn down, or its directory or
+ * database is gone). Only the machine server's engine (`openPinned`) opens
+ * pinned projects with no call, and only those with an index
+ * (src/extensions/host/worktree-lifecycle/pinned-open.ts); the time of that open
+ * is the project's last use, so once the pin is removed it closes after this
+ * timeout, at the next trim. Only that engine re-trims after each housekeeping
+ * pass; any other engine trims on the events listed at {@link ToolHandler.trimProjects}.
  */
 const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
+
+/**
+ * The wording of the building and not-yet-seeded answers
+ * (src/extensions/host/worktree-lifecycle/seed.ts), once a tool call first
+ * needed it (see ToolHandler.seedWorktreeIndex). Loaded lazily: seed.ts carries
+ * the writer-lock and SQLite dependencies, which stay off the startup path and
+ * off every call against an index of the tree's own.
+ */
+let worktreeSeedModule: typeof import('../extensions/host/worktree-lifecycle/seed') | null = null;
+
+/**
+ * Bound on each of {@link ToolHandler}'s unseeded-worktree and unbuilt-directory
+ * memos; past it that memo starts over. The bound keeps a long-lived handler
+ * asked about many paths from growing a memo without limit; 256 is ample because
+ * each holds only paths with no index that the builder could not seed or build
+ * (git worktrees and plain directories), and the next call on a path fills its
+ * cleared entry again.
+ */
+const MAX_UNSEEDED_WORKTREES = 256;
+
+/**
+ * Whether a cached root is pinned in the project registry. An unreadable
+ * registry pins nothing: every cached root is then subject to the idle timeout.
+ */
+function projectRootPinned(root: string): boolean {
+  try {
+    return isPinned(root);
+  } catch {
+    return false;
+  }
+}
 function resolveProjectIdleTimeoutMs(): number {
   const raw = process.env.CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS;
   if (raw === undefined || raw === '') return DEFAULT_PROJECT_IDLE_TIMEOUT_MS;
@@ -2063,12 +2323,62 @@ function resolveProjectIdleTimeoutMs(): number {
 }
 
 /**
+ * A session's judgement of the index root a call is about to be answered from
+ * (canonical path of the `.codegraph/`'s project root). Resolves to null to
+ * admit it, or to the success-shaped guidance to answer the call with instead.
+ * Run before the index is opened, so an index the session may not read is
+ * never opened, watched or queried on its behalf.
+ */
+export type IndexRootAdmission = (indexRoot: string) => Promise<string | null>;
+
+/** Per-call options of {@link ToolHandler.execute}. */
+export interface ExecuteOptions {
+  /**
+   * The session's admission check of the selected index root. Required of a
+   * handler that owns a project lifecycle (every MCP engine's): such a handler
+   * refuses a call that arrives without one, so a caller that forgets it gets
+   * guidance, never an unchecked answer. The CLI's handler has no lifecycle and
+   * passes none.
+   */
+  admitIndexRoot?: IndexRootAdmission;
+  /**
+   * The calling session's anchor root (the directory it was launched in, or its git worktree root).
+   * The builder cold-builds a path outside git that has no index at this root instead of at the
+   * path itself; omitted by a caller that has no session (the builder then builds at the path).
+   */
+  anchorRoot?: string;
+  /**
+   * The calling session's tool allowlist ({@link SessionToolList}): an array of
+   * short names, null for a session told it has none, undefined for a caller
+   * never told one (the CLI, a legacy client), which falls back to this
+   * process's CODEGRAPH_MCP_TOOLS. The call is refused when a non-null list does
+   * not name its tool.
+   */
+  toolAllowlist?: SessionToolList;
+  /**
+   * The calling client's one-time stale-index warnings (see
+   * {@link IndexVersionWarningState}). The state belongs to the client's
+   * session, never to this shared handler: one server answers many clients.
+   * Omitted by a caller that keeps none (the CLI): no warning is added.
+   */
+  indexVersionWarnings?: IndexVersionWarningState;
+}
+
+/**
+ * The part of the index builder (src/extensions/host/builder/client.ts) a
+ * ToolHandler uses: ask it to hold, seed or build the index a call names, sync
+ * a root for `fresh: true`, and read the freshness it pushed. The handler never
+ * writes an index itself, so the builder is its only route to a fresh one.
+ */
+export type HandlerBuilder = Pick<BuilderClient, 'ensure' | 'sync' | 'freshness'>;
+
+/**
  * Engine-side lifecycle for a project the ToolHandler opened for an explicit
- * `projectPath` (#1835). `activate` gives it the same treatment the default
- * project gets — a file watcher while it stays open and a catch-up sync — and
- * returns the catch-up promise, which the handler awaits (time-boxed) before
- * calls against that project. `release` runs after active calls drain, so the
- * engine can release shared ownership safely on LRU eviction or shutdown.
+ * `projectPath` (#1835). `open` opens it (read-only, after the builder holds
+ * it), `activate` returns the promise of the builder's catch-up of it, which
+ * the handler awaits (time-boxed) before calls against that project. `release`
+ * runs after active calls drain, so the engine can close the handle and let go
+ * of the builder's hold safely on idle release or shutdown.
  */
 export interface ProjectLifecycle {
   open(root: string, open: () => CodeGraph): CodeGraph;
@@ -2084,41 +2394,40 @@ export interface ProjectLifecycle {
  */
 export class ToolHandler {
   // Cache of opened CodeGraph instances for cross-project queries, keyed by the
-  // CANONICAL (realpath) index root. Map insertion order doubles as LRU order:
-  // a hit re-inserts, and `MAX_CACHED_PROJECTS` bounds the size (#1835).
+  // CANONICAL (realpath) index root. Map insertion order doubles as last-use order:
+  // a hit re-inserts. No cap bounds the size; the idle close does (#2087).
   private projectCache: Map<string, CodeGraph> = new Map();
   // When each cached root was last handed to a call, and the one timer that
   // releases the oldest once it has been idle long enough (#2087).
   private projectUsedAt: Map<string, number> = new Map();
   private idleReleaseTimer: NodeJS.Timeout | null = null;
-  // Engine hook that watches + catches up an explicit project (null for the
-  // CLI and worker-thread handlers, which never own a watcher).
+  // Engine hook that opens, catches up and releases an explicit project (null
+  // for the CLI and worker-thread handlers).
   private projectLifecycle: ProjectLifecycle | null = null;
+  // True for an engine's handler and a query worker's (setReadOnly). It is
+  // consulted at each place this handler could write an index, not by the
+  // callers: every project it opens is opened read-only (openProjectRoot) and
+  // `fresh: true` syncs only through the builder (execute).
+  private readOnly = false;
+  // The index builder (setBuilder): the process that writes the indexes
+  // this handler reads. Null for the CLI, worker-thread and fallback handlers,
+  // which seed, build and sync nothing.
+  private builder: HandlerBuilder | null = null;
   // Every concurrent call shares its project's pending catch-up promise.
   private projectGates: Map<CodeGraph, Promise<void>> = new Map();
+  // projectPath → the git worktree it is in, for paths the builder was asked
+  // about and could not give an index yet (seedWorktreeIndex); picks their
+  // not-indexed text.
+  private unseededWorktrees: Map<string, string> = new Map();
+  // projectPath → the build root and what it looks like, for plain directories (no
+  // git) the builder refused to build or failed to build (seedWorktreeIndex).
+  private unbuiltDirectories: Map<string, { root: string; unsafe?: string }> = new Map();
+  // releaseProjectRoot calls waiting for every in-flight tool call to finish.
+  private idleCallWaiters: Array<() => void> = [];
   private activeCalls = 0;
   private closing = false;
   private pendingCloses = 0;
   private closeWaiters: Array<() => void> = [];
-  // The directory the server last searched for a default project. Surfaced in
-  // the "not initialized" error so users can see why detection missed.
-  private defaultProjectHint: string | null = null;
-  // Indexed sub-projects the engine's bounded down-scan saw below the search
-  // base when no default project resolved (#1607). Listed in the "not
-  // initialized" error so the fact is reachable through the protocol, not just
-  // the host's stderr capture. Engine-maintained (initial resolve + throttled
-  // retry) — tool calls themselves never scan.
-  private knownSubprojects: string[] = [];
-  private knownSubprojectsBase: string | null = null;
-  // Why the default project failed to open, when that is worth telling the
-  // agent instead of "no project loaded": the Windows/WSL shared-index error
-  // (#995), or an index that exists but could not be opened (SQLite's own
-  // failure, or no node:sqlite). Engine-maintained; cleared by a successful open.
-  private defaultOpenFailure: WslSharedIndexError | DatabaseOpenError | NodeSqliteUnavailableError | null = null;
-  // Why the default project was refused: the folder it resolved to, or was
-  // searched for from, is a sensitive one (the guard a `projectPath` gets).
-  // Engine-maintained; cleared by a successful open.
-  private defaultRootRefusal: string | null = null;
   // Per-start-path cache of the git worktree/index mismatch (issue #155). The
   // mismatch is a fixed property of (where the request came from → which
   // .codegraph/ it resolves to), so the up-to-two `git rev-parse` spawns run
@@ -2129,14 +2438,15 @@ export class ToolHandler {
   // path sits in below that root, if any (#2110) — the git half of
   // `uncoveredNestedRepo`, memoized like the mismatch above.
   private nestedRepoCache: Map<string, NestedRepository | null> = new Map();
-  // Gate that the MCP engine pokes after `cg.open()` so the first tool call
-  // blocks on the post-open filesystem reconcile (catch-up sync). Without
-  // this, a tool call that races past `catchUpSync()` serves rows for files
-  // that were deleted (or edited) while no MCP server was running — and the
-  // per-file staleness banner can't help, because `getPendingFiles()` is
-  // populated by the watcher, not by catch-up. The wait is time-boxed
-  // (see {@link resolveCatchUpGateTimeoutMs}) so a minutes-long reconcile on a
-  // huge repo can't hang a call (#905); cleared when the reconcile settles.
+  // Gate the engine sets (setCatchUpGate) after `freshen` reopened a replaced
+  // database, so the next tool call blocks on the catch-up sync of the new
+  // file. Without it, a call that races past the reconcile serves rows for
+  // files that were deleted (or edited) while the old handle was dead — and
+  // the per-file staleness banner can't help, because `getPendingFiles()` is
+  // populated by the watcher, not by catch-up. The wait is time-boxed (see
+  // {@link resolveCatchUpGateTimeoutMs}) so a minutes-long reconcile on a huge
+  // repo can't hang a call (#905); cleared when the reconcile settles. The
+  // catch-up a project runs when first opened has its own gate (`projectGates`).
   private catchUpGate: Promise<void> | null = null;
   // Engine hook fired when `freshen` reopened a replaced database (#1902), so
   // the engine can reconcile the new file with a catch-up sync.
@@ -2149,8 +2459,8 @@ export class ToolHandler {
 
   /**
    * Engine-only: attach (or detach with null) the worker-thread query pool. The
-   * engine sets this after resolving its default project; the workers each
-   * hold their own WAL read connection and run {@link executeReadTool}. A
+   * workers each hold their own WAL read connections (opened per project, on
+   * first use) and run {@link executeReadTool}. A
    * worker's own ToolHandler never has a pool, so there is no nested off-loading.
    */
   setQueryPool(pool: QueryPool | null): void {
@@ -2158,7 +2468,7 @@ export class ToolHandler {
   }
 
   /**
-   * Engine-only: own the lifecycle (watcher, catch-up, writer lock) of every
+   * Engine-only: own the lifecycle (open, builder catch-up, release) of every
    * project this handler opens for an explicit `projectPath` (#1835).
    */
   setProjectLifecycle(lifecycle: ProjectLifecycle | null): void {
@@ -2166,31 +2476,25 @@ export class ToolHandler {
   }
 
   /**
-   * Update the default CodeGraph instance (e.g. after lazy initialization)
+   * Engine-only: mark this handler read-only (the engine and a query worker
+   * do). Every project then opens read-only, and the handler writes no index
+   * itself: no sync for `fresh: true` (unless a builder syncs it), no seed,
+   * cold build or registry entry for a worktree.
    */
-  setDefaultCodeGraph(cg: CodeGraph): void {
-    this.cg = cg;
-    this.defaultOpenFailure = null;
-    this.defaultRootRefusal = null;
+  setReadOnly(readOnly: boolean): void {
+    this.readOnly = readOnly;
   }
 
   /**
-   * Engine-only: record why the default project was refused as a sensitive
-   * folder, so a call without a projectPath says why there is none. `null`
-   * clears it. A refused root was never opened, so no open failure stands.
+   * Engine-only: the index builder that writes this handler's indexes. With
+   * one, a call ensures the builder holds the index it names before the handler
+   * opens it (a worktree with no index of its own is seeded or built there),
+   * `fresh: true` syncs through it, and the staleness banners and
+   * `codegraph_status` read the freshness it pushes, since the handler's own
+   * read-only handles never watch.
    */
-  setDefaultRootRefusal(refusal: string | null): void {
-    this.defaultRootRefusal = refusal;
-    if (refusal) this.defaultOpenFailure = null;
-  }
-
-  /**
-   * Engine-only: record why the default project failed to open (#995), so a
-   * call that needs it answers with that fix rather than "no project loaded".
-   * `null` clears it.
-   */
-  setDefaultOpenFailure(err: WslSharedIndexError | DatabaseOpenError | NodeSqliteUnavailableError | null): void {
-    this.defaultOpenFailure = err;
+  setBuilder(builder: HandlerBuilder | null): void {
+    this.builder = builder;
   }
 
   /**
@@ -2212,7 +2516,7 @@ export class ToolHandler {
   /**
    * Engine-only: called after a tool call's {@link freshen} reopened a database
    * that was replaced on disk (#1902). The engine decides whether a catch-up
-   * sync is its to run (only for the instance it watches and writes).
+   * sync is its to run (only with a builder: the builder runs it).
    */
   setOnDatabaseReopened(fn: ((cg: CodeGraph) => void) | null): void {
     this.onDatabaseReopened = fn;
@@ -2256,60 +2560,30 @@ export class ToolHandler {
   }
 
   /**
-   * Record the directory the server tried to resolve the default project from.
-   * Used only to make the "no default project" error actionable.
+   * The allowlist of exposed tools, as a set of short names ("node" and
+   * "codegraph_node" both work), or null for no allowlist: the default surface
+   * is listed and every defined tool may be called. Lets an operator (or an A/B
+   * harness) trim the tool surface without rebuilding the client config; the
+   * ablated tool is then truly absent from ListTools rather than merely denied
+   * on call. Extension tools are named here like built-ins, e.g. "explore,my_tool".
+   *
+   * `session` is the calling session's own list ({@link SessionToolList}): the
+   * machine server's process environment belongs to whichever client started
+   * it, so a session's list is its launcher's CODEGRAPH_MCP_TOOLS carried in
+   * the client hello, not this process's. An array is that list; null means
+   * the session was told it has none. Only undefined (a caller that was never
+   * told one: the CLI, a legacy client) reads this process's CODEGRAPH_MCP_TOOLS.
    */
-  setDefaultProjectHint(searchedPath: string): void {
-    this.defaultProjectHint = searchedPath;
+  private toolAllowlist(session?: SessionToolList): Set<string> | null {
+    const names = session === undefined
+      ? parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? '')
+      : session;
+    return names && names.length > 0 ? new Set(names) : null;
   }
 
-  /**
-   * Engine-only: record the indexed sub-projects the workspace down-scan saw
-   * when it could not adopt a default project (#1606/#1607). An empty list
-   * clears any previous note.
-   */
-  setKnownSubprojects(roots: string[], base: string): void {
-    this.knownSubprojects = roots;
-    this.knownSubprojectsBase = base;
-  }
-
-  /** One message line naming the indexed sub-projects, or '' when none known. */
-  private formatKnownSubprojects(): string {
-    if (this.knownSubprojects.length === 0) return '';
-    const base = this.knownSubprojectsBase;
-    const rels = this.knownSubprojects.map((r) => (base ? relativePath(base, r) || '.' : r));
-    return (
-      `Indexed sub-projects were found below it: ${rels.join(', ')} — ` +
-      'pass one of them (absolute, or resolved against that directory) as projectPath.\n'
-    );
-  }
-
-  /**
-   * Whether a default CodeGraph instance is available
-   */
-  hasDefaultCodeGraph(): boolean {
-    return this.cg !== null;
-  }
-
-  /**
-   * Optional allowlist of exposed tools, parsed from the CODEGRAPH_MCP_TOOLS
-   * env var (comma-separated short names, e.g. "trace,search,node,context").
-   * Unset/empty → every tool is exposed. Lets an operator (or an A/B harness)
-   * trim the tool surface without rebuilding the client config; the ablated
-   * tool is then truly absent from ListTools rather than merely denied on call.
-   * Matching is on the short form, so "node" and "codegraph_node" both work.
-   */
-  private toolAllowlist(): Set<string> | null {
-    const raw = process.env.CODEGRAPH_MCP_TOOLS;
-    if (!raw || !raw.trim()) return null;
-    const short = (s: string) => s.trim().replace(/^codegraph_/, '');
-    const set = new Set(raw.split(',').map(short).filter(Boolean));
-    return set.size ? set : null;
-  }
-
-  /** Whether a tool name passes the CODEGRAPH_MCP_TOOLS allowlist (if any). */
-  private isToolAllowed(name: string): boolean {
-    const allow = this.toolAllowlist();
+  /** Whether a tool name passes the allowlist (the session's, else CODEGRAPH_MCP_TOOLS), if any. */
+  private isToolAllowed(name: string, session?: SessionToolList): boolean {
+    const allow = this.toolAllowlist(session);
     return !allow || allow.has(name.replace(/^codegraph_/, ''));
   }
 
@@ -2318,49 +2592,52 @@ export class ToolHandler {
    * is set, the default surface otherwise. Not the same question as
    * `isToolAllowed` (with no allowlist, every defined tool may still be
    * called). Explore names a follow-up tool only when the agent can see it:
-   * `codegraph_node` is not on the default surface (#2486).
+   * `codegraph_node` is not on the default surface. `session` is the
+   * calling session's list (see {@link toolAllowlist}); a handler gets it from
+   * its call's arguments with `sessionToolsFromArgs`, which also holds inside a
+   * query-pool worker.
    */
-  private isToolServed(name: string): boolean {
+  private isToolServed(name: string, session?: SessionToolList): boolean {
     const short = name.replace(/^codegraph_/, '');
-    const allow = this.toolAllowlist();
+    const allow = this.toolAllowlist(session);
     return allow ? allow.has(short) : DEFAULT_MCP_TOOLS.has(short);
   }
 
   /**
    * Get tool definitions with dynamic descriptions based on project size.
    * The codegraph_explore tool description includes a budget recommendation
-   * scaled to the number of indexed files. Honors the CODEGRAPH_MCP_TOOLS
-   * allowlist so a trimmed surface is reflected in ListTools.
+   * scaled to the number of indexed files. Honors the allowlist so a trimmed
+   * surface is reflected in ListTools: `options.allowlist` is the calling
+   * session's list ({@link SessionToolList}, see {@link toolAllowlist}),
+   * CODEGRAPH_MCP_TOOLS of this process when it is undefined.
+   * Extension tools are candidates too, listed only when the allowlist names them.
    */
-  getTools(): ToolDefinition[] {
-    const allow = this.toolAllowlist();
-    // No explicit allowlist → the default 4-tool surface (see
+  getTools(options?: { allowlist?: SessionToolList }): ToolDefinition[] {
+    const allow = this.toolAllowlist(options?.allowlist);
+    const all = allToolDefinitions();
+    // No explicit allowlist → the default surface: `codegraph_explore` alone (see
     // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
     // default entirely, so any defined tool can be re-enabled.
-    let visible = allow
-      ? tools.filter(t => allow.has(t.name.replace(/^codegraph_/, '')))
-      : tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, '')));
-    // No default project loaded → no-root-index case (#993): a gateway server
-    // started outside any repo, or a monorepo root whose indexes live in
-    // sub-projects. With nothing to fall back to, EVERY call needs an explicit
-    // projectPath, so mark it required in the schema — a high-salience nudge the
-    // agent acts on, where SERVER_INSTRUCTIONS_NO_ROOT_INDEX's prose alone
-    // wasn't enough (the reporter had to add an AGENTS.md note). `this.cg` is
-    // settled by `retryInitIfNeeded()` before `handleToolsList` calls us, so a
-    // null here means "genuinely no default", not a startup race. When a default
-    // IS open we leave projectPath optional (below): a bare call falls back to
-    // it, exactly as in the common single-project launch.
-    if (!this.cg) return withRequiredProjectPath(visible);
+    // The server has no default project: EVERY call needs an explicit
+    // projectPath, so mark it required in the schema — a high-salience channel
+    // (MCP clients surface and often validate it) that the instructions text
+    // alone does not match (#993).
+    let visible = withRequiredProjectPath(
+      allow
+        ? all.filter(t => allow.has(t.name.replace(/^codegraph_/, '')))
+        : all.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^codegraph_/, ''))),
+    );
+    // The MCP engine's handler has no CodeGraph of its own, so no project size
+    // to tailor the descriptions to; only the CLI's handler has one.
+    if (!this.cg) return visible;
 
     try {
       const stats = this.cg.getStats();
       const budget = getExploreBudget(stats.fileCount);
 
-      // Tiny-repo tool gating: on projects under TINY_REPO_FILE_THRESHOLD
-      // files, only expose the core trio (search, node, explore) — one
-      // below even the 4-tool default: at this scale callers, too, reduces
-      // to one grep. (Historical note: the audit below ran when context and
-      // trace still existed; its "5 core tools" are today's trio.)
+      // Tiny-repo tool gating (CLI handler only): under 500 files
+      // (TINY_REPO_FILE_THRESHOLD), expose only explore, search and node;
+      // extension tools are exempt: one is visible only because the operator named it.
       //
       // n=2 audits ruled out cutting below 5 tools:
       // - 3-tool gate (search + context + trace): cost regressed on
@@ -2386,7 +2663,7 @@ export class ToolHandler {
         'codegraph_node',
       ]);
       if (stats.fileCount < TINY_REPO_FILE_THRESHOLD) {
-        visible = visible.filter(t => TINY_REPO_CORE_TOOLS.has(t.name));
+        visible = visible.filter(t => TINY_REPO_CORE_TOOLS.has(t.name) || isExtensionTool(t.name));
       }
 
       return visible.map(tool => {
@@ -2404,120 +2681,151 @@ export class ToolHandler {
   }
 
   /**
+   * Refuse (throw {@link PathRefusalError}) a sensitive system directory,
+   * whether the call names it or the walk up from the path lands on an index
+   * there. Runs before anything is opened, and before the builder is asked to
+   * hold an index (it would otherwise take the folder's writer slot and watch
+   * it). `resolvedRoot` is the index root the path resolves to, null when none.
+   * Only a path that actually exists is validated by itself — a nested or
+   * not-yet-created sub-path of a real project must still be allowed to resolve
+   * UP to its .codegraph/ root (issue #238), so the existence-checking
+   * validator does not run on paths that are meant to walk up; the root the
+   * walk landed on gets the same refusal, so `~/.config/no-such-dir` cannot
+   * walk up into an index of `~/.config` (#1930).
+   */
+  private refuseSensitivePath(projectPath: string, resolvedRoot: string | null): void {
+    if (existsSync(projectPath)) {
+      const pathError = validateProjectPath(projectPath);
+      if (pathError) throw new PathRefusalError(pathError);
+    }
+    if (resolvedRoot !== null) {
+      const rootError = validateProjectPath(resolvedRoot);
+      if (rootError) throw new PathRefusalError(rootError);
+    }
+  }
+
+  /**
    * Get CodeGraph instance for a project
    *
    * If projectPath is provided, opens that project's CodeGraph (cached).
-   * Otherwise returns the default CodeGraph instance.
+   * Otherwise returns the default CodeGraph instance, which only the CLI's
+   * handler has: the MCP engine's handler has no default project, so a call
+   * without `projectPath` is answered with {@link MISSING_PROJECT_PATH_TEXT}
+   * (the session's call guard answers the same text before a call gets here).
    *
    * Walks up parent directories to find the nearest .codegraph/ folder,
-   * similar to how git finds .git/ directories.
+   * similar to how git finds .git/ directories. The resolution is
+   * {@link selectIndexRootForCall}: a handler with a builder does not take an
+   * index above a git repository nested around the path (it is another repository's).
    */
   private getCodeGraph(projectPath?: string): CodeGraph {
     if (!projectPath) {
-      if (!this.cg) {
-        if (this.defaultOpenFailure) throw this.defaultOpenFailure;
-        const searched = this.defaultProjectHint ?? process.cwd();
-        // A refused default is the same "pass projectPath" state, success-shaped
-        // like the rest: the agent can still query every other project.
-        const why = this.defaultRootRefusal
-          ? `${this.defaultRootRefusal}. CodeGraph never uses a credential, config or system folder ` +
-            'as a project, so this session has no default project. To query a project outside such ' +
-            'folders, target it explicitly:\n'
-          : `Searched for a .codegraph/ directory starting from: ${searched}\n` +
-            this.formatKnownSubprojects() +
-            'Either the server root has no index of its own (e.g. a monorepo where only ' +
-            "sub-projects are indexed), or the MCP client launched the server outside your " +
-            'project without reporting the workspace root. Either way, target the project ' +
-            'explicitly:\n';
-        throw new NotIndexedError(
-          'No CodeGraph project is loaded for this session.\n' +
-          why +
-          '  • Pass projectPath to the tool call, e.g. projectPath: "/absolute/path/to/your/project" ' +
-          '(any project that has a .codegraph/ — including a sub-project of a monorepo)\n' +
-          '  • Or add --path to the server\'s MCP config args: ["serve", "--mcp", "--path", "/absolute/path/to/your/project"]\n' +
-          'If a project simply has no index, use your built-in tools (Read/Grep/Glob) for THAT ' +
-          "project (the user can run 'codegraph init' there to enable it) — you can still query " +
-          'other indexed projects by projectPath in the same session.'
-        );
-      }
+      if (!this.cg) throw new NotIndexedError(MISSING_PROJECT_PATH_TEXT);
       return this.freshen(this.cg);
     }
 
-    // Reject sensitive system directories before opening. Only validate a
-    // path that actually exists — a nested or not-yet-created sub-path of a
-    // real project must still be allowed to resolve UP to its .codegraph/
-    // root below (issue #238), so we don't run the existence-checking
-    // validator on paths that are meant to walk up.
-    if (existsSync(projectPath)) {
-      const pathError = validateProjectPath(projectPath);
-      if (pathError) {
-        throw new PathRefusalError(pathError);
+    // Re-resolved on every call (selectIndexRootForCall): a cached first
+    // resolution would pin a worktree to its parent checkout's index for the
+    // server's lifetime (#926). The walk is cheap (a few existsSync up the tree) and
+    // is the only thing that notices a path whose index root CHANGED since it was
+    // first seen, most importantly a git worktree that gained its own .codegraph/.
+    // The DB connection itself is cached (by resolved root, below), so
+    // re-resolving costs the stat walk (plus a git check for a path with a `.git`
+    // entry below its index, on a handler with a builder), never a reopen.
+    const selected = this.selectIndex(projectPath);
+    this.refuseSensitivePath(projectPath, selected?.resolvedRoot ?? null);
+
+    if (!selected) {
+      // A git working tree (a worktree, or a repository nested in an indexed checkout) the builder was asked
+      // about and could not seed or build (yet) gets the seeder's guidance, not the plain text below: a later
+      // call may still find an index (a sibling finishes, a build retries). A plain
+      // directory it refused or failed to build gets its own text (it names the
+      // reason). seedWorktreeIndex memoizes both paths.
+      const worktree = this.unseededWorktrees.get(projectPath);
+      if (worktree && worktreeSeedModule) throw new NotIndexedError(worktreeSeedModule.unseededWorktreeNote(projectPath, worktree));
+      const unbuilt = this.unbuiltDirectories.get(projectPath);
+      if (unbuilt && worktreeSeedModule) {
+        throw new NotIndexedError(worktreeSeedModule.unbuiltDirectoryNote(projectPath, unbuilt.root, unbuilt.unsafe));
       }
-    }
-
-    // Always RE-RESOLVE the nearest .codegraph/ from the input path. The walk
-    // is cheap (a few existsSync up the tree) and is the only thing that
-    // notices a path whose index root CHANGED since it was first seen — most
-    // importantly a git worktree that gained its own .codegraph/ after the
-    // (long-lived) server first resolved it up to the parent checkout. We used
-    // to short-circuit on a `projectCache[projectPath]` entry before resolving,
-    // which pinned that first resolution for the server's whole lifetime, so a
-    // worktree kept being served the parent checkout's index until restart
-    // (#926). The DB connection itself is still cached (by resolved root,
-    // below), so re-resolving costs only the stat walk, never a reopen.
-    const resolvedRoot = findNearestCodeGraphRoot(projectPath);
-    // Two spellings of one root (a symlinked checkout, `/tmp` vs
-    // `/private/tmp`) must share one connection and one watcher (#1835).
-    const canonicalRoot = resolvedRoot ? canonicalPath(resolvedRoot) : null;
-
-    if (!resolvedRoot || !canonicalRoot) {
+      // This text also answers a handler with no builder (the CLI, the read-only fallback),
+      // where nothing builds an index: it names the user's `codegraph init` as the way to get one, and it
+      // must not say a later call cannot succeed.
       throw new NotIndexedError(
         `The project at ${projectPath} isn't indexed with codegraph (no .codegraph/ directory found ` +
         'walking up from it), so codegraph cannot query it. Use your built-in tools (Read/Grep/Glob) ' +
-        "for that codebase instead, and don't call codegraph for it again this session. " +
-        "Indexing is the user's decision — they can run 'codegraph init' in that project to enable it."
+        "for that codebase instead. " +
+        "The user can run 'codegraph init' in that project to index it."
       );
     }
 
-    // The root the walk landed on gets the same refusal. A path that doesn't
-    // exist skips the check above, so `~/.config/no-such-dir` would otherwise
-    // walk up into an index of `~/.config` (#1930).
-    const rootError = validateProjectPath(resolvedRoot);
-    if (rootError) {
-      throw new PathRefusalError(rootError);
-    }
+    const { resolvedRoot, canonicalRoot } = selected;
 
     const cg = this.openProjectRoot(resolvedRoot, canonicalRoot);
-    // The walk above crosses git boundaries. A nested repository the ancestor
+    // The walk above crosses git boundaries. For a handler with no builder, a nested repository the ancestor
     // index leaves out (typically gitignored) would otherwise be answered from
     // the ancestor's code, looking like an answer about the requested project
-    // (#2110) — so it gets the same guidance as a project with no index at all.
+    // (#2110) — so it gets the same guidance as a project with no index at all. (A handler with a
+    // builder never selects the ancestor's index for a nested repository: selectIndexRootForCall.)
     const nested = this.uncoveredNestedRepo(projectPath, canonicalRoot, cg);
     if (nested) {
       throw new NotIndexedError(
         `The project at ${projectPath} isn't indexed with codegraph: it is its own git repository ` +
         `(${nested.root}), and the nearest index, at ${canonicalRoot}, holds none of its files ` +
         '(that repository is excluded from it, e.g. by a .gitignore), so codegraph cannot query it. ' +
-        "Use your built-in tools (Read/Grep/Glob) for that codebase instead, and don't call codegraph " +
-        "for it again this session. Indexing is the user's decision — they can run 'codegraph init' " +
-        `in ${nested.root} to enable it.`
+        "Use your built-in tools (Read/Grep/Glob) for that codebase instead. " +
+        `The user can run 'codegraph init' in ${nested.root} to index it.`
       );
     }
     return cg;
   }
 
   /**
-   * The open CodeGraph for an index root the up-walk resolved: the default
-   * instance, a cached one, or a newly opened (and cached) one.
+   * The index a call on `projectPath` is answered from: the nearest `.codegraph/`
+   * at or above it, as the root the walk landed on and its canonical spelling
+   * (two spellings of one root, a symlinked checkout or `/tmp` vs
+   * `/private/tmp`, must share one connection and one watch, #1835). Null when
+   * no index is found. The rule is {@link selectIndexRootForCall}'s (the nearest
+   * `.codegraph/`, except that a sub-project index inside a git worktree does
+   * not shadow the worktree's own, and, with a builder, an index above a git
+   * repository nested around the path is not the path's), the one the builder
+   * holds roots by. The
+   * ONE resolver: {@link getCodeGraph} opens what it returns, and a session's
+   * admission check ({@link ExecuteOptions}) judges the same root before
+   * anything is opened.
+   */
+  private selectIndex(projectPath: string): { resolvedRoot: string; canonicalRoot: string } | null {
+    const resolvedRoot = this.selectIndexRootForCall(projectPath);
+    if (!resolvedRoot) return null;
+    return { resolvedRoot, canonicalRoot: canonicalPath(resolvedRoot) };
+  }
+
+  /**
+   * The index root a call on `projectPath` selects: {@link selectOwnIndexRoot} on a handler with a builder (a git
+   * repository nested in an indexed checkout is its own worktree root, so the checkout's index does not answer
+   * for it, covered or not: the builder seeds or builds one for the nested repository unless
+   * CODEGRAPH_NO_AUTO_SEED=1 turns automatic indexing off, the call answers the building note while that runs,
+   * and the not-indexed guidance when the copy or build fails), {@link selectIndexRoot} on one without (the CLI,
+   * the read-only fallback, query workers: nothing builds there, and {@link uncoveredNestedRepo} guards the nested
+   * case instead). The one place the choice is made, for the selection, the builder question, the sensitive-path
+   * refusal and the focus root.
+   */
+  private selectIndexRootForCall(projectPath: string): string | null {
+    return this.builder ? selectOwnIndexRoot(projectPath) : selectIndexRoot(projectPath);
+  }
+
+  /**
+   * The open CodeGraph for an index root the up-walk resolved: the CLI's
+   * default instance, a cached one, or a newly opened (and cached) one.
    */
   private openProjectRoot(resolvedRoot: string, canonicalRoot: string): CodeGraph {
-    // If the path resolves to the default project, reuse the already-open
+    // If the path resolves to the default project (the CLI handler's own
+    // CodeGraph; the MCP engine's handler has none), reuse the already-open
     // default instance rather than opening a SECOND connection to the same DB.
     // A duplicate connection serializes reads against the watcher's auto-sync
     // writes; when WAL isn't in effect (e.g. a filesystem without shared-memory
     // support) that surfaces as intermittent
     // "database is locked" on concurrent tool calls. See issue #238. The
-    // default instance is owned/closed by the server, so it's never cached.
+    // default instance is owned/closed by its creator, so it's never cached.
     // Another spelling of the same root counts too (#1057).
     if (this.cg && isSameIndexRoot(this.cg.getProjectRoot(), resolvedRoot)) {
       return this.freshen(this.cg);
@@ -2528,7 +2836,7 @@ export class ToolHandler {
     // a changed resolution maps to a different entry instead of a stale hit.
     const cached = this.projectCache.get(canonicalRoot);
     if (cached) {
-      // Refresh LRU position.
+      // Refresh the last-use position.
       this.projectCache.delete(canonicalRoot);
       this.projectCache.set(canonicalRoot, cached);
       this.projectUsedAt.set(canonicalRoot, Date.now());
@@ -2546,9 +2854,15 @@ export class ToolHandler {
       }
     }
 
-    // Indexes an interrupted bulk load dropped are rebuilt off this thread,
-    // before the project is served (awaitIndexRecovery, #1887).
-    const open = () => loadCodeGraph().openSync(canonicalRoot, { deferIndexRecovery: true });
+    // The ONE open path: a read-only handler passes `readOnly`, which leaves
+    // migrations, index repair (the secondary indexes an interrupted bulk load
+    // dropped, #1887) and WAL maintenance to the builder when there is one: it
+    // runs them in the open job of its hold, which the call waited for at most
+    // a bounded time. With none (the read-only fallback) the
+    // index is served as it is. The engine's lifecycle calls this closure for
+    // it like for any other open.
+    const readOnly = this.readOnly;
+    const open = () => loadCodeGraph().openSync(canonicalRoot, { readOnly });
     const cg = this.projectLifecycle?.open(canonicalRoot, open) ?? open();
     this.projectCache.set(canonicalRoot, cg);
     this.projectUsedAt.set(canonicalRoot, Date.now());
@@ -2558,7 +2872,9 @@ export class ToolHandler {
 
   /**
    * The nested git repository `projectPath` lives in when the index the
-   * up-walk reached (`indexRoot`'s, open as `cg`) holds none of its files; null
+   * up-walk reached (`indexRoot`'s, open as `cg`) holds none of its files. Only a
+   * handler with no builder gets here with such an index (a builder's
+   * {@link selectIndexRootForCall} never selects an index above a nested repository); null
    * when that index covers it — an ordinary subdirectory, a submodule or
    * embedded clone the ancestor indexes, a linked worktree (#155) — or when git
    * can't tell (#2110).
@@ -2585,27 +2901,116 @@ export class ToolHandler {
   }
 
   /**
-   * Wait for a project to finish rebuilding, off this thread, the secondary
-   * indexes an interrupted bulk load dropped (#1887). Not time-boxed like the
-   * catch-up gate: without them a read scans whole tables, which on a large
-   * index stalls the thread the rebuild was moved off. Never throws: a failed
-   * rebuild leaves reads correct, and the next call tries again.
+   * Whether the builder must be asked about `projectPath` before the call
+   * opens its index. Yes for an index this handler has not opened (a first
+   * call, or one after an idle release: the builder's `ensure` resolves once it
+   * opened and migrated the index, or after a bounded wait, or when it could not
+   * open it, and this handler then opens read-only whatever is on disk), for one the builder no
+   * longer reports holding (its hold was dropped, or it restarted before
+   * re-holding), and for a path with a `.git` entry between it and its index or
+   * a `rebuild.pid` beside it (a worktree that may need a seed or a cold
+   * build). The index is the call's own ({@link selectIndexRootForCall}): a
+   * path in a git repository nested below an indexed checkout has none, so the
+   * builder is asked. Yes for a path with no index at all, in a git working tree or not:
+   * outside git the builder cold-builds it at the session's anchor root
+   * ({@link ExecuteOptions} `anchorRoot`). No otherwise: a
+   * call against an index already open and held costs a few stats, no IPC, so
+   * a builder busy with a long job never delays a read of another project.
    */
-  private async awaitIndexRecovery(cg: CodeGraph): Promise<void> {
-    if (!cg.hasPendingIndexRecovery?.()) return;
-    try {
-      await cg.recoverIndexes();
-    } catch (err) {
-      process.stderr.write(
-        `[CodeGraph MCP] Could not restore the indexes an interrupted indexing run left out of ${cg.getProjectRoot()}: ` +
-        `${err instanceof Error ? err.message : String(err)}. Queries still work, more slowly; the next call tries again.\n`
-      );
+  private needsBuilderEnsure(projectPath: string, builder: HandlerBuilder): boolean {
+    const root = this.selectIndexRootForCall(projectPath);
+    if (root === null) return worktreeSeedMayApply(projectPath);
+    const canonical = canonicalPath(root);
+    if (!this.projectCache.has(canonical)) return true;
+    if (builder.freshness(canonicalProjectRoot(canonical)) === null) return true;
+    return worktreeSeedMayApply(projectPath);
+  }
+
+  /**
+   * Have the builder hold the index a call names before the handler opens it:
+   * an indexed root is held (its writable open queued as a job, then its catch-up;
+   * the call waits for the open a bounded time),
+   * a git worktree with no index of its own is seeded from an indexed sibling
+   * worktree or cold-built from the queue (a git repository nested in an indexed
+   * checkout is such a worktree: the checkout's index is another repository's),
+   * a directory outside git with no
+   * index is cold-built at `anchorRoot` (the session's anchor root; the path
+   * itself when the call has no session), and a call that finds it still
+   * building is answered with the building note (success-shaped, through
+   * NotIndexedError) until it is done. Only on a handler that has a builder
+   * (the engine's; CLI, worker and fallback handlers never seed or build). A
+   * path in a git worktree the builder could not give an index (no sibling is
+   * complete yet, the copy failed, or the builder is not answering) is
+   * remembered, so that {@link getCodeGraph} answers it with the seeder's
+   * guidance. A plain directory the builder refused to build (home, a
+   * filesystem root) or whose build failed is remembered the same way and
+   * answered with its own text, which names the reason. The wording
+   * module is loaded lazily, only for those answers: a call against an
+   * index of the tree's own never loads it.
+   */
+  private async seedWorktreeIndex(projectPath: string, anchorRoot?: string): Promise<void> {
+    const builder = this.builder;
+    if (!builder || !this.projectLifecycle) return;
+    // A sensitive folder is refused before the builder is asked about it.
+    this.refuseSensitivePath(projectPath, this.selectIndexRootForCall(projectPath));
+    if (!this.needsBuilderEnsure(projectPath, builder)) return;
+    const outcome = await builder.ensure(projectPath, anchorRoot);
+    if (outcome.kind === 'building') {
+      // A `codegraph index` rebuild of an index that exists is not a build the
+      // builder runs: the open's rebuild fence answers it ("a rebuild is in
+      // progress"), as it does for a call that reaches it without the builder.
+      const { readWriterLock } = await import('./writer-lock');
+      if (readWriterLock(outcome.root, 'rebuild.pid')?.mode === 'rebuild') return;
+      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
+      throw new NotIndexedError(worktreeSeedModule.buildingNote(outcome.root));
+    }
+    const unbuilt = outcome.kind === 'none' ? outcome.unbuilt : undefined;
+    const worktree = outcome.kind === 'none' && !unbuilt ? (outcome.worktree ?? gitRootByStat(projectPath)) : null;
+    if (unbuilt) {
+      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
+      if (this.unbuiltDirectories.size >= MAX_UNSEEDED_WORKTREES) this.unbuiltDirectories.clear();
+      this.unbuiltDirectories.set(projectPath, unbuilt);
+    } else {
+      this.unbuiltDirectories.delete(projectPath);
+    }
+    if (worktree) {
+      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
+      if (this.unseededWorktrees.size >= MAX_UNSEEDED_WORKTREES) this.unseededWorktrees.clear();
+      this.unseededWorktrees.set(projectPath, worktree);
+    } else {
+      this.unseededWorktrees.delete(projectPath);
     }
   }
 
-  private async awaitProjectGate(projectPath: string): Promise<void> {
+  /**
+   * Admit the index a call selects, have the builder hold (seed, build) it,
+   * admit it again if the builder changed which index that is, then open the
+   * project and wait for its catch-up. Resolves to the refusal to answer with
+   * when the session's admission check turns the call's index down.
+   */
+  private async awaitProjectGate(projectPath: string, admit?: IndexRootAdmission, anchorRoot?: string): Promise<ToolResult | null> {
+    // The session's check of the index this call would be answered from: the
+    // one `getCodeGraph` is about to open. An index outside the session's
+    // repository is never held, opened or queried for it, so the check runs
+    // before the builder is asked for an index that exists, and again for the
+    // index a seed or build just created.
+    let admitted: string | null = null;
+    const admitSelected = async (): Promise<ToolResult | null> => {
+      if (!admit) return null;
+      const selected = this.selectIndex(projectPath);
+      if (!selected || selected.canonicalRoot === admitted) return null;
+      const refusal = await admit(selected.canonicalRoot);
+      if (refusal) return this.textResult(refusal);
+      admitted = selected.canonicalRoot;
+      return null;
+    };
+    const first = await admitSelected();
+    if (first) return first;
+    await this.seedWorktreeIndex(projectPath, anchorRoot);
+    const second = await admitSelected();
+    if (second) return second;
     const cg = this.getCodeGraph(projectPath);
-    if (!this.projectLifecycle || cg === this.cg) return;
+    if (!this.projectLifecycle || cg === this.cg) return null;
     let gate = this.projectGates.get(cg);
     if (!gate) {
       gate = this.projectLifecycle.activate(cg).catch(() => { /* engine logs */ });
@@ -2616,21 +3021,42 @@ export class ToolHandler {
       });
     }
     await this.awaitCatchUpGate(gate);
+    return null;
   }
 
   /**
    * Never evict a graph while a tool call or its timed-out reconcile uses it.
-   * Evicts over the LRU bound, on close, and once idle past the timeout
-   * (#2087). The cache is in last-use order, so idle entries lead it.
+   * Evicts on close and once idle past the timeout (#2087); no cap bounds how
+   * many projects stay open, only the idle close does. The cache is in
+   * last-use order, so idle entries lead it. A pinned root is skipped by the
+   * idle timeout; only close releases it here. The trim reads the registry
+   * (one small file per root) only for an entry that is idle; arming the idle
+   * timer reads it for the oldest roots, up to the first unpinned one.
+   * `maxOpen` is no standing cap: it defaults to none, and only
+   * {@link releaseIdleMemory} passes one, to close every project but the last
+   * one used on a query worker kept through a quiet spell.
+   * Callers: the idle timer, a tool call's open and finish, a catch-up or a
+   * release settling, a release, closeAll, and (an `openPinned` engine only) the
+   * engine after each housekeeping pass ({@link trimIdleProjects}): a pinned
+   * project arms no idle timer, so one unpinned later is released by that re-trim
+   * when no call comes.
    */
-  private trimProjects(maxOpen = MAX_CACHED_PROJECTS): void {
+  private trimProjects(maxOpen = Infinity): void {
     if (this.activeCalls > 0) return;
+    for (const resolve of this.idleCallWaiters.splice(0)) resolve();
     const idleMs = resolveProjectIdleTimeoutMs();
     const now = Date.now();
+    const pinnedMemo = new Map<string, boolean>();
+    const pinned = (root: string): boolean => {
+      let p = pinnedMemo.get(root);
+      if (p === undefined) pinnedMemo.set(root, (p = projectRootPinned(root)));
+      return p;
+    };
     for (const [root, cg] of this.projectCache) {
       const idle = idleMs > 0 && now - (this.projectUsedAt.get(root) ?? now) >= idleMs;
       if (!this.closing && this.projectCache.size <= maxOpen && !idle) break;
       if (this.projectGates.has(cg)) continue;
+      if (!this.closing && pinned(root)) continue;
       this.projectCache.delete(root);
       this.projectUsedAt.delete(root);
       if (this.projectLifecycle) {
@@ -2652,7 +3078,8 @@ export class ToolHandler {
    * project whose catch-up is still running is trimmed when that settles; the
    * 1s floor keeps a project a trim must skip from re-arming in a tight loop.
    * Each call replaces the armed timer, so an older project whose catch-up
-   * settles after a newer one armed the timer keeps its own deadline.
+   * settles after a newer one armed the timer keeps its own deadline. A
+   * pinned project never idles out, so it arms nothing.
    */
   private scheduleIdleRelease(idleMs: number): void {
     if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer);
@@ -2660,6 +3087,7 @@ export class ToolHandler {
     if (this.closing || idleMs <= 0) return;
     for (const [root, cg] of this.projectCache) {
       if (this.projectGates.has(cg)) continue;
+      if (projectRootPinned(root)) continue;
       const due = (this.projectUsedAt.get(root) ?? Date.now()) + idleMs - Date.now();
       this.idleReleaseTimer = setTimeout(() => {
         this.idleReleaseTimer = null;
@@ -2673,12 +3101,10 @@ export class ToolHandler {
   /**
    * Heal a long-lived connection whose `.codegraph/` was removed and recreated
    * at the same path (a worktree recreated, or `rm -rf .codegraph` + re-init)
-   * before handing it to a tool. Otherwise the daemon keeps serving the
-   * pre-removal snapshot from its now-unlinked file handle until restart — and
-   * because the daemon registry is keyed by path, a same-path recreate routes
-   * new clients straight back to this same stale daemon (#925). The check is one
-   * stat() and a no-op unless the inode actually changed; it never throws into a
-   * tool call.
+   * before handing it to a tool. Otherwise the server keeps serving the
+   * pre-removal snapshot from its now-unlinked file handle until restart
+   * (#925). The check is one stat() and a no-op unless the inode actually
+   * changed; it never throws into a tool call.
    */
   private freshen(cg: CodeGraph): CodeGraph {
     try {
@@ -2697,11 +3123,102 @@ export class ToolHandler {
   }
 
   /**
+   * The canonical roots of the projects this handler holds open now, in
+   * last-use order. The engine's housekeeping pass reads it and releases the
+   * ones whose directory or index is gone.
+   */
+  cachedProjectRoots(): string[] {
+    return [...this.projectCache.keys()];
+  }
+
+  /**
+   * Whether this handler holds the project at `root` open now. `root` is matched
+   * canonically against the cached roots, as {@link releaseProjectRoot} does, so
+   * any spelling of it works. The pinned-project opener asks it before each open.
+   */
+  isProjectRootOpen(root: string): boolean {
+    const wanted = canonicalProjectRoot(root);
+    for (const cached of this.projectCache.keys()) {
+      if (cached === root || canonicalProjectRoot(cached) === wanted) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Open the project at `root` with no tool call: the path a call that names it
+   * takes (the builder holds it and queues its catch-up, the handler opens it
+   * read-only and caches it, then the catch-up is awaited, time-boxed), minus the
+   * session's admission check and anchor, which belong to a call. The pinned-project
+   * opener (src/extensions/host/worktree-lifecycle/pinned-open.ts) uses it, so a
+   * pinned project is held and open before anyone asks. The project is cached with
+   * the time of this open: once it is unpinned, the idle release closes it after
+   * the idle timeout like any other. Rejects with what a call would have been
+   * answered with (a sensitive path, a project the builder is still building, an
+   * index that cannot be opened). A no-op once the handler is closing.
+   */
+  async openPinnedProject(root: string): Promise<void> {
+    if (this.closing) return;
+    await this.awaitProjectGate(root);
+  }
+
+  /**
+   * Run the idle release now: close every cached, unpinned project idle past
+   * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` (see {@link trimProjects}; a no-op while a
+   * tool call is running). The engine calls it after each housekeeping pass: a
+   * project opened without a call, then unpinned, arms no idle timer while it is
+   * pinned, and no later call may come to run the trim for it.
+   */
+  trimIdleProjects(): void {
+    this.trimProjects();
+  }
+
+  /**
+   * Release one cached explicit project (worktree teardown, or a housekeeping
+   * pass that found its directory or database gone): `root` is matched
+   * canonically against the cached roots, so any spelling of it works, and a
+   * root whose directory is already gone still matches its realpath'd key. It
+   * leaves the cache at once; a call that names the root meanwhile opens it
+   * again, with a handle of its own that this release leaves alone (the
+   * engine's `releaseProjectRoot` drops the builder's hold
+   * after this resolves; the next call's ensure holds it again). The close
+   * waits for its catch-up and
+   * every in-flight tool call to finish (the handler counts calls, not calls
+   * per project), then goes through the lifecycle's release, or `close()`
+   * without one. Pinned or not, it is released. A root that is not cached is
+   * a no-op.
+   */
+  async releaseProjectRoot(root: string): Promise<void> {
+    const wanted = canonicalProjectRoot(root);
+    let key: string | undefined;
+    for (const cached of this.projectCache.keys()) {
+      if (cached === root || canonicalProjectRoot(cached) === wanted) {
+        key = cached;
+        break;
+      }
+    }
+    if (key === undefined) return;
+    const cg = this.projectCache.get(key)!;
+    this.projectCache.delete(key);
+    this.projectUsedAt.delete(key);
+    this.pendingCloses++;
+    try {
+      const gate = this.projectGates.get(cg);
+      if (gate) await gate;
+      if (this.activeCalls > 0) await new Promise<void>((resolve) => this.idleCallWaiters.push(resolve));
+      if (this.projectLifecycle) await this.projectLifecycle.release(cg);
+      else cg.close();
+    } finally {
+      this.pendingCloses--;
+      this.trimProjects();
+    }
+  }
+
+  /**
    * A query worker kept through a quiet spell gives back what it can without
-   * going cold: every project but the last one used closes, and what stays
-   * open lets go of the memory it holds only to read faster. The heap needs
-   * nothing from here: V8 shrinks an idle thread's by itself, well before the
-   * pool's idle delay is up.
+   * going cold: every project but the last one used closes (a pinned one
+   * stays, as it does for the idle close), and what stays open lets go of the
+   * memory it holds only to read faster. The heap needs nothing from here: V8
+   * shrinks an idle thread's by itself, well before the pool's `idleShrinkMs` is up.
    */
   releaseIdleMemory(): void {
     this.trimProjects(1);
@@ -2718,6 +3235,8 @@ export class ToolHandler {
   closeAll(): Promise<void> {
     this.closing = true;
     this.worktreeMismatchCache.clear();
+    this.unseededWorktrees.clear();
+    this.unbuiltDirectories.clear();
     if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer);
     this.idleReleaseTimer = null;
     this.nestedRepoCache.clear();
@@ -2773,19 +3292,19 @@ export class ToolHandler {
   /**
    * Cached git worktree/index mismatch for a tool call's effective project.
    *
-   * The "effective project" is what the request targets: an explicit
-   * `projectPath` arg, else the directory the server resolved its default
-   * project from (`defaultProjectHint`), else cwd. Memoized per start path —
-   * see `worktreeMismatchCache`. Best-effort: if the project can't be resolved
-   * (e.g. nothing initialized yet), it reports "no mismatch" so a tool is never
+   * The "effective project" is what the request targets: the `projectPath`
+   * arg, else (the CLI's handler, the only one with a default CodeGraph) cwd.
+   * Memoized per start path — see `worktreeMismatchCache`. Best-effort: if the
+   * project can't be resolved, it reports "no mismatch" so a tool is never
    * broken by this check.
    */
   private worktreeMismatchFor(projectPath?: string): WorktreeIndexMismatch | null {
-    const startPath = projectPath ?? this.defaultProjectHint ?? process.cwd();
+    const startPath = projectPath ?? process.cwd();
 
     // The verdict depends on BOTH the start path AND the index root it resolves
     // to, so the cache must be keyed on the pair. Resolve the index root first
-    // (cheap — getCodeGraph re-walks to the nearest .codegraph/, no git), then
+    // (cheap — getCodeGraph re-walks to the index with stats; a handler with a builder also asks git, through
+    // ownIndexRootFor, for a path with a `.git` entry below its index, and remembers a nested answer), then
     // key on `(startPath, indexRoot)`. The moment that root changes — most
     // importantly when a git worktree gains its own index and the walk-up stops
     // there instead of at the parent checkout — the key changes and the verdict
@@ -2914,6 +3433,85 @@ export class ToolHandler {
     return result;
   }
 
+  /**
+   * What watches `cg`'s project, as far as this handler can tell. With a
+   * builder, the builder watches (the handler's own handles are read-only and
+   * never do), so this is the freshness it last pushed for the root; a root it
+   * does not report is no known degradation and no pending file. Without one,
+   * `cg` is asked: the CLI handler's own instance, or a test's stub, which may
+   * lack the newer watcher methods, and each is read defensively. A pending
+   * list that cannot be read comes back null.
+   */
+  private watcherView(cg: CodeGraph): { degraded: boolean; recovering: boolean; reason: string | null; pending: PendingFile[] | null } {
+    if (this.builder && cg !== this.cg) {
+      let state: BuilderFreshness | null = null;
+      try {
+        state = this.builder.freshness(canonicalProjectRoot(cg.getProjectRoot()));
+      } catch {
+        state = null;
+      }
+      if (!state) return { degraded: false, recovering: false, reason: null, pending: [] };
+      return {
+        degraded: state.recovering || state.degradedReason !== null,
+        recovering: state.recovering,
+        reason: state.degradedReason,
+        pending: state.pendingFiles.map((file) => pendingFileOf(state.root, file)),
+      };
+    }
+    const degraded = this.isWatcherDegraded(cg);
+    let recovering = false;
+    let reason: string | null = null;
+    if (degraded) {
+      try {
+        recovering = cg.isWatcherRecovering?.() ?? false;
+      } catch {
+        recovering = false;
+      }
+      try {
+        reason = cg.getWatcherDegradedReason?.() ?? null;
+      } catch {
+        reason = null;
+      }
+    }
+    let pending: PendingFile[] | null;
+    try {
+      pending = cg.getPendingFiles?.() ?? [];
+    } catch {
+      pending = null;
+    }
+    return { degraded, recovering, reason, pending };
+  }
+
+  /**
+   * Whether live watching of `cg`'s project has stopped (whole-index
+   * degradation, #876; a watcher re-armed but not yet caught up counts): the
+   * builder's pushed state when there is a builder, else `cg`'s own.
+   */
+  private isWatcherDegraded(cg: CodeGraph): boolean {
+    try {
+      if (this.builder && cg !== this.cg) {
+        const state = this.builder.freshness(canonicalProjectRoot(cg.getProjectRoot()));
+        return state !== null && (state.recovering || state.degradedReason !== null);
+      }
+      return cg.isWatcherDegraded?.() ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The sync `fresh: true` runs on `project`: the builder's sync job for an
+   * engine's handler, the instance's own for a handler that is not read-only
+   * (the CLI's), none for a read-only handler without a builder (the proxy's
+   * fallback), which then only measures.
+   */
+  private freshSyncFor(project: CodeGraph): (() => Promise<unknown>) | undefined {
+    const builder = this.builder;
+    if (builder) return () => builder.sync(canonicalProjectRoot(project.getProjectRoot()));
+    if (this.readOnly) return undefined;
+    return () => project.sync();
+  }
+
   private withStalenessNotice(result: ToolResult, projectPath?: string): ToolResult {
     if (result.isError) return result;
 
@@ -2921,14 +3519,16 @@ export class ToolHandler {
     try {
       cg = this.getCodeGraph(projectPath);
     } catch {
-      return result; // no default project — leave as is
+      return result; // the project can't be resolved — leave as is
     }
 
-    // A cross-project `projectPath` call's cached CodeGraph only has a watcher
-    // when the engine owns its lifecycle (#1835) — the CLI's handler has none.
-    // When the cross-project path happens to be the same project as the
-    // default cg, prefer the default cg so the staleness signal still fires
-    // when an agent passes the explicit projectPath form of its own project.
+    // A cross-project `projectPath` call's cached CodeGraph is opened read-only
+    // and has no watcher of its own (with a builder, the builder's pushed state
+    // stands in, see watcherView) — the CLI's handler has none either.
+    // When the cross-project path happens to be the same project as the CLI
+    // handler's own instance, prefer that instance so the staleness signal
+    // still fires when an agent passes the explicit projectPath form of its own
+    // project.
     if (this.cg && cg !== this.cg) {
       try {
         const sameProject =
@@ -2943,41 +3543,26 @@ export class ToolHandler {
     // stopped, getPendingFiles() is empty so the per-file banner below can't
     // fire — but the index is now FROZEN and silently drifting stale. Surface
     // one global notice instead, so the agent Reads for current content rather
-    // than trusting a response off a no-longer-updating index. (A cross-project
-    // instance without an engine-owned watcher reports false here — correct: we
-    // only know degraded state for a project we watch.)
-    let degraded = false;
-    try {
-      degraded = cg.isWatcherDegraded?.() ?? false;
-    } catch {
-      degraded = false;
-    }
-    if (degraded) {
+    // than trusting a response off a no-longer-updating index. (An instance
+    // nobody watches reports false here — correct: we only know degraded state
+    // for a project something watches. With a builder that is the builder, and
+    // its pushed state is what {@link watcherView} reads.)
+    const watcher = this.watcherView(cg);
+    if (watcher.degraded) {
       const [head, ...tail] = result.content;
       if (!head || head.type !== 'text') return result;
-      if (cg.isWatcherRecovering?.()) {
+      if (watcher.recovering) {
         const composed = `${formatRecoveringBanner()}\n\n${head.text}`;
         return { ...result, content: [{ type: 'text', text: composed }, ...tail] };
       }
-      let reason: string | null = null;
-      try {
-        reason = cg.getWatcherDegradedReason?.() ?? null;
-      } catch {
-        reason = null;
-      }
-      const composed = `${formatDegradedBanner(reason)}\n\n${head.text}`;
+      const composed = `${formatDegradedBanner(watcher.reason)}\n\n${head.text}`;
       return { ...result, content: [{ type: 'text', text: composed }, ...tail] };
     }
 
-    // Defensive: some test fakes inject a partial CodeGraph stub without the
-    // newer pending-files API. Treat missing/throwing as "no pending files."
-    let pending: PendingFile[] = [];
-    try {
-      pending = cg.getPendingFiles?.() ?? [];
-    } catch {
-      return result;
-    }
-    if (pending.length === 0) return result;
+    // A pending list that cannot be read (a throwing or partial test stub) is
+    // treated as "no pending files."
+    const pending = watcher.pending;
+    if (pending === null || pending.length === 0) return result;
 
     const [first, ...rest] = result.content;
     if (!first || first.type !== 'text') return result;
@@ -3010,7 +3595,7 @@ export class ToolHandler {
   /**
    * Warn this MCP client once for each selected project whose persisted
    * extraction version predates the running engine. The state belongs to the
-   * client session, never this shared handler: one daemon serves many clients.
+   * client session, never this shared handler: one server answers many clients.
    */
   private withIndexVersionNotice(
     result: ToolResult,
@@ -3045,18 +3630,38 @@ export class ToolHandler {
    * Execute a tool by name.
    *
    * `sessionState` is the CALLER's per-session explore history (CG-17). The
-   * daemon shares one ToolHandler across every connected session, so this state
+   * machine server shares one ToolHandler across every connected session, so this state
    * cannot live on the handler — each session owns one and hands it in, which is
-   * what keeps two sessions on one daemon from ever seeing each other's calls.
+   * what keeps two sessions on one server from ever seeing each other's calls.
    * Omit it (the CLI does) and explore behaves exactly as before, untracked.
+   *
+   * `options.admitIndexRoot` is the session's judgement of the index a call
+   * would be answered from (see {@link ExecuteOptions}). A handler that owns a
+   * project lifecycle (every MCP engine's) refuses a call that carries none;
+   * the CLI's handler has no lifecycle and passes none.
+   *
+   * The two refusals below come first, before the catch-up gate and before any
+   * project is seeded, opened or synced: a name that is no tool, and a call
+   * that skipped the admission check, must never cost an open or a write.
    */
   async execute(
     toolName: string,
     args: Record<string, unknown>,
     sessionState?: ExploreSessionState,
-    indexVersionWarnings?: IndexVersionWarningState,
+    options?: ExecuteOptions,
   ): Promise<ToolResult> {
     if (this.closing) return this.textResult('This MCP session is closing; retry with a connected session.');
+    if (!isKnownTool(toolName)) return this.errorResult(`Unknown tool: ${toolName}`);
+    if (this.projectLifecycle && !options?.admitIndexRoot) {
+      // Success-shaped like every expected condition: this is a fault of the
+      // calling code (dispatchToolCall always passes the check), but an isError
+      // would teach the agent to abandon the tools.
+      return this.textResult(
+        'This codegraph call was not run: it did not pass the repository check every call on this server ' +
+        'must pass, so the server could not tell whether the project belongs to this session. ' +
+        'Retry the call; if it persists, restart the codegraph session.'
+      );
+    }
     this.activeCalls++;
     try {
       // Block the first tool call on the engine's post-open reconcile so we
@@ -3071,10 +3676,17 @@ export class ToolHandler {
         const gate = this.catchUpGate;
         await this.awaitCatchUpGate(gate);
       }
-      // Honor the optional tool allowlist (CODEGRAPH_MCP_TOOLS): a trimmed
-      // surface rejects ablated tools defensively even if a client cached them.
-      if (!this.isToolAllowed(toolName)) {
-        return this.errorResult(`Tool ${toolName} is disabled via CODEGRAPH_MCP_TOOLS`);
+      // Honor the tool allowlist: a trimmed surface rejects ablated tools
+      // defensively even if a client cached them. The session's own list decides
+      // (its launcher's CODEGRAPH_MCP_TOOLS: this server's environment is
+      // whichever client started it); only a call that carries none reads this
+      // process's CODEGRAPH_MCP_TOOLS.
+      if (!this.isToolAllowed(toolName, options?.toolAllowlist)) {
+        return this.errorResult(
+          options?.toolAllowlist === undefined
+            ? `Tool ${toolName} is disabled via CODEGRAPH_MCP_TOOLS`
+            : `Tool ${toolName} is not enabled for this session (CODEGRAPH_MCP_TOOLS)`,
+        );
       }
       // Cross-cutting input validation. All tools accept an optional
       // `projectPath` and most accept either `query`, `task`, or
@@ -3086,8 +3698,8 @@ export class ToolHandler {
       }
       // An explicit project gets the same first-call guarantee as the default
       // (#1835): its post-open catch-up sync finishes (time-boxed) before we
-      // serve it. Resolved on the main thread so the watcher lives here even
-      // when dispatch is off-loaded to a worker.
+      // serve it. Resolved on the main thread so the gate and the freshness reads
+      // stay on the engine when dispatch is off-loaded to a worker.
       if (typeof pathCheck === 'string') {
         // A file inside a project (an agent passing the file it is looking at)
         // stands for its directory, like any other path inside it (#2982).
@@ -3098,7 +3710,8 @@ export class ToolHandler {
           if (statSync(pathCheck).isFile()) projectPath = dirname(pathCheck);
         } catch { /* a missing path walks up to its .codegraph/ as before */ }
         if (projectPath !== pathCheck) args = { ...args, projectPath };
-        await this.awaitProjectGate(projectPath);
+        const refused = await this.awaitProjectGate(projectPath, options?.admitIndexRoot, options?.anchorRoot);
+        if (refused) return refused;
       }
       // The `path` and `pattern` properties used by codegraph_files are
       // also path-shaped — apply the same cap.
@@ -3112,26 +3725,39 @@ export class ToolHandler {
       }
 
       const project = await this.getCodeGraph(args.projectPath as string | undefined);
-      await this.awaitIndexRecovery(project);
-      // Recover a watcher disabled by prolonged lock contention on the next call.
-      // The stale banner remains until the watcher finishes its full scan;
-      // frequent calls cannot bypass its cooldown (#1959).
+      // Recover a watcher the handler owns (an instance that was asked to
+      // watch, not the read-only handles an engine opens: those never watch)
+      // that prolonged lock contention disabled, on the next call. The stale
+      // banner remains until the watcher finishes its full scan; frequent calls
+      // cannot bypass its cooldown (#1959).
       if (project.rearmWatcherAfterLockContention?.()) {
         process.stderr.write('[CodeGraph MCP] Re-armed file watcher; full catch-up pending.\n');
       }
 
+      // `fresh: true`: bounded wait for the index to match the working tree,
+      // here on the main thread before dispatch (pooled or not), so the answer
+      // comes from the synced index. Never throws. The checkpoint (including a
+      // passed bound or a sync error) is appended to a successful answer; an
+      // isError result or a stale-file refusal is returned without it. The sync
+      // is the builder's (a sync job at sync priority, queued behind a running
+      // job); a read-only handler with no builder only measures: its checkpoint
+      // says the pending files were not synced, because it holds the index
+      // read-only. A handler that is not read-only (the CLI's) syncs its own.
+      const freshCp = args.fresh === true ? await waitForFresh(project, { sync: this.freshSyncFor(project) }) : undefined;
+
       // codegraph_status reports watcher state (pending files, degraded mode,
       // worktree warning) and embeds its own sections — it must run on the MAIN
-      // thread against the watched default instance, so it is NEVER off-loaded to
-      // a worker (whose read connection has no watcher). It also skips the
-      // auto-banner wrapper to avoid duplicating its own pending-files section.
+      // thread against the project's own instance and the builder's freshness,
+      // so it is NEVER off-loaded to a worker (whose read connection has no
+      // watcher). It also skips the auto-banner wrapper to avoid duplicating its
+      // own pending-files section.
       if (toolName === 'codegraph_status') {
-        const result = await this.handleStatus(args);
-        return this.withIndexVersionNotice(
-          result,
+        const status = this.withIndexVersionNotice(
+          await this.handleStatus(args),
           args.projectPath as string | undefined,
-          indexVersionWarnings,
+          options?.indexVersionWarnings,
         );
+        return await appendCheckpointFooter(status, args, project, freshCp);
       }
 
       // Read tools: off-load the CPU-heavy dispatch to the worker pool when one
@@ -3146,8 +3772,8 @@ export class ToolHandler {
       // no pool or a degraded one, dispatch runs in-process
       // exactly as before. Either way the result flows through the
       // cross-cutting notices — worktree-index mismatch (#155) and per-file
-      // staleness (#403) — which need the watched MAIN instance and so are
-      // always applied here, never in the worker.
+      // staleness (#403) — which need the engine's own handler and the builder's
+      // pushed freshness, and so are always applied here, never in the worker.
       //
       // Explore also carries the session's own call history down (CG-17) and its
       // emission record back up. Both travel as plain properties — on the args
@@ -3155,18 +3781,18 @@ export class ToolHandler {
       // structured-clone boundary into a worker, where a closure or a handler
       // field could not follow.
       const dispatchArgs = this.withSessionView(toolName, args, sessionState);
-      // The default may have appeared after the workers started. Pass the
-      // main thread's current root explicitly; with no root or projectPath,
-      // keep the main handler's workspace-specific not-indexed guidance.
+      // Workers hold no default project: every pooled call names its project.
+      // (The MCP engine's handler has no default, and the session's guard in
+      // front of it requires `projectPath`; the CLI's handler never has a pool.)
       const pooled = !!(this.queryPool && this.queryPool.healthy && this.queryPool.ready);
-      const projectPath = pooled ? args.projectPath ?? this.cg?.getProjectRoot() : undefined;
-      const wasDegraded = project.isWatcherDegraded?.();
+      const projectPath = pooled ? args.projectPath : undefined;
+      const wasDegraded = this.isWatcherDegraded(project);
       const raw = (pooled && projectPath)
         ? await this.queryPool!.run(toolName, { ...dispatchArgs, projectPath })
         : await this.executeReadTool(toolName, dispatchArgs);
       const answeredFrom = raw._cgAnswerFiles;
       delete raw._cgAnswerFiles;
-      if (!raw.isError && answeredFrom && (wasDegraded || project.isWatcherDegraded?.())) {
+      if (!raw.isError && answeredFrom && (wasDegraded || this.isWatcherDegraded(project))) {
         const validation = await validateAnswerFiles(project.getProjectRoot(), answeredFrom);
         if (validation.stale.length || validation.unchecked.length) {
           // Rejected source must not enter the session's emission history.
@@ -3192,15 +3818,13 @@ export class ToolHandler {
       // caller passed session state.
       const result = this.takeExploreEmission(raw, sessionState);
       const withWorktree = this.withWorktreeNotice(result, args.projectPath as string | undefined);
-      const withStaleness = this.withStalenessNotice(
-        withWorktree,
-        args.projectPath as string | undefined,
-      );
-      return this.withIndexVersionNotice(
+      const withStaleness = this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
+      const withVersion = this.withIndexVersionNotice(
         withStaleness,
         args.projectPath as string | undefined,
-        indexVersionWarnings,
+        options?.indexVersionWarnings,
       );
+      return await appendCheckpointFooter(withVersion, args, project, freshCp);
     } catch (err) {
       // Expected condition, not a malfunction: answer as a SUCCESS so the
       // agent keeps trusting the toolset for projects that ARE indexed.
@@ -3294,8 +3918,8 @@ export class ToolHandler {
    *
    * This is the worker thread's entry point (see {@link ./query-worker}) and the
    * in-process fallback for {@link execute}. It deliberately does NOT run the
-   * catch-up gate or the staleness/worktree notices — those need the daemon's
-   * watched main instance and stay on the main thread. Cross-cutting allowlist +
+   * catch-up gate or the staleness/worktree notices — those need the main
+   * thread's handler state and stay on the main thread. Cross-cutting allowlist +
    * path validation already ran in {@link execute} before routing here.
    */
   async executeReadTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -3327,6 +3951,7 @@ export class ToolHandler {
    * allowlist/validation (the caller owns those). `codegraph_status` is handled
    * on the main thread in {@link execute} and never reaches here. May throw
    * NotIndexed/PathRefusal, which {@link executeReadTool} classifies.
+   * An unknown name falls through to the extension tools (src/extensions/host).
    */
   private async dispatchTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     switch (toolName) {
@@ -3337,8 +3962,36 @@ export class ToolHandler {
       case 'codegraph_explore': return await this.handleExplore(args);
       case 'codegraph_node': return await this.handleNode(args);
       case 'codegraph_files': return await this.handleFiles(args);
-      default: return this.errorResult(`Unknown tool: ${toolName}`);
+      default: {
+        const ext = findExtensionTool(toolName);
+        if (ext) {
+          // The extension gets the session's focus, resolved for this call's
+          // worktree, in its context and never the internal keys: a tool that
+          // echoed or forwarded its args could not leak or replay them.
+          return await ext.handle(withoutSessionArgs(args), {
+            getCodeGraph: (p?: string) => this.getCodeGraph(p),
+            focus: this.focusDirsForCall(args),
+          });
+        }
+        return this.errorResult(`Unknown tool: ${toolName}`);
+      }
     }
+  }
+
+  /**
+   * The session's focus as `ctx.focus` carries it for this call: absolute canonical directories, the session's
+   * repo-relative entries read against the root of the worktree the call is answered from. That worktree is
+   * the one holding the index {@link selectIndexRootForCall} picks for the call's `projectPath` (nothing is opened),
+   * else the one containing `projectPath`; a call with no `projectPath` uses the default project's, and `[]`
+   * when there is none. `[]` too for a session with no focus. The built-in handlers apply the same rule per
+   * index through `focusPrefixesForIndex`.
+   */
+  private focusDirsForCall(args: Record<string, unknown>): string[] {
+    const entries = sessionFocusFromArgs(args);
+    if (entries.length === 0) return [];
+    const projectPath = typeof args.projectPath === 'string' && args.projectPath !== '' ? args.projectPath : null;
+    const base = projectPath === null ? this.cg?.getProjectRoot() : (this.selectIndexRootForCall(projectPath) ?? projectPath);
+    return base ? resolveFocusForRoot(worktreeRootOf(base), entries) : [];
   }
 
   /**
@@ -3357,13 +4010,28 @@ export class ToolHandler {
     const rawLimit = Number(args.limit) || 10;
     const limit = clamp(rawLimit, 1, 100);
 
-    const results = cg.searchNodes(query, {
-      limit,
+    // The search applies its limit inside the query layer, before any focus filter could see a file path, so a
+    // focused session over-fetches and cuts to `limit` after filtering: out-of-focus hits ranked above an
+    // in-focus one must not use up the slots. Capped, so a focus holding few of many matches can return fewer
+    // than `limit`; `scope: "repo"` is the way to see the rest.
+    const prefixes = focusPrefixesOfCall(cg, args, true);
+    const SEARCH_OVERFETCH = 5;
+    const SEARCH_FETCH_CAP = 500;
+    const found = cg.searchNodes(query, {
+      limit: prefixes === null ? limit : Math.min(limit * SEARCH_OVERFETCH, SEARCH_FETCH_CAP),
       kinds: kind ? [kind as NodeKind] : undefined,
     });
+    const results = prefixes === null
+      ? found
+      : found.filter((r) => inFocus(r.node.filePath, prefixes)).slice(0, limit);
 
     if (results.length === 0) {
-      return this.textResult(`No results found for "${query}"`);
+      // Hits that all sat outside the focus are a different answer from no hits at all: say which, and how to widen.
+      return this.textResult(
+        prefixes !== null && found.length > 0
+          ? nothingInFocusText(args, prefixes)
+          : `No results found for "${query}"`,
+      );
     }
 
     // Down-rank generated files within the FTS-returned set so a search
@@ -3411,6 +4079,8 @@ export class ToolHandler {
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const limit = clamp((args.limit as number) || 20, 1, 100);
     const fileFilter = typeof args.file === 'string' ? args.file : undefined;
+    // Callers cover the whole repository; the focus only decides which are listed first (see `splitByFocus`).
+    const prefixes = focusPrefixesOfCall(cg, args, false);
 
     const allMatches = this.findAllSymbols(cg, symbol);
     if (allMatches.nodes.length === 0) {
@@ -3458,12 +4128,16 @@ export class ToolHandler {
       // A successful `file` narrowing makes the multi-symbol aggregation note
       // stale — suppress it.
       const note = fileFilter && !filteredOut ? '' : allMatches.note;
+      // The listing and its counts cover the in-focus callers; the rest follow under "Outside focus". With no
+      // focus every caller is "inside", so the output is exactly the unfocused listing.
+      const { inside, outside } = this.splitByFocus(callers, prefixes);
       // Say when the cap cut the list (#1639, #1674): a truncated answer with
       // no marker reads as the complete set, and an agent under-counts from it.
-      const cut = callers.length > limit
-        ? `\n\n> Showing ${limit} of ${callers.length} callers; pass \`limit\` (up to 100) to widen.`
+      const cut = inside.length > limit
+        ? `\n\n> Showing ${limit} of ${inside.length} callers; pass \`limit\` (up to 100) to widen.`
         : '';
-      const formatted = this.formatNodeList(callers.slice(0, limit), `Callers of ${symbol}`, labels, locations, recursive) + cut + note + filterNote;
+      const outsideBlock = outside.length > 0 ? `\n\n${this.outsideFocusLines(outside, labels, limit).join('\n')}` : '';
+      const formatted = this.formatNodeList(inside.slice(0, limit), `Callers of ${symbol}`, labels, locations, recursive) + cut + outsideBlock + note + filterNote;
       return this.answerResult(cg, this.truncateOutput(formatted), answerPaths);
     }
 
@@ -3480,14 +4154,45 @@ export class ToolHandler {
         lines.push('- (no callers)');
         continue;
       }
-      for (const node of callers.slice(0, limit)) {
+      const { inside, outside } = this.splitByFocus(callers, prefixes);
+      if (inside.length === 0) lines.push('- (no callers inside the focus)');
+      for (const node of inside.slice(0, limit)) {
         lines.push(this.formatNodeListEntry(node, labels, locations, recursive));
       }
-      if (callers.length > limit) {
-        lines.push(`- … +${callers.length - limit} more (pass \`limit\` to widen)`);
+      if (inside.length > limit) {
+        lines.push(`- … +${inside.length - limit} more (pass \`limit\` to widen)`);
       }
+      if (outside.length > 0) lines.push('', ...this.outsideFocusLines(outside, labels, limit));
     }
     return this.answerResult(cg, this.truncateOutput(lines.join('\n') + filterNote), answerPaths);
+  }
+
+  /**
+   * Split a callers/impact result by the session's focus: the nodes whose file is in focus, then the rest,
+   * each in its original order. `prefixes` null (no focus) puts everything inside, so an unfocused session
+   * gets the plain listing with no `## Outside focus` section.
+   */
+  private splitByFocus(nodes: readonly Node[], prefixes: readonly string[] | null): { inside: Node[]; outside: Node[] } {
+    if (prefixes === null) return { inside: [...nodes], outside: [] };
+    const inside: Node[] = [];
+    const outside: Node[] = [];
+    for (const node of nodes) (inFocus(node.filePath, prefixes) ? inside : outside).push(node);
+    return { inside, outside };
+  }
+
+  /**
+   * The `## Outside focus (N)` section of a callers listing: every result the focus held back, one line each
+   * in the same shape as the in-focus lines, capped at `limit` like them. N counts all of them.
+   */
+  private outsideFocusLines(nodes: readonly Node[], labels: Map<string, string>, limit: number): string[] {
+    const lines = [`## Outside focus (${nodes.length})`, ''];
+    for (const node of nodes.slice(0, limit)) {
+      const location = node.startLine ? `:${node.startLine}` : '';
+      const label = labels.get(node.id);
+      lines.push(`- ${node.name} (${node.kind}) - ${node.filePath}${location}${label ? ` — via ${label}` : ''}`);
+    }
+    if (nodes.length > limit) lines.push(`- … +${nodes.length - limit} more (pass \`limit\` to widen)`);
+    return lines;
   }
 
   /**
@@ -3582,6 +4287,8 @@ export class ToolHandler {
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const depth = clamp((args.depth as number) || 2, 1, 10);
     const fileFilter = typeof args.file === 'string' ? args.file : undefined;
+    // Impact covers the whole repository; the focus only splits the affected symbols (see `formatImpact`).
+    const prefixes = focusPrefixesOfCall(cg, args, false);
 
     const allMatches = this.findAllSymbols(cg, symbol);
     if (allMatches.nodes.length === 0) {
@@ -3631,7 +4338,7 @@ export class ToolHandler {
 
     // Single definition (or same-file overloads): the familiar merged report.
     if (groups.length === 1) {
-      const formatted = this.formatImpact(symbol, impactOf(groups[0]!)) + (fileFilter && !filteredOut ? "" : allMatches.note) + filterNote;
+      const formatted = this.formatImpact(symbol, impactOf(groups[0]!), prefixes) + (fileFilter && !filteredOut ? "" : allMatches.note) + filterNote;
       return this.answerResult(cg, this.truncateOutput(formatted), answerPaths);
     }
 
@@ -3646,7 +4353,7 @@ export class ToolHandler {
       const line = head.startLine ? `:${head.startLine}` : '';
       sections.push(
         '',
-        this.formatImpact(`${head.qualifiedName} (${head.filePath}${line})`, impactOf(group))
+        this.formatImpact(`${head.qualifiedName} (${head.filePath}${line})`, impactOf(group), prefixes)
       );
     }
     return this.answerResult(cg, this.truncateOutput(sections.join('\n') + filterNote), answerPaths);
@@ -3682,10 +4389,55 @@ export class ToolHandler {
    * for an ordinary static edge. The wording is `graph/synthesized-hop.ts`'s,
    * shared with ContextBuilder's call paths.
    */
-  private synthEdgeNote(edge: Edge | null): string | null {
+  private synthEdgeNote(edge: Edge | null, prefixes: readonly string[] | null = null): string | null {
     const hop = describeSynthesizedHop(edge);
     if (!hop) return null;
-    return `dynamic: ${hop.summary}${hop.registeredAt ? ` @${hop.registeredAt}` : ''}`;
+    return `dynamic: ${hop.summary}${hop.registeredAt && this.wiringSiteInFocus(hop.registeredAt, prefixes) ? ` @${hop.registeredAt}` : ''}`;
+  }
+
+  /**
+   * Whether a synthesized hop's wiring site (`registeredAt`, spelled `path:line`) is in the session focus.
+   * `prefixes` null (no focus) is always in. A site outside it is left off the hop, so the Flow never prints a
+   * path the focus excludes; the hop itself still reads as dynamic.
+   */
+  private wiringSiteInFocus(registeredAt: string, prefixes: readonly string[] | null): boolean {
+    if (prefixes === null) return true;
+    const colon = registeredAt.lastIndexOf(':');
+    return inFocus(colon > 0 ? registeredAt.slice(0, colon) : registeredAt, prefixes);
+  }
+
+  /**
+   * Hold a resolved named-symbol flow to the session focus (`prefixes` null: returned as it is).
+   *
+   * The flow search itself (`resolveNamedSymbolFlow`) takes the focus as `pathPrefixes` when it is non-empty and
+   * searches for the deepest chain whose every step is inside it. This filter covers the one case the search is not
+   * given a focus: a focus with no directory in this index (`[]`), which it drops whole. For a non-empty focus the
+   * search has already filtered every field kept here, so this changes nothing. The nix option-prefix scan is not
+   * covered by this filter: its 12-row read is unfocused, and this cannot restore a row beyond it. It keeps the
+   * named symbols, their token lists and families, and a chain only when EVERY step of it is inside (a chain that
+   * passes through a file outside the focus is dropped whole, never cut, because a shortened chain would claim a
+   * call path the graph does not have).
+   * A flow whose route crosses the focus boundary loses its Flow strip only when no all-in-focus chain of three or
+   * more nodes exists for it. The named symbols inside stay in `namedNodeIds`, unless `identityOnly` returns, which
+   * keeps only the precise ones.
+   */
+  private focusNamedFlow(flow: NamedSymbolFlow, prefixes: readonly string[] | null): NamedSymbolFlow {
+    if (prefixes === null) return flow;
+    const keepNodes = (nodes: Map<string, Node>): Map<string, Node> =>
+      new Map([...nodes].filter(([, n]) => inFocus(n.filePath, prefixes)));
+    const named = keepNodes(flow.named);
+    const dynNamed = keepNodes(flow.dynNamed);
+    const live = (id: string): boolean => named.has(id) || dynNamed.has(id);
+    return {
+      tokens: flow.tokens,
+      named,
+      dynNamed,
+      tokenNodes: new Map([...flow.tokenNodes].map(([token, ids]) => [token, ids.filter(live)])),
+      tokenFamily: new Map([...flow.tokenFamily].map(([token, family]) => [token, family.filter((n) => inFocus(n.filePath, prefixes))])),
+      uniqueNamedNodeIds: new Set([...flow.uniqueNamedNodeIds].filter(live)),
+      preciseNamedIds: new Set([...flow.preciseNamedIds].filter(live)),
+      chains: flow.chains.filter((chain) => chain.steps.every((step) => inFocus(step.node.filePath, prefixes))),
+    };
   }
 
   /**
@@ -3701,8 +4453,19 @@ export class ToolHandler {
    * CO-NAMING: the agent names the class too, so we keep only `list` candidates
    * whose qualifiedName contains another named token (`PmsProductServiceImpl::list`),
    * dropping unrelated `OmsOrderService::list`.
+   *
+   * `sessionTools` is the calling session's tool list: it decides whether the
+   * dynamic-boundary note names `codegraph_node` as a follow-up
+   * (`buildDynamicBoundaries`).
+   *
+   * `prefixes` is the session's focus in this index (`focusPrefixesOfCall`; null for none): the flow search
+   * takes it (when non-empty), so the Flow is built from the named symbols inside it and its chain is the
+   * deepest one whose every step is inside; nothing it prints (a hop, a link, a boundary, a candidate) names
+   * a file outside it. The one figure it can print from outside the focus, a too-generic key's match count
+   * (`shortlistBoundaryCandidates`), counts the whole index. `focusNamedFlow` keeps the in-focus part of the
+   * result; for a focus with no directory in this index, which the search is not given, it empties it.
    */
-  private buildFlowFromNamedSymbols(cg: CodeGraph, query: string): { text: string; pathNodeIds: Set<string>; namedNodeIds: Set<string>; uniqueNamedNodeIds: Set<string>; spineCallSites: Map<string, number> } {
+  private buildFlowFromNamedSymbols(cg: CodeGraph, query: string, sessionTools: SessionToolList, prefixes: readonly string[] | null): { text: string; pathNodeIds: Set<string>; namedNodeIds: Set<string>; uniqueNamedNodeIds: Set<string>; spineCallSites: Map<string, number> } {
     // spineCallSites: for each spine node, the line where it CALLS the next hop —
     // lets the source assembler window an oversize spine method (e.g. n8n's 962-line
     // processRunExecutionData) to the call site instead of dumping the whole body.
@@ -3710,8 +4473,19 @@ export class ToolHandler {
     try {
       // Token resolution — parsing, overload disambiguation, the CONSTANT/
       // VARIABLE synth endpoints — is shared with `/api/flow`, so a name written
-      // in the viewer's search box resolves to the same nodes it does here.
-      const flow = resolveNamedSymbolFlow(cg, query);
+      // in the viewer's search box resolves to the same nodes it does here when
+      // the session has no focus. Under a focus this search resolves inside the
+      // focus (`pathPrefixes`); the viewer searches the whole index.
+      // A focus with at least one directory in this index goes to the search itself, which then looks for
+      // the deepest chain whose every step is in focus. `[]` (a focus with no directory in this index) is
+      // never passed: to the search it means "no filter", so it is left out and `focusNamedFlow` below
+      // (which drops everything for `[]`) answers for it.
+      const flow = this.focusNamedFlow(
+        prefixes !== null && prefixes.length > 0
+          ? resolveNamedSymbolFlow(cg, query, { pathPrefixes: prefixes })
+          : resolveNamedSymbolFlow(cg, query),
+        prefixes,
+      );
       const { named, dynNamed, tokenNodes, tokenFamily, uniqueNamedNodeIds, preciseNamedIds } =
         flow;
       if (flow.tokens.length < 2) return EMPTY;
@@ -3759,7 +4533,7 @@ export class ToolHandler {
             seen.add(key);
             if (onChain.has(edge.source) && onChain.has(edge.target)) continue;
             const other = named.get(otherId) ?? dynNamed.get(otherId) ?? cg.getNode(otherId);
-            if (!other) continue;
+            if (!other || !inFocus(other.filePath, prefixes)) continue;
             const lowValue = weight(otherId) === 0 && isLowValue(other.filePath);
             const linkWeight = weight(n.id) + weight(otherId);
             const rank = `${n.id}|${lowValue}|${linkWeight}`;
@@ -3780,7 +4554,7 @@ export class ToolHandler {
           // `TrySet → TrySet` says neither which interface nor which implementation:
           // a same-name link names each end by its owner, as the agent would write it.
           const same = src.name === tgt.name;
-          return `- ${same ? followUpName(src) : src.name} → ${same ? followUpName(tgt) : tgt.name}   [${this.synthEdgeNote(edge) ?? edge.kind}]`;
+          return `- ${same ? followUpName(src) : src.name} → ${same ? followUpName(tgt) : tgt.name}   [${this.synthEdgeNote(edge, prefixes) ?? edge.kind}]`;
         };
         // Distinct links can still read the same, and one line says it: gin declares
         // `Binding` once per build tag, so both declarations' `Bind` link to formBinding's,
@@ -3838,7 +4612,7 @@ export class ToolHandler {
         // whole chain; (2) the one resolved callable's body may hold the
         // dynamic-dispatch site that EXPLAINS a half-connected flow.
         const synthLines = collectSynthLinks(null);
-        const boundaries = named.size === 0 ? '' : (this.buildDynamicBoundaries(cg, [...named.values()], named) || '');
+        const boundaries = named.size === 0 ? '' : (this.buildDynamicBoundaries(cg, [...named.values()], named, sessionTools, prefixes) || '');
         if (synthLines.length === 0 && !boundaries) return identityOnly();
         const out: string[] = [];
         if (synthLines.length) out.push(
@@ -3886,7 +4660,7 @@ export class ToolHandler {
           if (hasMain) scanList.push(best![best!.length - 1]!.node);
           scanList.push(...uncovered.sort((a, b) =>
             (uniqueNamedNodeIds.has(b.id) ? 1 : 0) - (uniqueNamedNodeIds.has(a.id) ? 1 : 0)));
-          boundaryText = this.buildDynamicBoundaries(cg, scanList, named);
+          boundaryText = this.buildDynamicBoundaries(cg, scanList, named, sessionTools, prefixes);
         }
       }
 
@@ -3909,7 +4683,9 @@ export class ToolHandler {
           if (ids.some((id) => pathIds.has(id))) continue; // covered by the flow — silent
           polyCands.push({ token: t, family: fam });
         }
-        if (polyCands.length) polyText = this.buildPolymorphicBoundaries(cg, polyCands, named);
+        // Skipped under a focus: the announcement counts every implementer of the supertype (`countImplementers`,
+        // the same N the viewer shows), and that count would include implementers outside the focus.
+        if (polyCands.length && prefixes === null) polyText = this.buildPolymorphicBoundaries(cg, polyCands, named);
       }
 
       // Supplementary: dynamic-dispatch (synthesized) edges incident to a named
@@ -3929,7 +4705,7 @@ export class ToolHandler {
           const step = best![i]!;
           if (step.edge) {
             const when = i > 0 ? this.whenLabel(cg, best![i - 1]!.node, step.edge) : '';
-            out.push(`   ↓ ${this.synthEdgeNote(step.edge) ?? step.edge.kind}${when ? ` (when ${when})` : ''}`);
+            out.push(`   ↓ ${this.synthEdgeNote(step.edge, prefixes) ?? step.edge.kind}${when ? ` (when ${when})` : ''}`);
           }
           out.push(`${i + 1}. ${step.node.name} (${step.node.filePath}:${step.node.startLine})`);
         }
@@ -3967,9 +4743,12 @@ export class ToolHandler {
    * instead of guessing edges. The answer to "how does A reach B" when no
    * static path exists IS the dispatch site: that's where the flow continues
    * at runtime. Query-time, deterministic, zero graph mutation; a fully
-   * connected flow never reaches this method.
+   * connected flow never reaches this method. `sessionTools` is the calling
+   * session's tool list: the closing line names `codegraph_node` only when that
+   * session is served it. `prefixes` is the session's focus in this index (null
+   * for none): candidate targets outside it are not listed.
    */
-  private buildDynamicBoundaries(cg: CodeGraph, scanList: Node[], named: Map<string, Node>): string {
+  private buildDynamicBoundaries(cg: CodeGraph, scanList: Node[], named: Map<string, Node>, sessionTools: SessionToolList, prefixes: readonly string[] | null): string {
     const MAX_NOTES = 4; // boundary bullets per explore
     // The verdict is not derived here — `findDynamicBoundaries` produces it and
     // the viewer's end cap renders the same object, so the two can never
@@ -3984,7 +4763,7 @@ export class ToolHandler {
           ? ` (+${site.moreSites} more such site${site.moreSites > 1 ? 's' : ''} in this body)`
           : '';
         notes.push(`- \`${report.node.name}\` (${report.node.filePath}:${site.line}) — ${site.label}: \`${site.snippet}\`${more}`);
-        const cand = this.boundaryCandidates(site);
+        const cand = this.boundaryCandidates(site, prefixes);
         if (cand) notes.push(`  ${cand}`);
       }
     }
@@ -3994,7 +4773,7 @@ export class ToolHandler {
       '',
       ...notes,
       '',
-      `> These sites choose their call target at runtime (registry / bus / reflection) — the site shown IS where the flow continues. To follow it, run codegraph_explore${this.isToolServed('node') ? ' or codegraph_node' : ''} on a candidate; source for the sites above is included below.`,
+      `> These sites choose their call target at runtime (registry / bus / reflection) — the site shown IS where the flow continues. To follow it, run codegraph_explore${this.isToolServed('node', sessionTools) ? ' or codegraph_node' : ''} on a candidate; source for the sites above is included below.`,
       '',
     ].join('\n');
   }
@@ -4150,11 +4929,15 @@ export class ToolHandler {
    * `../graph/dynamic-boundary-report` — shared with the viewer's end cap, so
    * "candidates for key `save`" names the same symbols in both places. Symbols
    * the agent already named are marked: that is the "you were right, here's the
-   * wiring" case.
+   * wiring" case. `prefixes` is the session's focus in this index (null for none).
    */
-  private boundaryCandidates(site: BoundarySite): string {
+  private boundaryCandidates(site: BoundarySite, prefixes: readonly string[] | null): string {
     if (site.candidates.length === 0) return site.candidateNote ?? '';
-    const list = site.candidates.map((c) =>
+    // Candidates outside the session focus are left out; a shortlist the focus empties says nothing rather
+    // than a note about a shortlist that is no longer shown.
+    const inside = site.candidates.filter((c) => inFocus(c.node.filePath, prefixes));
+    if (inside.length === 0) return '';
+    const list = inside.map((c) =>
       `\`${c.display}\` (${c.node.filePath}:${c.node.startLine})${c.named ? ' ← you named this' : ''}`
     );
     return `candidates for key \`${site.key}\`: ${list.join(', ')}`;
@@ -4177,7 +4960,12 @@ export class ToolHandler {
      * query for `SQLCompiler.as_sql` headlined `SQLInsertCompiler.as_sql` — and
      * the agent took that as the tool having found the wrong method.
      */
-    leadingIds: Iterable<string> = [],
+    leadingIds: Iterable<string>,
+    /**
+     * The session's focus (`focusPrefixesOfCall`; null for none). Only callers inside it are counted and
+     * their files listed, so the section never names a file the focus excludes.
+     */
+    prefixes: readonly string[] | null,
   ): string {
     const ROOT_CAP = 5; // only the symbols the query actually targeted
     const FILE_CAP = 4; // caller files listed per symbol before "+N more"
@@ -4202,7 +4990,7 @@ export class ToolHandler {
       const seen = new Set<string>();
       const uniq: Node[] = [];
       for (const c of callers) {
-        if (c?.node && !seen.has(c.node.id)) { seen.add(c.node.id); uniq.push(c.node); }
+        if (c?.node && !seen.has(c.node.id) && inFocus(c.node.filePath, prefixes)) { seen.add(c.node.id); uniq.push(c.node); }
       }
       if (uniq.length === 0) continue; // no blast radius → nothing to flag
 
@@ -4223,7 +5011,7 @@ export class ToolHandler {
       const where = (codeFiles.length > 0 ? ` in ${shown}${more}` : '') + views;
       const tests = testFiles.length > 0
         ? `; tests: ${testFiles.slice(0, FILE_CAP).map((f) => `\`${f}\``).join(', ')}${testFiles.length > FILE_CAP ? ` +${testFiles.length - FILE_CAP}` : ''}`
-        : this.indirectTestNote(cg, uniq, rel);
+        : this.indirectTestNote(cg, uniq, rel, prefixes);
 
       entries.push(
         `- \`${root.name}\` (${rel(root.filePath)}:${root.startLine}) — ${uniq.length} caller${uniq.length === 1 ? '' : 's'}${where}${tests}`,
@@ -4286,7 +5074,7 @@ export class ToolHandler {
    * symbols had a test within 2-3 hops), so walk up to 2 more hops before
    * claiming anything — and even then claim only what was measured.
    */
-  private indirectTestNote(cg: CodeGraph, directCallers: Node[], rel: (p: string) => string): string {
+  private indirectTestNote(cg: CodeGraph, directCallers: Node[], rel: (p: string) => string, prefixes: readonly string[] | null): string {
     const MAX_HOPS = 3; // direct callers are hop 1
     const BUDGET = 64;  // getCallers lookups per entry — bounds god-fan-in symbols
     const FILE_CAP = 2;
@@ -4302,7 +5090,10 @@ export class ToolHandler {
         try { callers = cg.getCallers(node.id) as Array<{ node: Node }>; } catch { continue; }
         for (const c of callers) {
           const n = c?.node;
-          if (!n || visited.has(n.id)) continue;
+          // The walk stays inside the session focus: a test file outside it is not named. With a focus, the claim
+          // made below ("no tests found") is about the focus, the part of the repository the session sees, and
+          // says so; unfocused, it is about the whole index.
+          if (!n || visited.has(n.id) || !inFocus(n.filePath, prefixes)) continue;
           visited.add(n.id);
           const f = rel(n.filePath);
           if (isTestFile(f)) found.add(f);
@@ -4319,8 +5110,10 @@ export class ToolHandler {
     }
     // Budget exhaustion means hops 2-3 weren't fully searched — fall back to
     // the weaker claim that IS established by the direct-caller check.
+    // A focused walk searched only the focus, so its "no tests found" says "in focus".
+    const scope = prefixes === null ? '' : ' in focus';
     return budget > 0
-      ? `; no tests found within ${MAX_HOPS} caller hops`
+      ? `; no tests found within ${MAX_HOPS} caller hops${scope}`
       : '; no test calls this directly';
   }
 
@@ -4416,6 +5209,34 @@ export class ToolHandler {
     const cg = this.getCodeGraph(args.projectPath as string | undefined);
     const projectRoot = cg.getProjectRoot();
 
+    // Session focus. `prefixes` null means nothing below filters and the answer is what an unfocused session gets.
+    // Otherwise only files under a prefix contribute what the answer prints (source, file lists, counts, pins,
+    // the Flow strip, the blast-radius callers), apart from the reads listed below and the closing out-of-focus
+    // name lines (a name, no path, no source). The recall itself is
+    // focus-aware: it gets the focus as `pathPrefixes` (and is not asked at all when `prefixes` is `[]`, a focus
+    // with no directory in this index). Its traversal can still return out-of-focus nodes, so the candidate gather
+    // is cut to in-focus nodes once, right after it is complete (see "Session focus cut" below). Every stage that
+    // reaches the index on its own (named-symbol seeding, the change-surface rescue, the blast radius, the Flow)
+    // asks `inFocus` itself, and the copybook list is cut to it right after its lookup. The Flow search (the
+    // `pathPrefixes` of `resolveNamedSymbolFlow`) and the empty-result explanation (`getExploreMissDiagnostics`:
+    // matched words, unmatched words, retry candidates) take the focus too when it is non-empty (a `[]` focus
+    // returns before either runs). Some reads still take the
+    // whole index, and the focus does not cut them: the unseen-name check (`getUnseenNames`); every definition of a name
+    // (`getNodesByName` / `findAllSymbols`), which decides whether a name is reported as not in the index (the
+    // seeds still come only from in-focus definitions; the same whole-index read also decides the closing
+    // out-of-focus lines (up to three), one for each bare query name defined only outside the focus,
+    // independent of `focusDropped`); the caller counts that rank overloads (`getCallers`); the
+    // weak-kind isolation probe (`getIncomingEdges` and `getOutgoingEdges`, full graph); the
+    // interface-owned-method check (`getIncomingEdges`); and the one unfocused probe recall (see below).
+    // `focusDropped` records that something outside the focus was left out of the answer: a pinned path or a
+    // copybook entry outside it, nodes the focus cut removed, or, when the focused recall left nothing in focus, a
+    // hit of the unfocused probe outside it. It decides between the "nothing inside the focus" answer and the
+    // one-sentence note that closes the summary, and it keeps "No relevant code found" from answering for code
+    // that is only out of focus.
+    const prefixes = focusPrefixesOfCall(cg, args, true);
+    const inScope = (filePath: string): boolean => inFocus(filePath, prefixes);
+    let focusDropped = false;
+
     // Resolve adaptive output budget from project size. Falls back to the
     // largest-tier defaults if stats aren't available, which preserves
     // pre-#185 behavior for callers that hit the rare stats failure.
@@ -4465,6 +5286,17 @@ export class ToolHandler {
         }
       } catch { /* path pinning must never fail an explore call */ }
     }
+    // A path the query named inside the focus pins as usual. One outside it pins nothing, anchors nothing and
+    // is not named in the set-aside note (that note would otherwise print an out-of-focus path).
+    if (prefixes !== null) {
+      const pinnedInside = pinnedFiles.filter(inScope);
+      if (pinnedInside.length < pinnedFiles.length) focusDropped = true;
+      pinnedFiles = pinnedInside;
+      lineAnchors = lineAnchors.filter((a) => inScope(a.file));
+      setAsideMatches = setAsideMatches
+        .map((m) => ({ ...m, files: m.files.filter(inScope) }))
+        .filter((m) => m.files.length > 0);
+    }
     // A COBOL copybook the query names (`CVACT01Y`) names its FILE as surely as
     // `app/cpy/CVACT01Y.cpy` would (#2342), so it is pinned the same way: the
     // copybook's own source is admitted, ranked first and funded first. Looked
@@ -4475,6 +5307,19 @@ export class ToolHandler {
     try {
       namedCopybooks = cg.findNamedCopybooks(matchQuery);
     } catch { /* copybook pinning must never fail an explore call */ }
+    if (prefixes !== null) {
+      // A copybook is listed with its source file and its include sites. It is kept while each side that has
+      // entries still has an in-focus entry, and both lists are then cut to the in-focus entries.
+      namedCopybooks = namedCopybooks.flatMap((cb) => {
+        const files = cb.files.filter((n) => inScope(n.filePath));
+        const includes = cb.includes.filter((n) => inScope(n.filePath));
+        if (files.length === cb.files.length && includes.length === cb.includes.length) return [cb];
+        focusDropped = true;
+        const keepsSource = cb.files.length === 0 || files.length > 0;
+        const keepsIncludes = cb.includes.length === 0 || includes.length > 0;
+        return keepsSource && keepsIncludes ? [{ ...cb, files, includes }] : [];
+      });
+    }
     for (const copybook of namedCopybooks) {
       for (const file of copybook.files) {
         if (pinnedFiles.length >= maxFiles) break;
@@ -4545,16 +5390,38 @@ export class ToolHandler {
     };
 
     // Step 1: Find relevant context with generous parameters.
-    // Use a large maxNodes budget — explore has its own 35k char output limit
-    // that prevents context bloat, so more nodes just means better coverage
+    // Use a large maxNodes budget — explore's own output budget (`getExploreOutputBudget`,
+    // capped at 25k chars per call) prevents context bloat, so more nodes just means better coverage
     // across entry points (especially for large files like Svelte components).
     // Matching runs on the path-stripped query; `query` stays for display.
-    const subgraph = await cg.findRelevantContext(matchQuery, {
+    //
+    // The session focus goes to the recall as `pathPrefixes`, so its search, exact-match and seed limits count
+    // in-focus code only. The exceptions are listed on `FindRelevantContextOptions.pathPrefixes`. Three cases, by
+    // `prefixes`:
+    //  - `[]` (a focus with no directory inside this index): nothing here can be in focus, and an empty
+    //    `pathPrefixes` means "no filter" to the recall, so it is never asked. The answer is the one
+    //    nothing-in-focus sentence, shaped as the one after the seeding stages below.
+    //  - null (nothing filters: no focus, or a focus that holds the whole index): the options carry no
+    //    `pathPrefixes` key at all, so the recall answers as it always did.
+    //  - non-empty: the recall gets the prefixes. Its traversal can still reach nodes outside the focus; the
+    //    focus cut below removes them.
+    if (prefixes !== null && prefixes.length === 0) {
+      diag?.finishEmpty('nothing inside the session focus');
+      const outsideFocus = nothingInFocusText(args, prefixes);
+      return { ...this.textResult(outsideFocus), [EXPLORE_EMISSION_KEY]: {
+        projectRoot, query, files: [], sourceBytes: 0, responseBytes: outsideFocus.length,
+      } };
+    }
+    const recallOptions = {
       searchLimit: 8,
       traversalDepth: 3,
       maxNodes: 200,
       minScore: 0.2,
-    });
+    };
+    const subgraph = await cg.findRelevantContext(
+      matchQuery,
+      prefixes === null ? recallOptions : { ...recallOptions, pathPrefixes: prefixes },
+    );
 
     // Pinned files' symbols enter the gather unconditionally — the agent named
     // the file itself, so its contents ARE the answer regardless of what the
@@ -4606,7 +5473,42 @@ export class ToolHandler {
       anchorSpans.set(anchor.file, spans);
     }
 
-    if (subgraph.nodes.size === 0) {
+    // Session focus cut: the gather is complete here: the focused search's hits and their traversal, the pinned
+    // files' symbols and the anchored callables. The search is focused, but its traversal can still bring in nodes
+    // from outside the focus. Pinned and anchored nodes need no cut, since their files were cut to the focus when
+    // they were picked (see `pinnedFiles` and `lineAnchors` above). So this is the one place that takes
+    // out-of-focus nodes out of the gather. Their roots and every edge touching them go too, so the entry set and
+    // the usage degree are not built from code the answer will not show. The stages that add nodes after this one
+    // add only in-focus ones, see `inScope` below. The weak-kind isolation probe, the caller counts that rank
+    // overloads and the interface-owned-method check still read the whole graph (see `inScope` and the stages
+    // themselves). Seeding and glue still run after the cut, so an in-focus symbol the query names exactly is
+    // found by the seeding even when the cut emptied the gather.
+    if (prefixes !== null) {
+      const outside = new Set<string>();
+      for (const [id, n] of subgraph.nodes) if (!inScope(n.filePath)) outside.add(id);
+      if (outside.size > 0) {
+        focusDropped = true;
+        for (const id of outside) subgraph.nodes.delete(id);
+        subgraph.roots = subgraph.roots.filter((id) => !outside.has(id));
+        subgraph.edges = subgraph.edges.filter((e) => !outside.has(e.source) && !outside.has(e.target));
+      }
+    }
+
+    // A focused recall that left nothing in focus does not say whether the query matches nothing at all or only
+    // matches code outside the focus, and the two get different answers ("No relevant code found" below, or the
+    // nothing-in-focus sentence further down). One unfocused recall, with the options the focused one had and no
+    // `pathPrefixes`, tells them apart: a hit outside the focus sets `focusDropped`, so the flow continues as
+    // when the focus cut removed something (the seeding may still find in-focus named symbols; if none, the
+    // sentence answers). The probe's nodes are never added to the gather; only whether it hit outside the focus
+    // is used. It runs only on this path, so a focused call with in-focus hits makes the one recall.
+    if (prefixes !== null && subgraph.nodes.size === 0 && !focusDropped) {
+      const probe = await cg.findRelevantContext(matchQuery, recallOptions);
+      for (const n of probe.nodes.values()) {
+        if (!inScope(n.filePath)) { focusDropped = true; break; }
+      }
+    }
+
+    if (subgraph.nodes.size === 0 && !focusDropped) {
       diag?.finishEmpty('no relevant code found — empty subgraph');
       const missNote = unresolvedPathSpans.length > 0
         ? ` (no indexed file uniquely matches ${unresolvedPathSpans.map((s) => `\`${s}\``).join(', ')})`
@@ -4615,7 +5517,13 @@ export class ToolHandler {
       if (indexedNodeCount === 0) {
         explanation += '\nThis project has nothing indexed.';
       } else {
-        const miss = cg.getExploreMissDiagnostics(matchQuery);
+        // A focus with a directory in this index narrows the diagnostics to in-focus code. With no focus (null)
+        // the call takes one argument and reads the whole index; a `[]` focus returned before this branch, and
+        // is never passed (`[]` means "no filter" to the query).
+        const focusedDiag = prefixes !== null && prefixes.length > 0;
+        const miss = focusedDiag
+          ? cg.getExploreMissDiagnostics(matchQuery, prefixes)
+          : cg.getExploreMissDiagnostics(matchQuery);
         const list = (words: string[]) => words.map(w => `\`${w}\``).join(', ');
         // Separate caps preserve the retry instruction and complete candidate
         // names even with long queries or generated identifiers.
@@ -4627,7 +5535,10 @@ export class ToolHandler {
           }
           return list(kept) + (kept.length < words.length ? ' …' : '');
         };
-        explanation += '\nChecked indexed names, signatures, docstrings (FTS prefixes) and live name segments; not all source text.';
+        // The scope of the check is stated, so a focused session does not read "no match" as "not in the repository".
+        explanation += focusedDiag
+          ? "\nChecked indexed names, signatures, docstrings (FTS prefixes) and live name segments inside this session's focus (" + focusDirsText(args, prefixes) + '); not all source text. Pass scope: "repo" to check the whole repository.'
+          : '\nChecked indexed names, signatures, docstrings (FTS prefixes) and live name segments; not all source text.';
         if (miss.limited) explanation += '\nWord check limited to 16 words of at most 64 characters.';
         explanation += `\nNo lexical matches for checked words: ${cappedList(miss.unmatched, 250) || '(none)'}.`;
         if (miss.matched.length > 0) {
@@ -4735,6 +5646,12 @@ export class ToolHandler {
     // Tokens written like code names that resolved to no node at all, not even
     // a camel-infix definer: candidates for the "not in the index" note (#2462).
     const unresolvedNamedTokens: string[] = [];
+    // Bare identifier-shaped query names the index defines, but only outside the session focus (query order,
+    // de-duplicated, at most `OUT_OF_FOCUS_NAME_CAP`). They become the closing lines of a focused answer that
+    // renders (see `outOfFocusBlock`); the early exits of `handleExplore` (the empty focus, no relevant code,
+    // nothing in focus) do not carry them. Stays empty without a focus.
+    const OUT_OF_FOCUS_NAME_CAP = 3;
+    const outOfFocusNames: string[] = [];
     {
       const CALLABLE = new Set(['method', 'function', 'component', 'constructor']);
       // Variables/constants seed too: in Svelte/React a `$state` variable
@@ -4812,7 +5729,22 @@ export class ToolHandler {
         // type-token bias below couldn't pick the harness.rs one. (Same fix as
         // codegraph_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
         const isQual = /[.\/]|::/.test(t);
-        const raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        // Every definition the index has (`rawAll`) decides whether the name is known at all; only the ones in
+        // focus (`raw`) can seed, so a name defined only outside the focus is not reported as "not in the
+        // index" and never earns an out-of-focus seed. Under a focus, `rawAll` also decides the closing
+        // out-of-focus line: a bare identifier-shaped name with definitions and none in focus is named there
+        // (`outOfFocusNames`). A qualified token is not: its lookup (`findAllSymbols`) also accepts path
+        // matches, so a node that only sits under the qualifier's path could count as the token's definition
+        // when the index has none.
+        const rawAll = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
+        const raw = prefixes === null ? rawAll : rawAll.filter((n) => inScope(n.filePath));
+        if (
+          prefixes !== null && prefixes.length > 0 && !isQual && isIdentifierShapedToken(t)
+          && rawAll.length > 0 && raw.length === 0
+          && outOfFocusNames.length < OUT_OF_FOCUS_NAME_CAP && !outOfFocusNames.includes(t)
+        ) {
+          outOfFocusNames.push(t);
+        }
         // A query that NAMES a declared type is a question ABOUT that type, and
         // must still reach its declaration file at full weight — so record the
         // files those declarations live in and exempt them from the
@@ -4848,7 +5780,7 @@ export class ToolHandler {
               kinds: ['function', 'method', 'component', 'variable', 'constant'],
               limit: 60,
             })
-            .filter((n) => SEEDABLE.has(n.kind) && !isTestPath(n.filePath))
+            .filter((n) => SEEDABLE.has(n.kind) && !isTestPath(n.filePath) && inScope(n.filePath))
             .filter((n) => {
               const idx = n.name.toLowerCase().indexOf(lcToken);
               if (idx < 0) return false;
@@ -4858,7 +5790,7 @@ export class ToolHandler {
             .sort((a, b) => a.name.length - b.name.length)
             .slice(0, 3);
         }
-        if (raw.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
+        if (rawAll.length === 0 && cands.length === 0 && isIdentifierShapedToken(t)) unresolvedNamedTokens.push(t);
         // Bare lowercase words only seed defs their query-siblings corroborate
         // (see the NL-stopword guard above). Filtering CANDS (not picks) applies
         // the guard uniformly to both branches below, including the >3-def
@@ -4921,6 +5853,16 @@ export class ToolHandler {
           if (!isInterfaceOwnedMethod(n)) tierSeedIds.add(n.id);
         }
       }
+    }
+
+    // Nothing the focus lets through: the answer is the one sentence, success-shaped (an error here would teach
+    // the agent to stop calling), and it never points at a file the focus excludes.
+    if (prefixes !== null && subgraph.nodes.size === 0) {
+      diag?.finishEmpty('nothing inside the session focus');
+      const outsideFocus = nothingInFocusText(args, prefixes);
+      return { ...this.textResult(outsideFocus), [EXPLORE_EMISSION_KEY]: {
+        projectRoot, query, files: [], sourceBytes: 0, responseBytes: outsideFocus.length,
+      } };
     }
 
     // Step 2: Group nodes by file, score by relevance
@@ -5029,6 +5971,7 @@ export class ToolHandler {
         if (!SIG_EDGE.has(e.kind)) continue;
         const tgt = cg.getNode(e.target);
         if (!tgt || !TYPE_KINDS.has(tgt.kind) || namedSeedIds.has(tgt.id)) continue;
+        if (!inScope(tgt.filePath)) continue;
         if (seenChangeSurface.has(tgt.id)) continue;
         seenChangeSurface.add(tgt.id);
         changeSurfaceCandidates.push(tgt);
@@ -5460,7 +6403,7 @@ export class ToolHandler {
     // Blast radius (always-on, compact): for the entry symbols, who depends on
     // them + which tests cover them — locations only, no source — so the agent
     // knows what to update/verify before editing without a separate call.
-    const blastRadius = this.buildBlastRadiusSection(cg, subgraph, exactNodeIds);
+    const blastRadius = this.buildBlastRadiusSection(cg, subgraph, exactNodeIds, prefixes);
     if (blastRadius) lines.push(blastRadius);
 
     // Relationship map — show how symbols connect
@@ -5505,7 +6448,7 @@ export class ToolHandler {
     // The Flow section labels each hop with its branch conditions; that read
     // is synchronous, so the grammars it needs are loaded here, once.
     await warmBranchGuardGrammars();
-    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery);
+    const flow = this.buildFlowFromNamedSymbols(cg, matchQuery, sessionToolsFromArgs(args), prefixes);
 
     // The symbols the question is about: exact targets, the named ones, the spine.
     const questionIds = new Set([...exactNodeIds, ...flow.pathNodeIds, ...flow.namedNodeIds]);
@@ -5688,14 +6631,25 @@ export class ToolHandler {
     // of 47 measured responses over the 25K inline cap (up to 25,032), or the
     // lost-pointer note above squeezed out.
     // Reserved at its worst case: the gather's symbol and file counts bound the
-    // shown ones from above.
+    // shown ones from above. The out-of-focus lines (`outOfFocusBlock`) are appended after the summary is
+    // filled in, so their exact length is reserved here with it; zero when there are none.
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const outOfFocusBlock = outOfFocusNames.length > 0
+      ? `\n\n${outOfFocusNames.map((name) => `\`${name}\` is defined in this index, outside this session's focus; pass scope: "repo" to include it.`).join('\n')}`
+      : '';
+    // What the summary says when the focus left something out, reserved like the rest of it. Names the focus
+    // directories and the way to widen the call, and carries no count and no path of what was left out.
+    const focusNote = focusDropped && prefixes !== null
+      ? ` Results outside this session's focus (${focusDirsText(args, prefixes)}) are left out; pass scope: "repo" to include them.`
+      : '';
     const summaryReserve = `Found ${plural(subgraph.nodes.size, 'symbol')} across ${plural(fileGroups.size, 'file')}.`.length
+      + focusNote.length
       + (pinnedFiles.length > 0 ? ` ${plural(pinnedFiles.length, 'file')} pinned from the query.`.length : 0)
       + (unresolvedPathSpans.length > 0
         ? ` No indexed file uniquely matches ${unresolvedPathSpans.map((sp) => `\`${sp}\``).join(', ')}.`.length
         : 0)
-      + setAsideNote.length;
+      + setAsideNote.length
+      + outOfFocusBlock.length;
     const epilogueFloor = Math.max(
       EXPLORE_FALLBACK_NOTES.lost.complete.length, EXPLORE_FALLBACK_NOTES.lost.trimmed.length,
     ) + 2 + cliffPointerFloor + summaryReserve;
@@ -7890,7 +8844,7 @@ export class ToolHandler {
       ? exploreCompletenessNotes(filesIncluded, trimmedShown, [...renderedFilePaths, ...fileGroups.keys()])
         .map((note) => ['', '---', note])
       : anyFileTrimmed || trimmedShown.length > 0
-        ? [['', `> Some file sections were trimmed for size. Elided symbols are named inside gap markers as \`name (file:line)\` and preferred in the file header — run another \`codegraph_explore\`${this.isToolServed('node') ? ' (or `codegraph_node`)' : ''} with those exact names for their source.`]]
+        ? [['', `> Some file sections were trimmed for size. Elided symbols are named inside gap markers as \`name (file:line)\` and preferred in the file header — run another \`codegraph_explore\`${this.isToolServed('node', sessionToolsFromArgs(args)) ? ' (or `codegraph_node`)' : ''} with those exact names for their source.`]]
         : [];
     /** Whether a trimmed section survives in `text` — picks a fallback note's wording after a cut. */
     const trimmedIn = (text: string): boolean =>
@@ -7966,28 +8920,19 @@ export class ToolHandler {
     const epilogueOnlyCut = epilogueStart < lines.length
       ? flow.text + lines.slice(0, epilogueStart).join('\n')
       : null;
-    const EPILOGUE_CUT_NOTE = EXPLORE_FALLBACK_NOTES.cut[
-      epilogueOnlyCut !== null && trimmedIn(epilogueOnlyCut) ? 'trimmed' : 'complete'];
-
-    if (output.length > hardCeiling
-        && epilogueOnlyCut !== null
-        && epilogueOnlyCut.length + EPILOGUE_CUT_NOTE.length <= hardCeiling) {
-      finalText = epilogueOnlyCut + EPILOGUE_CUT_NOTE;
-    } else if (output.length > hardCeiling) {
-      // Still over with the epilogue gone: cut at a FILE-SECTION boundary (the
-      // last ``**` `` file header before the ceiling) so we drop whole trailing
-      // file-sections rather than slicing
-      // through a method body — a half-rendered method just forces the Read this
-      // tool exists to prevent. Fall back to a line boundary only if no section
-      // header sits in the back half (degenerate single-giant-section case).
-      const cut = output.slice(0, hardCeiling);
-      const lastSection = cut.lastIndexOf('\n' + FILE_SECTION_PREFIX);
-      const boundary = lastSection > hardCeiling * 0.5 ? lastSection : cut.lastIndexOf('\n');
-      const safe = boundary > 0 ? cut.slice(0, boundary) : cut;
-      finalText = safe + EXPLORE_FALLBACK_NOTES.truncated[trimmedIn(safe) ? 'trimmed' : 'complete'];
-    } else {
-      finalText = output;
-    }
+    // The cut runs before the summary sentinel is filled in and before the out-of-focus block is appended, and both
+    // add length afterwards. With a block, `exploreCutLimits` sizes the cut for both: the hard ceiling less the block
+    // and the summary line's growth. Without one it cuts at the hard ceiling, and the render loop has already left
+    // room for the summary growth. `summaryReserve` includes the block, so the growth is taken without it.
+    const summaryGrowth = Math.max(0, summaryReserve - outOfFocusBlock.length - SUMMARY_SENTINEL.length);
+    const cutLimits = exploreCutLimits(hardCeiling, outOfFocusBlock.length, summaryGrowth);
+    finalText = cutExploreToCeiling({
+      output,
+      epilogueOnlyCut,
+      ceiling: cutLimits.ceiling,
+      sliceLimit: cutLimits.sliceLimit,
+      trimmedIn,
+    });
 
     // Curated header (#1046): substitute the sentinel with the count of files
     // whose source SURVIVES in the final text — not `subgraph`/`fileGroups` (the
@@ -8019,7 +8964,22 @@ export class ToolHandler {
       summaryLine += ` No indexed file uniquely matches ${unresolvedPathSpans.map((s) => `\`${s}\``).join(', ')}.`;
     }
     summaryLine += setAsideNote;
+    summaryLine += focusNote;
     finalText = finalText.replace(SUMMARY_SENTINEL, summaryLine);
+
+    // Out-of-focus names: one closing line for each of up to three bare, identifier-shaped query names that the
+    // index defines outside this session's focus and nowhere inside it (`outOfFocusNames`), so the agent that asked
+    // for them learns they exist and how to reach them instead of reading the answer's silence as "no such symbol".
+    // Name only: existence is all it states, with no path, kind or source of the out-of-focus definition, so the
+    // focus still hides what it hides. Bare tokens only: a qualified token resolves through a lookup that also
+    // accepts path matches, which could count a node as the token's definition when the index has none. Capped at
+    // three so a wide query cannot turn the closing into a listing. Appended last, after the summary is in place,
+    // so the diagnostic and the emission record below both measure it; the render loop leaves room for it in
+    // `summaryReserve`, and the final cut above leaves room for the block, the summary growth and the cut's own
+    // note, so the answer with the block stays within `hardCeiling`. The answer's own
+    // trailing newlines are dropped first (the rendered answer ends in a newline), so exactly one blank line sets
+    // the block off. The early exits (nothing in focus, empty focus, no relevant code) never reach here.
+    if (outOfFocusBlock.length > 0) finalText = finalText.replace(/\n+$/, '') + outOfFocusBlock;
 
     // Emit the allocation diagnostic from the FINAL text, so per-file bytes and
     // shares account for the hard-ceiling truncation above (CG-4).
@@ -8558,9 +9518,9 @@ export class ToolHandler {
   private async handleStatus(args: Record<string, unknown>): Promise<ToolResult> {
     let cg = this.getCodeGraph(args.projectPath as string | undefined);
     // Same trick as withStalenessNotice — when an explicit projectPath
-    // resolves to the same project as the default session cg, prefer the
-    // default so getPendingFiles() (only populated by the default's watcher)
-    // is non-empty when there are pending edits.
+    // resolves to the same project as the CLI handler's own instance, prefer
+    // that instance so getPendingFiles() (only populated by its watcher) is
+    // non-empty when there are pending edits.
     if (this.cg && cg !== this.cg) {
       try {
         if (resolvePath(this.cg.getProjectRoot()) === resolvePath(cg.getProjectRoot())) {
@@ -8684,14 +9644,15 @@ export class ToolHandler {
     // stopped, getPendingFiles() is empty (so no "Pending sync" section below)
     // but the index is frozen — call that out explicitly here, the one place an
     // agent asks "is the index caught up?".
-    if (cg.isWatcherDegraded()) {
-      const recovering = cg.isWatcherRecovering();
+    // (With a builder, the state is the builder's: see watcherView.)
+    const watcher = this.watcherView(cg);
+    if (watcher.degraded) {
       lines.push(
         '',
-        recovering ? '**Auto-sync recovering:**' : '**Auto-sync disabled:**',
-        recovering
+        watcher.recovering ? '**Auto-sync recovering:**' : '**Auto-sync disabled:**',
+        watcher.recovering
           ? '- File watching restarted; full index catch-up has not completed.'
-          : `- ${cg.getWatcherDegradedReason() ?? 'live file watching stopped'}`,
+          : `- ${watcher.reason ?? 'live file watching stopped'}`,
         '- The index may be stale; Read files directly for current content.'
       );
     }
@@ -8700,7 +9661,7 @@ export class ToolHandler {
     // (issue #403). Surfacing it inside `status` gives the agent a single
     // place to ask "is the index caught up?" rather than inferring from
     // banners on other tool calls.
-    const pending = cg.getPendingFiles();
+    const pending = watcher.pending ?? [];
     if (pending.length > 0) {
       lines.push('', '**Pending sync:**');
       const now = Date.now();
@@ -9087,32 +10048,45 @@ export class ToolHandler {
     return edge.kind;
   }
 
-  private formatImpact(symbol: string, impact: Subgraph): string {
-    const nodeCount = impact.nodes.size;
+  /**
+   * The blast-radius report for one symbol, affected symbols grouped by file. With a session focus the
+   * header count and the listing cover the in-focus symbols, and the others follow under
+   * `## Outside focus (N)` in the same per-file shape. `prefixes` null (no focus) lists every symbol with no
+   * extra section, the same as an unfocused session's output; omitted, it is null. `[]` means nothing is in
+   * focus, so every symbol goes under the outside section.
+   */
+  private formatImpact(symbol: string, impact: Subgraph, prefixes: readonly string[] | null = null): string {
+    const { inside, outside } = this.splitByFocus([...impact.nodes.values()], prefixes);
 
     // Compact format: just list affected symbols grouped by file
     const lines: string[] = [
-      `**Impact: "${symbol}" affects ${nodeCount} symbols${impact.truncated ? ' (truncated at safety limit)' : ''}**`,
+      `**Impact: "${symbol}" affects ${inside.length} symbols${impact.truncated ? ' (truncated at safety limit)' : ''}**`,
       '',
     ];
     if (impact.truncated) {
       lines.push('> Result truncated to protect the MCP process on a high-fanout graph. Narrow with `file` or reduce `depth`.', '');
     }
 
-    // Group by file
-    const byFile = new Map<string, Node[]>();
-    for (const node of impact.nodes.values()) {
-      const existing = byFile.get(node.filePath) || [];
-      existing.push(node);
-      byFile.set(node.filePath, existing);
-    }
+    const listByFile = (nodes: readonly Node[]): void => {
+      const byFile = new Map<string, Node[]>();
+      for (const node of nodes) {
+        const existing = byFile.get(node.filePath) || [];
+        existing.push(node);
+        byFile.set(node.filePath, existing);
+      }
+      for (const [file, fileNodes] of byFile) {
+        lines.push(`**${file}:**`);
+        // Compact: inline list
+        const nodeList = fileNodes.map(n => `${n.name}:${n.startLine}`).join(', ');
+        lines.push(nodeList);
+        lines.push('');
+      }
+    };
 
-    for (const [file, nodes] of byFile) {
-      lines.push(`**${file}:**`);
-      // Compact: inline list
-      const nodeList = nodes.map(n => `${n.name}:${n.startLine}`).join(', ');
-      lines.push(nodeList);
-      lines.push('');
+    listByFile(inside);
+    if (outside.length > 0) {
+      lines.push(`## Outside focus (${outside.length})`, '');
+      listByFile(outside);
     }
 
     return lines.join('\n');

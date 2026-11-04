@@ -16,15 +16,18 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { encodeServerLock } from '../src/mcp/daemon-paths';
+import { stateIdentityOf } from './extensions/host/state-identity';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates, spawnLogFor } from './daemon-candidates';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const DISCOVER = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/discover' }) + '\n';
 
-function readLockPid(root: string): number | null {
+/** The pid in the machine server's lock (`<state dir>/server.pid`), or null. */
+function readLockPid(stateDir: string): number | null {
   try {
-    const info = JSON.parse(fs.readFileSync(path.join(root, '.codegraph', 'daemon.pid'), 'utf8'));
+    const info = JSON.parse(fs.readFileSync(path.join(stateDir, 'server.pid'), 'utf8'));
     return typeof info === 'number' ? info : typeof info.pid === 'number' ? info.pid : null;
   } catch { return null; }
 }
@@ -41,6 +44,7 @@ function isAlive(pid: number): boolean {
  */
 async function discover(
   cwd: string,
+  stateDir: string,
   env: NodeJS.ProcessEnv,
   children: ChildProcessWithoutNullStreams[],
   closeStdin: 'at-once' | 'after-reply' = 'at-once',
@@ -49,7 +53,7 @@ async function discover(
   const child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, ...recorder.args, BIN, 'serve', '--mcp', '--no-watch'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ...recorder.env, CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS: '1000', ...env },
+    env: { ...process.env, ...recorder.env, CODEGRAPH_ALLOW_UNSAFE_NODE: '1', CODEGRAPH_STATE_DIR: stateDir, ...env },
   }) as ChildProcessWithoutNullStreams;
   children.push(child);
   child.on('error', () => { /* ignore */ });
@@ -76,12 +80,14 @@ function expectMethodNotFound(stdout: string): void {
 
 describe('server/discover probe (issue #2084)', () => {
   let tempDir: string;
-  let realRoot: string;
+  // Each test's own machine-server state dir: the live server is never reached.
+  let stateDir: string;
   const children: ChildProcessWithoutNullStreams[] = [];
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-discover-'));
-    realRoot = fs.realpathSync(tempDir);
+    // Realpath'd: the lock records the canonical state dir (os.tmpdir() is a symlink on some systems).
+    stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-discover-state-')));
   });
 
   afterEach(async () => {
@@ -96,8 +102,8 @@ describe('server/discover probe (issue #2084)', () => {
     // stop the lock holder — never the vitest worker, which one test plants as
     // the holder.
     if (fs.existsSync(spawnLogFor(tempDir))) {
-      await settleLosingCandidates(tempDir, () => readLockPid(realRoot));
-      const daemonPid = readLockPid(realRoot);
+      await settleLosingCandidates(tempDir, () => readLockPid(stateDir));
+      const daemonPid = readLockPid(stateDir);
       if (daemonPid && daemonPid !== process.pid && isAlive(daemonPid)) {
         try { process.kill(daemonPid, 'SIGKILL'); } catch { /* race */ }
         for (let i = 0; i < 100 && isAlive(daemonPid); i++) await new Promise((r) => setTimeout(r, 50));
@@ -105,31 +111,39 @@ describe('server/discover probe (issue #2084)', () => {
       removeSpawnLog(tempDir);
     }
     await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await fs.promises.rm(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }, 45_000);
 
-  it('proxy mode answers -32601 even when the client closes stdin right after the probe', async () => {
-    const cg = await CodeGraph.init(tempDir);
-    cg.close();
-    expectMethodNotFound(await discover(tempDir, {}, children));
-  }, 20_000);
-
-  it('proxy mode answers -32601, not "daemon unavailable", when the daemon cannot start', async () => {
-    const cg = await CodeGraph.init(tempDir);
-    cg.close();
-    // A legacy plain-pid lock held by a live process (this worker) makes every
-    // daemon candidate step aside, so the proxy never gets a daemon.
-    fs.writeFileSync(path.join(realRoot, '.codegraph', 'daemon.pid'), `${process.pid}\n`);
-    expectMethodNotFound(await discover(tempDir, {}, children, 'after-reply'));
-  }, 20_000);
-
   it.each([
-    ['CODEGRAPH_NO_DAEMON=1 on an indexed project', true, { CODEGRAPH_NO_DAEMON: '1' }],
-    ['no .codegraph/ in the working directory', false, {}],
-  ])('direct mode answers -32601 (%s)', async (_label, indexed, env) => {
+    ['an indexed project', true],
+    ['a directory with no .codegraph/', false],
+  ])('proxy mode answers -32601 even when the client closes stdin right after the probe (%s)', async (_label, indexed) => {
     if (indexed) {
       const cg = await CodeGraph.init(tempDir);
       cg.close();
     }
-    expectMethodNotFound(await discover(tempDir, env, children));
+    expectMethodNotFound(await discover(tempDir, stateDir, {}, children));
+  }, 20_000);
+
+  it('proxy mode answers -32601, not "daemon unavailable", when the server cannot start', async () => {
+    const cg = await CodeGraph.init(tempDir);
+    cg.close();
+    // A lock held by a live process (this worker) that answers no socket hello
+    // makes every server candidate step aside, so the proxy never gets a server.
+    fs.writeFileSync(path.join(stateDir, 'server.pid'), encodeServerLock({
+      pid: process.pid,
+      version: 'test',
+      socketPath: path.join(stateDir, 'nothing-listens.sock'),
+      startedAt: Date.now(),
+      stateDir,
+      stateId: stateIdentityOf(stateDir),
+    }));
+    expectMethodNotFound(await discover(tempDir, stateDir, {}, children, 'after-reply'));
+  }, 20_000);
+
+  it('direct mode answers -32601 (CODEGRAPH_NO_DAEMON=1 on an indexed project)', async () => {
+    const cg = await CodeGraph.init(tempDir);
+    cg.close();
+    expectMethodNotFound(await discover(tempDir, stateDir, { CODEGRAPH_NO_DAEMON: '1' }, children));
   }, 20_000);
 });

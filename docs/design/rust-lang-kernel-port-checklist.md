@@ -172,9 +172,9 @@ undefined; **no isConst means `const_item`/`static_item` extract as kind
 - File node: kind `file`, name basename, qualifiedName = filePath, endLine =
   `source.split('\n').length`, isExported false.
 
-### extractFunction / extractMethod for rust (1517 / 1737)
+### extractFunction / extractMethod for rust
 
-- extractFunction: receiverType present → extractMethod (1522). Name via
+- extractFunction: receiverType present → extractMethod. Name via
   `extractName` → nameField `name` (identifier). No misparse hook. Node gets
   docstring, signature, visibility, isExported:undefined, isAsync:false (bug
   above), isStatic:undefined, returnType. Then extractTypeAnnotations,
@@ -183,17 +183,15 @@ undefined; **no isConst means `const_item`/`static_item` extract as kind
   decorates refs for rust**, and the backward-sibling scan at 5013 stops at the
   first attribute_item anyway). Push node, walk `body` field (block), pop.
 - extractMethod (reached for impl fns + trait members): receiverType computed
-  again (1742). Gate at 1747: not class-like AND no methodsAreTopLevel AND no
-  receiver → back to extractFunction (trait members pass via class-like; impl
-  fns via receiver). extraProps.qualifiedName = `Type::name` when receiver
-  (1790). **Contains edge from the owner (1798-1813): only when receiver
-  present AND not class-like — finds the FIRST node in `this.nodes` with
-  `name === receiverType && filePath === this.filePath && kind ∈
-  {struct,class,enum,trait}`. Source-order dependent: an impl ABOVE its struct
-  gets no contains edge. Since #1588 `impl Trait for Generic<T>` links to the
-  implementing TYPE's node (it used to link to the TRAIT node, the receiver
-  bug).** Then type annotations, decorators
-  (no-op), body walk with the method pushed.
+  again. Gate: not class-like AND no methodsAreTopLevel AND no receiver → back
+  to extractFunction (trait members pass via class-like; impl fns via receiver).
+  extraProps.qualifiedName = `Type::name` when receiver. **Contains edge from
+  the owner: only when receiver present AND not class-like. For rust,
+  `findTypeInScope` on the enclosing impl_item uses the lookup below; the
+  implementing type must already be extracted. Other languages scan for the
+  first same-file node named receiverType of kind struct, union, class, enum or
+  trait.** Then type annotations, decorators (no-op), body walk with the method
+  pushed.
 - **Nested `fn` inside an impl-method's body**: visitFunctionBody:5245 →
   named → extractFunction → getReceiverType walks parents THROUGH the outer fn
   to the impl_item → receiver found → extractMethod → a nested helper indexes
@@ -322,25 +320,32 @@ nothing: the Go struct-embedding branch (5496) runs for Go only (it was inert
 here anyway — rust `field_declaration` always carries a `field_identifier`
 name), so rustlang.rs has no `field_declaration` arm.
 
-### impl Trait for Type — extractRustImplItem (5690)
+### impl Trait for Type — extractRustImplItem / extract_rust_impl_item
 
-- hasFor = any child (ALL children) with `type === 'for' && !isNamed` — plain
-  `impl Type { }` → return (no edge; getReceiverType handles member attachment).
-- typeIdents = DIRECT namedChildren of type `type_identifier` | `generic_type`
-  | `scoped_type_identifier`; need ≥2 else return (v0.24.2 has `trait:` and
-  `type:` FIELDS, but the code deliberately uses positional filtering —
-  PRESERVE the positional logic).
-- traitNode = FIRST, typeNode = LAST. traitName: scoped_type_identifier →
-  `source.substring(startIndex,endIndex)` (full `fmt::Display`); else
-  getNodeText. typeName: generic_type → inner type_identifier text (`Container`)
-  else text.
-- targetId = `findNodeByName(typeName)` (5740): FIRST node in `this.nodes`
-  with that name and kind ∈ {struct, enum, class} — **NOT trait**, and
-  source-order dependent (the type must be defined EARLIER in the same file;
-  cross-file impls emit nothing). If found: push
-  {fromNodeId: **the TYPE's node id** (a back-reference), referenceName:
-  traitName (full path text), referenceKind:'implements', line/col of the
-  trait node}.
+- Called for every `impl_item`, both at module scope and inside function
+  bodies (TS: the main visit and the function-body walk; kernel: the same two
+  sites).
+- Reads the grammar's `trait` and `type` FIELDS (#1588). No `trait` field →
+  inherent `impl Type { }` → return, nothing emitted (getReceiverType handles
+  member attachment).
+- traitName = full text of the `trait` node (getNodeText / `self.text`), so a
+  scoped path (`std::fmt::Display`) and generic args (`From<u32>`) keep their
+  spelling.
+- Target lookup (TS: `findTypeInScope`; kernel: `find_type_in_scope`): read
+  the impl's `type` field as a path, unwrapping generic and reference types.
+  Search lexical AST scopes outward from the impl, then descend inline modules;
+  this includes fn-local paths. A declaration wins over a `use` in its scope.
+  Same-file `use` bindings include aliases, groups and `pub use`, with at most
+  eight rewrites. A leading `::` is external. `self::` / `super::` anchor at
+  modules; `crate::` first tries stripping the file's guessed module path, then
+  tries the path as written (a limit for `#[path]` files).
+  - The matched struct, union or enum syntax must already have an extracted
+    node: TS maps startIndex through `rustTypeIds`; the kernel matches node id
+    against `nodes_meta.type_syntax_id`. Owner kinds are {struct, union, enum,
+    class}, never trait; cross-file targets emit nothing.
+- If found: push {fromNodeId: **the TYPE's node id** (a back-reference),
+  referenceName: traitName, referenceKind: 'implements', line/col of the
+  trait node}. Not found → nothing.
 
 ### Type-annotation references (5752-6112)
 

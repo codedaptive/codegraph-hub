@@ -6,9 +6,9 @@
  * Parser.init() (web-tree-sitter WASM bootstrap), which could take longer than
  * Claude Code's ~30s handshake timeout. The child process stayed alive and
  * had received the request, but never sent a response, so tools never
- * appeared in the client. The fix sends the initialize response before
- * kicking off the heavy init in the background. These tests guard the
- * contract that initialize is fast regardless of how much work init does.
+ * appeared in the client. The server now has no default project, so the
+ * handshake opens nothing at all: these tests guard the contract that
+ * initialize is fast, and that it never starts the heavy init it once raced.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
@@ -35,18 +35,16 @@ function expectServerBranding(info: { title?: string; icons?: Array<Record<strin
   expect(Object.keys(icon).sort()).toEqual(['mimeType', 'src']);
 }
 
-function spawnServer(cwd: string): ChildProcessWithoutNullStreams {
+function spawnServer(cwd: string, stateDir: string): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, 'serve', '--mcp'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    // Pin to direct (in-process) mode. #172 is a contract about the in-process
-    // server's init ordering — the "File watcher active" log this test observes
-    // is emitted in-process. In daemon mode the watcher runs in the detached
-    // daemon (logging to .codegraph/daemon.log, not the child's stderr); the
-    // same response-before-init guarantee lives in the shared session code and
-    // is covered by mcp-daemon.test.ts. Direct mode also avoids leaking a
-    // detached daemon from this suite.
-    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1' },
+    // Pin to direct (in-process) mode: the "File watcher active" log the second
+    // test watches for is emitted in-process (the machine server logs to its
+    // own server.log), and direct mode avoids leaking a detached server from
+    // this suite. CODEGRAPH_STATE_DIR keeps the project registry out of the
+    // real ~/.codegraph.
+    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_STATE_DIR: stateDir },
   }) as ChildProcessWithoutNullStreams;
 }
 
@@ -152,10 +150,12 @@ describe('MCP server title and icon', () => {
 
 describe('MCP initialize handshake (issue #172)', () => {
   let tempDir: string;
+  let stateDir: string;
   let child: ChildProcessWithoutNullStreams | null = null;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-init-'));
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-init-state-'));
   });
 
   afterEach(async () => {
@@ -168,10 +168,11 @@ describe('MCP initialize handshake (issue #172)', () => {
     }
     child = null;
     await removeWhenReleased(tempDir);
+    await removeWhenReleased(stateDir);
   });
 
   it('responds to initialize quickly when no .codegraph exists in cwd', async () => {
-    child = spawnServer(tempDir);
+    child = spawnServer(tempDir, stateDir);
     const events = tagStreams(child);
     sendInitialize(child, tempDir);
     const response = await waitFor(events, (e) => e.stream === 'stdout', 5000);
@@ -182,37 +183,37 @@ describe('MCP initialize handshake (issue #172)', () => {
     expect(json.result.capabilities.tools).toBeDefined();
   }, 10000);
 
-  it('sends initialize response BEFORE tryInitializeDefault finishes', async () => {
-    // Seed a real .codegraph so the server's tryInitializeDefault path runs
-    // its full body: CodeGraph.open() (which awaits initGrammars()) and then
-    // startWatching() (which logs "File watcher active" to stderr). On any
-    // platform, that stderr log is observable evidence that tryInitializeDefault
-    // has completed. The contract we're protecting: the JSON-RPC response on
-    // stdout must arrive BEFORE that stderr log. If a future change re-awaits
-    // tryInitializeDefault before sendResult, this ordering inverts and the
-    // test fails — regardless of how fast the local filesystem is.
+  it('answers initialize without opening any project, even in an indexed launch directory', async () => {
+    // A real .codegraph in the launch directory. The server has no default
+    // project, so neither the handshake nor a tools/list opens it: opening it
+    // would log "File watcher active" on stderr. (A project is opened only by
+    // a tool call that names it in projectPath.)
     const cg = await CodeGraph.init(tempDir);
     cg.close();
 
-    child = spawnServer(tempDir);
+    child = spawnServer(tempDir, stateDir);
     const events = tagStreams(child);
     sendInitialize(child, tempDir);
 
     const response = await waitFor(events, (e) => e.stream === 'stdout', 10000);
-    const watcherLog = await waitFor(
-      events,
-      (e) => e.stream === 'stderr' && e.text.includes('File watcher active'),
-      10000,
-    );
-    expect(response.seq).toBeLessThan(watcherLog.seq);
     const json = JSON.parse(response.text);
     expect(json.id).toBe(0);
     expect(json.result.serverInfo.name).toBe('codegraph');
     expectServerBranding(json.result.serverInfo);
+    expect(json.result.instructions).toContain('missing argument: root path to the code you wish to query');
+
+    // A request answered after the handshake proves the server has had time to
+    // start anything the handshake queued; nothing was opened.
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n');
+    await waitFor(events, (e) => {
+      if (e.stream !== 'stdout') return false;
+      try { return JSON.parse(e.text).id === 1; } catch { return false; }
+    }, 10000);
+    expect(events.some((e) => e.stream === 'stderr' && e.text.includes('File watcher active'))).toBe(false);
   }, 20000);
 
   it('answers resources/list and prompts/list with empty lists, not -32601 (issue #621)', async () => {
-    child = spawnServer(tempDir);
+    child = spawnServer(tempDir, stateDir);
     const events = tagStreams(child);
     sendInitialize(child, tempDir);
     await waitFor(events, (e) => e.stream === 'stdout', 5000); // initialize reply

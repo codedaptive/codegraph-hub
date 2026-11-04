@@ -56,19 +56,39 @@ export function gitWorktreeRoot(dir: string): string | null {
  * from a nested repo the parent index already covers. Null when not a repo.
  */
 export function gitCommonDir(dir: string): string | null {
+  const answer = gitCommonDirAnswer(dir);
+  return answer.kind === 'dir' ? answer.dir : null;
+}
+
+/**
+ * What `git rev-parse --git-common-dir` said for `dir`: the directory, that git ran and said `dir` is not in a
+ * repository (exit 128 and "not a git repository" on stderr), or that git could not answer (not installed, a
+ * spawn that failed, a timeout, any other exit, and any other 128: git also exits 128 on a fatal config error
+ * or a safe.directory ownership refusal, which say nothing about whether `dir` is a repository).
+ * {@link gitCommonDir} maps the last two to null; {@link classifyNestedRepository} tells them apart.
+ */
+type CommonDirAnswer = { kind: 'dir'; dir: string } | { kind: 'not-a-repository' } | { kind: 'failed' };
+
+function gitCommonDirAnswer(dir: string): CommonDirAnswer {
   try {
     const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: dir,
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      // stderr is captured (on a failure it is on the error) to read git's reason; LC_ALL=C keeps that message
+      // in English, the language the match below reads.
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, LC_ALL: 'C' },
       windowsHide: true,
       timeout: 5000, // same rationale as gitWorktreeRoot
     }).trim();
-    if (!out) return null;
+    if (!out) return { kind: 'failed' };
     // `--git-common-dir` is relative to cwd unless already absolute.
-    return realpath(path.isAbsolute(out) ? out : path.resolve(dir, out));
-  } catch {
-    return null;
+    return { kind: 'dir', dir: realpath(path.isAbsolute(out) ? out : path.resolve(dir, out)) };
+  } catch (err) {
+    const { status, stderr } = err as { status?: unknown; stderr?: unknown };
+    return status === 128 && /not a git repository/i.test(String(stderr ?? ''))
+      ? { kind: 'not-a-repository' }
+      : { kind: 'failed' };
   }
 }
 
@@ -146,27 +166,50 @@ export interface NestedRepository {
  *     common dir): the #155 borrowed-worktree case, warned about, not refused.
  */
 export function nestedRepositoryBelow(startPath: string, indexRoot: string): NestedRepository | null {
+  const verdict = classifyNestedRepository(startPath, indexRoot);
+  if (verdict.kind === 'nested') return verdict.repository;
+  return verdict.kind === 'unknown' ? (verdict.assumedNested ?? null) : null;
+}
+
+/**
+ * {@link nestedRepositoryBelow}'s answer with the third case kept apart: `unknown` is git failing to answer
+ * (not installed, a failed spawn, a timeout, no toplevel or common dir for the path, or a failure on the index
+ * root's common dir that is not "the index root is not in a repository"); `not-nested` is the cases that
+ * function lists as null; `nested` is the repository. The index root not being in a git repository at all
+ * counts as `nested`, as it always has: its index cannot be the repository's own.
+ * `assumedNested` is set only when git failed on the index root's side after the path's repository was found
+ * nested: {@link nestedRepositoryBelow} keeps returning that repository for it, as it did before the verdict
+ * existed; a caller that must not guess (`ownIndexRootFor`) ignores it.
+ */
+export type NestedVerdict =
+  | { kind: 'nested'; repository: NestedRepository }
+  | { kind: 'not-nested' }
+  | { kind: 'unknown'; assumedNested?: NestedRepository };
+
+export function classifyNestedRepository(startPath: string, indexRoot: string): NestedVerdict {
   // git needs an existing directory to run in: a file, or a sub-path that does
   // not exist yet, belongs to the repository of its nearest existing directory.
   let dir = path.resolve(startPath);
   while (!isDirectory(dir)) {
     const up = path.dirname(dir);
-    if (up === dir) return null;
+    if (up === dir) return { kind: 'unknown' };
     dir = up;
   }
   const repoRoot = gitWorktreeRoot(dir);
-  if (!repoRoot) return null;
+  if (!repoRoot) return { kind: 'unknown' };
 
   // The on-disk spelling of both ends (`realpathSync.native` normalizes case on
   // macOS and Windows), so `relPath` matches the paths the index stored.
   const rel = path.relative(nativeRealpath(indexRoot), nativeRealpath(repoRoot));
-  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return { kind: 'not-nested' };
 
   const repoCommon = gitCommonDir(repoRoot);
-  if (!repoCommon) return null;
-  const indexCommon = gitCommonDir(realpath(indexRoot));
-  if (indexCommon && sameDirectory(repoCommon, indexCommon)) return null;
-  return { root: repoRoot, relPath: rel.split(path.sep).join('/') };
+  if (!repoCommon) return { kind: 'unknown' };
+  const repository = { root: repoRoot, relPath: rel.split(path.sep).join('/') };
+  const index = gitCommonDirAnswer(realpath(indexRoot));
+  if (index.kind === 'failed') return { kind: 'unknown', assumedNested: repository };
+  if (index.kind === 'dir' && sameDirectory(repoCommon, index.dir)) return { kind: 'not-nested' };
+  return { kind: 'nested', repository };
 }
 
 function isDirectory(p: string): boolean {

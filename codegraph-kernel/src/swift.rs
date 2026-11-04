@@ -11,10 +11,9 @@
 //! declarations descend so initializer calls attribute to the class. Also
 //! preserved on purpose: `parameter` field never resolves (zero param type
 //! refs, zero signatures), isAsync is present-false (dead hook), `open` →
-//! internal visibility, everything-is-`extends` inheritance (first
-//! type_identifier of each specifier), no instantiates refs ever (`Foo()` is
-//! a plain call), subscript reads as `calls arr`, `defer` as `calls defer`,
-//! multi-case enum entries minting only the first case, `/** */` block docs
+//! internal visibility, everything-is-`extends` inheritance, no instantiates
+//! refs ever (`Foo()` is a plain call), subscript reads as `calls arr`, `defer` as `calls defer`,
+//! `/** */` block docs
 //! ignored AND chain-breaking, init/deinit/subscript minting no nodes with
 //! their bodies routed through visitNode (calls → class, static reads →
 //! nothing). Positions in UTF-16 code units. Files with parse errors defer
@@ -973,12 +972,24 @@ impl<'t> Walker<'t> {
     }
 
     fn extract_enum_members(&mut self, node: Node<'t>) {
-        // `name` field = the FIRST case name only — `case put, delete` mints
-        // ONLY `put` (the identifier-scan fallback is dead, the field always
-        // resolves). Associated/raw values never walked.
-        if let Some(name_node) = node.child_by_field_name("name") {
-            let name = self.text(name_node).to_string();
+        // One `name` field per case. A single-case entry (`case put`) mints
+        // one member spanning the whole entry; a multi-case entry (`case put,
+        // delete`, `case object([Int]), null`) mints one member per case,
+        // each spanning its own name. Ids come from name and line; the
+        // column only separates a collision. Same rule as
+        // extractEnumMembers. The identifier-scan fallback there is dead for
+        // Swift (every enum_entry has a name field). Associated/raw values
+        // never walked.
+        let mut cursor = node.walk();
+        let names: Vec<Node<'t>> = node.children_by_field_name("name", &mut cursor).collect();
+        if let [only] = names.as_slice() {
+            let name = self.text(*only).to_string();
             self.create_node("enum_member", &name, node, Extra::default());
+        } else {
+            for case_name in names {
+                let name = self.text(case_name).to_string();
+                self.create_node("enum_member", &name, case_name, Extra::default());
+            }
         }
     }
 
@@ -1216,9 +1227,12 @@ impl<'t> Walker<'t> {
         }
     }
 
-    /// extractInheritance — the swift inheritance_specifier case: FIRST
-    /// type_identifier of each specifier's user_type, everything as `extends`
-    /// (conformances included; `: Module.Base` takes `Module`).
+    /// extractInheritance — the swift inheritance_specifier case: each
+    /// specifier's user_type as the dotted path of its direct type_identifier
+    /// children, everything as `extends` (conformances included). `: Kit.Runner`
+    /// is `Kit.Runner`, `: Kit.Runner<Int>` too (generic arguments sit in
+    /// type_arguments and are dropped), `: B` is `B`; the position is the
+    /// user_type's.
     fn extract_inheritance(&mut self, node: Node<'t>, class_row: u32) {
         let extends_kind = edge_kind_index("extends").unwrap();
         for i in 0..node.named_child_count() {
@@ -1230,12 +1244,16 @@ impl<'t> Walker<'t> {
                 .filter_map(|j| child.named_child(j))
                 .find(|c| c.kind() == "user_type");
             let Some(user_type) = user_type else { continue };
-            let type_id = (0..user_type.named_child_count())
+            let segments: Vec<&str> = (0..user_type.named_child_count())
                 .filter_map(|j| user_type.named_child(j))
-                .find(|c| c.kind() == "type_identifier");
-            let Some(type_id) = type_id else { continue };
-            let name = self.text(type_id).to_string();
-            self.push_ref_at(class_row, &name, extends_kind, type_id);
+                .filter(|c| c.kind() == "type_identifier")
+                .map(|c| self.text(c))
+                .collect();
+            if segments.is_empty() {
+                continue;
+            }
+            let name = segments.join(".");
+            self.push_ref_at(class_row, &name, extends_kind, user_type);
         }
     }
 

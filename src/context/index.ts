@@ -20,7 +20,7 @@ import {
   FindRelevantContextOptions,
   SearchResult,
 } from '../types';
-import { QueryBuilder } from '../db/queries';
+import { QueryBuilder, inPathPrefixes } from '../db/queries';
 import { GraphTraverser } from '../graph';
 import { formatContextAsMarkdown, formatContextAsJson } from './formatter';
 import { logDebug } from '../errors';
@@ -217,6 +217,7 @@ const DEFAULT_FIND_OPTIONS: Required<FindRelevantContextOptions> = {
   edgeKinds: [],
   nodeKinds: HIGH_VALUE_NODE_KINDS, // Filter out imports/exports by default
   seedNames: [],         // Segment-vocab supplement — filled by the facade
+  pathPrefixes: [],      // Path focus — none: every path is in scope
 };
 
 // Re-export the low-confidence sentinel (defined in a dependency-free leaf so
@@ -499,7 +500,15 @@ export class ContextBuilder {
     query: string,
     options: FindRelevantContextOptions = {}
   ): Promise<Subgraph> {
-    const opts = { ...DEFAULT_FIND_OPTIONS, ...options };
+    // `pathPrefixes` is read through `??`: an explicit `undefined` in `options`
+    // would otherwise replace the default list with undefined in the spread.
+    const opts = { ...DEFAULT_FIND_OPTIONS, ...options, pathPrefixes: options.pathPrefixes ?? [] };
+    // The path focus. A lookup that takes it counts only in-focus rows toward
+    // its own limit. The reads that cannot take it (the exact-filename lookups,
+    // the copybook list) are post-filtered with inPathPrefixes; the copybook
+    // per-member cap of 200 applies before that filter. An empty list filters
+    // nothing.
+    const pathPrefixes = opts.pathPrefixes;
 
     // Start with empty subgraph
     const nodes = new Map<string, Node>();
@@ -526,6 +535,7 @@ export class ContextBuilder {
           exactMatches = this.queries.findNodesByExactName(symbolsFromQuery, {
             limit: Math.ceil(opts.searchLimit * 5),
             kinds: opts.nodeKinds && opts.nodeKinds.length > 0 ? opts.nodeKinds : undefined,
+            pathPrefixes,
           });
         }
 
@@ -541,6 +551,7 @@ export class ContextBuilder {
           const seedResults = this.queries.findNodesByExactName(opts.seedNames, {
             limit: Math.ceil(opts.searchLimit * 3),
             kinds: opts.nodeKinds && opts.nodeKinds.length > 0 ? opts.nodeKinds : undefined,
+            pathPrefixes,
           });
           const known = new Set(exactMatches.map((r) => r.node.id));
           for (const r of seedResults) {
@@ -603,6 +614,7 @@ export class ContextBuilder {
         const prefixResults = this.queries.searchNodes(titleCased, {
           limit: 30,
           kinds: definitionKinds,
+          pathPrefixes,
         });
         const matched: SearchResult[] = [];
         for (const r of prefixResults) {
@@ -639,11 +651,13 @@ export class ContextBuilder {
     const exactFileMatches: SearchResult[] = [];
 
     if (hasHanInFilename && allowsFileNodes) {
+      // These two lookups take no path argument, so the focus is applied to
+      // their rows here.
       const candidates = [
         ...this.queries.getNodesByName(filenameQuery)
           .filter((node) => node.kind === 'file'),
         ...this.queries.getFileNodesByNamePrefix(`${filenameQuery}.`),
-      ];
+      ].filter((node) => inPathPrefixes(node.filePath, pathPrefixes));
       for (const node of candidates) {
         const fileName = path.basename(node.filePath);
         const fileExtension = path.extname(fileName);
@@ -665,9 +679,18 @@ export class ContextBuilder {
     const allowsIncludes = options.nodeKinds === undefined
       || options.nodeKinds.length === 0
       || options.nodeKinds.includes('import');
-    const copybooks = allowsIncludes
+    const copybooksFound = allowsIncludes
       ? this.findCopybookEntries(query)
       : { entries: [], members: new Set<string>() };
+    // findCopybookEntries takes no path argument, and its include cap of 200 is
+    // per member (src/graph/cobol-copybooks.ts) and applies before the focus, so
+    // the focus is applied to its entries here. `members` is not focus-filtered:
+    // Step 3 skips a member's name in the text search whether or not that
+    // member's entries are in focus.
+    const copybooks = {
+      entries: copybooksFound.entries.filter((r) => inPathPrefixes(r.node.filePath, pathPrefixes)),
+      members: copybooksFound.members,
+    };
 
     // Step 3: Run text search for natural language term matching
     // This catches file-name and node-name matches that semantic search may miss,
@@ -699,6 +722,7 @@ export class ContextBuilder {
           const termResults = this.queries.searchNodes(term, {
             limit: opts.searchLimit * 2,
             kinds: searchKinds,
+            pathPrefixes,
           });
           for (const r of termResults) {
             const existing = termResultsMap.get(r.node.id);
@@ -929,11 +953,13 @@ export class ContextBuilder {
             limit: 200,
             kinds: camelDefinitionKinds,
             excludePrefix: true,
+            pathPrefixes,
           }),
           ...this.queries.findNodesByNameSubstring(titleCased, {
             limit: 200,
             kinds: camelCallableKinds,
             excludePrefix: true,
+            pathPrefixes,
           }),
         ];
 
@@ -1018,12 +1044,14 @@ export class ContextBuilder {
               limit: 200,
               kinds: camelDefinitionKinds,
               excludePrefix: false,
+              pathPrefixes,
             }),
             // Same separate callable batch as Step 5b (#1196).
             ...this.queries.findNodesByNameSubstring(titleCased, {
               limit: 200,
               kinds: camelCallableKinds,
               excludePrefix: false,
+              pathPrefixes,
             }),
           ];
 
@@ -1073,6 +1101,11 @@ export class ContextBuilder {
     // If someone searches "terminal" and finds `import { TerminalPanel }`,
     // they want the TerminalPanel class, not the import statement
     filteredResults = this.resolveImportsToDefinitions(filteredResults);
+
+    // Path focus, after the import swap (an in-focus import can resolve to an
+    // out-of-focus definition, which is out of focus) and before the entry cap
+    // below, so the cap counts in-focus entries only.
+    filteredResults = filteredResults.filter((r) => inPathPrefixes(r.node.filePath, pathPrefixes));
 
     // An exact filename is the query's requested entry point. Keep it ahead of
     // broader text matches before applying the entry-point cap.

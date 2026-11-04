@@ -1,15 +1,18 @@
 /**
  * Taking over a stale `codegraph.lock` must leave exactly one holder (#2979).
  *
- * `FileLock.acquire()` used to read the lock, see a dead PID, unlink the file
- * and create its own. Two processes that both read the same dead PID could
- * then both succeed: the first replaced the stale lock, and the second, acting
- * on what it had read a moment earlier, unlinked the first one's live lock and
- * created its own. Both then wrote to the index as its only writer.
+ * The race: an acquire that reads the lock, sees a dead PID, unlinks the file
+ * and creates its own lets two processes that both read the same dead PID
+ * both succeed: the first replaces the stale lock, and the second, acting
+ * on what it read a moment earlier, unlinks the first one's live lock and
+ * creates its own. Both then write to the index as its only writer.
  *
  * The two-process cases pin that interleaving with a barrier rather than
  * timing: the slow contender stops right after reading the stale lock and
  * resumes only once the fast one holds it (see fixtures/filelock-contender.cjs).
+ * A stale lock is removed only if it is still the very file the taker read,
+ * under the `<lock>.takeover` guard (src/mcp/lock-takeover.ts); the taker then
+ * creates its own lock exclusively, which fails if anyone's lock is in place.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
@@ -137,20 +140,22 @@ describe('FileLock stale takeover (#2979)', () => {
   }, 60_000);
 
   it('leaves a stale lock to the process already taking it over', async () => {
-    // A live process holds the takeover sentinel: it is replacing the stale lock right now.
+    // A live process holds the takeover guard (`<lock>.takeover`, its PID as
+    // the body): it is replacing the stale lock right now. The guard is young,
+    // so it is not cleared as an orphan.
     const breaker = idle();
     fs.writeFileSync(lockPath, DEAD_PID);
-    fs.writeFileSync(`${lockPath}.break`, String(breaker.child.pid));
+    fs.writeFileSync(`${lockPath}.takeover`, String(breaker.child.pid));
 
     const lock = new FileLock(lockPath);
     expect(() => lock.acquire()).toThrow(new RegExp(`locked by another process \\(PID ${breaker.child.pid}\\)`));
     expect(fs.readFileSync(lockPath, 'utf8')).toBe(DEAD_PID);
-    expect(fs.readFileSync(`${lockPath}.break`, 'utf8')).toBe(String(breaker.child.pid));
+    expect(fs.readFileSync(`${lockPath}.takeover`, 'utf8')).toBe(String(breaker.child.pid));
   });
 
-  it('takes over a stale lock whose takeover sentinel a dead process left behind', () => {
+  it('takes over a stale lock whose takeover guard a dead process left behind', () => {
     fs.writeFileSync(lockPath, DEAD_PID);
-    fs.writeFileSync(`${lockPath}.break`, DEAD_PID);
+    fs.writeFileSync(`${lockPath}.takeover`, DEAD_PID);
 
     const lock = new FileLock(lockPath);
     lock.acquire();
@@ -178,6 +183,22 @@ describe('FileLock stale takeover (#2979)', () => {
     lock.release();
     expect(fs.existsSync(lockPath)).toBe(false);
   });
+
+  // A first line that is not a pid above zero names no process. Zero and -1 are the cases that matter: signal 0
+  // to pid 0 reaches this process's own group, and to -1 every process it may signal, so either would read as live.
+  for (const first of ['0', '-1', 'garbage']) {
+    it(`takes over a lock whose first line is ${first}, which names no process`, () => {
+      fs.writeFileSync(lockPath, `${first}\n`);
+      const lock = new FileLock(lockPath);
+      lock.acquire();
+      try {
+        expect(fs.readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+      } finally {
+        lock.release();
+      }
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
+  }
 
   it('treats a PID it may not signal (EPERM) as a live holder', () => {
     // Another user's process, or an elevated one on Windows: alive, just not ours to signal.

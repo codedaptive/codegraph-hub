@@ -1,18 +1,21 @@
 /**
- * MCP catch-up gate — first tool call blocks on the engine's post-open
- * filesystem reconcile so it never serves rows for files that were
- * deleted (or edited) while no MCP server was running.
+ * MCP catch-up gate — the first tool call after a catch-up sync was started
+ * blocks on it, so it never serves rows for files that were deleted (or edited)
+ * while the index handle was dead.
  *
- * Background: `MCPEngine.catchUpSync()` fires `cg.sync()` in the background.
- * Before this fix it was fire-and-forget — a tool call could race past it
- * and return rows for files that no longer exist on disk. The per-file
- * staleness banner (`withStalenessNotice`) couldn't help, because
- * `getPendingFiles()` is populated by the watcher, not by catch-up.
+ * Background: the engine's catch-up sync (`MCPEngine.catchUpAfterReopen`, run
+ * when a call reopens a replaced database) is a sync job on the index builder,
+ * started in the background (the tests below stand a `cg.sync()` promise in for
+ * it: what matters here is the handler's gate on a promise). Fire-and-forget,
+ * a tool call could race past it and return rows for files
+ * that no longer exist on disk. The per-file staleness banner
+ * (`withStalenessNotice`) couldn't help, because `getPendingFiles()` is
+ * populated by the watcher, not by catch-up.
  *
- * The fix: `catchUpSync()` pushes its promise into the `ToolHandler` via
- * `setCatchUpGate(p)`; the first `execute()` call awaits the gate and then
- * clears it. These tests exercise the gate directly (deterministic) and
- * the engine-driven path (proves the engine actually pokes the gate).
+ * The fix: the engine pushes the sync's promise into the `ToolHandler` via
+ * `setCatchUpGate(p)`; the next `execute()` call awaits the gate and then
+ * clears it. These tests exercise the gate directly (deterministic); the
+ * engine-driven path is covered by watcher-replaced-db.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

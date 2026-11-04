@@ -11,6 +11,7 @@ import {
 import { EXTRACTION_VERSION } from '../src/extraction/extraction-version';
 import { IndexVersionWarningState } from '../src/mcp/index-version-warning';
 import { MCPSession } from '../src/mcp/session';
+import { resolveRepoAnchor } from '../src/extensions/host/server/repo-anchor';
 import type { MCPEngine } from '../src/mcp/engine';
 import type {
   JsonRpcNotification,
@@ -55,12 +56,12 @@ function fakeTransport(): JsonRpcTransport & {
   };
 }
 
-function searchCall(id: number): JsonRpcRequest {
+function searchCall(id: number, projectPath: string): JsonRpcRequest {
   return {
     jsonrpc: '2.0',
     id,
     method: 'tools/call',
-    params: { name: 'codegraph_search', arguments: { query: 'alpha' } },
+    params: { name: 'codegraph_search', arguments: { query: 'alpha', projectPath } },
   };
 }
 
@@ -101,13 +102,13 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_search',
       { query: 'alpha' },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
     const second = await handler.execute(
       'codegraph_search',
       { query: 'alpha' },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
 
     expect(resultText(first)).toMatch(/index predates the running extraction engine/i);
@@ -135,7 +136,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_search',
       { query: '' },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
     expect(invalid.isError).toBe(true);
     expect(resultText(invalid)).not.toMatch(/index predates/i);
@@ -144,7 +145,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_search',
       { query: 'alpha' },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
     expect(resultText(successful)).toMatch(/index predates the running extraction engine/i);
   });
@@ -154,7 +155,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_search',
       { query: 'alpha' },
       undefined,
-      new IndexVersionWarningState(),
+      { indexVersionWarnings: new IndexVersionWarningState() },
     );
     expect(resultText(current)).not.toMatch(/index predates/i);
 
@@ -162,7 +163,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_status',
       {},
       undefined,
-      new IndexVersionWarningState(),
+      { indexVersionWarnings: new IndexVersionWarningState() },
     );
     expect(resultText(currentStatus)).toContain(
       `**Index built with:** CodeGraph v`,
@@ -185,7 +186,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_search',
       { query: 'pending' },
       undefined,
-      new IndexVersionWarningState(),
+      { indexVersionWarnings: new IndexVersionWarningState() },
     );
     expect(resultText(uninitializedResult)).not.toMatch(/index predates/i);
 
@@ -193,7 +194,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_status',
       {},
       undefined,
-      new IndexVersionWarningState(),
+      { indexVersionWarnings: new IndexVersionWarningState() },
     );
     expect(resultText(uninitializedStatus)).toContain('**Index built with:** not indexed yet');
     expect(resultText(uninitializedStatus)).toContain('**Re-index recommended:** no');
@@ -215,19 +216,19 @@ describe('MCP index extraction-version warning (#1852)', () => {
       'codegraph_search',
       { query: 'alpha' },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
     const otherFirst = await handler.execute(
       'codegraph_search',
       { query: 'bravo', projectPath: otherRoot },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
     const otherAlias = await handler.execute(
       'codegraph_search',
       { query: 'bravo', projectPath: path.join(otherRoot, 'src') },
       undefined,
-      state,
+      { indexVersionWarnings: state },
     );
 
     expect(resultText(defaultFirst)).toContain('CodeGraph v0.1.0');
@@ -239,8 +240,8 @@ describe('MCP index extraction-version warning (#1852)', () => {
     stampStale(cg, '0.1.0');
     const state = new IndexVersionWarningState();
 
-    const first = await handler.execute('codegraph_status', {}, undefined, state);
-    const second = await handler.execute('codegraph_status', {}, undefined, state);
+    const first = await handler.execute('codegraph_status', {}, undefined, { indexVersionWarnings: state });
+    const second = await handler.execute('codegraph_status', {}, undefined, { indexVersionWarnings: state });
 
     expect(resultText(first)).toMatch(/index predates the running extraction engine/i);
     for (const result of [first, second]) {
@@ -252,25 +253,23 @@ describe('MCP index extraction-version warning (#1852)', () => {
     expect(resultText(second)).not.toMatch(/index predates the running extraction engine/i);
   });
 
-  it('keeps warnings independent for daemon clients sharing one engine', async () => {
+  it('keeps warnings independent for clients sharing one engine', async () => {
     stampStale(cg);
     const engine = {
-      ensureInitialized: async () => { /* already initialized */ },
-      hasDefaultCodeGraph: () => true,
-      getProjectPath: () => root,
-      retryInitializeSync: () => { /* already initialized */ },
       getToolHandler: () => handler,
     } as unknown as MCPEngine;
+    // Sessions anchored at the project the calls name: the repo guard lets the path through.
+    const anchor = await resolveRepoAnchor(root);
     const transportA = fakeTransport();
     const transportB = fakeTransport();
-    const sessionA = new MCPSession(transportA, engine);
-    const sessionB = new MCPSession(transportB, engine);
+    const sessionA = new MCPSession(transportA, engine, { anchor });
+    const sessionB = new MCPSession(transportB, engine, { anchor });
     sessionA.start();
     sessionB.start();
 
-    await transportA.deliver(searchCall(1));
-    await transportA.deliver(searchCall(2));
-    await transportB.deliver(searchCall(3));
+    await transportA.deliver(searchCall(1, anchor.root));
+    await transportA.deliver(searchCall(2, anchor.root));
+    await transportB.deliver(searchCall(3, anchor.root));
 
     expect(resultText(transportA.results[0] as ToolResult)).toMatch(/index predates/i);
     expect(resultText(transportA.results[1] as ToolResult)).not.toMatch(/index predates/i);

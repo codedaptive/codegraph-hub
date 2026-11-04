@@ -1,18 +1,17 @@
 /**
  * MCP proxy mode — issue #411.
  *
- * The proxy is a near-transparent stdio↔socket pipe. Once it has verified
- * the daemon's hello line (same major.minor.patch as ours), it does no
- * protocol parsing of its own: every byte the MCP host writes to the proxy's
- * stdin goes straight to the daemon socket, and every byte the daemon emits
- * goes straight to the host's stdout. Server-initiated JSON-RPC requests
- * (e.g. `roots/list`) flow through the same pipe transparently.
+ * The proxy is the process an MCP host actually spawns: a stdio front for the
+ * machine server. It answers the MCP handshake locally (so tools register at
+ * process-startup speed) and forwards every other message, byte for byte, to
+ * the server over its socket; server replies stream straight back to the host's
+ * stdout. When the server cannot be reached it serves tool calls in-process,
+ * read-only, until a retry attaches (see {@link runLocalHandshakeProxy}).
  *
  * Lifecycle expectations:
- *   - The proxy exits when *either* stream closes (host stdin closed →
- *     daemon socket end, or daemon-side socket close → host stdout end).
- *   - Closing the socket on the proxy side is what tells the daemon to
- *     decrement its connected-clients refcount.
+ *   - The proxy exits when the host's stdin closes (or its host process dies).
+ *   - Closing the socket on the proxy side is what tells the server to drop
+ *     this client's session.
  *   - On a parent-process death we can't detect via stdin close (e.g. SIGKILL
  *     of the MCP host), the proxy's PPID watchdog catches it — same logic
  *     the direct-mode server uses; see issue #277.
@@ -29,9 +28,12 @@ import { armStartupHandshakeTimeout } from './startup-handshake';
 import { treatStdinFailureAsShutdown } from './stdin-teardown';
 import { treatStdoutFailureAsShutdown } from './stdout-teardown';
 import { CodeGraphPackageVersion, isOlderRelease } from './version';
-import { SERVER_INFO, PROTOCOL_VERSION, initializeInstructions, toolCallArguments, TOOL_ARGUMENTS_NOT_OBJECT } from './session';
+import { SERVER_INFO, PROTOCOL_VERSION, initializeInstructions } from './session';
 import { SERVER_INSTRUCTIONS } from './server-instructions';
 import { getStaticTools } from './tools';
+import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
+import { dispatchToolCall } from '../extensions/host/server/tool-call';
+import { parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { ErrorCodes } from './transport';
 import { ExploreSessionState } from './explore-session-state';
 import {
@@ -91,88 +93,26 @@ export function logAttachedDaemon(socketPath: string, hello: DaemonHello): void 
   );
 }
 
-export interface ProxyResult {
-  /**
-   * `proxied` — successfully attached to a same-version daemon and piped
-   * stdio. The proxy stays alive until either end closes.
-   * `fallback-needed` — the daemon rejected us (version mismatch / unreachable
-   * socket) and the caller should run the server in direct mode.
-   */
-  outcome: 'proxied' | 'fallback-needed';
-  reason?: string;
-}
-
 /**
- * Attempt to connect to the daemon at `socketPath` and pipe stdio through it.
- *
- * Returns a promise that resolves when either:
- *   - the connection succeeded and one of stdin/socket has now closed
- *     (after which the process should exit), or
- *   - the connection failed early enough that the caller can still fall
- *     back to direct mode.
- *
- * The `expectedVersion` param defaults to the package's own version — daemon
- * and proxy MUST match exactly. Mismatch resolves with
- * `outcome: 'fallback-needed'` so the caller can transparently start its own
- * server. (We accept the cost of two concurrent servers in this case as the
- * price of never silently running a stale daemon against newer client code.)
- */
-export async function runProxy(
-  socketPath: string,
-  expectedVersion: string = CodeGraphPackageVersion,
-): Promise<ProxyResult> {
-  // POSIX: refuse to connect to a stale socket file that points at no
-  // listening process. `fs.existsSync` is a cheap pre-check; a real
-  // ECONNREFUSED below catches the rare "exists but unbound" race.
-  if (process.platform !== 'win32' && !fs.existsSync(socketPath)) {
-    return { outcome: 'fallback-needed', reason: 'socket file missing' };
-  }
-
-  const socket = net.createConnection(socketPath);
-  socket.setEncoding('utf8');
-
-  const hello = await readHelloLine(socket).catch((err) => {
-    socket.destroy();
-    return new Error(String(err));
-  });
-  if (hello instanceof Error) {
-    return { outcome: 'fallback-needed', reason: hello.message };
-  }
-
-  if (hello.codegraph !== expectedVersion) {
-    process.stderr.write(
-      `[CodeGraph MCP] Found a daemon on ${socketPath} but version (${hello.codegraph}) ` +
-      `differs from ours (${expectedVersion}); falling back to direct mode.\n`
-    );
-    socket.destroy();
-    return { outcome: 'fallback-needed', reason: 'version mismatch' };
-  }
-
-  logAttachedDaemon(socketPath, hello);
-
-  sendClientHello(socket);
-  startPpidWatchdog(socket);
-  await pipeUntilClose(socket);
-  // Host disconnected (or the daemon went away). The proxy's only job is the
-  // pipe; exit now so we don't linger — process.stdin's 'data' listener would
-  // otherwise keep the event loop alive and leave a zombie launcher behind.
-  process.exit(0);
-}
-
-/**
- * Connect to a daemon at `socketPath` and verify its hello (exact version match).
- * Returns the live socket (hello already consumed), null if unreachable / stale,
- * or — for a daemon of another version — `'older-version'` when it runs an older
- * release ({@link isOlderRelease}; the launcher replaces it, #2335) and
- * `'version-mismatch'` for any other version, which is left alone. Unlike
- * {@link runProxy} it does NOT pipe — the caller owns the socket. Used by the
- * local-handshake proxy's background connect. `helloTimeoutMs` bounds the wait
- * for the hello, so a caller with a deadline can spend no more than it has.
+ * Connect to the server at `socketPath` and verify its hello (exact version
+ * match). Returns the live socket (hello already consumed, client hello sent),
+ * null if unreachable / stale, or — for a server of another version —
+ * `'older-version'` when it runs an older release ({@link isOlderRelease}; the
+ * launcher replaces it, #2335) and `'version-mismatch'` for any other version,
+ * which is left alone. The caller owns the socket. Used by the local-handshake
+ * proxy's background connect. `helloTimeoutMs` bounds the wait for the hello,
+ * so a caller with a deadline can spend no more than it has. `launchDir` is the
+ * directory this session was launched in; it travels in the client hello and
+ * fixes the session's repo anchor on the server. `focus` is the session's
+ * `--focus` directories (normalised, relative to the repository root; none
+ * when omitted), which travel in the same hello.
  */
 export async function connectWithHello(
   socketPath: string,
   expectedVersion: string = CodeGraphPackageVersion,
   helloTimeoutMs: number = DAEMON_HELLO_TIMEOUT_MS,
+  launchDir?: string,
+  focus?: readonly string[],
 ): Promise<net.Socket | 'older-version' | 'version-mismatch' | null> {
   if (process.platform !== 'win32' && !fs.existsSync(socketPath)) return null;
   const socket = net.createConnection(socketPath);
@@ -193,36 +133,46 @@ export async function connectWithHello(
     return null; // no daemon yet — caller should keep polling
   }
   if (hello.codegraph !== expectedVersion) {
-    // A daemon IS up but it's the wrong version — definitive, not a "not yet".
+    // A server IS up but it's the wrong version — definitive, not a "not yet".
     socket.destroy();
     // An older release is the launcher's to replace (#2335); it says what it did.
     if (isOlderRelease(hello.codegraph, expectedVersion)) return 'older-version';
     // Any other: don't poll; the caller serves in-process so we never run stale-vs-new.
     process.stderr.write(
-      `[CodeGraph MCP] Found a daemon on ${socketPath} but version (${hello.codegraph}) ` +
+      `[CodeGraph MCP] Found a server on ${socketPath} but version (${hello.codegraph}) ` +
       `differs from ours (${expectedVersion}); serving this session in-process.\n`
     );
     return 'version-mismatch';
   }
   logAttachedDaemon(socketPath, hello);
-  sendClientHello(socket);
+  sendClientHello(socket, launchDir, focus);
   return socket;
 }
 
 /**
- * Tell the daemon our pids right after we verify its hello, so its liveness
- * sweep can reap this client if our process dies without the socket ever
- * signalling close (the Windows named-pipe hazard behind #692). Best-effort:
- * sent before any piped bytes so it's always the daemon's first line from us,
- * and a write failure here is harmless (the daemon just falls back to the
+ * Tell the server our pids, launch directory and session scope right after we
+ * verify its hello. The pids let its liveness sweep reap this client if our
+ * process dies without the socket ever signalling close (the Windows
+ * named-pipe hazard); the launch directory fixes the session's
+ * repo anchor, so without it every call on this session is answered with
+ * guidance to restart it. The scope is this client's own: its `--focus`
+ * directories, and its raw CODEGRAPH_MCP_TOOLS, which is sent even when empty
+ * so the server never answers this client from the environment of whichever
+ * client started it. Sent before any piped bytes so it's always the server's first line from
+ * us; a write failure here is harmless (the server just falls back to the
  * socket-close lifecycle). `hostPid` mirrors the PPID watchdog: the threaded
  * host pid if set, else our own parent (the host, on a no-relaunch bundle).
+ * Never send the `control` marker from an agent session: the server takes a hello with it and no `launchDir`
+ * for a control client (daemon.ts ClientPeers.control), which may send codegraph/indexWrite.
  */
-function sendClientHello(socket: net.Socket): void {
+function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[]): void {
   const clientHello: DaemonClientHello = {
     codegraph_client: 1,
     pid: process.pid,
     hostPid: parseHostPpid(process.env[HOST_PPID_ENV]) ?? EARLY_PPID,
+    ...(launchDir !== undefined ? { launchDir } : {}),
+    focus: [...(focus ?? [])],
+    tools: process.env.CODEGRAPH_MCP_TOOLS ?? '',
   };
   try { socket.write(JSON.stringify(clientHello) + '\n'); } catch { /* best-effort */ }
 }
@@ -232,23 +182,32 @@ type JsonRpc = Record<string, unknown>;
 /** Dependencies the local-handshake proxy needs, injected by MCPServer (which
  *  owns the daemon-spawn machinery and the engine factory). */
 export interface LocalHandshakeDeps {
-  /** Probe (replacing a daemon of an older release, #2335) → spawn → retry →
-   *  hello-verify; resolves a connected daemon socket, or null when the daemon
+  /** Probe (replacing a server of an older release, #2335) → spawn → retry →
+   *  hello-verify; resolves a connected server socket, or null when the server
    *  path is genuinely unavailable (→ in-process fallback). */
   getDaemonSocket(): Promise<net.Socket | null>;
-  /** Lazily create an in-process engine — used only while the daemon is
-   *  unreachable, preserving the "a broken daemon never wedges a session"
-   *  guarantee. Called again whenever the previous engine was retired (#2277). */
+  /** Lazily create an in-process engine — used only while the server is
+   *  unreachable, preserving the "a broken server never wedges a session"
+   *  guarantee. It is rootless, with no index builder, so read-only (`new MCPEngine()`):
+   *  it never writes an index (no seed of a worktree's index, no cold build, no
+   *  registry entry, no `codegraph.lock` or writer slot), so it holds no lock the
+   *  server needs. Called again
+   *  whenever the previous engine was retired (#2277). */
   makeEngine(): MCPEngine;
-  /** Project root for the fallback engine's lazy init. */
-  root: string;
+  /** The directory this session was launched in. The fallback's repo anchor is
+   *  resolved from it, so in-process calls answer for exactly the repository
+   *  the server would have answered for. */
+  launchDir: string;
+  /** The session's `--focus` directories, normalised and relative to the repository root (`normaliseFocusArgs`); none when omitted. The fallback keeps them as the server does for a hello (`sessionFocusEntries`). */
+  focus?: readonly string[];
 }
 
 /**
  * Local-handshake proxy (the cold-start fix).
  *
  * Answers `initialize` + `tools/list` from STATIC constants the instant the
- * client asks — tools register in ~process-startup time instead of waiting
+ * client asks (the list is filtered by THIS client's CODEGRAPH_MCP_TOOLS, which
+ * the hello also carries so the server's call gate agrees with it) — tools register in ~process-startup time instead of waiting
  * ~600ms for the daemon to spawn+bind, which is what produced the "No such tool
  * available" race that made headless agents flail into grep/Read. Tool CALLS are
  * forwarded to the shared daemon (connected in the background); the daemon's
@@ -257,11 +216,16 @@ export interface LocalHandshakeDeps {
  * a lazily-created in-process engine serves the calls — so the handshake speedup
  * never costs the old fall-back-to-direct robustness.
  *
- * Serving in-process is not for the rest of the session (#2277): that engine
- * may own the project's writer lock, and no daemon can start while it does, so
- * every other session on the project would be stuck without auto-sync. The
- * proxy retries the daemon with backoff, handing the writer lock back first,
- * and proxies again once one answers.
+ * Serving in-process is not for the rest of the session (#2277): it is
+ * read-only (no sync, not even for `fresh: true`; it never seeds, builds or
+ * registers an index, and every index it opens is opened read-only) and it
+ * duplicates work the server does for every session. The proxy retries the
+ * server with backoff, stops the fallback engine once one answers, and proxies
+ * again. In-process calls go through the same dispatch the server's sessions
+ * use ({@link dispatchToolCall}: tool-name checks, repo-anchor guard, index
+ * admission), with this process's own focus and tool allowlist, so a degraded
+ * session answers for the same repository, the same focus and the same tools,
+ * and asks for the same `projectPath`.
  */
 export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<void> {
   // The proxy is long-lived and can serve fallback tool calls in-process. Match
@@ -278,7 +242,30 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   let telemetryClient: ClientInfo | undefined;
   const pending: string[] = [];            // client lines buffered until the daemon resolves
   let engine: MCPEngine | null = null;
-  let engineReady: Promise<void> | null = null;
+  // The repo anchor of this session's launch dir, resolved on the first call
+  // served in-process and kept once it has resolved. A failed resolution is NOT
+  // kept: the next call resolves again, so one transient failure cannot disable
+  // every later call for the life of the process, and the failure is logged
+  // once. A call that finds no anchor is answered with the guard's "restart the
+  // session" guidance.
+  let anchor: Promise<RepoAnchor> | null = null;
+  let anchorFailureLogged = false;
+  const getAnchor = async (): Promise<RepoAnchor | null> => {
+    const attempt = (anchor ??= resolveRepoAnchor(deps.launchDir));
+    try {
+      return await attempt;
+    } catch (err) {
+      if (anchor === attempt) anchor = null;
+      if (!anchorFailureLogged) {
+        anchorFailureLogged = true;
+        process.stderr.write(
+          `[CodeGraph MCP] Could not resolve the repository of ${deps.launchDir} (${err instanceof Error ? err.message : String(err)}); ` +
+          'in-process calls get restart guidance until it resolves, and each call tries again.\n'
+        );
+      }
+      return null;
+    }
+  };
   // Calls being served in-process; the engine is only ever stopped after they finish.
   const localCalls = new Set<Promise<void>>();
   // Engines retired but not yet stopped; shutdown() waits for them too.
@@ -290,16 +277,15 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   let retryTimer: NodeJS.Timeout | null = null;
   let attachedAt = 0;
   // Requests forwarded to the daemon and not yet answered, keyed by JSON-RPC id.
-  // If the daemon dies mid-session (#662 — e.g. an MCP host SIGTERM's it when a
-  // new session starts), these would otherwise hang forever; we re-serve them
-  // in-process so the host always gets a reply.
+  // If the daemon dies mid-session (#662), these would otherwise hang forever;
+  // we re-serve them in-process so the host always gets a reply.
   const inflight = new Map<unknown, string>();
   // Explore call history for the ONE host connection this proxy serves (CG-17).
   // Only the daemon-unavailable fallback below uses it; when the daemon is up,
   // the tracking happens on the daemon's own MCPSession.
   const exploreSession = new ExploreSessionState();
   // The fallback is still one MCP client session. Keep its one-time warnings
-  // local just as MCPSession does when the shared daemon is available.
+  // local just as MCPSession does when the machine server answers.
   const indexVersionWarnings = new IndexVersionWarningState();
   const recordDaemonWarning = (requestLine: string | undefined, response: JsonRpc): void => {
     if (!requestLine) return;
@@ -313,13 +299,12 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
     const params = request.params as {
       arguments?: { projectPath?: unknown };
     } | undefined;
+    // Every call names its project (the server has no default one), so a
+    // warning always belongs to the root that path resolves to.
     const requestedPath = params?.arguments?.projectPath;
-    let root = deps.root;
-    if (typeof requestedPath === 'string') {
-      const resolved = findNearestCodeGraphRoot(requestedPath);
-      if (!resolved) return;
-      root = resolved;
-    }
+    if (typeof requestedPath !== 'string') return;
+    const root = findNearestCodeGraphRoot(requestedPath);
+    if (!root) return;
     indexVersionWarnings.claim(root);
   };
   const trackInflight = (line: string): void => {
@@ -341,7 +326,7 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
     try { daemonSocket?.destroy(); } catch { /* ignore */ }
     // Exit once every engine has stopped, a retiring one included: exiting while
     // a query worker is still starting up can crash the process on Windows (see
-    // QueryPool.destroy), and stopping releases the writer lock. The backstop
+    // QueryPool.destroy). The backstop
     // bounds a stop that never settles; it stays ref'd so the process lives
     // until one of the two exits it.
     setTimeout(() => {
@@ -353,23 +338,16 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   };
   // Resolves the engine a call was started on, so a call in flight while the
   // engine is being retired still finishes on it.
-  const ensureEngine = async (): Promise<MCPEngine> => {
+  const ensureEngine = (): MCPEngine => {
     // shutdown() stops only the engines it can see; never start one after it.
     if (!engine && shuttingDown) throw new Error('codegraph is shutting down');
-    if (!engine) {
-      engine = deps.makeEngine();
-      engineReady = engine.ensureInitialized(deps.root).catch(() => { /* degraded */ });
-    }
-    const current = engine;
-    await engineReady;
-    return current;
+    if (!engine) engine = deps.makeEngine();
+    return engine;
   };
   // Stop the in-process engine once the calls it is serving have answered.
-  // Stopping it releases the writer lock if it held one.
   const retireEngine = async (): Promise<void> => {
     const retired = engine;
     engine = null;
-    engineReady = null;
     if (retired) retiring.add(retired);
     try {
       await Promise.allSettled([...localCalls]);
@@ -390,17 +368,32 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
     let msg: JsonRpc; try { msg = JSON.parse(line) as JsonRpc; } catch { return; }
     const id = msg.id;
     if (msg.method === 'tools/call' && id !== undefined) {
-      const params = (msg.params || {}) as { name: string; arguments?: unknown };
-      const args = toolCallArguments(params);
-      if (!args) {
-        writeClient({ jsonrpc: '2.0', id, error: { code: ErrorCodes.InvalidParams, message: TOOL_ARGUMENTS_NOT_OBJECT } });
-        return;
-      }
       try {
-        const local = await ensureEngine();
-        const result = await local.getToolHandler().execute(params.name, args, exploreSession, indexVersionWarnings);
-        writeClient({ jsonrpc: '2.0', id, result });
-        getTelemetry().recordUsage('mcp_tool', params.name, !result.isError, telemetryClient);
+        // The same dispatch the server's sessions run (MCPSession.handleToolsCall):
+        // tool-name checks, the required-projectPath and repo-anchor guard, then
+        // the handler. Only the reply and telemetry are the proxy's own.
+        // The engine is resolved before the anchor is awaited: a call in flight
+        // while the engine is retired finishes on the engine it started on.
+        const handler = ensureEngine().getToolHandler();
+        const anchor = await getAnchor();
+        const outcome = await dispatchToolCall({
+          handler,
+          anchor,
+          exploreSession,
+          // This process's own scope, which the server would have had from the
+          // client hello: its repo-relative focus entries, and this client's
+          // CODEGRAPH_MCP_TOOLS.
+          focus: sessionFocusEntries(deps.focus),
+          toolAllowlist: parseToolAllowlist(process.env.CODEGRAPH_MCP_TOOLS ?? ''),
+          indexVersionWarnings,
+          params: msg.params,
+        });
+        if ('error' in outcome) {
+          writeClient({ jsonrpc: '2.0', id, error: outcome.error });
+        } else {
+          writeClient({ jsonrpc: '2.0', id, result: outcome.result });
+          getTelemetry().recordUsage('mcp_tool', outcome.toolName, !outcome.result.isError, telemetryClient);
+        }
       } catch (err) {
         writeClient({ jsonrpc: '2.0', id, error: { code: -32603, message: err instanceof Error ? err.message : String(err) } });
       }
@@ -451,7 +444,7 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
           };
         }
         writeClient({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO, instructions: initializeInstructions(SERVER_INSTRUCTIONS) } });
-        routeToDaemon(line); // prime the daemon so it resolves the project (its reply is suppressed below)
+        routeToDaemon(line); // prime the server's session with the client's initialize (its reply is suppressed below)
       } else if (msg.method === 'tools/list') {
         writeClient({ jsonrpc: '2.0', id: msg.id, result: { tools: getStaticTools() } });
       } else if (msg.method === 'resources/list') {
@@ -522,26 +515,16 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   };
   const retryDaemon = async (): Promise<void> => {
     if (shuttingDown || daemonStatus !== 'failed') return;
-    // While a writing engine owns writer.pid no daemon can start (#2277). Hand
-    // the lock back first, once the calls it is serving have answered, and
-    // buffer new calls until a daemon answers or we resume in-process. One
-    // writer at a time: the engine is fully stopped before a daemon is spawned.
-    const handover = engine !== null && !engine.isReadOnly();
-    if (handover) {
-      daemonStatus = 'connecting';
-      await retireEngine();
-    }
     const socket = await connectDaemon();
     if (shuttingDown) return;
     if (socket) {
       process.stderr.write('[CodeGraph MCP] Shared daemon reachable; proxying this session to it instead of serving in-process.\n');
       attachDaemon(socket, true);
-      // A read-only engine holds no lock: let its calls finish, then close it.
-      if (!handover) void retireEngine();
+      // The fallback engine is read-only and holds no lock: let the calls it is
+      // serving finish, then stop it.
+      void retireEngine();
       return;
     }
-    daemonStatus = 'failed';
-    serveBufferedLocally();
     scheduleDaemonRetry();
   };
 
@@ -571,11 +554,12 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
         writeClient(line);
       }
     });
-    // The daemon going away does NOT end the session (#662). An MCP host can
-    // SIGTERM the shared daemon when another session starts; if we exited here,
-    // this host would silently lose CodeGraph and any in-flight request would
-    // hang. Instead, fall back to the in-process engine until a daemon answers
-    // again, and re-serve whatever the dead daemon never answered.
+    // The server going away does NOT end the session (#662). The server can stop
+    // while a session is attached (an upgrade, `codegraph daemon --stop`, a
+    // crash); if we exited here, this host would silently lose CodeGraph and any
+    // in-flight request would hang. Instead, fall back to the in-process engine
+    // until a server answers again, and re-serve whatever the dead server never
+    // answered.
     const onDaemonLost = (): void => {
       if (shuttingDown || daemonSocket !== socket) return; // host teardown, or already handled
       daemonStatus = 'failed';
@@ -621,9 +605,9 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   await new Promise<void>(() => { /* stdin keeps the loop alive; exit via shutdown() */ });
 }
 
-/** PPID watchdog for the local-handshake proxy — same #277 logic as
- *  {@link startPpidWatchdog} but with no socket to close (the caller's shutdown
- *  handles teardown). */
+/** PPID watchdog for the local-handshake proxy (#277): shuts the proxy down when
+ *  its host process is gone. There is no socket to close here (the caller's
+ *  shutdown handles teardown). */
 function startPpidWatchdogNoSocket(onDeath: () => void): void {
   const pollMs = parsePollMs(process.env.CODEGRAPH_PPID_POLL_MS);
   if (pollMs <= 0) return;
@@ -649,7 +633,7 @@ function startPpidWatchdogNoSocket(onDeath: () => void): void {
 
 /**
  * Read one CRLF/LF-terminated JSON line from the socket, parse it as the
- * daemon hello, and return it. Bounded to {@link MAX_HELLO_LINE_BYTES} so a
+ * server hello, and return it. Bounded to {@link MAX_HELLO_LINE_BYTES} so a
  * malicious or broken peer can't OOM us. Times out after `timeoutMs` (3s by
  * default) — a healthy daemon sends hello immediately on accept.
  */
@@ -702,81 +686,6 @@ function readHelloLine(socket: net.Socket, timeoutMs: number = DAEMON_HELLO_TIME
     socket.on('error', onError);
     socket.on('close', onClose);
   });
-}
-
-/**
- * Pipe stdin → socket and socket → stdout. Resolves once either end closes
- * so the process can exit. Note: we deliberately do NOT use
- * `process.stdin.pipe(socket)` because pipe propagates 'end' onto the
- * downstream, which would close the socket prematurely if stdin happens to
- * end early — the MCP spec allows it to stay open across reconnects.
- */
-function pipeUntilClose(socket: net.Socket): Promise<void> {
-  return new Promise((resolve) => {
-    let resolved = false;
-    const done = () => { if (!resolved) { resolved = true; resolve(); } };
-
-    process.stdin.on('data', (chunk) => {
-      try { socket.write(chunk); } catch { /* socket may have errored — close path catches it */ }
-    });
-    process.stdin.on('end', () => {
-      try { socket.end(); } catch { /* ignore */ }
-      done();
-    });
-    // 'close' and 'error' both tear down: a socket-backed stdin can fail with
-    // an 'error' (ECONNRESET/hangup) rather than a clean close; destroying it
-    // stops a hung fd from busy-spinning the event loop (#799).
-    const teardown = () => {
-      try { process.stdin.destroy(); } catch { /* ignore */ }
-      try { socket.destroy(); } catch { /* ignore */ }
-      done();
-    };
-    process.stdin.on('close', teardown);
-    process.stdin.on('error', teardown);
-
-    socket.on('data', (chunk) => {
-      try { process.stdout.write(chunk); } catch { /* ignore */ }
-    });
-    socket.on('end', () => done());
-    socket.on('close', () => done());
-    socket.on('error', (err) => {
-      process.stderr.write(`[CodeGraph MCP] daemon socket error: ${err.message}\n`);
-      done();
-    });
-  });
-}
-
-/**
- * PPID watchdog mirroring the one in `MCPServer.start` — kills the proxy if
- * the MCP host (or its proxy of a host, see HOST_PPID_ENV) goes away without
- * closing stdin. Issue #277 documents why we can't rely on stdin EOF on
- * Linux: the parent may be SIGKILL'd and reparenting doesn't close pipes.
- *
- * The proxy's "kill" is just a socket close + process.exit — no SQLite or
- * watchers to clean up, so this is cheap.
- */
-function startPpidWatchdog(socket: net.Socket): void {
-  const pollMs = parsePollMs(process.env.CODEGRAPH_PPID_POLL_MS);
-  if (pollMs <= 0) return;
-  // Baseline from the CLI entry's earliest capture, not process.ppid here —
-  // a launcher killed during our first ~100ms would otherwise leave the
-  // baseline at 1 and blind the divergence check forever (#1185).
-  const originalPpid = EARLY_PPID;
-  const hostPpid = parseHostPpid(process.env[HOST_PPID_ENV]);
-  const timer = setInterval(() => {
-    const reason = supervisionLostReason({
-      originalPpid,
-      currentPpid: process.ppid,
-      hostPpid,
-      isAlive: isProcessAliveLocal,
-    });
-    if (reason) {
-      process.stderr.write(`[CodeGraph MCP] Parent process exited (${reason}); shutting down.\n`);
-      try { socket.destroy(); } catch { /* ignore */ }
-      process.exit(0);
-    }
-  }, pollMs);
-  timer.unref?.();
 }
 
 function parsePollMs(raw: string | undefined): number {

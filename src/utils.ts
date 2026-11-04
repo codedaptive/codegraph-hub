@@ -32,7 +32,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { threadId } from 'worker_threads';
+import { createLockFile, removeLockIfUnchanged, snapshotLock, takeoverGuardHolder, type LockSnapshot } from './mcp/lock-takeover';
 
 // ============================================================
 // SECURITY UTILITIES
@@ -444,146 +444,137 @@ export function escapeRegExp(text: string): string {
 /**
  * An empty lock file younger than this is still being written by the process
  * that created it (#2979): where hard links are missing, the lock is created
- * first and the PID written a moment later. Only a crash leaves one empty for
- * long, and FAT's 2 s timestamps stay well inside this.
+ * with an exclusive create first and the PID lands a moment later (see
+ * `createLockFile`). Only a crash leaves one empty for long, and FAT's 2 s
+ * timestamps stay well inside this.
  */
 const EMPTY_LOCK_GRACE_MS = 10_000;
 
 /**
- * How many `.break` levels a takeover may climb. Each level is needed only if
- * a process died inside the level above it, within a few file operations.
+ * The project that takes a {@link FileLock}. `stamp()` is the record written
+ * on the lock body's second line (read at each acquire, so it describes the
+ * index as it is then); `isForeign()` tests a parsed second line for a record
+ * that names no live holder of this project's lock. That is either a record
+ * whose `pid` is alive but whose recorded `pidStart` differs from that
+ * process's OS start time (the pid was reused by a later process), at any
+ * root; or a record another project wrote: its recorded root is not this
+ * project's, its recorded index identities both differ from this project's
+ * index, and neither the recorded root's `.codegraph` nor its database is
+ * this project's now. The copied-index rule does not make a record foreign
+ * at this project's own root or at a project whose database has more than
+ * one hard link. It also exempts a record whose root's `.codegraph` is this
+ * project's index now (`isSameIndexRoot`), or whose root's database is this
+ * project's database now; only the start-time check can make any of these
+ * records foreign. The caller supplies both
+ * (`lockStamp` and `isForeignLockRecord` in `mcp/writer-lock`) because this
+ * module cannot import `directory` without a cycle (`utils` → `directory` →
+ * `sync/watch-policy` → `utils`). The stale-lock takeover it does import,
+ * `mcp/lock-takeover`, imports Node builtins only, so it adds no cycle.
  */
-const MAX_LOCK_BREAK_DEPTH = 3;
-
-/** What a lock file says about its holder. */
-type LockHolder =
-  | { state: 'free' }
-  | { state: 'held'; pid?: number }
-  | { state: 'stale' };
+export interface FileLockOwner {
+  stamp(): object;
+  isForeign(record: unknown): boolean;
+}
 
 /**
  * Cross-process file lock using a lock file with PID tracking.
  *
  * Prevents multiple processes (e.g., git hooks, CLI, MCP server) from
  * writing to the same database simultaneously.
+ *
+ * Without an owner the body is the bare PID. With an owner it is the PID, a
+ * newline and the owner's stamp as one line of JSON, so a lock copied in with
+ * another project's `.codegraph/` can be told apart from one taken on this
+ * project. The first line stays the bare PID: readers that `parseInt` the body
+ * get the PID, and a non-numeric first line would make them delete a live lock.
  */
 export class FileLock {
   private lockPath: string;
+  private owner: FileLockOwner | undefined;
   private held = false;
 
-  constructor(lockPath: string) {
+  constructor(lockPath: string, owner?: FileLockOwner) {
     this.lockPath = lockPath;
+    this.owner = owner;
   }
 
   /**
-   * Acquire the lock. Throws if the lock is held by another live process.
-   *
-   * A free lock costs one create. A stale one, whose PID is dead or missing,
-   * is replaced only by the process holding `<lock>.break` (itself a
-   * FileLock), after reading it again there (#2979). Before, two processes
-   * that read the same dead PID both unlinked the lock and created their own,
-   * the second one deleting the first one's live lock, and both went on to
-   * write as the only writer.
+   * Acquire the lock. Throws if the lock is held by another live process and
+   * its record is not foreign; the message names the holder's PID, or the PID
+   * in the takeover guard when another process is replacing a stale lock
+   * right now. A lock whose PID is dead or malformed (a first line that is not
+   * a pid above zero) is stale;
+   * so is one whose second-line record the owner calls foreign (another
+   * project's, copied in with its `.codegraph/`, or one whose PID now names a
+   * process that started at another time than the recorded `pidStart`), even
+   * when its PID is alive. A record at the owner's own root whose PID is alive
+   * and started when recorded (or that records no start time) holds. An empty
+   * lock younger than {@link EMPTY_LOCK_GRACE_MS} holds too: its creator is
+   * still writing the PID.
    */
   acquire(): void {
-    const refusal = this.tryAcquire(0);
-    if (refusal) {
-      const who = refusal.state === 'held' && refusal.pid !== undefined ? ` (PID ${refusal.pid})` : '';
-      throw new Error(
-        `CodeGraph database is locked by another process${who}. ` +
-        `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
-      );
-    }
-  }
-
-  /** Null once the lock is ours; otherwise what kept us out. */
-  private tryAcquire(depth: number): LockHolder | null {
-    if (this.create()) return this.taken();
-    let holder = this.readHolder();
-    if (holder.state === 'free') {
-      // Released between our create and our read.
-      if (this.create()) return this.taken();
-      holder = this.readHolder();
-    }
-    // A long sync can hold the lock for hours. Its age says nothing about
-    // whether the writer is still alive; only a dead PID is stale.
-    if (holder.state !== 'stale') return holder;
-    if (depth >= MAX_LOCK_BREAK_DEPTH) return { state: 'held' };
-    const breaker = new FileLock(`${this.lockPath}.break`);
-    // Refused: a live process is replacing this stale lock right now.
-    const breaking = breaker.tryAcquire(depth + 1);
-    if (breaking) return breaking;
-    try {
-      // What we read before holding the break lock may be out of date: another
-      // process may have replaced the stale lock, or released its own, since.
-      const current = this.readHolder();
-      if (current.state === 'held') return current;
-      // Nobody else replaces a stale lock while we hold the break lock, and no
-      // create succeeds while the file exists, so this unlinks the stale lock.
-      if (current.state === 'stale') {
-        try { fs.unlinkSync(this.lockPath); } catch { /* gone, or the create below says who has it */ }
+    const locked = (pid?: number) => new Error(
+      'CodeGraph database is locked by another process' + (pid === undefined ? '. ' : ` (PID ${pid}). `) +
+      `If this is stale, run 'codegraph unlock' or delete ${this.lockPath}`
+    );
+    // One read of the existing lock, judged as read: never re-read to judge.
+    // A lock that exists but cannot be read is held (fail closed).
+    let snapshot: LockSnapshot | null;
+    try { snapshot = snapshotLock(this.lockPath); } catch { throw locked(); }
+    let removal: ReturnType<typeof removeLockIfUnchanged> | undefined;
+    if (snapshot) {
+      const content = snapshot.raw;
+      // An empty lock its creator may still be writing is held, not stale
+      // (#2979); an old empty one, left by a crash, is stale like any
+      // malformed body.
+      if (content.trim() === '' && this.youngerThanGrace()) throw locked();
+      // parseInt stops at the first newline: the PID is the first line.
+      const pid = parseInt(content.trim(), 10);
+      // The record is exactly the second line, parsed as JSON and never
+      // trimmed or split further: JSON escapes any newline inside the root,
+      // and its spaces are part of it. No second line, or one that does not
+      // parse, is no record: pid liveness alone decides.
+      let foreign = false;
+      if (this.owner) {
+        const recordLine = content.split('\n')[1];
+        if (recordLine !== undefined) {
+          try { foreign = this.owner.isForeign(JSON.parse(recordLine)); } catch { /* no record */ }
+        }
       }
-      return this.create() ? this.taken() : this.readHolder();
-    } finally {
-      breaker.release();
+      // A long sync can hold the lock for hours. Its age says nothing about
+      // whether the writer is still alive; only a dead or malformed PID, or a
+      // foreign record, is stale. A first line that is not a pid above zero
+      // (NaN, 0, -1) names no process and is stale before any liveness test:
+      // signal 0 to pid 0 or a negative pid addresses a process group (pid 0
+      // the caller's own), which would read as a live holder.
+      if (!foreign && pid > 0 && this.isProcessAlive(pid)) throw locked(pid);
+      // Stale (dead process, malformed PID or foreign record): remove it only
+      // if it is still the file judged above, under the `.takeover` guard, so
+      // a fresh lock another taker created meanwhile is not deleted
+      // (residuals: see mcp/lock-takeover). Any
+      // result falls through to the exclusive create, which wins only if no
+      // lock is in place.
+      try { removal = removeLockIfUnchanged(this.lockPath, snapshot); } catch { /* left in place */ }
     }
-  }
-
-  private taken(): null {
+    // Write our PID (and our stamp, with an owner), created exclusively
+    // (linked into place complete where the filesystem has hard links);
+    // false means another process holds the lock. When the removal above was
+    // busy, a live process held the takeover guard and is replacing the stale
+    // lock: the refusal names the pid in that guard, as read now.
+    const body = this.owner ? `${process.pid}\n${JSON.stringify(this.owner.stamp())}` : String(process.pid);
+    if (!createLockFile(this.lockPath, body)) {
+      throw locked(removal === 'busy' ? takeoverGuardHolder(this.lockPath) : undefined);
+    }
     this.held = true;
-    return null;
   }
 
-  /**
-   * Create the lock file with our PID already in it, so no reader ever finds
-   * it empty: write a private file, then hard-link it into place, which fails
-   * if the lock exists. Where hard links are missing, fall back to an
-   * exclusive create, whose PID lands a moment later (see
-   * EMPTY_LOCK_GRACE_MS). False when the lock already exists.
-   */
-  private create(): boolean {
-    const pid = String(process.pid);
-    const tmp = `${this.lockPath}.${process.pid}.${threadId}.tmp`;
+  /** True while the lock file's mtime is within {@link EMPTY_LOCK_GRACE_MS}; false when it cannot be read. */
+  private youngerThanGrace(): boolean {
     try {
-      fs.writeFileSync(tmp, pid);
-      fs.linkSync(tmp, this.lockPath);
-      return true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      // No hard links here (or no private file): create in place instead.
-    } finally {
-      try { fs.unlinkSync(tmp); } catch { /* never written */ }
+      return Date.now() - fs.statSync(this.lockPath).mtimeMs < EMPTY_LOCK_GRACE_MS;
+    } catch {
+      return false;
     }
-    try {
-      fs.writeFileSync(this.lockPath, pid, { flag: 'wx' });
-      return true;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw err;
-    }
-  }
-
-  private readHolder(): LockHolder {
-    let content: string;
-    try {
-      content = fs.readFileSync(this.lockPath, 'utf-8').trim();
-    } catch (err) {
-      // Unreadable is not proof the holder is gone: leave it to `codegraph unlock`.
-      return (err as NodeJS.ErrnoException).code === 'ENOENT' ? { state: 'free' } : { state: 'held' };
-    }
-    if (content === '') {
-      let age: number;
-      try {
-        age = Date.now() - fs.statSync(this.lockPath).mtimeMs;
-      } catch {
-        return { state: 'free' };
-      }
-      return age < EMPTY_LOCK_GRACE_MS ? { state: 'held' } : { state: 'stale' };
-    }
-    const pid = parseInt(content, 10);
-    // Malformed: no process owns it.
-    if (!(pid > 0)) return { state: 'stale' };
-    return this.isProcessAlive(pid) ? { state: 'held', pid } : { state: 'stale' };
   }
 
   /**
@@ -592,7 +583,8 @@ export class FileLock {
   release(): void {
     if (!this.held) return;
     try {
-      // Only remove if we still own it (check PID)
+      // Only remove if we still own it (check PID; parseInt reads the first
+      // line of an owner body)
       const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
       if (parseInt(content, 10) === process.pid) {
         fs.unlinkSync(this.lockPath);

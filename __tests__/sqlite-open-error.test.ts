@@ -20,6 +20,7 @@ import { DatabaseConnection, DatabaseOpenError, NodeSqliteUnavailableError, getD
 import { toDatabaseOpenError } from '../src/db/open-error';
 import { WslSharedIndexError } from '../src/db/wsl-shared-index';
 import { __setWslWindowsDriveForTests } from '../src/sync/watch-policy';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 // Through require: vite does not resolve the node:sqlite builtin.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -244,29 +245,12 @@ describe('the MCP server', () => {
 
   const text = (r: { content: Array<{ text: string }> }): string => r.content.map((c) => c.text).join('\n');
 
-  it('answers a call on the default project with why its index could not be opened', async () => {
-    const { root, dbPath } = await indexedProject();
-    lockDatabase(dbPath);
-    const engine = new MCPEngine({ watch: false });
-    engines.push(engine);
-    await engine.ensureInitialized(root);
-    expect(engine.hasDefaultCodeGraph()).toBe(false);
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha' });
-    // A malfunction: isError, with the retry-once note, saying what failed.
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain(`Could not open the CodeGraph database at ${dbPath}`);
-    expect(text(result)).toContain('(SQLITE_BUSY)');
-    expect(text(result)).toContain('Retry the call once');
-    expect(text(result)).not.toContain('No CodeGraph project is loaded');
-    expect(text(result)).not.toContain('internal codegraph error');
-  }, 60_000);
-
   it('answers a projectPath call with why that index could not be opened', async () => {
     const { root, dbPath } = await indexedProject();
     lockDatabase(dbPath);
-    const engine = new MCPEngine({ watch: false });
+    const engine = new MCPEngine();
     engines.push(engine);
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha', projectPath: root });
+    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBe(true);
     expect(text(result)).toContain(`Could not open the CodeGraph database at ${dbPath}`);
     expect(text(result)).toContain('(SQLITE_BUSY)');
@@ -274,13 +258,11 @@ describe('the MCP server', () => {
     expect(text(result)).not.toContain('node:sqlite');
   }, 60_000);
 
-  it('still answers an unindexed default project with the not-indexed guidance', async () => {
-    const root = tempDir();
-    const engine = new MCPEngine({ watch: false });
+  it('answers a call without projectPath with the missing-argument text, not a database error', async () => {
+    const engine = new MCPEngine();
     engines.push(engine);
-    await engine.ensureInitialized(root);
-    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha' });
+    const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alpha' }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
-    expect(text(result)).toContain('No CodeGraph project is loaded');
+    expect(text(result)).toBe('missing argument: root path to the code you wish to query');
   }, 30_000);
 });

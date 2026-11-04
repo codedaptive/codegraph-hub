@@ -8,7 +8,6 @@ import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { MCPEngine } from '../src/mcp/engine';
 import {
   decodeWriterLockInfo,
   getWriterPidPath,
@@ -83,9 +82,9 @@ describe('writer lock (#1740)', () => {
       const msg = writerLockHeldMessage(r.existing, r.pidPath);
       expect(msg).toMatch(/writer lock held/i);
       expect(msg).toMatch(/CODEGRAPH_NO_DAEMON/);
-      // `codegraph daemon` is the picker that stops the shared daemon; the CLI
-      // rejects `codegraph daemon stop` (#2770).
-      expect(msg).toContain('pick it in `codegraph daemon`');
+      // `codegraph daemon --stop` stops the shared daemon; the CLI rejects
+      // `codegraph daemon stop` (#2770).
+      expect(msg).toContain('stop it with `codegraph daemon --stop`');
       expect(msg).not.toMatch(/daemon stop/);
     }
   });
@@ -113,30 +112,5 @@ describe('writer lock (#1740)', () => {
     expect(readWriterLock(root)).toEqual({ ...before, ready: true });
     tryAcquireWriterLock(root, 'fallback');
     expect(readWriterLock(root)).toEqual({ ...before, ready: true });
-  });
-
-  it('lets a fallback engine atomically claim and release writer ownership', () => {
-    const root = makeProject();
-    const engine = new MCPEngine({ writerLockRoot: root });
-
-    expect(decodeWriterLockInfo(fs.readFileSync(getWriterPidPath(root), 'utf8'))).toMatchObject({
-      pid: process.pid,
-      mode: 'fallback',
-    });
-
-    engine.stop();
-    expect(fs.existsSync(getWriterPidPath(root))).toBe(false);
-  });
-
-  it('rejects a fallback engine before opening when another process owns writer.pid', () => {
-    const root = makeProject();
-    holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-    if (!holder.pid) throw new Error('Failed to spawn writer-lock holder');
-    fs.writeFileSync(
-      getWriterPidPath(root),
-      JSON.stringify({ pid: holder.pid, mode: 'daemon', startedAt: Date.now() }) + '\n',
-    );
-
-    expect(() => new MCPEngine({ writerLockRoot: root })).toThrow(/writer lock held/i);
   });
 });

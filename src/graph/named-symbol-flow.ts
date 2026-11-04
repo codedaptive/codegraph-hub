@@ -35,6 +35,7 @@
 import type CodeGraph from '../index';
 import type { Node, Edge } from '../types';
 import { isTestFile, splitAtCjkSwitches, isQueryNameToken } from '../search/query-utils';
+import { inPathPrefixes } from '../db/queries';
 
 import { qualifiedSymbolMatches } from './symbol-lookup';
 import { goPackageReaderFor } from './go-package';
@@ -49,8 +50,20 @@ export { RUST_PATH_PREFIXES, lastQualifierPart, matchesSymbol } from './symbol-l
  * Exact matches only (#1473): a missing / mistyped name must NOT silently
  * resolve to the top fuzzy FTS hit under the caller's typed label. Closest
  * hits may appear in `note` as a did-you-mean hint when `nodes` is empty.
+ *
+ * `pathPrefixes` is a path focus (index-relative, whole segments,
+ * case-sensitive, as {@link inPathPrefixes}); absent or empty = no filter and
+ * the answer is the unfocused one. With a focus, every lookup below keeps only
+ * definitions inside it before its cap, except the nix option-prefix scan: its
+ * 12-row index read runs unfocused and the focus filters its rows afterwards,
+ * so an in-focus option node beyond those 12 rows is not found. The did-you-mean
+ * note names only symbols in focus.
  */
-export function findAllSymbols(cg: CodeGraph, symbol: string): { nodes: Node[]; note: string } {
+export function findAllSymbols(
+  cg: CodeGraph,
+  symbol: string,
+  pathPrefixes: readonly string[] = []
+): { nodes: Node[]; note: string } {
   // Nix option paths: the declaration is stored as `options.<path>` and
   // config writes carry longer/quoted tails (`<path>."git/config".text`),
   // so a dotted option token (`xdg.configFile`, `launchd.user.agents`) has
@@ -60,11 +73,15 @@ export function findAllSymbols(cg: CodeGraph, symbol: string): { nodes: Node[]; 
   // capped prefix scan of write sites. Three index hits; non-nix graphs
   // fall straight through.
   if (/^[a-z][\w'-]*(?:\.[\w'-]+)+$/.test(symbol)) {
+    // The focus filters the hits BEFORE the `.slice(0, 10)` below and the
+    // `length > 0` fall-through, so an out-of-focus option hit neither takes a
+    // slot nor stops the lookup from falling through. The 12-row prefix scan
+    // is the index's own cut and runs unfocused; the filter applies to its rows.
     const optionHits = [
       ...cg.getNodesByName(`options.${symbol}`),
       ...cg.getNodesByName(symbol),
       ...cg.getNodesByNamePrefix(`${symbol}.`, 12),
-    ].filter((n) => n.language === 'nix');
+    ].filter((n) => n.language === 'nix' && inPathPrefixes(n.filePath, pathPrefixes));
     if (optionHits.length > 0) {
       const seen = new Set<string>();
       const nodes = optionHits.filter((n) => !seen.has(n.id) && !!seen.add(n.id)).slice(0, 10);
@@ -78,15 +95,20 @@ export function findAllSymbols(cg: CodeGraph, symbol: string): { nodes: Node[]; 
   if (!isQualified) {
     // Direct index — every exact-name overload, case-sensitive. Avoids FTS
     // ranking a differently-cased sibling above the real node (#1473 Fetch).
-    exactNodes = cg.getNodesByName(symbol);
+    exactNodes = cg.getNodesByName(symbol).filter((n) => inPathPrefixes(n.filePath, pathPrefixes));
   } else {
     // Shared with codegraph_node's lookup: search rank first, the complete
     // exact-name index when the search's cut misses the definition.
-    exactNodes = qualifiedSymbolMatches(cg, symbol, goPackageReaderFor(cg));
+    exactNodes = qualifiedSymbolMatches(cg, symbol, goPackageReaderFor(cg), pathPrefixes);
   }
 
   if (exactNodes.length === 0) {
-    const fuzzy = cg.searchNodes(symbol, { limit: 5 });
+    // Under a focus the search carries it, so the did-you-mean names only
+    // in-focus symbols; the unfocused call passes `{ limit: 5 }` alone.
+    const fuzzy = cg.searchNodes(
+      symbol,
+      pathPrefixes.length > 0 ? { limit: 5, pathPrefixes } : { limit: 5 }
+    );
     const suggestions = [
       ...new Set(fuzzy.map((r) => r.node.name).filter((n) => n !== symbol)),
     ].slice(0, 3);
@@ -204,6 +226,17 @@ export interface NamedSymbolFlowOptions {
   maxBridge?: number;
   /** Distinct chains to return. Explore only ever looks at the first. */
   maxChains?: number;
+  /**
+   * A path focus: index-relative prefixes, matched on whole path segments and
+   * case-sensitively (as {@link inPathPrefixes}). Token resolution and both
+   * walks see only nodes whose file is inside it, so each chain is the one the
+   * search finds among in-focus nodes only (the deepest in `named` mode; in
+   * `directed` mode the path the two-ended walk meets on, shortest of those
+   * found), and a chain that exists only through out-of-focus
+   * code is absent. Absent or `[]` = no filter; the answer is the
+   * unfocused one.
+   */
+  pathPrefixes?: readonly string[];
 }
 
 export interface NamedSymbolFlow {
@@ -215,9 +248,12 @@ export interface NamedSymbolFlow {
   dynNamed: Map<string, Node>;
   /** token → the node ids it resolved to. */
   tokenNodes: Map<string, string[]>;
-  /** token → its whole same-name callable family, before the container filter. */
+  /**
+   * token → its whole same-name callable family (the in-focus part of it under
+   * a path focus), before the container filter.
+   */
   tokenFamily: Map<string, Node[]>;
-  /** Ids whose token was a (near-)unique callable name — at most 3 defs. */
+  /** Ids whose token was a (near-)unique callable name — at most 3 defs, counted in focus under a path focus. */
   uniqueNamedNodeIds: Set<string>;
   /** Ids resolved from a shape-precise token (camelCase, dotted, PascalCase…). */
   preciseNamedIds: Set<string>;
@@ -286,6 +322,7 @@ export function resolveNamedTokens(
   opts: NamedSymbolFlowOptions = {}
 ): NamedSymbolFlow {
   const directed = opts.mode === 'directed';
+  const prefixes = opts.pathPrefixes ?? [];
   const out = EMPTY_FLOW();
   // A directed question names its two ends exactly — a symbol's own name, as
   // the viewer's links write it: an Objective-C selector (`initWithFrame:`), a
@@ -315,7 +352,9 @@ export function resolveNamedTokens(
     );
 
   for (const t of tokens) {
-    const hits = findAllSymbols(cg, t).nodes;
+    // Focus first: the callable filter, the `specific` count and every cap
+    // below then see in-focus definitions only.
+    const hits = findAllSymbols(cg, t, prefixes).nodes;
     const cands = hits.filter((n) => FLOW_CALLABLE_KINDS.has(n.kind));
     out.tokenFamily.set(t, cands);
     // A qualified or otherwise-specific name (<=3 hits) keeps all of them.
@@ -440,6 +479,10 @@ function onRoute(parent: ReadonlyMap<string, WalkStep>, key: string, nodeId: str
  * dropped before anything is reached through it. Ending on fewer unnamed hops
  * is no worse, so no route spends bridge budget a later hop needs.
  *
+ * Under a path focus a callee outside it is skipped before it is recorded or
+ * queued: no route runs through it and it does not count toward
+ * {@link NAMED_VISIT_CAP}.
+ *
  * Returns the parent map keyed by route, so a caller can reconstruct the path
  * of any route that reached a named symbol (`reached`).
  */
@@ -448,7 +491,8 @@ function walkCalls(
   seed: Node,
   named: ReadonlySet<string>,
   maxHops: number,
-  maxBridge: number
+  maxBridge: number,
+  pathPrefixes: readonly string[]
 ): { parent: Map<string, WalkStep>; reached: string[] } {
   const parent = new Map<string, WalkStep>();
   /** The routes each reached node keeps, by key; its size is the nodes reached. */
@@ -498,6 +542,7 @@ function walkCalls(
     if (at.depth >= maxHops - 1) continue;
     for (const c of calleesOf(id)) {
       if (!FLOW_EDGE_KINDS.has(c.edge.kind)) continue;
+      if (!inPathPrefixes(c.node.filePath, pathPrefixes)) continue;
       const isNamed = named.has(c.node.id);
       // A route node is a connector, not a symbol the reader would have named:
       // crossing one costs no bridge budget. Nor does the hop from a const to the
@@ -537,12 +582,18 @@ function walkCalls(
  * stops the moment the two sides share a node. Alternating levels this way can
  * return a path one hop longer than the true shortest — which is why nothing in
  * the payload claims to be shortest, only to be a path the graph records.
+ *
+ * Under a path focus both sides skip a caller or callee outside it before
+ * recording it, and a sink outside it is dropped, so every step of the path
+ * returned is in focus and out-of-focus nodes do not count toward
+ * {@link DIRECTED_VISIT_CAP}.
  */
 function walkBidirectional(
   cg: CodeGraph,
   seed: Node,
   sinks: ReadonlySet<string>,
-  maxHops: number
+  maxHops: number,
+  pathPrefixes: readonly string[]
 ): FlowStep[] | null {
   if (sinks.has(seed.id)) return null;
 
@@ -556,7 +607,7 @@ function walkBidirectional(
   let frontB: Node[] = [];
   for (const id of sinks) {
     const node = cg.getNode(id);
-    if (!node) continue;
+    if (!node || !inPathPrefixes(node.filePath, pathPrefixes)) continue;
     backward.set(id, null);
     backNodes.set(id, node);
     frontB.push(node);
@@ -578,6 +629,7 @@ function walkBidirectional(
       for (const node of frontF) {
         for (const c of cg.getCallees(node.id)) {
           if (!FLOW_EDGE_KINDS.has(c.edge.kind) || forward.has(c.node.id)) continue;
+          if (!inPathPrefixes(c.node.filePath, pathPrefixes)) continue;
           forward.set(c.node.id, { prev: node.id, edge: c.edge, node: c.node });
           next.push(c.node);
         }
@@ -590,6 +642,7 @@ function walkBidirectional(
       for (const node of frontB) {
         for (const c of cg.getCallers(node.id)) {
           if (!FLOW_EDGE_KINDS.has(c.edge.kind) || backward.has(c.node.id)) continue;
+          if (!inPathPrefixes(c.node.filePath, pathPrefixes)) continue;
           backward.set(c.node.id, { next: node.id, edge: c.edge });
           backNodes.set(c.node.id, c.node);
           next.push(c.node);
@@ -663,6 +716,7 @@ export function resolveNamedSymbolFlow(
     const maxBridge = opts.maxBridge ?? (directed ? Number.POSITIVE_INFINITY : DEFAULT_MAX_BRIDGE);
     const maxChains = Math.max(1, opts.maxChains ?? 1);
     const namedIds = new Set(flow.named.keys());
+    const prefixes = opts.pathPrefixes ?? [];
 
     const found: FlowStep[][] = [];
     if (directed) {
@@ -676,7 +730,7 @@ export function resolveNamedSymbolFlow(
       for (const id of fromIds) {
         const seed = flow.named.get(id);
         if (!seed) continue;
-        const steps = walkBidirectional(cg, seed, sinks, maxHops);
+        const steps = walkBidirectional(cg, seed, sinks, maxHops, prefixes);
         if (steps) found.push(steps);
       }
     } else {
@@ -690,7 +744,7 @@ export function resolveNamedSymbolFlow(
         return out;
       };
       for (const seed of [...flow.named.values()].slice(0, MAX_SEEDS)) {
-        const { parent, reached } = walkCalls(calleesOf, seed, namedIds, maxHops, maxBridge);
+        const { parent, reached } = walkCalls(calleesOf, seed, namedIds, maxHops, maxBridge, prefixes);
         // Explore's rule: the DEEPEST named sink this seed can reach. Of two as
         // deep, the one whose route passes more named symbols, as in the walk.
         let deepest: string | null = null;

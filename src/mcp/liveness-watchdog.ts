@@ -30,16 +30,19 @@
  *
  * **Won't fire on real work.** Heavy parsing runs in the parse worker
  * (off-thread) and the daemon's indexing shells out to a child process, so the
- * daemon's main thread mostly does fast, bounded work; the exception, a sync
- * storing into SQLite, is what the disk-progress deferral below is for. The
- * default timeout is ~300× the 5h #850 wedge shorter, yet far longer than any
- * legitimate main-thread block. Opt out with `CODEGRAPH_NO_WATCHDOG=1`; tune
- * with `CODEGRAPH_WATCHDOG_TIMEOUT_MS`.
+ * daemon's main thread mostly does fast, bounded work. The server's main thread
+ * does reads only: its syncs run in the index builder, a separate process.
+ * The exception, a long synchronous store into SQLite (the CLI's `index` and
+ * `init` run it on this thread when no machine server routes them to its
+ * builder), is what the disk-progress deferral below is for. The default
+ * timeout, 60 s, is ~300× shorter than the 5 h #850 wedge, yet far longer than
+ * any legitimate main-thread block. Opt out with `CODEGRAPH_NO_WATCHDOG=1`;
+ * tune with `CODEGRAPH_WATCHDOG_TIMEOUT_MS`.
  *
- * **Disk-progress deferral (`progressPaths`).** The CLI `index`/`init` path is
- * different: it runs the SQLite store on this thread, and one long synchronous
- * statement on severely degraded storage can block the loop past the timeout
- * with the process perfectly healthy (#1231: killed a valid index on a
+ * **Disk-progress deferral (`progressPaths`).** The CLI `index`/`init` path
+ * without a server's builder is different: it runs the SQLite store on this
+ * thread, and one long synchronous statement on severely degraded storage can
+ * block the loop past the timeout with the process perfectly healthy (#1231: killed a valid index on a
  * 150-IOPS disk). Heartbeat silence alone cannot tell that apart from a wedge —
  * but the disk can: a wedged CPU loop makes no forward progress on the DB
  * files, while a slow store advances them. When the caller supplies
@@ -50,18 +53,6 @@
  * coinciding with unrelated file activity — or I/O hung beyond all reason —
  * still dies. A true wedge with no disk progress dies at the base timeout,
  * exactly as before.
- *
- * **Every index the process writes counts (#2404).** An MCP server syncs on
- * its main thread too, and not only the project it was armed for: the shared
- * daemon writes every project a session names by `projectPath`, and a proxy's
- * in-process fallback writes its own. {@link addWatchdogProgressPaths} adds a
- * project's index files the moment this process becomes its writer and drops
- * them when it lets go; each change re-arms the watchdog with a new child
- * whose argv carries the whole list. A new process gets its list the instant
- * it is spawned, whatever the parent does next: a message on the heartbeat
- * pipe could not promise that, since a pipe write queued behind one still in
- * flight waits for an event-loop turn, and a sync can block the loop right
- * after the project is added.
  */
 import * as fs from 'fs';
 import * as os from 'os';
@@ -136,7 +127,7 @@ const capMs = Number(process.argv[3]);
 const progressPaths = process.argv.slice(4);
 const secs = Math.round(timeoutMs / 1000);
 function kill(extra) {
-  // Timestamped so daemon.log kills can be correlated with anything (#1431) —
+  // Timestamped so server.log kills can be correlated with anything (#1431) —
   // computed here at kill time; this child process is never the wedged one.
   try { fs.writeSync(2, Buffer.from('[' + new Date().toISOString() + '] [CodeGraph] Main thread unresponsive for ~' + secs + 's' + (extra || '') + ' — killing the wedged process so a fresh one can start (#850). Disable with CODEGRAPH_NO_WATCHDOG=1.\\n')); } catch (e) {}
   try { process.kill(parentPid, 'SIGKILL'); } catch (e) {}
@@ -187,63 +178,14 @@ export interface WatchdogOptions {
   /**
    * Files whose size/mtime advancing counts as forward progress (the SQLite
    * DB + `-wal` for an in-process indexer). With paths supplied, a silent
-   * timeout only kills when the files did NOT advance — see the header. The
-   * files of other indexes the process comes to write join at runtime through
-   * {@link addWatchdogProgressPaths}; with neither, a silent timeout kills.
+   * timeout only kills when the files did NOT advance — see the header. With
+   * none, a silent timeout kills.
    */
   progressPaths?: string[];
 }
 
-/**
- * Files added with {@link addWatchdogProgressPaths} and not yet dropped, with
- * how many registrations hold each.
- */
-const addedProgressPaths = new Map<string, number>();
-
-/**
- * Tells each armed watchdog the list of files changed: `added` when a file
- * joined it, false when files only left it.
- */
-const armedWatchdogs = new Set<(added: boolean) => void>();
-
-/**
- * Count `paths` advancing as forward progress for this process's liveness
- * watchdog, armed now or later, until the returned function is called
- * (#2404). For the index files of a project this process has just become the
- * writer of: its syncs store on the main thread, and without this a long one
- * reads as a wedge whenever the project is not the one the watchdog was armed
- * for. Registrations of one file nest, and the returned function is
- * idempotent.
- */
-export function addWatchdogProgressPaths(paths: readonly string[]): () => void {
-  let added = false;
-  for (const file of paths) {
-    const held = addedProgressPaths.get(file) ?? 0;
-    addedProgressPaths.set(file, held + 1);
-    if (held === 0) added = true;
-  }
-  if (added) for (const changed of armedWatchdogs) changed(true);
-  let dropped = false;
-  return () => {
-    if (dropped) return;
-    dropped = true;
-    let removed = false;
-    for (const file of paths) {
-      const held = addedProgressPaths.get(file) ?? 0;
-      if (held > 1) {
-        addedProgressPaths.set(file, held - 1);
-      } else if (held === 1) {
-        addedProgressPaths.delete(file);
-        removed = true;
-      }
-    }
-    if (removed) for (const changed of armedWatchdogs) changed(false);
-  };
-}
-
 /** One watchdog child process, watching a fixed list of files. */
 interface WatchdogChild {
-  paths: readonly string[];
   /** Write one heartbeat byte. */
   beat(): void;
   /** End the child: EOF, then a kill for good measure. */
@@ -256,7 +198,7 @@ function spawnWatchdogChild(timeoutMs: number, checkMs: number, capMs: number, p
   try {
     // No execArgv inheritance (unlike Worker), so the child carries none of our
     // V8 flags — it runs no WASM and needs none. stderr inherits the parent's
-    // fd 2 so the kill notice lands wherever the parent logs (daemon.log).
+    // fd 2 so the kill notice lands wherever the parent logs (server.log).
     child = spawn(
       process.execPath,
       ['-e', CHILD_SOURCE, String(process.pid), String(timeoutMs), String(capMs), ...paths],
@@ -292,7 +234,6 @@ function spawnWatchdogChild(timeoutMs: number, checkMs: number, capMs: number, p
   debug(`armed (child pid ${child.pid ?? '?'}): timeoutMs=${timeoutMs} checkMs=${checkMs} progressPaths=${paths.length}`);
 
   return {
-    paths,
     beat(): void {
       try { stdin.write('\n'); } catch { /* child gone */ }
     },
@@ -315,58 +256,22 @@ export function installMainThreadWatchdog(options: WatchdogOptions = {}): Watchd
   const timeoutMs = parseWatchdogTimeoutMs(process.env.CODEGRAPH_WATCHDOG_TIMEOUT_MS);
   const checkMs = deriveCheckIntervalMs(timeoutMs);
   const capMs = timeoutMs * PROGRESS_CAP_MULTIPLIER;
-  const armedPaths = options.progressPaths ?? [];
-  const watchedPaths = (): string[] => [...new Set([...armedPaths, ...addedProgressPaths.keys()])];
 
-  let current = spawnWatchdogChild(timeoutMs, checkMs, capMs, watchedPaths());
-  if (!current) return null;
+  const child = spawnWatchdogChild(timeoutMs, checkMs, capMs, options.progressPaths ?? []);
+  if (!child) return null;
 
   // Heartbeat: a byte per tick. When the main thread wedges, these stop and the
   // child's timeout fires. unref'd so it never keeps the process alive itself.
-  const heartbeat = setInterval(() => current?.beat(), checkMs);
+  const heartbeat = setInterval(() => child.beat(), checkMs);
   heartbeat.unref();
-
-  // The list of files changed (#2404): a child for the new list takes over,
-  // then the old one goes. Always from a turning event loop, so the old child,
-  // its last heartbeat recent, has no reason to kill meanwhile; a spawn that
-  // fails leaves it watching the old list. An added file takes effect at once,
-  // since a sync may block the loop right after. Dropped files wait for the
-  // next turn, so a process letting go of several projects, as one does on its
-  // way out, re-arms once or not at all.
-  let pendingRearm: NodeJS.Timeout | null = null;
-  const rearm = (): void => {
-    if (pendingRearm) clearTimeout(pendingRearm);
-    pendingRearm = null;
-    if (!current) return;
-    const paths = watchedPaths();
-    if (paths.length === current.paths.length && paths.every((p) => current!.paths.includes(p))) return;
-    const next = spawnWatchdogChild(timeoutMs, checkMs, capMs, paths);
-    if (!next) return;
-    const previous = current;
-    current = next;
-    previous.stop();
-  };
-  const changed = (added: boolean): void => {
-    if (added) {
-      rearm();
-    } else if (!pendingRearm) {
-      pendingRearm = setTimeout(rearm, 0);
-      pendingRearm.unref();
-    }
-  };
-  armedWatchdogs.add(changed);
 
   let stopped = false;
   return {
     stop(): void {
       if (stopped) return;
       stopped = true;
-      armedWatchdogs.delete(changed);
-      if (pendingRearm) clearTimeout(pendingRearm);
-      pendingRearm = null;
       clearInterval(heartbeat);
-      current?.stop();
-      current = null;
+      child.stop();
     },
   };
 }

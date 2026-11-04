@@ -118,7 +118,7 @@ describe('projectPath inside a nested git repository the ancestor index excludes
     }
   });
 
-  it('refuses the same way when the parent is not the session\'s default project', async () => {
+  it('refuses the same way for a handler with no default project', async () => {
     __setLoadCodeGraphForTests(CodeGraph);
     handler = new ToolHandler(null);
     const res = await handler.execute('codegraph_search', { query: 'parentOnly', projectPath: nested });
@@ -176,8 +176,8 @@ describe('projectPath inside a nested git repository the ancestor index excludes
     const lowerWt = wt.charAt(0).toLowerCase() + wt.slice(1);
     expect(lowerWt).not.toBe(wt);
     __setLoadCodeGraphForTests(CodeGraph);
-    // The server's default project is the parent; then no default project, so
-    // the index is opened under the caller's spelling.
+    // A handler with a default CodeGraph (the CLI's), then one without: the
+    // index is opened under the caller's spelling.
     for (const defaultCg of [cg, null]) {
       if (handler) await handler.closeAll();
       handler = new ToolHandler(defaultCg);
@@ -329,10 +329,12 @@ describe('stdio MCP: projectPath inside an excluded nested git repository (#2110
   let root: string;
   let parent: string;
   let nested: string;
+  let stateDir: string;
   let child: ChildProcessWithoutNullStreams | null = null;
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nested-stdio-'));
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nested-stdio-state-'));
     ({ parent, nested } = makeParentWithIgnoredNestedRepo(root));
     const cg = CodeGraph.initSync(parent);
     await cg.indexAll();
@@ -347,15 +349,21 @@ describe('stdio MCP: projectPath inside an excluded nested git repository (#2110
       child = null;
     }
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
-  it('returns the not-indexed guidance for the nested repository and still serves the parent', async () => {
+  // The nested repository has its own git common dir, so it is outside the
+  // repository the session was launched in (its anchor): the session answers
+  // with guidance naming the anchor, before any index is consulted. The
+  // handler's own "isn't indexed" guidance for it is covered above.
+  it('answers a nested repository with the repo-anchor guidance and still serves the parent', async () => {
     child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, 'serve', '--mcp'], {
       cwd: parent,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      // In-process server (no detached daemon to leak); see mcp-unindexed.test.ts.
-      env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1' },
+      // In-process server (no detached machine server to leak); see
+      // mcp-unindexed.test.ts. The state dir keeps its registry out of ~/.codegraph.
+      env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1', CODEGRAPH_STATE_DIR: stateDir },
     }) as ChildProcessWithoutNullStreams;
 
     await request(child, {
@@ -365,7 +373,6 @@ describe('stdio MCP: projectPath inside an excluded nested git repository (#2110
         protocolVersion: '2025-11-25',
         capabilities: {},
         clientInfo: { name: 'test', version: '0.0.0' },
-        rootUri: `file://${parent}`,
       },
     });
 
@@ -379,7 +386,8 @@ describe('stdio MCP: projectPath inside an excluded nested git repository (#2110
     });
     const result = res.result as { content: Array<{ text: string }>; isError?: boolean };
     expect(result.isError).toBeUndefined();
-    expect(result.content[0]!.text).toMatch(/isn't indexed/);
+    expect(result.content[0]!.text).toContain(fs.realpathSync(parent));
+    expect(result.content[0]!.text).toMatch(/answers only for the repository/);
     expect(result.content[0]!.text).not.toContain('parent-only.ts');
 
     const ok = await request(child, {

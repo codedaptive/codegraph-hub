@@ -32,8 +32,8 @@ const INITIALIZE = line({
   method: 'initialize',
   params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0.0.0' } },
 });
-const call = (id: number, name = 'codegraph_status'): string =>
-  line({ id, method: 'tools/call', params: { name, arguments: {} } });
+const call = (id: number, name = 'codegraph_status', args: Record<string, unknown> = {}): string =>
+  line({ id, method: 'tools/call', params: { name, arguments: args } });
 /** No watchdogs, prompt hook or handshake timer: only the stdout failure can end these processes. */
 const QUIET = {
   CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1', CODEGRAPH_NO_PROMPT_HOOK: '1',
@@ -139,13 +139,23 @@ describe('MCP stdio output failure (#2991)', () => {
     server.write(INITIALIZE);
     await until(() => answered(server, 1), 'the initialize response');
     server.write(line({ method: 'notifications/initialized' }));
-    server.write(call(2));
+    // A call that names the project: the server opens it read-only, and its
+    // index builder (a child process of the server) holds it, taking the
+    // project's writer lock. The server itself never takes it.
+    server.write(call(2, 'codegraph_status', { projectPath: dir }));
     await until(() => answered(server, 2), 'the first tool call');
-    expect(JSON.parse(fs.readFileSync(writerPid, 'utf8')).pid).toBe(server.child.pid);
+    await until(() => fs.existsSync(writerPid), 'the builder to take the writer lock');
+    const holder = JSON.parse(fs.readFileSync(writerPid, 'utf8')).pid as number;
+    expect(holder).not.toBe(server.child.pid);
 
+    // The normal shutdown stops the engine and then the builder, which lets go
+    // of the project: no writer lock is left behind, and its holder is gone.
+    // The last-resort fatal handler would exit 1 and skip both.
     expect(await breakOutputThenCall(server, 3), server.err()).toBe(0);
     expect(server.err()).not.toMatch(/Uncaught exception/);
     expect(fs.existsSync(writerPid)).toBe(false);
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    await until(() => !alive(holder), 'the builder to exit', 10_000);
   }, 60_000);
 
   it('stops the local proxy\'s in-process engine before the proxy exits', async () => {

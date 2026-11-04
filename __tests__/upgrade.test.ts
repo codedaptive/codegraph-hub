@@ -15,6 +15,8 @@ import {
   parseLatestTagFromLocation,
   reindexAdvisory,
   runUpgrade,
+  upgradeUnixBundle,
+  upgradeWindowsBundle,
   verifyResolvedVersion,
   defaultWirePromptHook,
   buildWindowsUpgradeScript,
@@ -476,6 +478,19 @@ function makeDeps(
   return { deps, calls };
 }
 
+/**
+ * The packed build attached to a codedaptive/codegraph-hub release, which `codegraph upgrade` installs with npm
+ * `--ignore-scripts` (the fork never installs upstream's registry package or runs install.sh / install.ps1).
+ */
+function hubUrl(version: string): string {
+  return `https://github.com/codedaptive/codegraph-hub/releases/download/v${version}/colbymchenry-codegraph-${version}.tgz`;
+}
+
+/** npm's global install of the hub asset as one command line (what cmd.exe runs on win32). */
+function hubManual(version: string): string {
+  return `npm install -g --ignore-scripts ${hubUrl(version)}`;
+}
+
 /** Decode a `-EncodedCommand` base64 (UTF-16LE) payload back to its script. */
 function decodeEncodedCommand(args: string[]): string {
   const i = args.indexOf('-EncodedCommand');
@@ -503,96 +518,7 @@ describe('runUpgrade', () => {
     expect(calls.logs.join('\n')).toMatch(/update is available/i);
   });
 
-  it('unix bundle: runs the installer via sh with the derived install dir', async () => {
-    const { deps, calls } = makeDeps({
-      method: { kind: 'bundle', os: 'unix', bundleRoot: '/h/.codegraph/versions/v0.9.8', installDir: '/h/.codegraph' },
-      currentVersion: '0.9.8',
-    });
-    const code = await runUpgrade({}, deps);
-    expect(code).toBe(0);
-    expect(calls.runs).toHaveLength(1);
-    expect(calls.runs[0].cmd).toBe('sh');
-    expect(calls.runs[0].args[0]).toBe('-c');
-    expect(calls.runs[0].args[1]).toContain('curl -fsSL');
-    expect(calls.runs[0].args[1]).toContain('| sh');
-    expect(calls.runs[0].env?.CODEGRAPH_INSTALL_DIR).toBe('/h/.codegraph');
-    expect(calls.logs.join('\n')).toMatch(/codegraph index/); // re-index advisory printed
-  });
-
-  it('unix bundle: falls back to wget, and errors when neither downloader exists', async () => {
-    const { deps, calls } = makeDeps({
-      method: { kind: 'bundle', os: 'unix', bundleRoot: '/h/.codegraph/versions/v0.9.8', installDir: null },
-      currentVersion: '0.9.8',
-      hasCommand: () => false,
-    });
-    const code = await runUpgrade({}, deps);
-    expect(code).toBe(1);
-    expect(calls.runs).toHaveLength(0);
-    expect(calls.errors.join('\n')).toMatch(/curl nor wget/i);
-  });
-
-  it('windows bundle: runs a synchronous in-place (rename + extract) powershell upgrade', async () => {
-    const { deps, calls } = makeDeps({
-      method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
-      currentVersion: '0.9.8',
-      platform: 'win32',
-    });
-    const code = await runUpgrade({}, deps);
-    expect(code).toBe(0);
-    expect(calls.runs).toHaveLength(1);
-    expect(calls.runs[0].cmd).toBe('powershell.exe');
-    const decoded = decodeEncodedCommand(calls.runs[0].args);
-    // Downloads the right asset and swaps it in with the shared rename-aside function.
-    expect(decoded).toContain('releases/download/v0.9.9/codegraph-win32-');
-    expect(decoded).toContain(WINDOWS_SWAP_FUNCTION);
-    expect(decoded).toMatch(/^\s*Install-CodeGraphFiles .* \$dest$/m);
-  });
-
-  it('windows bundle: a non-zero installer exit is a failure', async () => {
-    const { deps, calls } = makeDeps(
-      {
-        method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
-        currentVersion: '0.9.8',
-        platform: 'win32',
-      },
-      1
-    );
-    const code = await runUpgrade({}, deps);
-    expect(code).toBe(1);
-    // Exit 1 is the script's "failed, install unchanged" code (#2185).
-    expect(calls.errors.join('\n')).toMatch(/did not complete; your existing install was left as it was/i);
-  });
-
-  it('windows bundle: an incomplete rollback points at the reinstall command', async () => {
-    const { deps, calls } = makeDeps(
-      {
-        method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
-        currentVersion: '0.9.8',
-        platform: 'win32',
-      },
-      WINDOWS_UPGRADE_DAMAGED
-    );
-    const code = await runUpgrade({}, deps);
-    expect(code).toBe(1);
-    expect(calls.errors.join('\n')).toMatch(/could not be put back/i);
-    expect(calls.logs.join('\n')).toContain('install.ps1 | iex');
-    expect(calls.runs).toHaveLength(1); // no post-upgrade refresh/probe after a failure
-  });
-
-  it('windows bundle: any other exit code is reported as-is', async () => {
-    const { deps, calls } = makeDeps(
-      {
-        method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
-        currentVersion: '0.9.8',
-        platform: 'win32',
-      },
-      -1
-    );
-    expect(await runUpgrade({}, deps)).toBe(1);
-    expect(calls.errors.join('\n')).toMatch(/exited with code -1/i);
-  });
-
-  it('npm global: shells out to npm install -g @pkg@latest', async () => {
+  it('npm global: shells out to npm install -g --ignore-scripts <hub release asset>', async () => {
     const { deps, calls } = makeDeps({
       method: { kind: 'npm', scope: 'global' },
       currentVersion: '0.9.8',
@@ -600,7 +526,8 @@ describe('runUpgrade', () => {
     const code = await runUpgrade({}, deps);
     expect(code).toBe(0);
     expect(calls.runs[0].cmd).toBe('npm');
-    expect(calls.runs[0].args).toEqual(['install', '-g', `${NPM_PACKAGE}@latest`]);
+    expect(calls.runs[0].args).toEqual(['install', '-g', '--ignore-scripts', hubUrl('0.9.9')]);
+    expect(calls.runs[0].args.join(' ')).not.toContain(`${NPM_PACKAGE}@`);
   });
 
   it('npm on win32 routes through cmd.exe (a direct npm.cmd spawn EINVALs on modern Node)', async () => {
@@ -612,17 +539,17 @@ describe('runUpgrade', () => {
     await runUpgrade({}, deps);
     expect(calls.runs[0].cmd).toBe('cmd.exe');
     expect(calls.runs[0].args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
-    expect(calls.runs[0].args[3]).toBe(`npm install -g ${NPM_PACKAGE}@latest`);
+    expect(calls.runs[0].args[3]).toBe(hubManual('0.9.9'));
   });
 
-  it('npm: a pinned version is passed through as @<version>', async () => {
+  it('npm: a pinned version installs that hub release\'s asset', async () => {
     const { deps, calls } = makeDeps({
       method: { kind: 'npm', scope: 'global' },
       currentVersion: '0.9.9',
     });
     await runUpgrade({ version: '0.9.8' }, deps);
-    // npm spec carries no leading "v".
-    expect(calls.runs[0].args).toEqual(['install', '-g', `${NPM_PACKAGE}@0.9.8`]);
+    // the asset URL carries the v-prefixed tag and the bare version.
+    expect(calls.runs[0].args).toEqual(['install', '-g', '--ignore-scripts', hubUrl('0.9.8')]);
   });
 
   it('npm: surfaces a non-zero exit as failure', async () => {
@@ -655,6 +582,97 @@ describe('runUpgrade', () => {
   });
 });
 
+describe('upstream bundle installer helpers', () => {
+  it('unix bundle: runs the installer via sh with the derived install dir', async () => {
+    const { deps, calls } = makeDeps({
+      method: { kind: 'bundle', os: 'unix', bundleRoot: '/h/.codegraph/versions/v0.9.8', installDir: '/h/.codegraph' },
+      currentVersion: '0.9.8',
+    });
+    const code = await upgradeUnixBundle(deps.method as Extract<InstallMethod, { kind: 'bundle' }>, undefined, deps);
+    expect(code).toBe(0);
+    expect(calls.runs).toHaveLength(1);
+    expect(calls.runs[0].cmd).toBe('sh');
+    expect(calls.runs[0].args[0]).toBe('-c');
+    expect(calls.runs[0].args[1]).toContain('curl -fsSL');
+    expect(calls.runs[0].args[1]).toContain('| sh');
+    expect(calls.runs[0].env?.CODEGRAPH_INSTALL_DIR).toBe('/h/.codegraph');
+    expect(calls.logs.join('\n')).toMatch(/codegraph index/); // re-index advisory printed
+  });
+
+  it('unix bundle: falls back to wget, and errors when neither downloader exists', async () => {
+    const { deps, calls } = makeDeps({
+      method: { kind: 'bundle', os: 'unix', bundleRoot: '/h/.codegraph/versions/v0.9.8', installDir: null },
+      currentVersion: '0.9.8',
+      hasCommand: () => false,
+    });
+    const code = await upgradeUnixBundle(deps.method as Extract<InstallMethod, { kind: 'bundle' }>, undefined, deps);
+    expect(code).toBe(1);
+    expect(calls.runs).toHaveLength(0);
+    expect(calls.errors.join('\n')).toMatch(/curl nor wget/i);
+  });
+
+  it('windows bundle: runs a synchronous in-place (rename + extract) powershell upgrade', async () => {
+    const { deps, calls } = makeDeps({
+      method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
+      currentVersion: '0.9.8',
+      platform: 'win32',
+    });
+    const code = await upgradeWindowsBundle(deps.method as Extract<InstallMethod, { kind: 'bundle' }>, 'v0.9.9', deps);
+    expect(code).toBe(0);
+    expect(calls.runs).toHaveLength(1);
+    expect(calls.runs[0].cmd).toBe('powershell.exe');
+    const decoded = decodeEncodedCommand(calls.runs[0].args);
+    // Downloads the right asset and swaps it in with the shared rename-aside function.
+    expect(decoded).toContain('releases/download/v0.9.9/codegraph-win32-');
+    expect(decoded).toContain(WINDOWS_SWAP_FUNCTION);
+    expect(decoded).toMatch(/^\s*Install-CodeGraphFiles .* \$dest$/m);
+  });
+
+  it('windows bundle: a non-zero installer exit is a failure', async () => {
+    const { deps, calls } = makeDeps(
+      {
+        method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
+        currentVersion: '0.9.8',
+        platform: 'win32',
+      },
+      1
+    );
+    const code = await upgradeWindowsBundle(deps.method as Extract<InstallMethod, { kind: 'bundle' }>, 'v0.9.9', deps);
+    expect(code).toBe(1);
+    // Exit 1 is the script's "failed, install unchanged" code (#2185).
+    expect(calls.errors.join('\n')).toMatch(/did not complete; your existing install was left as it was/i);
+  });
+
+  it('windows bundle: an incomplete rollback points at the reinstall command', async () => {
+    const { deps, calls } = makeDeps(
+      {
+        method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
+        currentVersion: '0.9.8',
+        platform: 'win32',
+      },
+      WINDOWS_UPGRADE_DAMAGED
+    );
+    const code = await upgradeWindowsBundle(deps.method as Extract<InstallMethod, { kind: 'bundle' }>, 'v0.9.9', deps);
+    expect(code).toBe(1);
+    expect(calls.errors.join('\n')).toMatch(/could not be put back/i);
+    expect(calls.logs.join('\n')).toContain('install.ps1 | iex');
+    expect(calls.runs).toHaveLength(1); // no post-upgrade refresh/probe after a failure
+  });
+
+  it('windows bundle: any other exit code is reported as-is', async () => {
+    const { deps, calls } = makeDeps(
+      {
+        method: { kind: 'bundle', os: 'windows', bundleRoot: 'C:/x/codegraph/current', installDir: 'C:/x/codegraph' },
+        currentVersion: '0.9.8',
+        platform: 'win32',
+      },
+      -1
+    );
+    expect(await upgradeWindowsBundle(deps.method as Extract<InstallMethod, { kind: 'bundle' }>, 'v0.9.9', deps)).toBe(1);
+    expect(calls.errors.join('\n')).toMatch(/exited with code -1/i);
+  });
+});
+
 describe('runUpgrade picks npm\'s scope and folder from the install, not from cwd (#2477)', () => {
   let tmp: string;
   beforeEach(() => {
@@ -678,7 +696,7 @@ describe('runUpgrade picks npm\'s scope and folder from the install, not from cw
     const { deps, calls } = makeDeps({ method, currentVersion: '0.9.8', platform: 'win32' });
     expect(await runUpgrade({}, deps)).toBe(0);
     const run = npmRun(calls)!;
-    expect(run.args).toEqual(['/d', '/s', '/c', `npm install -g ${NPM_PACKAGE}@latest`]);
+    expect(run.args).toEqual(['/d', '/s', '/c', hubManual('0.9.9')]);
     expect(run.cwd).toBeUndefined();
   });
 
@@ -693,8 +711,8 @@ describe('runUpgrade picks npm\'s scope and folder from the install, not from cw
     fs.writeFileSync(manifest, JSON.stringify({ version: '0.9.8' }));
     const stale = makeDeps({ method, currentVersion: '0.9.8' });
     expect(await runUpgrade({}, stale.deps)).toBe(0);
-    expect(npmRun(stale.calls)!).toMatchObject({ cmd: 'npm', args: ['install', `${NPM_PACKAGE}@latest`], cwd: project });
-    expect(stale.calls.logs.join('\n')).toContain(`Running: npm install ${NPM_PACKAGE}@latest (in ${project})`);
+    expect(npmRun(stale.calls)!).toMatchObject({ cmd: 'npm', args: ['install', '--ignore-scripts', hubUrl('0.9.9')], cwd: project });
+    expect(stale.calls.logs.join('\n')).toContain(`Running: npm install --ignore-scripts ${hubUrl('0.9.9')} (in ${project})`);
     expect(stale.calls.logs.join('\n')).toContain(`npm finished, but ${project} still has CodeGraph v0.9.8.`);
 
     fs.writeFileSync(manifest, JSON.stringify({ version: '0.9.9' }));
@@ -723,9 +741,9 @@ describe('runUpgrade picks npm\'s scope and folder from the install, not from cw
 
   it('a pnpm, yarn or bun install is not touched with npm: the user gets the command for their manager', async () => {
     for (const [manager, global, command] of [
-      ['pnpm', true, `pnpm add -g ${NPM_PACKAGE}@latest`],
-      ['yarn', true, `yarn global add ${NPM_PACKAGE}@latest`],
-      ['bun', false, `bun add ${NPM_PACKAGE}@latest`],
+      ['pnpm', true, `pnpm add -g --ignore-scripts ${hubUrl('0.9.9')}`],
+      ['yarn', true, `yarn global add --ignore-scripts ${hubUrl('0.9.9')}`],
+      ['bun', false, `bun add --ignore-scripts ${hubUrl('0.9.9')}`],
     ] as const) {
       const { deps, calls } = makeDeps({ method: { kind: 'package-manager', manager, global }, currentVersion: '0.9.8' });
       expect(await runUpgrade({}, deps)).toBe(1);

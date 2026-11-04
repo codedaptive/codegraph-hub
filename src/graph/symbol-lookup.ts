@@ -25,6 +25,7 @@
  */
 
 import type { Node } from '../types';
+import { inPathPrefixes } from '../db/queries';
 import type { GoPackageOf } from './go-package';
 
 /** Rust path prefixes that name no directory (`crate::x`, `super::y`). */
@@ -171,30 +172,45 @@ export function matchesSymbol(node: Node, symbol: string, goPackageOf?: GoPackag
 /**
  * The nodes a QUALIFIED query names, in search-rank order: the full-text
  * search's top hits that satisfy the matcher, else every exact-name definition
- * of the last part that does. The search ranks and truncates, so a definition
- * can sit below its cut: for gin's `binding.Default` it returned three
- * `binding/default_validator*.go` files and not the function, and the query
- * named nothing. The exact-name index is complete.
+ * (inside the focus, when there is one) of the last part that does. The search
+ * ranks and truncates, so a definition can sit below its cut: for gin's
+ * `binding.Default` it returned three `binding/default_validator*.go` files and
+ * not the function, and the query named nothing. The exact-name index is complete.
+ *
+ * `pathPrefixes` is a path focus (index-relative, whole segments,
+ * case-sensitive, as {@link inPathPrefixes}); absent or empty = no filter. The
+ * search applies it before its 50-row cut, so a definition inside the focus is
+ * not crowded out by higher-ranked ones outside it, and the exact-name
+ * fallback keeps only definitions inside the focus.
  */
 export function qualifiedSymbolMatches(
   cg: SymbolLookupHost,
   symbol: string,
-  goPackageOf?: GoPackageOf
+  goPackageOf?: GoPackageOf,
+  pathPrefixes: readonly string[] = []
 ): Node[] {
   const tail = lastQualifierPart(symbol);
-  let hits = cg.searchNodes(symbol, { limit: 50 });
+  // The focus rides the search options only when there is one. An unfocused
+  // lookup passes `{ limit: 50 }` with no path key.
+  const searchOpts = pathPrefixes.length > 0 ? { limit: 50, pathPrefixes } : { limit: 50 };
+  let hits = cg.searchNodes(symbol, searchOpts);
   // FTS strips colons, so `stage_apply::run` searches the literal
   // `stage_applyrun` and finds nothing: search the bare last part instead.
-  if (hits.length === 0 && tail && tail !== symbol) hits = cg.searchNodes(tail, { limit: 50 });
+  if (hits.length === 0 && tail && tail !== symbol) hits = cg.searchNodes(tail, searchOpts);
   const ranked = hits.map((h) => h.node).filter((n) => matchesSymbol(n, symbol, goPackageOf));
   if (ranked.length > 0 || !tail) return ranked;
-  return cg.getNodesByName(tail).filter((n) => matchesSymbol(n, symbol, goPackageOf));
+  return cg
+    .getNodesByName(tail)
+    .filter((n) => inPathPrefixes(n.filePath, pathPrefixes) && matchesSymbol(n, symbol, goPackageOf));
 }
 
 /** The slice of CodeGraph a symbol lookup needs — keeps this module testable. */
 export interface SymbolLookupHost {
   getNodesByName(name: string): Node[];
-  searchNodes(query: string, options?: { limit?: number }): Array<{ node: Node }>;
+  searchNodes(
+    query: string,
+    options?: { limit?: number; pathPrefixes?: readonly string[] }
+  ): Array<{ node: Node }>;
   generatedFilePredicate(paths: string[]): (path: string) => boolean;
 }
 

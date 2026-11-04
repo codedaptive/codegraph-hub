@@ -10,7 +10,7 @@
  *   one CodeGraph instance via per-connection sessions.
  *
  * Both implement {@link JsonRpcTransport} so the session-level protocol logic
- * (initialize / tools/list / tools/call, plus server-initiated `roots/list`)
+ * (initialize / tools/list / tools/call)
  * is identical regardless of where the bytes come from.
  */
 
@@ -90,8 +90,8 @@ export interface JsonRpcTransport {
  */
 abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   protected messageHandler: MessageHandler | null = null;
-  // Outstanding server-initiated requests (e.g. roots/list), keyed by the id
-  // we sent. Responses from the client are matched back here.
+  // Outstanding server-initiated requests, keyed by the id we sent. Responses
+  // from the client are matched back here.
   protected pending = new Map<string | number, {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
@@ -105,11 +105,9 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   abstract stop(): void;
 
   /**
-   * Send a server-initiated request to the client and await its response.
+   * Sends a server-initiated request and awaits the answer.
    *
-   * MCP is bidirectional: the server can ask the client questions too. We use
-   * this for `roots/list` — the spec-blessed way to learn the workspace root
-   * when the client didn't pass one in `initialize` (see issue #196). Rejects
+   * MCP is bidirectional: the server can ask the client questions too. Rejects
    * on timeout so callers can fall back rather than hang forever.
    */
   request(method: string, params?: unknown, timeoutMs = 5000): Promise<unknown> {
@@ -249,14 +247,12 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
 export interface StdioTransportOptions {
   /**
    * If true, the transport calls `process.exit(0)` when stdin closes. Set to
-   * `false` in shared-daemon mode where the stdio "session" is just *one* of
-   * many clients — losing it shouldn't drag the daemon down. The default
+   * `false` when the stdio session is not the process's only client. The default
    * (true) matches the original single-process behavior callers rely on.
    */
   exitOnClose?: boolean;
   /**
-   * Optional callback fired when the stdin stream closes. The daemon uses
-   * this to decrement its connected-clients refcount.
+   * Optional callback fired when the stdin stream closes.
    */
   onClose?: () => void;
 }
@@ -266,9 +262,7 @@ export interface StdioTransportOptions {
  *
  * Reads JSON-RPC messages from stdin and writes responses to stdout. Used by
  * the direct (single-process) MCP server path, where the MCP host launches
- * one server per session and talks to it over the child's stdio. Also used by
- * shared-daemon mode for the launcher's session (with `exitOnClose: false`)
- * so the daemon outlives its launcher.
+ * one server per session and talks to it over the child's stdio.
  */
 export class StdioTransport extends LineBasedJsonRpcTransport {
   private rl: readline.Interface | null = null;
@@ -355,7 +349,7 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
 
   /**
    * Register a callback fired exactly once when the socket closes (from either
-   * side). Used by the daemon to decrement its connected-clients refcount.
+   * side).
    */
   onClose(handler: () => void): void {
     this.closeHandlers.push(handler);
@@ -376,7 +370,7 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
       // next chunk. The handler is async but we don't await it here — JSON-RPC
       // permits out-of-order responses, and serializing here would deadlock if
       // a handler issued a server-initiated request that needed a *later* line
-      // to arrive (e.g. roots/list mid-tools-call).
+      // to arrive (e.g. a server request mid-tools-call).
       while ((idx = this.buffer.indexOf('\n')) !== -1) {
         const line = this.buffer.slice(0, idx);
         this.buffer = this.buffer.slice(idx + 1);

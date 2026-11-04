@@ -1,17 +1,16 @@
 /**
- * No-default-project → projectPath is `required` in the tool schema (issue #993).
+ * projectPath is `required` in the tool schema (issue #993).
  *
- * When the MCP server has no default project to fall back to — a gateway server
- * started outside any repo, or a monorepo root whose `.codegraph/` indexes live
- * only in sub-projects — every tool call MUST carry an explicit `projectPath`.
- * `ToolHandler.getTools()` reflects that by marking `projectPath` required in the
- * exposed schemas, a high-salience nudge that gets the agent to pass it on the
- * first call instead of omitting it (the reported behavior). When a default
- * project IS open, projectPath stays optional: a bare call falls back to it.
+ * The MCP server has no default project to fall back to, so every tool call
+ * MUST carry an explicit `projectPath`. `ToolHandler.getTools()` reflects that
+ * by marking `projectPath` required in the exposed schemas, a high-salience
+ * nudge that gets the agent to pass it on the first call instead of omitting it
+ * (the reported behavior). It does so whether or not the handler holds a
+ * CodeGraph of its own (only the CLI's handler does).
  *
- * The change is schema-only — the runtime stays exactly as before: a missing
- * projectPath with no default still returns SUCCESS-shaped guidance (never
- * `isError`), and a missing projectPath WITH a default still falls back to it.
+ * The runtime backstop is success-shaped: a missing projectPath on a handler
+ * with no default returns the missing-argument text (never `isError`), while the
+ * CLI's handler, which has a default CodeGraph, still falls back to it.
  */
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import * as fs from 'fs';
@@ -25,14 +24,14 @@ const ENV = 'CODEGRAPH_MCP_TOOLS';
 const exploreOf = (defs: { name: string; inputSchema: { required?: string[] } }[]) =>
   defs.find((t) => t.name === 'codegraph_explore')!;
 
-describe('No-default-project requires projectPath in the schema (#993)', () => {
+describe('A handler with no default project requires projectPath in the schema (#993)', () => {
   const originalAllowlist = process.env[ENV];
   afterEach(() => {
     if (originalAllowlist === undefined) delete process.env[ENV];
     else process.env[ENV] = originalAllowlist;
   });
 
-  it('marks projectPath required on codegraph_explore when no default project is loaded', () => {
+  it('marks projectPath required on codegraph_explore', () => {
     const explore = exploreOf(new ToolHandler(null).getTools());
     expect(explore.inputSchema.required).toContain('projectPath');
     // The tool's own required arg is preserved, not replaced.
@@ -54,23 +53,22 @@ describe('No-default-project requires projectPath in the schema (#993)', () => {
   });
 
   it('does NOT mutate the shared module-level tools array (purity)', () => {
-    // Marking required must clone — otherwise a no-default session would corrupt
-    // the schema every later default-project session reuses.
+    // Marking required must clone — otherwise one session's listing would
+    // corrupt the schema every later caller (the CLI) reuses.
     new ToolHandler(null).getTools();
     expect(exploreOf(tools).inputSchema.required).toEqual(['query']);
   });
 
-  it('a missing projectPath with no default is still SUCCESS-shaped guidance, not isError', async () => {
-    // Schema-only change: the runtime backstop is unchanged. A client that
-    // ignores `required` still gets the nudge, never a session-souring isError.
+  it('a missing projectPath with no default is SUCCESS-shaped guidance, not isError', async () => {
+    // A client that ignores `required` still gets the exact missing-argument
+    // answer, never a session-souring isError.
     const res = await new ToolHandler(null).execute('codegraph_explore', { query: 'anything' });
     expect(res.isError).toBeUndefined();
-    expect(res.content[0]!.text).toMatch(/No CodeGraph project is loaded/);
-    expect(res.content[0]!.text).toMatch(/projectPath/);
+    expect(res.content[0]!.text).toBe('missing argument: root path to the code you wish to query');
   });
 });
 
-describe('A default project keeps projectPath OPTIONAL (#993)', () => {
+describe('The CLI handler (it has a default CodeGraph) lists projectPath required but still falls back to it (#993)', () => {
   let tempDir: string;
   let cg: CodeGraph;
 
@@ -88,17 +86,16 @@ describe('A default project keeps projectPath OPTIONAL (#993)', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('leaves projectPath optional when a default project is loaded', () => {
+  it('marks projectPath required even when the handler has a default CodeGraph', () => {
     const explore = exploreOf(new ToolHandler(cg).getTools());
-    expect(explore.inputSchema.required).toEqual(['query']);
-    expect(explore.inputSchema.required).not.toContain('projectPath');
+    expect(explore.inputSchema.required).toEqual(['query', 'projectPath']);
   });
 
-  it('a bare call (no projectPath) still falls back to the default project', async () => {
+  it('a bare call (no projectPath) on the CLI handler still falls back to its default CodeGraph', async () => {
     const res = await new ToolHandler(cg).execute('codegraph_explore', { query: 'processPayment' });
     expect(res.isError).toBeUndefined();
-    // Resolved against the default project — not the no-default guidance.
-    expect(res.content[0]!.text).not.toMatch(/No CodeGraph project is loaded/);
+    // Resolved against the default CodeGraph — not the missing-argument answer.
+    expect(res.content[0]!.text).not.toMatch(/missing argument/);
     expect(res.content[0]!.text).toMatch(/processPayment/);
   });
 });

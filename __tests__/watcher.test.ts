@@ -1127,7 +1127,11 @@ describe('FileWatcher', () => {
       expect(results.length).toBeGreaterThan(0);
 
       cg.unwatch();
-    });
+      // The timeout must outlast the 8 s waitFor above (real FSEvents delivery
+      // can take seconds on a busy Mac); a test abandoned mid-wait has its DB
+      // closed by afterEach while the poll still runs, which throws an
+      // uncaught "database is not open".
+    }, 15000);
 
     it.runIf(process.platform === 'win32')(
       'should ignore an NTFS access-only event but retain a real edit (#1451)',

@@ -30,12 +30,14 @@ let warnedBadDirName = false;
  * segment that lives in the project root.
  *
  * Why this exists: two environments that share one working tree must NOT share
- * one `.codegraph/` — most concretely Windows-native and WSL (issue #636). The
- * daemon lockfile (`.codegraph/daemon.pid`) records a platform-specific pid and
- * socket path (a Windows named pipe vs a WSL Unix socket), and SQLite file
- * locking across the WSL2 ↔ Windows filesystem boundary is unreliable, so two
- * daemons sharing one index risks corruption. Setting `CODEGRAPH_DIR=.codegraph-win`
- * on one side gives each environment its own index in the same tree.
+ * one `.codegraph/` — most concretely Windows-native and WSL (issue #636).
+ * `.codegraph/` holds the SQLite index (`codegraph.db`) and the writer locks that
+ * say which process owns live auto-sync (`codegraph.lock`, `writer.pid`,
+ * `rebuild.pid`). Those lock records carry platform-specific pids that only the
+ * writing environment can check for liveness, and SQLite file locking across the
+ * WSL2 ↔ Windows filesystem boundary is unreliable, so two environments writing
+ * one index risk corruption. Setting `CODEGRAPH_DIR=.codegraph-win` on one side
+ * gives each environment its own index in the same tree.
  *
  * Read live (not captured at load) so it is both process-accurate and testable.
  * An override that isn't a plain directory name — empty, containing a path
@@ -308,16 +310,20 @@ export function statInode(p: string): string | null {
 }
 
 /**
- * Canonicalize a project root for IDENTITY: hashing it into a rendezvous key
- * (the daemon's named pipe / tmpdir socket, a registry record). Not for display
- * — the caller-visible root keeps its own spelling.
+ * Canonicalize a project root for IDENTITY: the string every per-project record
+ * is filed under. Not for display — the caller-visible root keeps its own spelling.
  *
- * The contract is that two spellings of ONE directory yield ONE string, because
- * a client that derives a different key silently fails to meet the daemon that
- * is already running: it probes a socket nobody bound, spawns a redundant
- * daemon, and that daemon dies on the lock the first one holds, so the session
- * degrades to a single-process engine. `path.resolve` alone does NOT satisfy
- * that contract — NTFS is case-insensitive, so `d:\work\codegraph` and
+ * Keys filed under this string today: the builder's holds and its cold-build and
+ * seed state (the builder client, holder, seed host and service), the project
+ * registry's records, the writer lock's `root` field, and the lookups of cached
+ * projects in the engine and the MCP tools.
+ *
+ * The contract is that two spellings of ONE directory yield ONE string. A caller
+ * that derives a different key gets a second builder hold, a second registry
+ * record and a second writer-lock root for a directory another caller has already
+ * claimed, so the lookups that should find the first one miss it.
+ * `path.resolve` alone does NOT satisfy that contract — NTFS is
+ * case-insensitive, so `d:\work\codegraph` and
  * `D:\work\codegraph` name one directory but two strings, and non-native
  * `fs.realpathSync` keeps whichever casing the caller passed (only `.native`
  * asks the filesystem for the on-disk name — the same reason
@@ -342,9 +348,12 @@ export function canonicalProjectRoot(projectRoot: string): string {
 }
 
 /**
- * Whether two resolved index roots are one index spelled two ways — a symlinked
- * checkout, or a case-variant on a case-insensitive mount (macOS, NTFS, WSL
- * DrvFs `/mnt/c`), where `realpathSync` keeps the caller's casing (#1057).
+ * Whether two project roots reach the same index directory — a symlinked
+ * checkout, a `.codegraph` symlink between different roots, or a case-variant
+ * on a case-insensitive mount (macOS, NTFS, WSL DrvFs `/mnt/c`), where
+ * `realpathSync` keeps the caller's casing (#1057). `isForeignLockRecord`
+ * uses this check when the recorded root still reaches this project's index
+ * after a restore has changed the recorded identities.
  * Compares the identity of both data directories as they are NOW, so an inode
  * reused after a delete can't match: the deleted root no longer stats. Windows
  * has no usable inode, so it compares the on-disk-cased native realpaths.
@@ -920,14 +929,13 @@ const GITIGNORE_CONTENT = `# CodeGraph data files — local to each machine, not
 const GITIGNORE_MARKER = '# CodeGraph data files';
 
 /**
- * Is `content` a stale CodeGraph-generated `.gitignore` that should be
- * regenerated in place? True when it carries our header but predates the
- * wildcard ignore (it has no bare `*` line) — i.e. one of the old explicit
- * allowlists (`*.db`, `cache/`, `.dirty`, …) that never ignored `daemon.pid`
- * or the socket (issue #788). A file WITHOUT our header is user-authored and
- * is left untouched; one that already has the wildcard is current. Matching
- * on the header (not a byte-exact list of past defaults) heals every old
- * variant — v0.7.x through 0.9.9 — and is idempotent once upgraded.
+ * Is `content` a CodeGraph-generated `.gitignore` that should be regenerated in
+ * place? True when it carries our header and has no bare `*` line (the wildcard
+ * ignore that keeps every file in the index dir out of git). A file WITHOUT our
+ * header is user-authored and is left untouched; one that already has the
+ * wildcard is current. Matching on the header, not on a byte-exact list of
+ * defaults, means any generated variant without the wildcard is regenerated, and
+ * the check is idempotent once it is.
  */
 function isStaleDefaultGitignore(content: string): boolean {
   if (!content.trimStart().startsWith(GITIGNORE_MARKER)) return false;
@@ -1171,8 +1179,8 @@ export function validateDirectory(projectRoot: string): {
   }
 
   // Auto-repair / upgrade .gitignore (non-critical file). A missing one is
-  // recreated; a stale pre-wildcard default that never ignored daemon.pid is
-  // regenerated in place (issue #788); a user-authored file is left alone.
+  // recreated; a CodeGraph-generated one without the wildcard ignore is
+  // regenerated in place; a user-authored file is left alone.
   const gitignorePath = path.join(codegraphDir, '.gitignore');
   const existedBefore = fs.existsSync(gitignorePath);
   if (!ensureGitignore(gitignorePath) && !existedBefore) {

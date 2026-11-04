@@ -1,39 +1,37 @@
 /**
- * A launcher replaces a daemon from an older install (#2335).
+ * A launcher replaces a machine server from an older install (#2335).
  *
- * A daemon keeps running the code it started with. The 1.6.1 daemon in #2335
+ * A server keeps running the code it started with. The 1.6.1 daemon in #2335
  * outlived an upgrade to 1.6.2, went on loading grammars from the install the
  * upgrade removed, and wrote every file its watcher re-indexed as empty. A
- * launcher that found it could only serve its own session in-process, read-only:
- * the old daemon held the project's writer lock and file watcher, so no daemon
- * from the new install could start. Daemons from before the fix cannot notice
- * the upgrade themselves, so the launcher acts: a daemon of an OLDER release is
- * stopped the way `codegraph daemon` stops one (identity-checked SIGTERM, a
- * graceful shutdown on POSIX) and one from the launcher's own install takes its
- * place. The launcher hears an older daemon's hello on its own socket, or —
- * when it listens elsewhere (on Windows, daemons before #2278 named their pipe
- * after the root as typed) — finds it by the project lock. A daemon of the
- * same, a newer or an unknown version is never touched, so two installed
- * versions cannot fight over the daemon.
+ * launcher that found it could only serve its own session in-process, read-only.
+ * Servers from before the fix cannot notice the upgrade themselves, so the
+ * launcher acts: a server of an OLDER release is stopped the way `codegraph
+ * daemon` stops one (`stopServer`: identity-checked SIGTERM, a graceful shutdown
+ * on POSIX) and one from the launcher's own install takes its place. The
+ * launcher hears an older server's hello on the state dir's socket, or — when it
+ * listens elsewhere — finds it by the state dir's lock. A server of the same, a
+ * newer or an unknown version is never touched, so two installed versions
+ * cannot fight over the server. (The stop primitive itself is unit-tested in
+ * extensions/host/server-control.unit.test.ts.)
  *
- * The end-to-end cases run real daemons of other versions: this build's dist/
+ * The end-to-end cases run real servers of other versions: this build's dist/
  * linked into a temp "install" whose package.json carries another version. A
- * daemon resolves its version, and every grammar it loads, from its own files,
- * so that install's daemon advertises that version in its lock and its hello.
+ * server resolves its version, and every grammar it loads, from its own files,
+ * so that install's server advertises that version in its lock and its hello.
+ * Every case has its own state dir, so the live server is never touched.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChildProcessWithoutNullStreams, execFileSync, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { once } from 'events';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
-import { encodeLockInfo, getDaemonPidPath, getDaemonSocketPath } from '../src/mcp/daemon-paths';
-import { isProcessAlive, stopOlderDaemon } from '../src/mcp/daemon-registry';
+import { stateIdentityOf } from './extensions/host/state-identity';
 import { connectWithHello } from '../src/mcp/proxy';
 import { CodeGraphPackageVersion, isOlderRelease } from '../src/mcp/version';
-import { getWriterPidPath, readWriterLock, swapWriterLock } from '../src/mcp/writer-lock';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
 
@@ -103,7 +101,7 @@ describe('connectWithHello', () => {
     [OLDER, 'older-version', false],
     [NEWER, 'version-mismatch', true],
     ['0.0.0-unknown', 'version-mismatch', true],
-  ])('reports a %s daemon as %s', async (version, expected, logged) => {
+  ])('reports a %s server as %s', async (version, expected, logged) => {
     const socketPath = listenPath(dir, 'daemon');
     server = net.createServer((socket) => {
       socket.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath, protocol: 1 }) + '\n');
@@ -112,203 +110,32 @@ describe('connectWithHello', () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
       expect(await connectWithHello(socketPath, '1.6.2')).toBe(expected);
-      // An older daemon is the launcher's to report; it is not a mismatch to serve around.
+      // An older server is the launcher's to report; it is not a mismatch to serve around.
       expect(stderr.mock.calls.some(([line]) => String(line).includes('differs from ours'))).toBe(logged);
     } finally {
       stderr.mockRestore();
     }
   });
-});
 
-describe('swapWriterLock', () => {
-  let root: string;
-  beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-writer-swap-'));
-    fs.mkdirSync(path.join(root, '.codegraph'));
-  });
-  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
-
-  const record = (pid: number, mode: string) => ({ pid, mode, startedAt: 1, ready: false });
-
-  it('replaces the record of the given pid, and only that record', () => {
-    const file = getWriterPidPath(root);
-    fs.writeFileSync(file, JSON.stringify(record(111, 'daemon')) + '\n');
-    expect(swapWriterLock(root, 222, record(333, 'handover'))).toBe(false);
-    expect(readWriterLock(root)).toMatchObject({ pid: 111, mode: 'daemon' });
-    expect(swapWriterLock(root, 111, record(333, 'handover'))).toBe(true);
-    expect(readWriterLock(root)).toMatchObject({ pid: 333, mode: 'handover' });
-    // A slot nobody holds is not handed over: it is acquired the usual way.
-    fs.rmSync(file);
-    expect(swapWriterLock(root, 333, record(444, 'daemon'))).toBe(false);
-    expect(fs.existsSync(file)).toBe(false);
-    expect(fs.readdirSync(path.join(root, '.codegraph'))).toEqual([]);
-  });
-});
-
-/** A live process to stand in for a daemon; signals reach it, never the test. */
-function startDetachedProcess(): number {
-  const source = [
-    "const { spawn } = require('child_process');",
-    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });",
-    'child.unref();',
-    'console.log(child.pid);',
-  ].join(' ');
-  const pid = Number(execFileSync(process.execPath, ['-e', source], { encoding: 'utf8' }).trim());
-  if (!Number.isInteger(pid) || pid <= 0) throw new Error('could not start daemon fixture');
-  return pid;
-}
-
-async function deadPid(): Promise<number> {
-  const child = spawn(process.execPath, ['-e', 'process.exit(0)']);
-  await once(child, 'exit');
-  await new Promise((r) => setTimeout(r, 50));
-  return child.pid!;
-}
-
-describe('stopOlderDaemon', () => {
-  let root: string;
-  let pidPath: string;
-  let socketPath: string;
-  let server: net.Server | null;
-  let pids: number[];
-
-  beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-older-daemon-'));
-    fs.mkdirSync(path.join(root, '.codegraph'));
-    pidPath = getDaemonPidPath(root);
-    socketPath = getDaemonSocketPath(root);
-    server = null;
-    pids = [];
-  });
-
-  afterEach(async () => {
-    vi.restoreAllMocks();
-    for (const pid of pids) if (isProcessAlive(pid)) process.kill(pid, 'SIGKILL');
-    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
-    fs.rmSync(root, { recursive: true, force: true });
-  });
-
-  /** A daemon of `version`: its lock, and a socket answering the hello as `helloPid`. */
-  async function fakeDaemon(version: string, helloPid?: number): Promise<{ pid: number; lock: string }> {
-    const pid = startDetachedProcess();
-    pids.push(pid);
+  it('sends its pids and the launch directory in the client hello, right after verifying the server hello', async () => {
+    const socketPath = listenPath(dir, 'daemon');
+    const received: string[] = [];
     server = net.createServer((socket) => {
-      socket.end(JSON.stringify({ protocol: 1, codegraph: version, pid: helloPid ?? pid, socketPath }) + '\n');
+      socket.write(JSON.stringify({ codegraph: '1.6.2', pid: process.pid, socketPath, protocol: 1 }) + '\n');
+      socket.setEncoding('utf8');
+      socket.on('data', (chunk) => received.push(String(chunk)));
     });
     await listen(server, socketPath);
-    const lock = encodeLockInfo({ pid, version, socketPath, startedAt: Date.now() });
-    fs.writeFileSync(pidPath, lock);
-    return { pid, lock };
-  }
-
-  /** Signals sent to `pid`, other than the signal-0 liveness probe. */
-  function signalsTo(kill: ReturnType<typeof vi.spyOn>, pid: number): unknown[] {
-    return kill.mock.calls.filter(([target, signal]) => target === pid && signal !== 0).map(([, signal]) => signal);
-  }
-
-  /** The writer record, decoded. */
-  const writerRecord = (): any => {
-    try { return JSON.parse(fs.readFileSync(getWriterPidPath(root), 'utf8')); } catch { return null; }
-  };
-
-  it('stops a verified daemon of an older release and clears its lock', async () => {
-    const { pid } = await fakeDaemon('1.6.1');
-    const result = await stopOlderDaemon(root, '1.6.2');
-    expect(result).toMatchObject({ pid, outcome: 'term', version: '1.6.1' });
-    expect(isProcessAlive(pid)).toBe(false);
-    expect(fs.existsSync(pidPath)).toBe(false);
-    // Kept for the daemon the caller starts next.
-    expect(writerRecord()).toMatchObject({ pid: process.pid, mode: 'handover' });
-  }, 15000);
-
-  it('holds the writer slot from before the signal, so it is never free or stale', async () => {
-    const { pid } = await fakeDaemon('1.6.1');
-    fs.writeFileSync(getWriterPidPath(root), JSON.stringify({ pid, mode: 'daemon', startedAt: 1, ready: true }) + '\n');
-    let atSignal: unknown = null;
-    const originalKill = process.kill.bind(process);
-    vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
-      if (target === pid && signal === 'SIGTERM') atSignal = writerRecord();
-      return originalKill(target, signal);
+    const launchDir = path.join(dir, 'launch');
+    const socket = await connectWithHello(socketPath, '1.6.2', 3_000, launchDir);
+    expect(typeof socket).toBe('object');
+    const line = await vi.waitFor(() => {
+      const first = received.join('').split('\n')[0];
+      if (!first) throw new Error('no client hello yet');
+      return first;
     });
-    expect(await stopOlderDaemon(root, '1.6.2')).toMatchObject({ pid, outcome: 'term' });
-    // A session of the old daemon serving itself the moment it went found the
-    // slot held, and so served reads only.
-    expect(atSignal).toMatchObject({ pid: process.pid, mode: 'handover' });
-    expect(writerRecord()).toMatchObject({ pid: process.pid, mode: 'handover' });
-    expect(fs.existsSync(pidPath)).toBe(false);
-  }, 15000);
-
-  it('gives the writer slot back to an older daemon that does not exit', async () => {
-    const { pid, lock } = await fakeDaemon('1.6.1');
-    const record = { pid, mode: 'daemon', startedAt: 1, ready: true };
-    fs.writeFileSync(getWriterPidPath(root), JSON.stringify(record) + '\n');
-    // The signal reaches nothing: the daemon closes its socket, as its own
-    // shutdown does first, and then never exits.
-    const originalKill = process.kill.bind(process);
-    vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
-      if (target === pid && signal === 'SIGTERM') { server?.close(); return true; }
-      return originalKill(target, signal);
-    });
-    expect(await stopOlderDaemon(root, '1.6.2', { shutdownGraceMs: 300 })).toMatchObject({ pid, outcome: 'still-running' });
-    expect(writerRecord()).toEqual(record);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(lock);
-    expect(isProcessAlive(pid)).toBe(true);
-  }, 15000);
-
-  it('leaves the daemon to another launcher already holding the slot to replace it', async () => {
-    const { pid, lock } = await fakeDaemon('1.6.1');
-    const other = startDetachedProcess();
-    pids.push(other);
-    const claim = { pid: other, mode: 'handover', startedAt: 1, ready: false };
-    fs.writeFileSync(getWriterPidPath(root), JSON.stringify(claim) + '\n');
-    const kill = vi.spyOn(process, 'kill');
-    expect(await stopOlderDaemon(root, '1.6.2')).toBeNull();
-    expect(signalsTo(kill, pid)).toEqual([]);
-    expect(writerRecord()).toEqual(claim);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(lock);
-  });
-
-  it.each(['1.6.2', '1.6.3', '2.0.0', '1.6.1-beta.1', '0.0.0-unknown', 'test'])(
-    'never signals a daemon of version %s',
-    async (version) => {
-      const { pid, lock } = await fakeDaemon(version);
-      const kill = vi.spyOn(process, 'kill');
-      expect(await stopOlderDaemon(root, '1.6.2')).toBeNull();
-      expect(signalsTo(kill, pid)).toEqual([]);
-      expect(isProcessAlive(pid)).toBe(true);
-      expect(fs.readFileSync(pidPath, 'utf8')).toBe(lock);
-    },
-  );
-
-  it('leaves an older lock alone when its socket answers for another process (#1553)', async () => {
-    const { pid, lock } = await fakeDaemon('1.6.1', process.pid);
-    const kill = vi.spyOn(process, 'kill');
-    expect(await stopOlderDaemon(root, '1.6.2')).toMatchObject({ pid, outcome: 'unverified' });
-    expect(signalsTo(kill, pid)).toEqual([]);
-    expect(signalsTo(kill, process.pid)).toEqual([]);
-    expect(isProcessAlive(pid)).toBe(true);
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(lock);
-  });
-
-  it('reports an older daemon that already exited, leaving its lock to its successor', async () => {
-    const lock = encodeLockInfo({ pid: await deadPid(), version: '1.6.1', socketPath, startedAt: Date.now() });
-    fs.writeFileSync(pidPath, lock);
-    expect(await stopOlderDaemon(root, '1.6.2')).toMatchObject({ outcome: 'not-running', version: '1.6.1' });
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(lock);
-  });
-
-  it('has nothing to stop without a lock, and leaves a listening socket alone', async () => {
-    server = net.createServer((socket) => {
-      socket.end(JSON.stringify({ protocol: 1, codegraph: '1.6.1', pid: process.pid, socketPath }) + '\n');
-    });
-    await listen(server, socketPath);
-    expect(await stopOlderDaemon(root, '1.6.2')).toBeNull();
-    expect(await connectWithHello(socketPath, '1.6.2')).toBe('older-version');
-  });
-
-  it('does not act on an unreadable lock', async () => {
-    fs.mkdirSync(pidPath);
-    expect(await stopOlderDaemon(root, '1.6.2')).toEqual({ root, pid: null, outcome: 'unverified' });
+    expect(JSON.parse(line)).toMatchObject({ codegraph_client: 1, pid: process.pid, launchDir });
+    (socket as net.Socket).destroy();
   });
 });
 
@@ -390,13 +217,14 @@ function readJson(file: string): any | null {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
-describe('a launcher meeting a daemon of another version (#2335)', () => {
+describe('a launcher meeting a server of another version (#2335)', () => {
   let olderInstall: string;
   let newerInstall: string;
   let tempDir: string;
   let realRoot: string;
+  let stateDir: string;
   const sessions: Session[] = [];
-  const daemonPids = new Set<number>();
+  const serverPids = new Set<number>();
 
   beforeAll(() => {
     olderInstall = makeInstall(OLDER);
@@ -414,6 +242,7 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
 
   beforeEach(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-older-version-'));
+    stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-older-state-')));
     fs.writeFileSync(path.join(tempDir, 'app.ts'), 'export function appMain() { return 1; }\n');
     const cg = await CodeGraph.init(tempDir);
     try { await cg.indexAll(); } finally { cg.close(); }
@@ -422,7 +251,7 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
 
   afterEach(async () => {
     // Every launcher first (with the runtime flags there is no relaunch child),
-    // then the losing daemon candidates, then the daemons themselves — and only
+    // then the losing server candidates, then the servers themselves — and only
     // then the fixture: on Windows a live process inside it blocks the removal.
     await Promise.all(sessions.map(async ({ child }) => {
       if (child.exitCode !== null || child.signalCode !== null) return;
@@ -431,18 +260,19 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
       await exited;
     }));
     sessions.length = 0;
-    const lockPid = (): number | null => readJson(path.join(realRoot, '.codegraph', 'daemon.pid'))?.pid ?? null;
+    const lockPid = (): number | null => readJson(path.join(stateDir, 'server.pid'))?.pid ?? null;
     await settleLosingCandidates(tempDir, lockPid);
     const holder = lockPid();
-    if (holder) daemonPids.add(holder);
-    for (const pid of daemonPids) {
+    if (holder) serverPids.add(holder);
+    for (const pid of serverPids) {
       if (pid === process.pid || !isAlive(pid)) continue;
       try { process.kill(pid, 'SIGKILL'); } catch { /* raced to exit */ }
       await waitProcessExit(pid, 5000);
     }
-    daemonPids.clear();
+    serverPids.clear();
     removeSpawnLog(tempDir);
     await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await fs.promises.rm(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }, 45_000);
 
   /** An agent session: `install`'s launcher, `serve --mcp` in the project. */
@@ -455,7 +285,8 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
       env: {
         ...process.env,
         CODEGRAPH_MCP_LOG_ATTACH: '1',
-        CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS: '30000',
+        CODEGRAPH_ALLOW_UNSAFE_NODE: '1',
+        CODEGRAPH_STATE_DIR: stateDir,
         ...recorder.env,
         ...env,
       },
@@ -468,7 +299,7 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
     sessions.push(session);
     send(session, {
       jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0.0.0' }, rootUri: `file://${tempDir}` },
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '0.0.0' } },
     });
     return session;
   }
@@ -477,10 +308,15 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
     try { session.child.stdin.write(JSON.stringify(msg) + '\n'); } catch { /* gone */ }
   }
 
+  /** `codegraph_status` for the project, which every call must name. */
+  function sendStatus(session: Session, id: number): void {
+    send(session, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'codegraph_status', arguments: { projectPath: tempDir } } });
+  }
+
   async function status(session: Session, id: number, label: string): Promise<any> {
-    send(session, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'codegraph_status', arguments: {} } });
+    sendStatus(session, id);
     const reply = await waitFor(() => findResponse(session.stdout, id), 20000, label).catch((err: Error) => {
-      throw new Error(`${err.message}\n--- stderr ---\n${session.stderr.join('\n')}\n--- daemon.log ---\n${daemonLog()}`);
+      throw new Error(`${err.message}\n--- stderr ---\n${session.stderr.join('\n')}\n--- server.log ---\n${serverLog()}`);
     });
     expect(reply.error, label).toBeUndefined();
     expect(reply.result?.isError, label).not.toBe(true);
@@ -490,111 +326,32 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
 
   const attachedLine = (session: Session): string | undefined =>
     session.stderr.find((l) => l.includes('Attached to shared daemon'));
-  const daemonLock = (): any => readJson(path.join(realRoot, '.codegraph', 'daemon.pid'));
+  const serverLock = (): any => readJson(path.join(stateDir, 'server.pid'));
   const writerLock = (): any => readJson(path.join(realRoot, '.codegraph', 'writer.pid'));
-  const daemonLog = (): string => {
-    try { return fs.readFileSync(path.join(realRoot, '.codegraph', 'daemon.log'), 'utf8'); } catch { return ''; }
+  const serverLog = (): string => {
+    try { return fs.readFileSync(path.join(stateDir, 'server.log'), 'utf8'); } catch { return ''; }
   };
 
-  /** A session of `install` attached to a daemon of its own, which owns the project. */
-  async function sessionWithDaemon(install: string, version: string, env: NodeJS.ProcessEnv = {}): Promise<{ session: Session; pid: number }> {
+  /** A session of `install` attached to a server of its own, which owns the state dir. */
+  async function sessionWithServer(install: string, version: string, env: NodeJS.ProcessEnv = {}): Promise<{ session: Session; pid: number }> {
     const session = startSession(install, env);
     await waitFor(() => attachedLine(session), 20000, `the ${version} session to attach`);
-    // Attached means listening, not initialized: let the engine open the
-    // database before anything stops this daemon.
+    // Attached means listening, not that a project is open: let a call open the
+    // database before anything stops this server.
     await status(session, 2, `a ${version} tool call`);
-    const lock = daemonLock();
-    expect(lock).toMatchObject({ version });
-    expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
-    daemonPids.add(lock.pid);
+    const lock = serverLock();
+    expect(lock).toMatchObject({ version, stateDir });
+    serverPids.add(lock.pid);
     return { session, pid: lock.pid };
   }
 
-  /** A daemon process for the project, started the way a launcher starts one. */
-  function startDaemon(env: NodeJS.ProcessEnv): { child: ChildProcessWithoutNullStreams; log: string[] } {
-    const child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, 'serve', '--mcp', '--path', realRoot], {
-      cwd: tempDir,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, CODEGRAPH_DAEMON_INTERNAL: '1', CODEGRAPH_DAEMON_IDLE_TIMEOUT_MS: '30000', ...env },
-    }) as ChildProcessWithoutNullStreams;
-    child.on('error', () => { /* ignore */ });
-    child.stdout.resume();
-    const log: string[] = [];
-    lines(child.stderr, log);
-    daemonPids.add(child.pid!);
-    return { child, log };
-  }
-
-  /** The slot as a launcher that just stopped an older daemon holds it: this test process stands in. */
-  function holdWriterSlotForSuccessor(): string {
-    const claim = JSON.stringify({ pid: process.pid, mode: 'handover', startedAt: Date.now(), ready: false }) + '\n';
-    fs.writeFileSync(path.join(realRoot, '.codegraph', 'writer.pid'), claim);
-    return claim;
-  }
-
-  it('a daemon takes over the writer slot held for it, and only that one', async () => {
-    const claim = holdWriterSlotForSuccessor();
-
-    // A daemon the slot is not held for finds it held, as by any live writer.
-    const stranger = startDaemon({});
-    const [strangerCode] = await once(stranger.child, 'exit');
-    expect(strangerCode).toBe(1);
-    expect(stranger.log.join('\n')).toContain(`writer lock held by PID ${process.pid} (handover mode)`);
-    expect(fs.readFileSync(path.join(realRoot, '.codegraph', 'writer.pid'), 'utf8')).toBe(claim);
-
-    const successor = startDaemon({ CODEGRAPH_DAEMON_HANDOVER: String(process.pid) });
-    await waitFor(
-      () => daemonLock()?.pid === successor.child.pid && successor.log.some((l) => l.includes('Listening on')),
-      20000, 'the successor to listen',
-    );
-    expect(writerLock()).toMatchObject({ pid: successor.child.pid, mode: 'daemon' });
-    expect(successor.log.join('\n')).toContain(`Took over the writer lock from launcher pid ${process.pid}`);
-  }, 60000);
-
-  it('a daemon the slot is held for outwaits a candidate still starting in its way', async () => {
-    holdWriterSlotForSuccessor();
-    // A racing launcher's candidate holds the daemon lock, still starting; it
-    // cannot get the writer slot, so it will give up.
-    const candidate = startDetachedProcess();
-    daemonPids.add(candidate);
-    const pidPath = path.join(realRoot, '.codegraph', 'daemon.pid');
-    const candidateLock = encodeLockInfo({
-      pid: candidate, version: CodeGraphPackageVersion, socketPath: getDaemonSocketPath(realRoot), startedAt: Date.now(),
-    });
-    fs.writeFileSync(pidPath, candidateLock);
-
-    // Any other daemon yields to it at once.
-    const yielding = startDaemon({});
-    const [yieldingCode] = await once(yielding.child, 'exit');
-    expect(yieldingCode).toBe(0);
-    expect(yielding.log.join('\n')).toContain(`Another daemon (pid ${candidate}) already holds the lock`);
-
-    const successor = startDaemon({ CODEGRAPH_DAEMON_HANDOVER: String(process.pid) });
-    await waitFor(
-      () => successor.log.some((l) => l.includes(`Waiting for daemon candidate pid ${candidate}`)),
-      20000, 'the successor to wait for the candidate',
-    );
-    expect(successor.child.exitCode).toBeNull();
-    expect(fs.readFileSync(pidPath, 'utf8')).toBe(candidateLock);
-    // The candidate gives up: its lock goes, then so does it.
-    fs.rmSync(pidPath);
-    process.kill(candidate, 'SIGKILL');
-    await waitFor(
-      () => daemonLock()?.pid === successor.child.pid && successor.log.some((l) => l.includes('Listening on')),
-      20000, 'the successor to listen',
-    );
-    expect(writerLock()).toMatchObject({ pid: successor.child.pid, mode: 'daemon' });
-  }, 60000);
-
-  it('keeps the older daemon\'s sessions read-only through the replacement, even mid-call', async () => {
-    const before = await sessionWithDaemon(olderInstall, OLDER);
+  it('keeps the older server\'s sessions answering through the replacement, even mid-call', async () => {
+    const before = await sessionWithServer(olderInstall, OLDER);
     // The older session calls every 20ms throughout, so it serves itself
-    // in-process the instant its daemon goes. Finding the writer slot free
-    // then, it would claim it — with the code of the install being replaced.
+    // in-process the instant its server goes: every call must still get its one
+    // reply, and that engine only ever reads.
     let next = 100;
-    const calling = setInterval(() => {
-      send(before.session, { jsonrpc: '2.0', id: next++, method: 'tools/call', params: { name: 'codegraph_status', arguments: {} } });
-    }, 20);
+    const calling = setInterval(() => sendStatus(before.session, next++), 20);
     let after: Session;
     try {
       after = startSession(null);
@@ -603,11 +360,10 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
     } finally {
       clearInterval(calling);
     }
-    const lock = daemonLock();
-    daemonPids.add(lock.pid);
+    const lock = serverLock();
+    serverPids.add(lock.pid);
     expect(lock.version).toBe(CodeGraphPackageVersion);
-    expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
-    await status(after, 2, 'a tool call through the new daemon');
+    await status(after, 2, 'a tool call through the new server');
 
     const last = next - 1;
     await waitFor(() => findResponse(before.session.stdout, last), 20000, 'the older session to answer every call');
@@ -615,136 +371,125 @@ describe('a launcher meeting a daemon of another version (#2335)', () => {
     const stderr = before.session.stderr.join('\n');
     expect(stderr).toContain('Serving reads in-process without auto-sync');
     expect(stderr).not.toContain('File watcher active');
-    expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
   }, 120000);
 
-  it('stops a daemon from an older install and starts one from its own', async () => {
-    const before = await sessionWithDaemon(olderInstall, OLDER);
+  it('stops a server from an older install and starts one from its own', async () => {
+    const before = await sessionWithServer(olderInstall, OLDER);
 
     const after = startSession(null);
     const stopped = await waitFor(
       () => after.stderr.find((l) => l.includes('[CodeGraph MCP] Stopped')),
-      30000, 'the older daemon to be stopped',
+      30000, 'the older server to be stopped',
     );
-    expect(stopped).toContain(`the CodeGraph ${OLDER} daemon (pid ${before.pid})`);
+    expect(stopped).toContain(`the CodeGraph ${OLDER} server (pid ${before.pid})`);
     expect(stopped).toContain(`from this install (${CodeGraphPackageVersion})`);
     expect(await waitProcessExit(before.pid, 10000)).toBe(true);
 
     const attached = await waitFor(() => attachedLine(after), 20000, 'the new session to attach');
-    const lock = daemonLock();
-    daemonPids.add(lock.pid);
+    const lock = serverLock();
+    serverPids.add(lock.pid);
     expect(lock.version).toBe(CodeGraphPackageVersion);
     expect(lock.pid).not.toBe(before.pid);
     expect(attached).toContain(`(pid ${lock.pid}, v${CodeGraphPackageVersion})`);
-    await status(after, 2, 'a tool call through the new daemon');
-    // The replacement owns updates for the project: writer lock and watcher,
-    // handed to it by the launcher that held the slot through the stop.
-    expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
-    expect(daemonLog()).toContain(`Took over the writer lock from launcher pid ${after.child.pid}`);
+    await status(after, 2, 'a tool call through the new server');
     if (process.platform !== 'win32') {
-      // SIGTERM ran the old daemon's own shutdown. (On Windows it is
+      // SIGTERM ran the old server's own shutdown. (On Windows it is
       // TerminateProcess, and the stop clears what is left.)
-      expect(daemonLog()).toContain(`Shutting down (SIGTERM`);
+      expect(serverLog()).toContain('Shutting down (SIGTERM');
     }
 
-    // The session from before the upgrade keeps answering, read-only, and
-    // leaves the new daemon its writer lock.
+    // The session from before the upgrade keeps answering, read-only.
     await waitFor(
       () => before.session.stderr.some((l) => l.includes('Shared daemon connection lost')),
-      10000, 'the older session to lose its daemon',
+      10000, 'the older session to lose its server',
     );
     await status(before.session, 3, 'a tool call in the older session');
     expect(before.session.stderr.some((l) => l.includes('Serving reads in-process without auto-sync'))).toBe(true);
-    expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
-    expect(daemonLock()).toEqual(lock);
+    expect(serverLock()).toEqual(lock);
     expect(isAlive(lock.pid)).toBe(true);
   }, 120000);
 
-  it('finds an older daemon its probe cannot reach by the project lock, and stops it', async () => {
-    // On Windows a 1.6.1 daemon named its pipe after the root as typed (#2278),
-    // so a newer launcher's probe never hears its hello; only its lock says
-    // where it listens. Stand one up on a socket no launcher probes.
+  it('finds an older server listening off the socket candidates by the state dir\'s lock, and stops it', async () => {
+    // A launcher's probe walks the lock's socket and then the state dir's socket
+    // candidates, so a server listening elsewhere is found only because the lock
+    // says where it is. Stand one up on a socket that is not a candidate.
     const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-sock-'));
     try {
       const socketPath = listenPath(socketDir, 'older');
-      const older = spawn(process.execPath, [OLDER_DAEMON, realRoot, OLDER, socketPath], { detached: true, stdio: 'ignore' });
+      const older = spawn(process.execPath, [OLDER_DAEMON, stateDir, OLDER, socketPath, stateIdentityOf(stateDir)], { detached: true, stdio: 'ignore' });
       older.unref();
-      daemonPids.add(older.pid!);
-      await waitFor(() => daemonLock()?.pid === older.pid, 10000, 'the older daemon to hold the project');
-      expect(writerLock()).toMatchObject({ pid: older.pid, mode: 'daemon' });
+      serverPids.add(older.pid!);
+      await waitFor(() => serverLock()?.pid === older.pid, 10000, 'the older server to hold the state dir');
 
       const session = startSession(null);
       const stopped = await waitFor(
         () => session.stderr.find((l) => l.includes('[CodeGraph MCP] Stopped')),
-        30000, 'the older daemon to be stopped',
+        30000, 'the older server to be stopped',
       );
-      expect(stopped).toContain(`the CodeGraph ${OLDER} daemon (pid ${older.pid})`);
+      expect(stopped).toContain(`the CodeGraph ${OLDER} server (pid ${older.pid})`);
       expect(await waitProcessExit(older.pid!, 10000)).toBe(true);
       const attached = await waitFor(() => attachedLine(session), 20000, 'the session to attach');
-      const lock = daemonLock();
-      daemonPids.add(lock.pid);
+      const lock = serverLock();
+      serverPids.add(lock.pid);
       expect(lock.version).toBe(CodeGraphPackageVersion);
       expect(attached).toContain(`(pid ${lock.pid}, v${CodeGraphPackageVersion})`);
-      expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
-      expect(daemonLog()).toContain(`Took over the writer lock from launcher pid ${session.child.pid}`);
-      await status(session, 2, 'a tool call through the new daemon');
+      await status(session, 2, 'a tool call through the new server');
     } finally {
       fs.rmSync(socketDir, { recursive: true, force: true });
     }
   }, 90000);
 
-  it('never stops a daemon from a newer install', async () => {
+  it('never stops a server from a newer install', async () => {
     const retry = { CODEGRAPH_DAEMON_RETRY_MS: '300', CODEGRAPH_DAEMON_RETRY_MAX_MS: '600' };
-    const newer = await sessionWithDaemon(newerInstall, NEWER);
-    const lock = daemonLock();
+    const newer = await sessionWithServer(newerInstall, NEWER);
+    const lock = serverLock();
 
     const current = startSession(null, retry);
-    // The first probe and the retries that follow all find the newer daemon.
+    // The first probe and the retries that follow all find the newer server.
     await waitFor(
       () => current.stderr.filter((l) => l.includes(`version (${NEWER}) differs from ours`)).length >= 3,
-      20000, 'repeated probes of the newer daemon',
+      20000, 'repeated probes of the newer server',
     );
     await status(current, 2, 'a tool call served in-process');
     expect(current.stderr.some((l) => l.includes('Serving reads in-process without auto-sync'))).toBe(true);
     expect(current.stderr.some((l) => l.includes('[CodeGraph MCP] Stopped'))).toBe(false);
 
     expect(isAlive(newer.pid)).toBe(true);
-    expect(daemonLock()).toEqual(lock);
-    expect(writerLock()).toMatchObject({ pid: newer.pid, mode: 'daemon' });
-    await status(newer.session, 3, 'a tool call through the newer daemon');
+    expect(serverLock()).toEqual(lock);
+    await status(newer.session, 3, 'a tool call through the newer server');
   }, 90000);
 
-  it('a session whose own install was upgraded serves reads only once its daemon exits', async () => {
-    // An upgrade in place: the daemon notices its package.json changed and
-    // exits (its install check), and its session falls back in-process. As
-    // the project's writer that session — running code the upgrade replaced —
-    // would only keep a daemon from the new install from starting.
+  it('a session whose own install was upgraded keeps answering in-process once its server exits', async () => {
+    // An upgrade in place: the server notices its package.json changed and
+    // exits (its install check), and its session falls back in-process, where
+    // it only reads and claims no writer slot, so a server from the new install
+    // starts straight away.
     const install = makeInstall('0.0.2');
     try {
-      const before = await sessionWithDaemon(install, '0.0.2', {
+      const before = await sessionWithServer(install, '0.0.2', {
         CODEGRAPH_DAEMON_INSTALL_CHECK_MS: '200',
         CODEGRAPH_DAEMON_RETRY_MS: '0',
       });
       fs.writeFileSync(path.join(install, 'package.json'), JSON.stringify({ name: '@colbymchenry/codegraph', version: '0.0.3' }) + '\n');
       expect(await waitProcessExit(before.pid, 10000)).toBe(true);
-      expect(daemonLog()).toContain('Install replaced by v0.0.3');
+      expect(serverLog()).toContain('Install replaced by v0.0.3');
       await waitFor(
         () => before.session.stderr.some((l) => l.includes('Shared daemon connection lost')),
-        10000, 'the session to lose its daemon',
+        10000, 'the session to lose its server',
       );
 
-      await status(before.session, 3, 'a tool call after the daemon exited');
+      await status(before.session, 3, 'a tool call after the server exited');
       const stderr = before.session.stderr.join('\n');
-      expect(stderr).toContain("this session's CodeGraph install was upgraded or removed");
+      expect(stderr).toContain('Serving reads in-process without auto-sync');
       expect(stderr).not.toContain('File watcher active');
       expect(writerLock()).toBeNull();
 
-      // So a session from the current install gets a daemon straight away.
+      // So a session from the current install gets a server straight away.
       const after = startSession(null);
       await waitFor(() => attachedLine(after), 20000, 'the new session to attach');
-      const lock = daemonLock();
-      daemonPids.add(lock.pid);
-      expect(writerLock()).toMatchObject({ pid: lock.pid, mode: 'daemon' });
+      const lock = serverLock();
+      serverPids.add(lock.pid);
+      expect(lock.version).toBe(CodeGraphPackageVersion);
     } finally {
       // On Windows a process still running from the install blocks its removal.
       for (const { child } of sessions) {

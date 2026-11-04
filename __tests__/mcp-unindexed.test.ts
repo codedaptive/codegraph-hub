@@ -1,18 +1,15 @@
 /**
- * No-root-index session policy tests (#964).
+ * Session policy tests for a launch directory with no index of its own (#964).
  *
- * A server whose own root has no .codegraph/ still exposes its tools — gating
- * tool AVAILABILITY on whether `./` is indexed broke monorepos (only
- * sub-projects indexed) and hid the tools from a session that started before
- * `codegraph init`. So `initialize` returns the per-project instructions
- * variant (not the full single-project playbook, and NOT an "inactive" note),
- * `tools/list` exposes the tool surface, and a query against an indexed project
- * by `projectPath` works even with no default project. Safety is preserved by
- * the response SHAPE, not by hiding tools: a call against an un-indexed path
- * returns SUCCESS-shaped guidance ("pass projectPath / run codegraph init"),
- * never `isError: true` — one or two early isError responses teach an agent to
- * abandon codegraph for the whole session, and that failure mode is still
- * guarded below.
+ * The server has no default project, so a launch directory that is (or is not)
+ * indexed changes nothing about the session: `initialize` returns the one
+ * instructions text (never an "inactive" note), `tools/list` exposes the tool
+ * surface, and a query against an indexed project by `projectPath` works.
+ * Safety is preserved by the response SHAPE, not by hiding tools: a call
+ * against an un-indexed path, or without a `projectPath`, returns
+ * SUCCESS-shaped guidance, never `isError: true` — one or two early isError
+ * responses teach an agent to abandon codegraph for the whole session, and
+ * that failure mode is still guarded below.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
@@ -21,22 +18,23 @@ import * as path from 'path';
 import * as os from 'os';
 import { CodeGraph } from '../src';
 import { ToolHandler } from '../src/mcp/tools';
+import { MISSING_PROJECT_PATH_TEXT } from '../src/extensions/host/server/repo-anchor';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
-function spawnServer(cwd: string): ChildProcessWithoutNullStreams {
+function spawnServer(cwd: string, stateDir: string): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, [BIN, 'serve', '--mcp'], {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
-    // Direct (in-process) mode — the unindexed path never has a daemon
-    // anyway (the daemon socket lives in .codegraph/), and this keeps the
-    // suite from leaking a detached daemon in the indexed test.
+    // Direct (in-process) mode keeps the suite from leaking a detached machine
+    // server. CODEGRAPH_STATE_DIR keeps the project registry (and anything else
+    // the server writes) out of the real ~/.codegraph.
     // CODEGRAPH_WASM_RELAUNCHED skips the --liftoff-only re-exec: without
     // it the server runs as a GRANDCHILD that survives child.kill() on
     // Windows and holds the temp cwd/SQLite handles, failing teardown with
     // EPERM no matter how long rmSync retries (the class documented for
     // the mcp-initialize/mcp-roots suites).
-    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1' },
+    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1', CODEGRAPH_STATE_DIR: stateDir },
   }) as ChildProcessWithoutNullStreams;
 }
 
@@ -86,12 +84,14 @@ function initializeParams(projectPath: string) {
   };
 }
 
-describe('No-root-index session policy', () => {
+describe('Session policy for a launch directory with no index', () => {
   let tempDir: string;
+  let stateDir: string;
   let child: ChildProcessWithoutNullStreams | null = null;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unindexed-'));
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unindexed-state-'));
   });
 
   afterEach(async () => {
@@ -108,28 +108,29 @@ describe('No-root-index session policy', () => {
       child = null;
     }
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
-  it('initialize returns the per-project instructions (not "inactive", not the full playbook)', async () => {
+  it('initialize returns the one instructions text (not "inactive"), naming projectPath and the missing-argument answer', async () => {
     fs.writeFileSync(path.join(tempDir, 'index.ts'), 'export const x = 1;\n');
-    child = spawnServer(tempDir);
+    child = spawnServer(tempDir, stateDir);
 
     const res = await request(child, { id: 0, method: 'initialize', params: initializeParams(tempDir) });
     const instructions = (res.result as { instructions: string }).instructions;
 
-    // No longer an "inactive, do nothing" note — the tools are available.
+    // Not an "inactive, do nothing" note — the tools are available.
     expect(instructions).not.toMatch(/inactive/i);
-    // It steers the agent to target a project explicitly via projectPath...
+    // It tells the agent every call needs projectPath, and what a call without one is answered...
     expect(instructions).toMatch(/projectPath/);
+    expect(instructions).toContain(MISSING_PROJECT_PATH_TEXT);
     expect(instructions).toMatch(/codegraph_explore/);
     expect(instructions).toMatch(/codegraph init/);
-    // ...but it is NOT the full single-project playbook (that's sent only when
-    // the root itself is indexed — keeps the common case tight).
-    expect(instructions).not.toMatch(/## How to query/);
+    // ...and it is the full playbook, whether or not the launch directory is indexed.
+    expect(instructions).toMatch(/## How to query/);
   });
 
-  it('tools/list exposes the tools even when the server root has no index (#964)', async () => {
-    child = spawnServer(tempDir);
+  it('tools/list exposes the tools even when the launch directory has no index (#964)', async () => {
+    child = spawnServer(tempDir, stateDir);
     await request(child, { id: 0, method: 'initialize', params: initializeParams(tempDir) });
 
     const res = await request(child, { id: 1, method: 'tools/list' });
@@ -138,9 +139,10 @@ describe('No-root-index session policy', () => {
     expect(tools.map((t) => t.name)).toContain('codegraph_explore');
   });
 
-  it('a query by projectPath reaches an INDEXED sub-project of an unindexed root (monorepo) (#964)', async () => {
-    // The server root (tempDir) has no index; an indexed sub-project lives
-    // under it — exactly the monorepo shape. The query must resolve to the
+  it('a query by projectPath reaches an INDEXED sub-project of an unindexed launch directory (monorepo) (#964)', async () => {
+    // The launch directory (tempDir) has no index; an indexed sub-project lives
+    // under it — exactly the monorepo shape (outside a repository, the anchor
+    // is the launch directory and its subtree). The query must resolve to the
     // sub-project's .codegraph/ and return real results. Run through the real
     // spawned server (a second-project open can't be exercised in-process under
     // vitest — see mcp-toolhandler cache notes — but a child process can).
@@ -153,7 +155,7 @@ describe('No-root-index session policy', () => {
     const cg = await CodeGraph.init(svc, { index: true });
     cg.close();
 
-    child = spawnServer(tempDir);
+    child = spawnServer(tempDir, stateDir);
     await request(child, { id: 0, method: 'initialize', params: initializeParams(tempDir) });
 
     const res = await request(child, {
@@ -167,16 +169,36 @@ describe('No-root-index session policy', () => {
     expect(result.content[0]!.text).not.toMatch(/isn't indexed/);
   });
 
-  it('an INDEXED workspace still gets the full playbook and the explore tool', async () => {
+  it('a call without projectPath is answered exactly the missing-argument text, even in an INDEXED launch directory', async () => {
     fs.writeFileSync(path.join(tempDir, 'index.ts'), 'export function hello(): string { return "hi"; }\n');
     const cg = await CodeGraph.init(tempDir, { index: true });
     cg.close();
 
-    child = spawnServer(tempDir);
+    child = spawnServer(tempDir, stateDir);
     const init = await request(child, { id: 0, method: 'initialize', params: initializeParams(tempDir) });
     const instructions = (init.result as { instructions: string }).instructions;
     expect(instructions).toMatch(/How to query/);
     expect(instructions).not.toMatch(/inactive/i);
+
+    // No fallback to the launch directory's own index: no projectPath, no answer from a default.
+    const bare = await request(child, {
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'codegraph_explore', arguments: { query: 'hello' } },
+    });
+    const bareResult = bare.result as { content: Array<{ text: string }>; isError?: boolean };
+    expect(bareResult.isError).toBeFalsy();
+    expect(bareResult.content[0]!.text).toBe(MISSING_PROJECT_PATH_TEXT);
+
+    // With the path it answers from that index.
+    const named = await request(child, {
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'codegraph_explore', arguments: { query: 'hello', projectPath: tempDir } },
+    });
+    const namedResult = named.result as { content: Array<{ text: string }>; isError?: boolean };
+    expect(namedResult.isError).toBeFalsy();
+    expect(namedResult.content[0]!.text).toMatch(/hello/);
 
     const list = await request(child, { id: 1, method: 'tools/list' });
     const tools = (list.result as { tools: Array<{ name: string }> }).tools;
@@ -211,12 +233,11 @@ describe('No-error policy on expected conditions', () => {
     expect(res.content[0]!.text).toMatch(/built-in tools/);
   });
 
-  it('no-default-project (working-directory detection miss) is SUCCESS-shaped guidance', async () => {
+  it('a handler with no default project answers a call without projectPath with the missing-argument text, SUCCESS-shaped', async () => {
     const res = await new ToolHandler(null).execute('codegraph_search', { query: 'anything' });
 
     expect(res.isError).toBeUndefined();
-    expect(res.content[0]!.text).toMatch(/No CodeGraph project is loaded/);
-    expect(res.content[0]!.text).toMatch(/projectPath/);
+    expect(res.content[0]!.text).toBe(MISSING_PROJECT_PATH_TEXT);
   });
 
 

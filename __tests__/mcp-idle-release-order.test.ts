@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ToolHandler, type ProjectLifecycle } from '../src/mcp/tools';
 import CodeGraph from '../src';
+import { ADMIT_ALL } from './helpers/admit-all';
 
 const IDLE_MS = 3000;
 // Long enough to fail validation after the project gate, so a call opens and
@@ -59,7 +60,7 @@ describe('idle release order (#2087)', () => {
     const handler = new ToolHandler(null);
     handler.setProjectLifecycle(lifecycle);
     const call = async (name: string): Promise<void> => {
-      const done = handler.execute('codegraph_files', { projectPath: path.join(workspace, name), path: OVERSIZED_PATH });
+      const done = handler.execute('codegraph_files', { projectPath: path.join(workspace, name), path: OVERSIZED_PATH }, undefined, ADMIT_ALL);
       await vi.advanceTimersByTimeAsync(10); // the catch-up gate's serve-anyway deadline
       expect((await done).content[0]!.text).toContain('path exceeds maximum length');
     };

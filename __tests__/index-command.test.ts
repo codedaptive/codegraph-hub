@@ -14,15 +14,34 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { CodeGraph } from '../src';
 import { DatabaseConnection } from '../src/db';
-import { encodeLockInfo, getDaemonPidPath } from '../src/mcp/daemon-paths';
+import { startFakeServer } from './fake-release-server';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
+
+/**
+ * Every test runs against its own machine-server state dir, so `index`'s
+ * request to release the project never reaches the live server of
+ * `~/.codegraph`. The vitest process sets it too: the fake server binds the
+ * socket path that the state dir keys.
+ */
+let stateDir: string;
+let savedStateDir: string | undefined;
+beforeEach(() => {
+  stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-index-state-'));
+  savedStateDir = process.env.CODEGRAPH_STATE_DIR;
+  process.env.CODEGRAPH_STATE_DIR = stateDir;
+});
+afterEach(() => {
+  if (savedStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+  else process.env.CODEGRAPH_STATE_DIR = savedStateDir;
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
 
 /** Normalize a PRAGMA read across return shapes (array | object | scalar). */
 function pragmaValue(raw: unknown, key: string): unknown {
@@ -35,8 +54,23 @@ function runCodegraph(args: string[], cwd: string): string {
   return execFileSync(process.execPath, [BIN, ...args], {
     cwd,
     encoding: 'utf-8',
-    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1' },
+    env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_STATE_DIR: stateDir },
     stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+/** Like {@link runCodegraph}, but without blocking this process's event loop (a fake server runs in it). */
+function runCodegraphAsync(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [BIN, ...args],
+      { cwd, encoding: 'utf-8', env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_STATE_DIR: stateDir } },
+      (error, stdout, stderr) => {
+        const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
+        resolve({ code, stdout, stderr });
+      },
+    );
   });
 }
 
@@ -50,34 +84,19 @@ function graphCounts(dir: string): { nodes: number; edges: number } {
   }
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * A live process standing in for a daemon that does not answer its socket.
- * Its command line reads like a CodeGraph MCP server's: one that is plainly
- * some other program would make the lock stale, and `index` would clear it
- * (#2770).
+ * Timeout for every test in the two `codegraph index` describes below. Each test
+ * spawns the CLI as a child process (init, index, or both), and the #1325 tests
+ * also run a fake release server in this process. Under heavy load those children
+ * are starved of CPU rather than stuck: at 1-minute load ~140 on 18 CPUs, one run
+ * of this file took 390 s wall for 36.5 s of CPU, and six tests hit the 30 s
+ * default. Measured on the same 18 CPUs: the #1325 release test takes
+ * 23.3 s alone at load ~101-110, and 27.2-32.0 s with four copies of this file in
+ * parallel at load ~101-104. 90 s is about three times the slowest of those runs.
  */
-function startDetachedProcess(): number {
-  const source = [
-    "const { spawn } = require('child_process');",
-    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'codegraph.js', 'serve', '--mcp'], { detached: true, stdio: 'ignore' });",
-    'child.unref();',
-    'console.log(child.pid);',
-  ].join(' ');
-  const pid = Number(execFileSync(process.execPath, ['-e', source], { encoding: 'utf8' }).trim());
-  if (!Number.isInteger(pid) || pid <= 0) throw new Error('could not start daemon fixture');
-  return pid;
-}
+const CLI_TEST_TIMEOUT_MS = 90_000;
 
-describe('codegraph index — full re-index keeps the graph populated (#874)', () => {
+describe('codegraph index — full re-index keeps the graph populated (#874)', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   let tempDir: string;
 
   beforeEach(() => {
@@ -141,26 +160,41 @@ describe('codegraph index — full re-index keeps the graph populated (#874)', (
     expect(afterIndex.edges).toBe(afterInit.edges);
   });
 
-  it('refuses to recreate while a live daemon cannot be verified (#1325)', () => {
+  it('asks the server to release the project, never to stop, then rebuilds (#1325)', async () => {
     runCodegraph(['init'], tempDir);
-    const daemonPid = startDetachedProcess();
-    const lockPath = getDaemonPidPath(fs.realpathSync(tempDir));
-    fs.writeFileSync(
-      lockPath,
-      encodeLockInfo({
-        pid: daemonPid,
-        version: 'test',
-        socketPath: path.join(tempDir, '.codegraph', 'missing.sock'),
-        startedAt: Date.now(),
-      }),
-    );
-
+    const before = graphCounts(tempDir);
+    const server = await startFakeServer();
     try {
-      expect(() => runCodegraph(['index', '--quiet'], tempDir)).toThrow(/did not answer as its daemon, so it was left running/);
-      expect(isAlive(daemonPid)).toBe(true);
-      expect(fs.existsSync(lockPath)).toBe(true);
+      const result = await runCodegraphAsync(['index', '--quiet'], tempDir);
+      expect(result.code).toBe(0);
+      // One request, the release of this project's real path: the server keeps
+      // running and serving every other project.
+      expect(server.requests).toHaveLength(1);
+      expect(server.requests[0]!.method).toBe('codegraph/releaseProject');
+      expect((server.requests[0]!.params as { root: string }).root).toBe(fs.realpathSync(tempDir));
+      const after = graphCounts(tempDir);
+      expect(after.nodes).toBe(before.nodes);
+      expect(after.edges).toBe(before.edges);
     } finally {
-      if (isAlive(daemonPid)) process.kill(daemonPid, 'SIGKILL');
+      await server.close();
+    }
+  });
+
+  it('refuses to recreate while the server does not confirm the release (#1325)', async () => {
+    runCodegraph(['init'], tempDir);
+    const dbPath = path.join(tempDir, '.codegraph', 'codegraph.db');
+    const dbBefore = fs.readFileSync(dbPath);
+    const server = await startFakeServer({
+      reply: () => ({ error: { code: -32603, message: 'could not release' } }),
+    });
+    try {
+      const result = await runCodegraphAsync(['index', '--quiet'], tempDir);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('did not confirm that it released');
+      // The database was not recreated under the server that may still hold it.
+      expect(fs.readFileSync(dbPath)).toEqual(dbBefore);
+    } finally {
+      await server.close();
     }
   });
 });
@@ -177,7 +211,7 @@ describe('codegraph index — full re-index keeps the graph populated (#874)', (
  * away. The fix discards (unlinks) the database files and re-initializes a fresh
  * one — O(1) regardless of size — so `index` recovers any prior state.
  */
-describe('codegraph index — recovers a stale/oversized prior index (#1067)', () => {
+describe('codegraph index — recovers a stale/oversized prior index (#1067)', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   let tempDir: string;
   const dbPath = (dir: string) => path.join(dir, '.codegraph', 'codegraph.db');
 

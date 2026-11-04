@@ -11,7 +11,11 @@ if (parentPort) {
     // Loaded: from here on the owner may terminate this worker. Ending it while
     // it loads those modules can crash the process on Windows (worker-teardown.ts).
     port.postMessage({ type: 'loaded' });
-    cg = CodeGraph.openSync((workerData as { root: string }).root);
+    // Read-only for every engine, writable ones included: counting changed
+    // files only reads, and a writable open would run migrations and the
+    // open-time repairs on a plain `codegraph_status` (the CLI's status opens
+    // read-only for the same reason, src/bin/codegraph.ts).
+    cg = CodeGraph.openSync((workerData as { root: string }).root, { readOnly: true });
     const changes = cg.getChangedFiles();
     counts = {
       added: changes.added.length,

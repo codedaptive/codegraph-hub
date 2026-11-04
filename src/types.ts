@@ -486,11 +486,20 @@ export interface SearchOptions {
   /** Languages to include */
   languages?: Language[];
 
-  /** File path patterns to include */
+  /** File path patterns to include. Declared but read by no search: setting it filters nothing. */
   includePatterns?: string[];
 
-  /** File path patterns to exclude */
+  /** File path patterns to exclude. Declared but read by no search: setting it filters nothing. */
   excludePatterns?: string[];
+
+  /**
+   * Path focus: index-relative directory (or file) prefixes. A result is kept only when its file path equals a
+   * prefix or lies below it, matched on whole path segments and case-sensitively (`src/app` keeps `src/app/x.ts`,
+   * never `src/application/x.ts`). Applied before each candidate source's own limit, so the limit counts in-focus
+   * rows only. Absent or empty = no filter, and the answer is the unfocused one. A prefix is taken as written: no
+   * trailing-slash or empty-string normalisation.
+   */
+  pathPrefixes?: readonly string[];
 
   /** Maximum results to return */
   limit?: number;
@@ -749,4 +758,16 @@ export interface FindRelevantContextOptions {
    * SEGMENTS the query's words name are seeded here instead.
    */
   seedNames?: string[];
+
+  /**
+   * Path focus: index-relative directory (or file) prefixes, matched on whole path segments and case-sensitively
+   * (see {@link SearchOptions.pathPrefixes}). The lookups the recall makes and the top-N limits it applies
+   * (search limit, exact-match trim, seed cap) count in-focus hits only: the filter runs before each limit, not
+   * after, so an in-focus symbol is not crowded out by out-of-focus hits. Three limits are not counted that way:
+   * the COBOL copybook per-member include cap (src/graph/cobol-copybooks.ts) applies before the focus filter; the
+   * `searchLimit * 3` cut runs before imports are resolved to their definitions, so an in-focus import that
+   * resolves to an out-of-focus definition takes a slot and is then dropped; and graph traversal from the entry
+   * points is not filtered. Absent or empty = no filter, and the answer is the unfocused one.
+   */
+  pathPrefixes?: readonly string[];
 }

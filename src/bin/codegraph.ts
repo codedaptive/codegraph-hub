@@ -51,14 +51,14 @@ import '../compile-cache';
 import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs';
-import { getCodeGraphDir, makeGitignoreLocalOnly, isInitialized, hasSchemalessDb, hasForeignDbFile, unsafeIndexRootReason, findNearestCodeGraphRoot, planFrontload, isTaskNotification, isAgentMessage, isCrossSessionMessage, stripSystemReminders, hasStructuralKeyword, extractCodeTokens, capPromptHookInjection, codeGraphDirName, DEFAULT_CODEGRAPH_DIR } from '../directory';
+import { getCodeGraphDir, makeGitignoreLocalOnly, isInitialized, hasSchemalessDb, hasForeignDbFile, unsafeIndexRootReason, planFrontload, isTaskNotification, isAgentMessage, isCrossSessionMessage, stripSystemReminders, hasStructuralKeyword, extractCodeTokens, capPromptHookInjection, codeGraphDirName, DEFAULT_CODEGRAPH_DIR } from '../directory';
 import { extractProseCandidates } from '../search/identifier-segments';
 import { detectWorktreeIndexMismatch, worktreeMismatchWarning } from '../sync/worktree';
 import { createShimmerProgress } from '../ui/shimmer-progress';
 import { getGlyphs } from '../ui/glyphs';
 import { ansiColorsEnabled } from '../ui/color';
 
-import { buildNode25BlockBanner, buildNodeTooOldBanner, MIN_NODE_MAJOR } from './node-version-check';
+import { buildNodeTooOldBanner, MIN_NODE_MAJOR } from './node-version-check';
 import { installFatalHandlers } from './fatal-handler';
 import { relaunchWithWasmRuntimeFlagsIfNeeded } from '../extraction/wasm-runtime-flags';
 import { installCommandSupervision, watchParent } from './command-supervision';
@@ -77,6 +77,11 @@ import { buildTypeHierarchy, canHaveHierarchy, MAX_DESCENDANTS, MAX_DESCENDANT_D
 import { isTestCode } from '../graph/test-code';
 import type { Node, Edge, Language } from '../types';
 import { isTestPath } from '../search/query-utils';
+import { registerExtensionCommands } from '../extensions/host/registry';
+// Static: .option() needs the --fresh / --checkpoint help text when the program is built.
+import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
+import type { FreshAnswer } from '../extensions/host/fresh/cli';
+import type { IndexWriter, SyncWriter } from '../extensions/host/builder/cli-route';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -103,25 +108,14 @@ async function loadCodeGraph(): Promise<typeof import('../index')> {
 const importESM = new Function('specifier', 'return import(specifier)') as
   (specifier: string) => Promise<typeof import('@clack/prompts')>;
 
-// Block CodeGraph on Node.js 25.x — V8's turboshaft WASM JIT has a Zone
-// allocator bug that reliably crashes when compiling tree-sitter
-// grammars (see #54, #81, #140). The previous behaviour was a soft
-// console.warn that scrolls off-screen before the OOM crash 30 seconds
-// later, leading to a steady stream of "what is this OOM" reports.
-// Hard-exit before any WASM work; allow override via env var for users
-// who patched V8 themselves or want to test a future fix.
-const nodeVersion = process.versions.node;
-const nodeMajor = parseInt(nodeVersion.split('.')[0] ?? '0', 10);
-if (nodeMajor >= 25) {
-  process.stderr.write(buildNode25BlockBanner(nodeVersion) + '\n');
-  if (!process.env.CODEGRAPH_ALLOW_UNSAFE_NODE) {
-    process.exit(1);
-  }
-  // Override active — banner shown for visibility, continuing.
-}
 // Enforce the supported Node floor. `engines` in package.json only *warns* on
 // install (unless engine-strict), so hard-block here to actually keep users off
-// unsupported versions. Mirrors the 25+ block above. See package.json `engines`.
+// unsupported versions. There is no upper bound: Node 25+ is safe because a
+// normal launch runs with `--liftoff-only` (the bundled launcher passes it, or
+// the re-exec below adds it; CODEGRAPH_NO_RELAUNCH or a failed re-exec runs
+// without it). See package.json `engines`.
+const nodeVersion = process.versions.node;
+const nodeMajor = parseInt(nodeVersion.split('.')[0] ?? '0', 10);
 if (nodeMajor < MIN_NODE_MAJOR) {
   process.stderr.write(buildNodeTooOldBanner(nodeVersion) + '\n');
   if (!process.env.CODEGRAPH_ALLOW_UNSAFE_NODE) {
@@ -139,7 +133,7 @@ relaunchWithWasmRuntimeFlagsIfNeeded(__filename);
 
 // Last-resort fatal handlers: log a bounded line and exit non-zero. A fault
 // that reaches here escaped every boundary, so the process is in an undefined
-// state — keeping it alive is what let the detached MCP daemon orphan and pin a
+// state — keeping it alive is what let the detached MCP server orphan and pin a
 // CPU core with no recovery (#799, #850). Installed before the command branch
 // so it also covers a synchronous throw during startup. See ./fatal-handler.
 installFatalHandlers();
@@ -245,7 +239,7 @@ program
 const TELEMETRY_FLUSH_COMMANDS = new Set(['init', 'uninit', 'index', 'sync', 'upgrade']);
 program.hook('preAction', (_thisCommand, actionCommand) => {
   try {
-    // The detached daemon re-invokes `serve --mcp` internally — not a user action.
+    // The detached server re-invokes `serve --mcp` internally — not a user action.
     if (process.env.CODEGRAPH_DAEMON_INTERNAL) return;
     const name = actionCommand.name();
     if (name === 'telemetry') return; // managing telemetry is not usage
@@ -778,7 +772,9 @@ async function runInit(
       clack.log.warn(`Found a codegraph.db without the codegraph schema in ${getCodeGraphDir(projectPath)} (left by an interrupted init?) — rebuilding it.`);
     }
     const { default: CodeGraph, getDatabasePath } = await loadCodeGraph();
-    const cg = await CodeGraph.init(projectPath, { index: false });
+    // With a machine server whose index builder is up, that builder does the write; otherwise this process does.
+    const cg: IndexWriter = await (await import('../extensions/host/builder/cli-route')).startRoutedInit(projectPath, !!options.force, !!options.verbose)
+      ?? await CodeGraph.init(projectPath, { index: false });
     clack.log.success(`Initialized in ${projectPath}`);
     if (options.localOnly) applyLocalOnlyGitignore(clack, projectPath);
     // A fresh index on a Windows drive under WSL gets its own directory (#995).
@@ -858,6 +854,12 @@ program
 
 /**
  * codegraph uninit [path]
+ *
+ * With a machine server running, the server and its index builder let go of the index before it is deleted, so
+ * neither keeps a handle on the deleted database (src/extensions/host/uninit.ts: the routed release, or the
+ * in-process guard of `index` when no builder serves it). The output is the same either way, and so are the files
+ * removed. The routed delete opens the index read-only; an unrouted one can refuse when a running server does not
+ * confirm the release (src/extensions/host/uninit.ts).
  */
 program
   .command('uninit [path]')
@@ -891,8 +893,10 @@ program
       }
 
       const { default: CodeGraph } = await loadCodeGraph();
-      const cg = CodeGraph.openSync(projectPath);
-      cg.uninitialize();
+      const { removeIndexReleased } = await import('../extensions/host/uninit');
+      await removeIndexReleased(projectPath, (readOnly) => {
+        CodeGraph.openSync(projectPath, { readOnly }).uninitialize();
+      });
 
       // Clean up any git sync hooks we installed (no-op if none / not a repo).
       try {
@@ -916,6 +920,67 @@ program
       process.exit(1);
     }
   });
+
+/**
+ * The supervised, progress-rendered index of `codegraph index`, on `cg`: the freshly recreated CodeGraph of
+ * this process, or the writer of an index the machine server's builder is rebuilding. Destroys `cg` and
+ * answers whether the index succeeded; the caller exits 1 when it did not. `dbPath` is the database the
+ * liveness watchdog watches for progress.
+ */
+async function runIndexOn(
+  cg: IndexWriter,
+  dbPath: string,
+  projectPath: string,
+  options: { quiet?: boolean; verbose?: boolean },
+): Promise<boolean> {
+  // Supervise the indexer: self-terminate if orphaned (parent shim killed) or if the main thread wedges (#999).
+  // The DB + WAL paths let the liveness watchdog tell a slow store on
+  // degraded storage from a true wedge (#1231).
+  const supervision = installCommandSupervision('index', { progressPaths: [dbPath, `${dbPath}-wal`] });
+  try {
+    if (options.quiet) {
+      // Quiet mode: no UI, just run against the freshly-recreated index.
+      const result = await cg.indexAll();
+      return result.success;
+    }
+
+    const clack = await importESM('@clack/prompts');
+    clack.intro('Indexing project');
+
+    // A closure so a re-index (after opting gitignored child repos in, #1156)
+    // renders identically. Supervision already wraps the whole command.
+    const renderIndex = async (): Promise<IndexResult> => {
+      if (options.verbose) {
+        return await cg.indexAll({ onProgress: createVerboseProgress(), verbose: true });
+      }
+      process.stdout.write(`${colors.dim}${getGlyphs().rail}${colors.reset}\n`);
+      const progress = createShimmerProgress();
+      const r = await cg.indexAll({ onProgress: progress.onProgress });
+      await progress.stop();
+      return r;
+    };
+
+    const result = await renderIndex();
+
+    printIndexResult(clack, result, projectPath);
+    await recordIndexTelemetry(cg, result);
+
+    // Empty graph at a git super-repo → likely `.gitignore`d child repos;
+    // name them and offer to opt in instead of a silent 0-node result (#1156).
+    let finalResult = result;
+    if (result.nodesCreated === 0) {
+      finalResult = (await offerIndexIgnoredRepos(clack, projectPath, renderIndex, { interactive: true })) ?? result;
+    }
+
+    if (!finalResult.success) return false;
+
+    clack.outro('Done');
+    return true;
+  } finally {
+    supervision.stop();
+    cg.destroy();
+  }
+}
 
 /**
  * codegraph index [path]
@@ -955,22 +1020,43 @@ program
         process.exit(1);
       }
 
+      // With a machine server whose index builder is up, the builder rebuilds the index under a lease it holds
+      // for this command, and this process takes no lock. Otherwise this process rebuilds, below.
+      const routed = await (await import('../extensions/host/builder/cli-route')).startRoutedIndex(projectPath, !!options.force, !!options.verbose && !options.quiet);
+      if (routed) {
+        let indexed: boolean;
+        try {
+          const { getDatabasePath } = await loadCodeGraph();
+          indexed = await runIndexOn(routed, getDatabasePath(projectPath), projectPath, options);
+        } finally {
+          await routed.end();
+        }
+        if (!indexed) process.exit(1);
+        return;
+      }
+
       const { tryAcquireWriterLock, releaseWriterLock, writerLockHeldMessage } = await import('../mcp/writer-lock');
       const rebuild = tryAcquireWriterLock(projectPath, 'rebuild', 'rebuild.pid');
       if (rebuild.kind === 'taken') throw new Error('Another index rebuild is already in progress.');
       try {
-        // A live MCP daemon keeps SQLite handles open. Verify it by its socket
-        // before stopping it so a stale pidfile can never signal another process.
-        // A lock left naming a process that isn't CodeGraph is cleared (#2770).
-        const { stopDaemonAt, daemonStopFailureMessage } = await import('../mcp/daemon-registry');
+        // The machine server keeps SQLite handles open on every project it has
+        // answered for. Ask it to release this one (it keeps serving every other
+        // project and reopens this one on its next call); never stop it. No server
+        // running, or one that released the project, goes on to the writer lock. A
+        // server that did not confirm may still hold the database, so the rebuild
+        // would delete files under it: refuse instead.
+        const { requestProjectRelease } = await import('../mcp/server-control');
         const realRoot = fs.realpathSync(projectPath);
-        const daemonStop = await stopDaemonAt(realRoot, { preserveUnverified: true });
-        if (daemonStop.outcome === 'unverified' || daemonStop.outcome === 'still-running') {
-          throw new Error(await daemonStopFailureMessage(realRoot, daemonStop));
+        const released = await requestProjectRelease(realRoot);
+        if (released === 'failed') {
+          throw new Error(
+            `The CodeGraph server did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
+            'Stop it with `codegraph daemon --stop` (clients reconnect and start a fresh one), then retry `codegraph index`.'
+          );
         }
 
         // Keep the writer slot through recreation AND indexing. A reconnecting
-        // proxy/daemon must not open the replacement database halfway through.
+        // proxy/server must not open the replacement database halfway through.
         const writer = tryAcquireWriterLock(projectPath, 'rebuild');
         if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
         try {
@@ -986,57 +1072,8 @@ program
           // fast incremental updates use `sync`.
           const cg = await CodeGraph.recreate(projectPath);
 
-          // Supervise the indexer: self-terminate if orphaned (parent shim killed)
-          // or if the main thread wedges — neither was guarded on this path (#999).
-          // The DB + WAL paths let the liveness watchdog tell a slow store on
-          // degraded storage from a true wedge (#1231).
           const dbPath = getDatabasePath(projectPath);
-          const supervision = installCommandSupervision('index', { progressPaths: [dbPath, `${dbPath}-wal`] });
-          try {
-            if (options.quiet) {
-              // Quiet mode: no UI, just run against the freshly-recreated graph.
-              const result = await cg.indexAll();
-              if (!result.success) process.exit(1);
-              return;
-            }
-
-            const clack = await importESM('@clack/prompts');
-            clack.intro('Indexing project');
-
-            // A closure so a re-index (after opting gitignored child repos in, #1156)
-            // renders identically. Supervision already wraps the whole command.
-            const renderIndex = async (): Promise<IndexResult> => {
-              if (options.verbose) {
-                return await cg.indexAll({ onProgress: createVerboseProgress(), verbose: true });
-              }
-              process.stdout.write(`${colors.dim}${getGlyphs().rail}${colors.reset}\n`);
-              const progress = createShimmerProgress();
-              const r = await cg.indexAll({ onProgress: progress.onProgress });
-              await progress.stop();
-              return r;
-            };
-
-            const result = await renderIndex();
-
-            printIndexResult(clack, result, projectPath);
-            await recordIndexTelemetry(cg, result);
-
-            // Empty graph at a git super-repo → likely `.gitignore`d child repos;
-            // name them and offer to opt in instead of a silent 0-node result (#1156).
-            let finalResult = result;
-            if (result.nodesCreated === 0) {
-              finalResult = (await offerIndexIgnoredRepos(clack, projectPath, renderIndex, { interactive: true })) ?? result;
-            }
-
-            if (!finalResult.success) {
-              process.exit(1);
-            }
-
-            clack.outro('Done');
-          } finally {
-            supervision.stop();
-            cg.destroy();
-          }
+          if (!(await runIndexOn(cg, dbPath, projectPath, options))) process.exit(1);
         } finally {
           releaseWriterLock(projectPath);
         }
@@ -1068,7 +1105,9 @@ program
       }
 
       const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.open(projectPath);
+      // With a machine server whose index builder is up, that builder does the sync; otherwise this process does.
+      const cg: SyncWriter = await (await import('../extensions/host/builder/cli-route')).openRoutedSync(projectPath)
+        ?? await CodeGraph.open(projectPath);
 
       try {
         if (options.quiet) {
@@ -1091,7 +1130,7 @@ program
         // older engine extracted from it, and the index isn't up to date however
         // little changed. It warns and carries on: the git hooks discard this
         // output, so a refusal would quietly stop them after every upgrade.
-        const staleIndex = cg.isIndexStale();
+        const staleIndex = await cg.isIndexStale();
 
         if (totalChanges === 0 && !result.pendingRefsProcessed) {
           clack.log.info(staleIndex ? 'No files changed' : 'Already up to date');
@@ -1457,8 +1496,11 @@ program
   .option('-l, --limit <number>', 'Maximum results', '10')
   .option('-k, --kind <kind>', 'Filter by node kind (function, class, etc.)')
   .option('-j, --json', 'Output as JSON')
-  .action(async (search: string, options: { path?: string; limit?: string; kind?: string; json?: boolean }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (search: string, options: { path?: string; limit?: string; kind?: string; json?: boolean } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1466,6 +1508,8 @@ program
         process.exit(1);
       }
 
+      // Loaded per command so other commands never load it; loadCodeGraph is passed so a load failure under --fresh prints this file's banner and exits 1.
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
 
       const limit = parseInt(options.limit || '10', 10);
@@ -1521,9 +1565,10 @@ program
         }
       }
 
-      cg.destroy();
+      await fresh.end(cg);
     } catch (err) {
       error(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -1542,8 +1587,11 @@ program
   .description('Explore an area: relevant symbols\' source + call paths in one shot (same output as the codegraph_explore MCP tool)')
   .option('-p, --path <path>', 'Project path')
   .option('--max-files <number>', 'Maximum number of files to include source from')
-  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1551,6 +1599,7 @@ program
         process.exit(1);
       }
 
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
@@ -1560,10 +1609,11 @@ program
       const result = await handler.execute('codegraph_explore', args);
 
       console.log(result.content[0]?.text ?? '');
-      cg.destroy();
+      await fresh.end(cg, result.isError ? 1 : undefined);
       if (result.isError) process.exit(1);
     } catch (err) {
       error(`Explore failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -1826,7 +1876,9 @@ program
   .option('--offset <number>', 'File mode: 1-based start line')
   .option('--limit <number>', 'File mode: maximum lines')
   .option('--symbols-only', 'File mode: just the symbol map + dependents')
-  .action(async (name: string | undefined, options: { path?: string; file?: string; offset?: string; limit?: string; symbolsOnly?: boolean }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (name: string | undefined, options: { path?: string; file?: string; offset?: string; limit?: string; symbolsOnly?: boolean } & FreshFlags) => {
     // Need a symbol (positional) OR a file (--file / a path-like positional).
     // With [name] optional, a bare `codegraph node` reaches here with neither
     // and must be told what to pass, rather than crashing downstream.
@@ -1836,6 +1888,7 @@ program
     }
 
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -1843,6 +1896,7 @@ program
         process.exit(1);
       }
 
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
@@ -1876,10 +1930,11 @@ program
       const result = await handler.execute('codegraph_node', args);
 
       console.log(result.content[0]?.text ?? '');
-      cg.destroy();
+      await fresh.end(cg, result.isError ? 1 : undefined);
       if (result.isError) process.exit(1);
     } catch (err) {
       error(`Node lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -2141,51 +2196,53 @@ function printFileTree(
 }
 
 /**
- * codegraph daemon — interactive manager for the background daemons. Arrow keys
- * to pick one (the current project's daemon floats to the top, auto-selected),
- * enter to stop it. Falls back to a plain list when output isn't a TTY.
+ * codegraph daemon [--stop] — the one machine server of this state dir
+ * (`~/.codegraph`, or `CODEGRAPH_STATE_DIR`): show its pid, version, uptime,
+ * socket and state dir, or stop it. Non-interactive: there is one server, so
+ * there is nothing to pick.
  */
 program
   .command('daemon')
   .aliases(['daemons'])
-  .description('Manage running CodeGraph background daemons — pick one and press enter to stop it')
-  .action(async () => {
-    const { listVerifiedDaemons, stopDaemonAt, stopAllDaemons } = await import('../mcp/daemon-registry');
-    const { runDaemonPicker } = await import('../mcp/daemon-manager');
+  .description('Show the running CodeGraph MCP server (one per machine) and optionally stop it')
+  .option('--stop', 'Stop the server (clients reconnect and start a fresh one)')
+  .action(async (options: { stop?: boolean }) => {
+    try {
+      const { probeServer, stopServer } = await import('../mcp/server-control');
 
-    const daemons = await listVerifiedDaemons();
-    if (daemons.length === 0) {
-      info('No CodeGraph daemons running.');
-      return;
-    }
-
-    // No TTY (piped / CI / non-interactive) — can't do arrow-key selection, so
-    // just print what's running instead of crashing on a prompt with no input.
-    if (!process.stdout.isTTY || !process.stdin.isTTY) {
-      for (const d of daemons) {
-        console.log(`pid ${d.pid}  v${d.version}  up ${formatDuration(Date.now() - d.startedAt)}  ${d.root}`);
+      if (options.stop) {
+        const stop = await stopServer();
+        if (stop.outcome === 'stopped') {
+          success(`Stopped the CodeGraph server (pid ${stop.pid}, v${stop.version}).`);
+        } else if (stop.outcome === 'not-running') {
+          info('No CodeGraph server running.');
+        } else if (stop.outcome === 'still-running') {
+          const kill = process.platform === 'win32' ? `taskkill /PID ${stop.pid} /F` : `kill -9 ${stop.pid}`;
+          error(`The CodeGraph server (pid ${stop.pid}) did not exit when asked to stop. Stop it with \`${kill}\`.`);
+          process.exit(1);
+        } else {
+          // 'unverified'; 'kept' is only returned for `onlyIfOlderThan`, which this command never passes.
+          error(
+            `Process ${stop.pid} holds the server lock but did not answer as the CodeGraph server, so it was left running. ` +
+            'If it is not a CodeGraph server, delete the stale server.pid in the state dir.'
+          );
+          process.exit(1);
+        }
+        return;
       }
-      return;
+
+      const server = await probeServer();
+      if (!server) {
+        info('No CodeGraph server running.');
+        return;
+      }
+      console.log(`pid ${server.pid}  v${server.version}  up ${formatDuration(Date.now() - server.startedAt)}`);
+      console.log(`socket: ${server.socketPath}`);
+      console.log(`state dir: ${server.stateDir}`);
+    } catch (err) {
+      error(`Failed to reach the CodeGraph server: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
-
-    // The current project's daemon floats to the top and is pre-selected.
-    let cwdRoot: string | null = null;
-    const found = findNearestCodeGraphRoot(process.cwd());
-    if (found) { try { cwdRoot = fs.realpathSync(found); } catch { cwdRoot = found; } }
-
-    const clack = await importESM('@clack/prompts');
-    clack.intro('CodeGraph daemons');
-    await runDaemonPicker({
-      list: listVerifiedDaemons,
-      stop: stopDaemonAt,
-      stopAll: stopAllDaemons,
-      cwdRoot,
-      now: () => Date.now(),
-      select: (opts) => clack.select(opts),
-      isCancel: (v) => clack.isCancel(v),
-      note: (m) => clack.log.success(m),
-      done: (m) => clack.outro(m),
-    });
   });
 
 /**
@@ -2388,12 +2445,33 @@ program
   // guard below, which explains this to anyone who runs it by hand.
   .command('serve', { hidden: true })
   .description('Start CodeGraph as an MCP server for AI assistants')
-  .option('-p, --path <path>', 'Project path (optional for MCP mode, uses rootUri from client)')
+  .option('-p, --path <path>', "The session's launch directory, which fixes the repository it answers for (default: the current directory)")
   .option('--mcp', 'Run as MCP server (stdio transport)')
+  .option(
+    '--focus <dir>',
+    "A directory, relative to the repository root, that this session's search and explore results stay inside (repeatable; callers and impact list the rest after the in-focus results)",
+    (dir: string, previous: string[]) => [...previous, dir],
+    [] as string[],
+  )
   .option('--no-watch', 'Disable the file watcher (no auto-sync; useful on slow filesystems like WSL2 /mnt drives)')
   .option('--no-telemetry', 'Send no usage telemetry from this server (same as CODEGRAPH_TELEMETRY=0)')
-  .action(async (options: { path?: string; mcp?: boolean; watch?: boolean; telemetry?: boolean }) => {
-    const projectPath = options.path ? resolveProjectPath(options.path) : undefined;
+  .action(async (options: { path?: string; mcp?: boolean; watch?: boolean; focus: string[]; telemetry?: boolean }) => {
+    // The launch directory (repo anchor), taken as given: not walked up to an
+    // initialized parent as `resolveProjectPath` does for the other commands,
+    // since the server answers for the whole repository the directory is in.
+    const projectPath = options.path ? path.resolve(options.path) : undefined;
+
+    // The session's focus, checked before anything starts: an absolute directory
+    // or one that leaves the repository root is refused here with the bad value
+    // named, so no server is spawned for a session that could not use it.
+    let focus: string[];
+    try {
+      const { normaliseFocusArgs } = await import('../extensions/host/server/session-scope');
+      focus = normaliseFocusArgs(options.focus);
+    } catch (err) {
+      error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
 
     // Commander sets watch=false when --no-watch is passed. Route it through
     // the same env-var chokepoint the watcher and MCP server already honor.
@@ -2401,7 +2479,9 @@ program
       process.env.CODEGRAPH_NO_WATCH = '1';
     }
     // Same for --no-telemetry (#1908): telemetry reads CODEGRAPH_TELEMETRY on
-    // every check, and a daemon this server spawns inherits the env.
+    // every check, so this covers everything this session's process records,
+    // its in-process fallback included. The machine server has its own
+    // environment, from whichever client started it.
     if (options.telemetry === false) {
       process.env.CODEGRAPH_TELEMETRY = '0';
     }
@@ -2412,7 +2492,7 @@ program
         // not a command to run by hand. A human in a terminal would otherwise
         // see it hang waiting for JSON-RPC on stdin, which reads as broken. If
         // stdin is an interactive TTY, explain instead of hanging. The agent's
-        // pipe and the detached daemon both have a non-TTY stdin, so this only
+        // pipe and the detached server both have a non-TTY stdin, so this only
         // ever fires for a person who typed it.
         if (process.stdin.isTTY && !process.env.CODEGRAPH_DAEMON_INTERNAL) {
           console.error(chalk.bold('\nCodeGraph MCP server\n'));
@@ -2420,13 +2500,14 @@ program
           console.error("starts automatically — you don't run it yourself.");
           console.error(`\nIt's already wired up by ${chalk.cyan('codegraph install')}. To check on things:`);
           console.error(`  ${chalk.cyan('codegraph status')}   ${chalk.dim('— is this project indexed and healthy?')}`);
-          console.error(`  ${chalk.cyan('codegraph daemon')}   ${chalk.dim('— list or stop background MCP servers')}`);
+          console.error(`  ${chalk.cyan('codegraph daemon')}   ${chalk.dim('— show or stop the background MCP server')}`);
           console.error(chalk.dim('\n(Running it directly only does something when an MCP client drives it over stdin.)'));
           return;
         }
-        // Start MCP server - it handles initialization lazily based on rootUri from client
+        // Start MCP server: the launcher proxies to the machine server (starting
+        // it when none runs), sending the launch directory as the session's anchor.
         const { MCPServer } = await import('../mcp/index');
-        const server = new MCPServer(projectPath);
+        const server = new MCPServer(projectPath, focus);
         await server.start();
         // Server will run until terminated
       } else {
@@ -2463,6 +2544,10 @@ program
 
 /**
  * codegraph unlock [path]
+ *
+ * Takes out `.codegraph/codegraph.lock` when it is stale: its first line is not a live pid, or its owner record is
+ * foreign to this project (src/extensions/host/lock-repair.ts).
+ * A lock held by a live process is left as it is: the error names the pid and the command exits 1.
  */
 program
   .command('unlock [path]')
@@ -2476,15 +2561,13 @@ program
         return;
       }
 
-      const lockPath = path.join(getCodeGraphDir(projectPath), 'codegraph.lock');
-      let removed = false;
-      if (fs.existsSync(lockPath)) {
-        fs.unlinkSync(lockPath);
-        removed = true;
+      const { repairLock } = await import('../extensions/host/lock-repair');
+      const repaired = repairLock(projectPath);
+      if (repaired.kind === 'held' || repaired.kind === 'contended') {
+        error(repaired.message);
+        process.exit(1);
       }
-      const { clearStaleDaemonArtifacts } = await import('../mcp/daemon-registry');
-      removed = await clearStaleDaemonArtifacts(projectPath) || removed;
-      if (removed) success('Removed stale lock artifacts. You can now run indexing again.');
+      if (repaired.kind === 'removed') success('Removed stale lock artifacts. You can now run indexing again.');
       else info(`No stale lock files found ${getGlyphs().dash} nothing to do`);
     } catch (err) {
       error(`Failed to remove lock: ${err instanceof Error ? err.message : String(err)}`);
@@ -2508,8 +2591,11 @@ for (const direction of ['callers', 'callees'] as const) {
     .option('-f, --file <path>', 'Narrow definitions by file path or suffix (no match: show all with a note)')
     .option('-l, --limit <number>', 'Maximum results per definition (also caps the JSON union)', '20')
     .option('-j, --json', 'Output as JSON')
-    .action(async (symbol: string, options: { path?: string; file?: string; limit?: string; json?: boolean }) => {
+    .option('--fresh', FRESH_OPTION_HELP)
+    .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+    .action(async (symbol: string, options: { path?: string; file?: string; limit?: string; json?: boolean } & FreshFlags) => {
       const projectPath = resolveProjectPath(options.path);
+      let fresh: FreshAnswer | undefined;
 
       try {
         if (!isInitialized(projectPath)) {
@@ -2517,7 +2603,11 @@ for (const direction of ['callers', 'callees'] as const) {
           process.exit(1);
         }
 
+        fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
         const cg = await openIndexToRead(projectPath);
+        // Set only when the answer threw: then the outer catch prints the error first and finishes
+        // with exit status 1, so the finally below must not finish ahead of it.
+        let failed = false;
         try {
           const limit = parseInt(options.limit || '20', 10);
           const { nodes: targets } = lookupSymbolNodes(cg, symbol, goPackageReaderFor(cg));
@@ -2630,11 +2720,17 @@ for (const direction of ['callers', 'callees'] as const) {
               if (truncated) console.log(chalk.dim(`Showing ${limited.length} of ${total}; pass --limit to widen.`));
             }
           }
+        } catch (err) {
+          failed = true;
+          throw err;
         } finally {
-          cg.destroy();
+          // Here so a "not found" answer (the early return above) reports its checkpoint, and
+          // finishes the --fresh wait, too.
+          await fresh.end(cg, failed ? false : undefined);
         }
       } catch (err) {
         error(`${direction} failed: ${err instanceof Error ? err.message : String(err)}`);
+        await fresh?.fail();
         process.exit(1);
       }
     });
@@ -2650,8 +2746,11 @@ program
   .option('-f, --file <path>', 'Narrow definitions by file path or suffix (no match: show all with a note)')
   .option('-d, --depth <number>', 'Traversal depth', '2')
   .option('-j, --json', 'Output as JSON')
-  .action(async (symbol: string, options: { path?: string; file?: string; depth?: string; json?: boolean }) => {
+  .option('--fresh', FRESH_OPTION_HELP)
+  .option('--checkpoint', CHECKPOINT_OPTION_HELP)
+  .action(async (symbol: string, options: { path?: string; file?: string; depth?: string; json?: boolean } & FreshFlags) => {
     const projectPath = resolveProjectPath(options.path);
+    let fresh: FreshAnswer | undefined;
 
     try {
       if (!isInitialized(projectPath)) {
@@ -2659,7 +2758,11 @@ program
         process.exit(1);
       }
 
+      fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
+      // Set only when the answer threw: then the outer catch prints the error first and finishes
+      // with exit status 1, so the finally below must not finish ahead of it.
+      let failed = false;
       try {
         const depth = Math.min(Math.max(parseInt(options.depth || '2', 10), 1), 10);
         const { nodes: targets } = lookupSymbolNodes(cg, symbol, goPackageReaderFor(cg));
@@ -2746,11 +2849,17 @@ program
           }
           if (truncated) warn('Result truncated at the safety limit. Narrow it with --file or a smaller --depth.');
         }
+      } catch (err) {
+        failed = true;
+        throw err;
       } finally {
-        cg.destroy();
+        // Here so a "not found" answer (the early return above) reports its checkpoint, and
+        // finishes the --fresh wait, too.
+        await fresh.end(cg, failed ? false : undefined);
       }
     } catch (err) {
       error(`impact failed: ${err instanceof Error ? err.message : String(err)}`);
+      await fresh?.fail();
       process.exit(1);
     }
   });
@@ -3348,6 +3457,13 @@ program
   .action(() => {
     console.log(packageJson.version);
   });
+
+// Commands contributed by extensions (src/extensions/host): the compiled
+// siblings under dist/extensions/ and any CODEGRAPH_EXTENSION_MODULES entry.
+// Every invocation that reaches program.parse() (`serve --mcp` included; not
+// the bare installer run or -v) loads all extension modules here, so an
+// extension's module top level must stay light.
+registerExtensionCommands(program);
 
 // Parse and run
 program.parse();
