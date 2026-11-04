@@ -373,3 +373,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Expanded in docs/SPEC-upstream.md §4 and §7. Work implied: Orc-Codegraph routes the rename, README, Issues,
   #3211 body edit and the first update (upstream-prs, which keeps the fork checkout, is the natural owner) after
   S-53, and fixes the monthly date.
+- Amended 2026-11-04 (Bob): "The main readme should simply and clearly communicate exactly what features we have
+  added and how to use them. We carry the same license as the source." The hub's README leads with one entry per
+  added feature (what it does in one sentence, then how to use it, with an example), the fixes carried ahead of
+  upstream with their PR numbers, install and setup, and where it differs from upstream's defaults; upstream's
+  README follows unchanged. The hub keeps upstream's MIT `LICENSE` as is and says so (SPEC-upstream §7 items 3-4).

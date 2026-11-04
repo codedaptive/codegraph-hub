@@ -107,11 +107,21 @@ Linux and Windows, if they want it.
    organisation; GitHub redirects the old name, so #3211's link and existing clones keep working).
 2. **Stance.** The README opens by saying the hub tracks `colbymchenry/codegraph` and keeps its own feature set (the
    §4 table), is updated monthly, and takes issues. Issues are turned on.
-3. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
+3. **The README says simply and clearly exactly what we added and how to use it** (Bob, R-31 amended):
+   - one entry per added feature, each with one plain sentence of what it does and then how to use it: the command,
+     argument, setting or file, with a short example; nothing we did not add, nothing left out;
+   - fixes we carry ahead of upstream in a short list, each with its upstream PR number;
+   - how to install and point an agent at it, and where it differs from upstream's defaults;
+   - written for a stranger: no internal names, rulings, lanes or process words; every claim true of the hub's
+     `main` (Kong checks it against the code);
+   - below it, upstream's README unchanged, for everything the hub does not change.
+4. **License.** The hub carries upstream's license unchanged (MIT; upstream's `LICENSE` file as is), and the README
+   says so.
+5. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
    then the hub's `main` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
    bob-codedaptive identity), and the update tagged. The first update is made now, from sm.11.
-4. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
+6. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
    cycle, through the owning lane and the same gate.
-5. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further
+7. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further
    pushes, restacks or bot replies. If the maintainer himself comments on one, upstream-prs answers him.
-6. **Issue #3211.** Its body is edited to name the hub; no new comment (R-25).
+8. **Issue #3211.** Its body is edited to name the hub; no new comment (R-25).
