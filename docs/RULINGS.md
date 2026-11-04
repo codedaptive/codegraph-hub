@@ -439,3 +439,20 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Work implied: Orc-Codegraph drives the in-flight list to done, reports done and the stand-down in one message,
   and the morning check on 2026-11-05 confirms sm.12 is stable (every team answers; no error in the server and
   builder logs since the install) before the lanes go idle for good.
+
+## R-35. Force pushes to the hub are allowed while no one uses it
+- Date: 2026-11-04 13:58 CST / Bob, direct ("no one knows we exist right now you can do whatever you want on your
+  git pushes"), on S-56 (the hub's main moved by a two-parent merge because rules/global.md rule 1 forbids force
+  pushes).
+- Question: may the hub's main be replaced by force push, so it reads as upstream plus one commit?
+- Ruling: yes. While the hub has no outside users (no stars, forks, or issues or pull requests from anyone else;
+  today 0, 0, 0), each hub update is one commit whose only parent is the upstream main it merged, its tree ours minus
+  SPEC-upstream §4's exclusions plus the README, force-pushed over the previous main; GitHub then shows it 1 commit
+  ahead and 0 behind. Rule 1's purpose holds: the replaced commit is kept first as a backup ref on our private
+  origin (refs/backup/hub/<sha>). Once the hub has an outside user, updates switch to S-56's two-parent merge, so
+  clones keep pulling.
+- Reason: Bob's word; the hub is unannounced, and one commit on upstream is the plainest statement of what it adds.
+- Not chosen: S-56's merge for the first release (kept for after the hub has users).
+- Supersedes: S-56 while the hub has no outside users.
+- Work implied: upstream-prs publishes sm.12's hub main as the single-parent commit (its c4ac845c has the same tree
+  as f65d2441), backs up 900d223b first, and checks behind_by 0 and ahead_by 1.
