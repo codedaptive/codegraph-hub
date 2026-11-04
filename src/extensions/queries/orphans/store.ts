@@ -3,6 +3,13 @@
  * blast's queries over it (`symbolsOverlapping`, `nodesByIds`, through
  * `../blast/store.ts` `storeOver`) and the queries only orphans runs.
  *
+ * Positions are (line, column) pairs: every node, incoming-use source and
+ * failed-reference from-node carries its `nodes.start_column` / `end_column`
+ * beside its lines, so two declarations on one line are told apart (the
+ * own-span rules in `./orphans.ts` compare start and end by line, then column;
+ * a column is tree-sitter's 0-based one, an end column exclusive). The same
+ * rules also walk `contains` ancestry through `parents`.
+ *
  * The connection has exactly one owner: this store. Its `close` closes the
  * connection once; blast's store over the same connection is never closed on
  * its own.
@@ -25,7 +32,7 @@ import type { BlastNode } from '../blast/blast';
 import { storeOver } from '../blast/store';
 import { MAX_IDS_PER_QUERY, chunks, placeholders } from '../shared/sql';
 
-/** One failed unresolved reference whose name tail names a candidate (the unresolved-reference check), with its from-node's span. */
+/** One failed unresolved reference whose name tail names a candidate (the unresolved-reference check), with its from-node's span (lines and columns). */
 export interface FailedRef {
   /** `unresolved_refs.name_tail`: the reference name's last segment. */
   nameTail: string;
@@ -40,9 +47,13 @@ export interface FailedRef {
   fromPath: string;
   fromStart: number;
   fromEnd: number;
+  /** The from-node's start column (0-based) on `fromStart`. */
+  fromStartColumn: number;
+  /** The from-node's end column (exclusive) on `fromEnd`. */
+  fromEndColumn: number;
 }
 
-/** A node with the numeric span and language the orphan rules need. */
+/** A node with the numeric span (lines and columns) and language the orphan rules need. */
 export interface OrphanNode {
   id: string;
   name: string;
@@ -50,7 +61,18 @@ export interface OrphanNode {
   path: string;
   startLine: number;
   endLine: number;
+  /** `nodes.start_column`: 0-based, on `startLine`. */
+  startColumn: number;
+  /** `nodes.end_column`: exclusive, on `endLine`. */
+  endColumn: number;
   language: string;
+}
+
+/** What `OrphansStore.details` returns per node id: the fields `BlastNode` lacks. */
+export interface NodeDetail {
+  language: string;
+  startColumn: number;
+  endColumn: number;
 }
 
 /** One incoming edge with its source node's position, its target node's file and the edge's resolution metadata. */
@@ -58,8 +80,8 @@ export interface IncomingUse {
   source: string;
   target: string;
   /**
-   * The target node's file. A type's counted uses span its same-name group, so
-   * the guess rule reads this, not the candidate's own file.
+   * The target node's file. A Swift type's counted uses span its proven same-name
+   * group, so the guess rule reads this, not the candidate's own file.
    */
   targetPath: string;
   kind: string;
@@ -71,6 +93,10 @@ export interface IncomingUse {
   sourcePath: string;
   sourceStart: number;
   sourceEnd: number;
+  /** The source node's start column (0-based) on `sourceStart`. */
+  sourceStartColumn: number;
+  /** The source node's end column (exclusive) on `sourceEnd`. */
+  sourceEndColumn: number;
 }
 
 export interface OrphansStore {
@@ -78,13 +104,13 @@ export interface OrphansStore {
   symbolsOverlapping(path: string, start: number, end: number): BlastNode[];
   /** Blast's lookup: the nodes for `ids`. */
   nodesByIds(ids: readonly string[]): BlastNode[];
-  /** `nodes.language` per id. */
-  languages(ids: readonly string[]): Map<string, string>;
+  /** Per id, `nodes.language` and the start and end columns (what `BlastNode` does not carry). */
+  details(ids: readonly string[]): Map<string, NodeDetail>;
   /** Every edge pointing at any of `targetIds` except `contains` and `exports`, with its source node and its target's file. */
   incomingUses(targetIds: readonly string[]): IncomingUse[];
-  /** Per child id, the ids of the nodes that hold it by a `contains` edge. */
+  /** Per child id, the ids of the nodes that hold it by a `contains` edge (one level; the caller walks up the ancestry). */
   parents(childIds: readonly string[]): Map<string, string[]>;
-  /** Type-kind nodes named any of `names`, any language (the caller groups them by language and name, Swift extensions as one type). */
+  /** Type-kind nodes named any of `names`, any language (the caller requests Swift group names only and joins Swift nodes of one proven type path; other languages do not group, see `./orphans.ts`). */
   typesNamed(names: readonly string[], kinds: readonly string[]): OrphanNode[];
   /** Per source id, the targets of its outgoing `implements` / `extends` edges. */
   conformances(sourceIds: readonly string[]): Map<string, string[]>;
@@ -92,7 +118,8 @@ export interface OrphansStore {
   memberNames(containerIds: readonly string[]): Map<string, Set<string>>;
   /**
    * Per node id, the reference names of its FAILED `extends` / `implements`
-   * unresolved refs: conformances to a type the index does not hold.
+   * unresolved refs: conformances that did not resolve to an indexed type
+   * (usually one the index does not hold).
    */
   externalConformances(nodeIds: readonly string[]): Map<string, string[]>;
   /** Every FAILED unresolved ref whose `name_tail` is one of `names`, any language (the unresolved-reference check; the caller keeps S's language, the same-language rule). */
@@ -106,7 +133,7 @@ const NOT_A_USE = ['contains', 'exports'] as const;
 /** Edge kinds that make one type conform to another. */
 const CONFORMANCE_KINDS = ['implements', 'extends'] as const;
 
-const NODE_COLUMNS = 'id, name, kind, file_path, start_line, end_line, language';
+const NODE_COLUMNS = 'id, name, kind, file_path, start_line, end_line, start_column, end_column, language';
 
 interface NodeRow {
   id: string;
@@ -115,13 +142,17 @@ interface NodeRow {
   file_path: string;
   start_line: number;
   end_line: number;
+  start_column: number;
+  end_column: number;
   language: string;
 }
 
 function toOrphanNode(r: NodeRow): OrphanNode {
   return {
     id: r.id, name: r.name, kind: r.kind, path: r.file_path,
-    startLine: Number(r.start_line), endLine: Number(r.end_line), language: r.language,
+    startLine: Number(r.start_line), endLine: Number(r.end_line),
+    startColumn: Number(r.start_column), endColumn: Number(r.end_column),
+    language: r.language,
   };
 }
 
@@ -178,22 +209,27 @@ function storeOn(conn: DatabaseConnection): OrphansStore {
     symbolsOverlapping: (path, start, end) => blast.symbolsOverlapping(path, start, end),
     nodesByIds: (ids) => blast.nodesByIds(ids),
 
-    languages(ids) {
-      const rows = perChunk<{ id: string; language: string }>(
-        ids, (n) => `SELECT id, language FROM nodes WHERE id IN (${placeholders(n)})`);
-      return new Map(rows.map((r) => [r.id, r.language]));
+    details(ids) {
+      const rows = perChunk<NodeRow>(
+        ids, (n) => `SELECT ${NODE_COLUMNS} FROM nodes WHERE id IN (${placeholders(n)})`);
+      return new Map(rows.map((r) => {
+        const node = toOrphanNode(r);
+        return [r.id, {
+          language: node.language, startColumn: node.startColumn, endColumn: node.endColumn,
+        }];
+      }));
     },
 
     incomingUses(targetIds) {
       interface Row {
         source: string; target: string; kind: string; line: number | null; metadata: string | null;
-        sname: string; spath: string; sstart: number; send: number; tpath: string;
+        sname: string; spath: string; sstart: number; send: number; scol: number; secol: number; tpath: string;
       }
       const rows = perChunk<Row>(
         targetIds,
         (n) => `SELECT e.source AS source, e.target AS target, e.kind AS kind, e.line AS line, e.metadata AS metadata,
                        s.name AS sname, s.file_path AS spath, s.start_line AS sstart, s.end_line AS send,
-                       t.file_path AS tpath
+                       s.start_column AS scol, s.end_column AS secol, t.file_path AS tpath
                 FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
                 WHERE e.target IN (${placeholders(n)}) AND e.kind NOT IN (${placeholders(NOT_A_USE.length)})`,
         NOT_A_USE,
@@ -209,6 +245,8 @@ function storeOn(conn: DatabaseConnection): OrphansStore {
         sourcePath: r.spath,
         sourceStart: Number(r.sstart),
         sourceEnd: Number(r.send),
+        sourceStartColumn: Number(r.scol),
+        sourceEndColumn: Number(r.secol),
       }));
     },
 
@@ -274,13 +312,14 @@ function storeOn(conn: DatabaseConnection): OrphansStore {
     failedRefsNamed(names) {
       interface Row {
         name_tail: string; reference_name: string; reference_kind: string; language: string; file_path: string; line: number;
-        from_node_id: string; fpath: string; fstart: number; fend: number;
+        from_node_id: string; fpath: string; fstart: number; fend: number; fscol: number; fecol: number;
       }
       const rows = perChunk<Row>(
         names,
         (n) => `SELECT u.name_tail AS name_tail, u.reference_name AS reference_name, u.reference_kind AS reference_kind,
                        u.language AS language, u.file_path AS file_path, u.line AS line, u.from_node_id AS from_node_id,
-                       f.file_path AS fpath, f.start_line AS fstart, f.end_line AS fend
+                       f.file_path AS fpath, f.start_line AS fstart, f.end_line AS fend,
+                       f.start_column AS fscol, f.end_column AS fecol
                 FROM unresolved_refs u JOIN nodes f ON f.id = u.from_node_id
                 WHERE u.status = 'failed' AND u.name_tail IN (${placeholders(n)})`,
       );
@@ -295,6 +334,8 @@ function storeOn(conn: DatabaseConnection): OrphansStore {
         fromPath: r.fpath,
         fromStart: Number(r.fstart),
         fromEnd: Number(r.fend),
+        fromStartColumn: Number(r.fscol),
+        fromEndColumn: Number(r.fecol),
       }));
     },
 
