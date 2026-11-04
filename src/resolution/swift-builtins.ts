@@ -15,9 +15,15 @@
  * itself. A call by one of these names needs receiver evidence before it
  * resolves to a project member: name-matcher's Swift chained-call test
  * (`isSwiftCallTarget`) and its single-candidate fallback for an untyped
- * receiver (`stdMethodNames`) both read it. Names a project type often
- * carries (`cancel`, `resume`, `store`, `validate`, `load`) are left out:
- * Alamofire's `request.resume()`, Kingfisher's `cache.store(…)`.
+ * receiver (`stdMethodNames`) both read it. Where the chained-call test can
+ * read the receiver's type, it keeps only that type's member or its
+ * supertypes'; otherwise it keeps a member the receiver names, an outside-type
+ * member, or one declaring the call's label. The fallback keeps a member the
+ * receiver names, or an outside-type member whose parameter labels the call's
+ * arguments fit.
+ * Names a project type often carries (`cancel`, `resume`, `store`, `validate`,
+ * `load`) are left out: Alamofire's `request.resume()`, Kingfisher's
+ * `cache.store(…)`.
  */
 export const SWIFT_STD_METHODS: ReadonlySet<string> = new Set([
   'append', 'insert', 'remove', 'removeAll', 'removeFirst', 'removeLast', 'removeValue', 'contains', 'map',
