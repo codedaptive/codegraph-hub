@@ -300,3 +300,20 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: the decision was made where the behaviour was settled; the text is bookkeeping.
 - Not chosen: holding each text catch-up in team/questions.md for Bob.
 - Done: both §6 rows rewritten in the same commit; Q-17 closed.
+
+## R-29. Deadline: the project complete by noon, Wednesday 2026-11-04
+- Date: 2026-11-04 02:00 CST / Bob, direct ("Please complete this project by noon CDT Wed November 4th").
+- Question: when does the round S-52 closed have to be finished?
+- Ruling: by noon on 2026-11-04. Daylight time ended on 1 November, so noon CDT as written is 11:00 on the
+  machine's CST clock; the team works to 11:00 CST so either reading is met.
+- Complete means: S-52's list integrated, the whole-suite gate run once and green, promoted to `ours` as the next
+  sm.N and packed to `releases/`, SPEC §8 current, and the S-52 PR pushes made with their bodies current. Installing
+  the new build replaces sm.8 for every team, so it still needs Bob's word (R-18; asked as Q-18).
+- Cut-off: an S-52 item not integrated by 09:00 CST is dropped from this release and filed for the next one (a PR
+  fix not ready then becomes a known limit in that PR's body), so the gate, promote and pack fit before 11:00.
+  Ceremony that adds nothing is dropped (R-10); the gate is not.
+- Reason: the governing spec has been shipped since sm.8; this closes the review-fix tail with a date.
+- Not chosen: a later date; letting the gate wait for late items.
+- Still binding: R-18, R-21, R-22, R-24, R-25, S-52.
+- Work implied: Orc-Codegraph plans backward from 11:00 and reports at the deadline what is done, what is not, and
+  why; Designer-Codegraph refreshes SPEC §8 at the promote.
