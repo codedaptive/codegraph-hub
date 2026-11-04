@@ -270,3 +270,33 @@ General as a RULING line. Decisions already settled by a document live in `team/
   r17-round2-results.md, notes). From then on Orc-Codegraph routes PR work and runs no leads for it.
 - Still binding: R-24 (after round two, no fixes or replies for what its pushes draw), R-25, R-21, R-22, R-18.
 - Work implied: as above; the lane's first job is the hand-over, then upstream analysis.
+
+## R-27. Overnight mode, 2026-11-04
+- Date: 2026-11-04 00:3x / Bob, direct ("keep the project moving forward overnight").
+- Question: Bob is offline overnight with the carry-back and the S-47/S-50 PR pushes under way; does the team wait
+  for him or keep working?
+- Ruling: keep working through the night without waiting on Bob, as under R-20: settle what the documents and
+  rulings settle; anything that truly needs Bob goes into team/questions.md and work continues around it.
+- Reason: the open work needs no new decision from Bob; it is already ruled (R-24, R-26, S-47 to S-51).
+- Not chosen: pausing the lanes until morning.
+- Still binding: R-13 (the harness is not ours), R-18 (sm.8 stays installed; no install or update without Bob),
+  R-21 (macOS only), R-22 (only changed tests; one whole-suite gate), R-24 (no bot-comment work), R-25 (nothing asks
+  the maintainer for anything). Spec text changes wait for Bob (Q-17).
+- Work implied: Orc-Codegraph keeps every lane on its backlog: finish the carry-back (queries' grep and orphans
+  fixes with O-01 to O-11; resolution's qualified-supertype feature on exchange and its remaining Swift and Rust
+  rows), run the whole-suite gate once on the merged integration and promote to `ours` if it passes, with no
+  install; upstream-prs makes the S-47/S-50 final pushes (#3199 with its children restacked, #3209, #3210). A
+  status for Bob in the morning naming what was done, what was not, and why.
+
+## R-28. Spec text that only catches up with settled behaviour is the designer's (answers Q-17)
+- Date: 2026-11-04 / Bob, direct ("Kong's finding is not a decision worthy of my time; you should be able to figure
+  it out").
+- Question: Q-17: two docs/SPEC.md §6 rows lag the carried-back PR review fixes: blast seeds per changed line from
+  the merge base to the working tree (S-51), and grep leaves a stale file's hits unattributed (R2-05, Kong K-F5).
+  Does each such text change need Bob?
+- Ruling: no. Where a SPEC line only describes behaviour already settled (a ruling or a settled.md entry, or a
+  carry-back row Kong has cleared), Designer-Codegraph rewrites the line to match and records it; Bob is not asked.
+  A change to what the product does still goes to Bob.
+- Reason: the decision was made where the behaviour was settled; the text is bookkeeping.
+- Not chosen: holding each text catch-up in team/questions.md for Bob.
+- Done: both §6 rows rewritten in the same commit; Q-17 closed.
