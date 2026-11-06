@@ -485,3 +485,5 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: the bug struck three times on 2026-11-06 at load ~90, each time leaving a second server and builder.
 - Not chosen: waiting for the restart.
 - Supersedes: R-36's halt (R-36's hub updates by Bob stand).
+- Corrected 2026-11-06 (Orc #2416): "the team restarts for new features" was Orc's misreading of Bob, who was shutting
+  herdr down; no new features are asked for (Q-22 withdrawn). The split-server fix stands (S-58, Bob's own words).
