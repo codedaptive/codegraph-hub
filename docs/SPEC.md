@@ -44,8 +44,9 @@ their own state directory. They never connect to, replace or write through the l
 - A database lives in its worktree's `.codegraph/` and always covers the whole repository of that worktree [B3]
   (not a subdirectory; `--focus` narrows answers, never the index).
 - Opened when a call needs it; closed after **10 minutes** with no call; no limit on how many are open [B2].
-  Closing releases handles and keeps the file. Every pinned project that has an index is also opened without a
-  call: when the server starts and after each housekeeping pass (`pinned-open-at-start`).
+  Closing releases handles and keeps the file. Every pinned project is also opened without a call: when the server
+  starts and after each housekeeping pass (`pinned-open-at-start`). A pinned project with no index is first seeded
+  from its nearest indexed sibling, when it is pinned and on that pass (S-57, `pinned-seed`).
 - **Pinned** databases (standing worktrees) stay open and current: never closed for idleness, always synced, so they
   are always a good copy source [B13]. Who pins: codeteam, with `codegraph project pin`, for the worktrees it
   calls standing [B14].
@@ -119,7 +120,7 @@ Ours (on `ours` since sm.2–sm.4; enabled by name in `CODEGRAPH_MCP_TOOLS`):
 | `orphans --base <ref>` | Symbols added since `<ref>` with no incoming edges; implementations of protocols/traits and tests excluded. |
 | `suspects` | Name-only or low-confidence call edges, ranked; `grep`/`blast` mark them, `--strict` drops them. |
 | `checkpoint`, `fresh` | What an answer describes (HEAD, uncommitted-change hash, files pending); `fresh` waits until the index matches the tree. |
-| `project list/pin/unpin/remove` | The worktree registry; pin as in §3. |
+| `project list/pin/unpin/remove/seed` | The worktree registry; pin as in §3. `project seed <path>` seeds a worktree from its nearest indexed sibling now: exit 0 when it has an index afterwards, 3 when no sibling has one, 1 on an error (S-57). |
 | `upgrade`, update notice | Install and announce the hub's releases (`codedaptive/codegraph-hub`), never upstream's package; `-sm.N` versions compared by number (R-32). |
 
 ## 7. Acceptance
@@ -142,8 +143,9 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-11-04)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.11** (ours
-ff092584, 2026-11-04, R-30); running sessions moved to it with `/mcp reconnect codegraph`, no restart.
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.12** (ours
+4fdda779, 2026-11-04 15:30, R-33); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
+`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team stands down (R-34).
 
 | Release | What it shipped |
 |---|---|
@@ -154,13 +156,14 @@ ff092584, 2026-11-04, R-30); running sessions moved to it with `/mcp reconnect c
 | sm.9 (ours 8ebff286) | upstream 4499d007 merged in (84 commits), keeping the machine server, builder and focus work; tool descriptions say `projectPath` is required; `CODEGRAPH_NO_AUTO_SEED` named where users see it |
 | sm.10 (ours 182c04bb) | upstream 5cd8a9a8 merged in (16 commits); pinned projects opened at server start and after each housekeeping pass (`pinned-open-at-start`); slow tests wait on events with stated timeouts (`slow-tests`); a server that cannot bind any socket says why for each candidate |
 | sm.11 (ours ff092584, 2026-11-04) | upstream f72c9d2e merged in; the review fixes from our upstream pull requests carried back (S-52, R-29): locks, sync and readiness (host); `grep` (stale files unattributed), `blast` (per-line seeds, S-51) and `orphans` (queries); `suspects`, Swift and Rust resolution (resolution) |
+| sm.12 (ours 4fdda779, 2026-11-04) | `codegraph upgrade` and the update notice use the hub's releases, never upstream's package; `-sm.N` versions compared by number (R-32); comments and test names without internal citations (S-55); the hub's first release |
 
-| Left | State |
+| Left (deferred under R-34) | State |
 |---|---|
-| The official public fork `codedaptive/codegraph-hub`: rename, README, Issues (R-31, SPEC-upstream §7) | after S-53's restack; upstream-prs |
-| `upgrade` and the update notice on the hub's releases (R-32); then sm.12, the hub's first release | to route |
-| Install and rollback docs: the stop-the-old-server and reconnect steps (R-30) | fleet (back after Kong's review) |
-| Findings after S-52 closed: `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); resolution's own list | next release (S-52) |
+| A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen once in the sm.12 install and cleared; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md | host's todo |
+| `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
+| The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
+| Pinned projects with no index seeded, and `codegraph project seed` (S-57, host 85467837) | ships as sm.13 |
 
 ## 9. Out of scope (R-12)
 
