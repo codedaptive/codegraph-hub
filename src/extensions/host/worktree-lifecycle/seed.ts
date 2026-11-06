@@ -145,6 +145,15 @@ export type SeedOutcome =
   // absent when its build failed; the answer is {@link unbuiltDirectoryNote}.
   | { kind: 'none'; worktree?: string; unbuilt?: { root: string; unsafe?: string } };
 
+export type WorktreeSeedOutcome =
+  | { kind: 'indexed'; root: string }
+  | { kind: 'seeded'; root: string; source: string; method: SeedMethod }
+  | { kind: 'no-source'; root: string }
+  | { kind: 'not-git'; root: string }
+  | { kind: 'disabled'; root: string }
+  | { kind: 'queued'; root: string }
+  | { kind: 'failed'; root: string; reason: string };
+
 const NONE: SeedOutcome = { kind: 'none' };
 
 /** The kill switch. Read per call, so a test or an operator can flip it live. */
@@ -852,9 +861,10 @@ export interface SeedHost {
    * removal fails it when it starts if `source` or `root` is being removed, before `copy` opens anything.
    * `done: false` when it did not finish within the host's wait, because a long job was ahead of
    * it: the job stays queued, and {@link buildingRootFor} names `root` until
-   * it ends. Rejects with the copy's error when it ran and failed.
+   * it ends. `wait: true` removes that bound, for a caller that needs the finished result. Rejects with the
+   * copy's error when it ran and failed.
    */
-  runSeed<T>(root: string, source: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }>;
+  runSeed<T>(root: string, source: string, copy: () => Promise<T>, opts?: { wait?: boolean }): Promise<{ done: true; value: T } | { done: false }>;
 }
 
 /**
@@ -922,6 +932,71 @@ export function unbuiltDirectoryNote(projectPath: string, root: string, unsafe?:
 // ---------------------------------------------------------------------------
 // The entry point
 // ---------------------------------------------------------------------------
+
+/** Waiting callers must not inherit a bounded caller's queued answer. */
+const seedOnlyInflight = new Map<string, Promise<WorktreeSeedOutcome>>();
+
+type WorktreeSeedOptions = {
+  host?: SeedHost;
+  wait?: boolean;
+  automatic?: boolean;
+  log?: (line: string) => void;
+};
+
+/** A pin or an explicit seed may copy a sibling's index, but must never request a cold build. Never rejects. */
+export async function seedWorktreeNow(projectPath: string, opts: WorktreeSeedOptions = {}): Promise<WorktreeSeedOutcome> {
+  let root = path.resolve(projectPath);
+  try {
+    const worktree = await gitWorktreeRootAsync(projectPath);
+    if (worktree === null) return { kind: isInitialized(projectPath) ? 'indexed' : 'not-git', root };
+    root = worktree;
+    const key = `${canonicalProjectRoot(worktree)}\0${opts.wait === true}`;
+    const existing = seedOnlyInflight.get(key);
+    if (existing) return await existing;
+    const pending = seedWorktreeOnly(worktree, opts);
+    seedOnlyInflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      seedOnlyInflight.delete(key);
+    }
+  } catch (err) {
+    if (isInitialized(root)) return { kind: 'indexed', root };
+    return { kind: 'failed', root, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function seedWorktreeOnly(worktree: string, opts: WorktreeSeedOptions): Promise<WorktreeSeedOutcome> {
+  const { host } = opts;
+  if (host?.buildingRootFor(worktree)) return { kind: 'queued', root: worktree };
+  const rebuildHeld = host ? rebuildHeldBy(host) : isRebuildInProgress;
+  if (rebuildHeld(worktree)) return { kind: 'queued', root: worktree };
+  const initialized = isInitialized(worktree);
+  const abandoned = initialized && isAbandonedIndex(worktree, rebuildHeld);
+  if (initialized && !abandoned) return { kind: 'indexed', root: worktree };
+  if (opts.automatic && seedingDisabled()) return { kind: 'disabled', root: worktree };
+  const refusal = validateProjectPath(worktree);
+  if (refusal) return { kind: 'failed', root: worktree, reason: refusal };
+  const source = await pickSeedSource(worktree, rebuildHeld);
+  if (source === null) return { kind: 'no-source', root: worktree };
+  if (abandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return { kind: 'queued', root: worktree };
+  const commonDir = await gitCommonDirAsync(worktree);
+  const copy = async (): Promise<SeedMethod> => {
+    const { method, nonce } = await seedFromSibling(worktree, source);
+    registerProject(worktree, { seeded: true, commonDir, seedNonce: nonce });
+    const line = `[CodeGraph MCP] Seeded the index of ${worktree} from ${source} (${method}).`;
+    if (opts.log) opts.log(line);
+    else process.stderr.write(`${line}\n`);
+    return method;
+  };
+  if (host) {
+    const run = await host.runSeed(worktree, source, copy, { wait: opts.wait === true });
+    return run.done
+      ? { kind: 'seeded', root: worktree, source, method: run.value }
+      : { kind: 'queued', root: worktree };
+  }
+  return { kind: 'seeded', root: worktree, source, method: await copy() };
+}
 
 /** One seed or build decision per worktree at a time; concurrent calls share it. */
 const inflight = new Map<string, Promise<SeedOutcome>>();

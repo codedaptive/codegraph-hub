@@ -1,8 +1,8 @@
 /**
- * Pinned-open gates PO1-PO4: the machine server opens every pinned project that has an index when it starts
- * (PO1), skips a pinned root it cannot open with a line in `<state>/server.log` and still starts (PO2), opens a
- * project pinned while it runs on its housekeeping pass (PO3), and lets the idle release close a project it opened
- * for a pin once the pin is removed (PO4). Every open happens with no tool call.
+ * Pinned-open gates PO1-PO5: the machine server opens a pinned indexed project at startup (PO1), skips a pinned
+ * root it cannot open with a line in `<state>/server.log` and still starts (PO2), opens a project pinned while it
+ * runs on its housekeeping pass (PO3), and lets idle release close an unpinned project (PO4). It seeds and opens
+ * an unindexed pinned worktree with an indexed sibling, and skips one without (PO5). Every open needs no tool call.
  *
  * Each gate drives the built CLI's `serve --mcp` over stdio, as an agent host does, against throwaway git
  * repositories, with CODEGRAPH_STATE_DIR set per test. What a gate observes from outside: `<state>/builder.pid` and
@@ -17,6 +17,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseSync } from 'node:sqlite';
+import { isInitialized } from '../../../src/directory';
+import { pinProject, PROJECT_FLAG_SEEDED } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
 import {
   Fixtures,
   LSOF_AVAILABLE,
@@ -260,6 +262,56 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     // Each entry starts with its step number: (1) R held, (2) R's database open in the server, (3) a skip line for the
     // gone root D, (4) a skip line for the unindexed root E, (5) E still has no .codegraph/. Empty means every step held.
     expect(problems, 'PO2 entries are the failing steps, each named by its number; empty means R is held and open, both skipped roots are logged, and E was not built').toEqual([]);
+  }, 300_000);
+
+  it('PO5: a pinned linked worktree is seeded and held at startup without a tool call; a repo without a sibling is skipped', async () => {
+    // Over 5 s by design: a CLI index, git worktree creation, a server and builder start, and a bounded 60 s wait
+    // for the seed, builder hold, server open and the separate repository's skip line.
+    const root = fx.tempRoot();
+    const stateDir = path.join(root, 'state');
+    const repo = fx.makeRepo(path.join(root, 'repo'), { 'src/pinned.ts': 'export const po5Source = 1;\n' });
+    fx.index(repo, stateDir);
+    const linked = fx.addWorktree(repo, 'po5-linked', path.join(root, 'linked'));
+    const bare = fx.makeRepo(path.join(root, 'bare'), { 'src/bare.ts': 'export const po5Bare = 1;\n' });
+
+    // Pin through the registry, not the CLI: CLI pin itself seeds, which would bypass the pass under test.
+    const oldState = process.env.CODEGRAPH_STATE_DIR;
+    try {
+      process.env.CODEGRAPH_STATE_DIR = stateDir;
+      pinProject(linked);
+      pinProject(bare);
+    } finally {
+      if (oldState === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+      else process.env.CODEGRAPH_STATE_DIR = oldState;
+    }
+    expect(isInitialized(repo), 'PO5 setup: the main worktree has an index').toBe(true);
+    expect(fs.existsSync(path.join(linked, '.codegraph')), 'PO5 setup: linked worktree has no index after pin').toBe(false);
+    expect(fs.existsSync(path.join(bare, '.codegraph')), 'PO5 setup: separate repo has no index after pin').toBe(false);
+
+    const seededRecord = (): boolean => {
+      try {
+        return fs.readdirSync(path.join(stateDir, 'projects')).filter((name) => name.endsWith('.json')).some((name) => {
+          const rec = JSON.parse(fs.readFileSync(path.join(stateDir, 'projects', name), 'utf8')) as { root?: string; flags?: number };
+          return rec.root === linked && ((rec.flags ?? 0) & PROJECT_FLAG_SEEDED) !== 0;
+        });
+      } catch { return false; }
+    };
+    const session = fx.session({ cwd: repo, stateDir });
+    await session.initialize();
+    await waitUntil(() => isInitialized(linked) && seededRecord() && heldByLiveBuilder(stateDir, linked)
+      && (!LSOF_AVAILABLE || serverHoldsDb(stateDir, linked)) && skipLines(stateDir, bare).length > 0,
+    OPEN_WAIT_MS, LSOF_POLL_MS);
+    const builder = builderPidOf(stateDir);
+    if (builder !== null) builderPids.push(builder);
+
+    const problems: string[] = [];
+    if (!isInitialized(linked)) problems.push('(1) linked worktree has no initialized index');
+    if (!seededRecord()) problems.push('(2) linked worktree registry record is not SEEDED');
+    if (!heldByLiveBuilder(stateDir, linked)) problems.push(`(3) linked worktree is not held by the live builder (writer ${writerHolderOf(linked) ?? 'none'}, builder ${builder ?? 'none'})`);
+    if (LSOF_AVAILABLE && !serverHoldsDb(stateDir, linked)) problems.push(`(4) server does not hold the linked database open: ${serverOpenDbsText(stateDir)}`);
+    if (!skipLines(stateDir, bare).some((line) => line.includes('skipped: no index and no sibling worktree has one'))) problems.push('(5) separate repo has no no-sibling skip line');
+    if (fs.existsSync(path.join(bare, '.codegraph'))) problems.push('(6) separate repo was built despite having no indexed sibling');
+    expect(problems, 'PO5 failing steps: initialized, SEEDED, held, open, no-sibling skip, no cold build').toEqual([]);
   }, 300_000);
 
   // PO3: a project pinned while the server runs is picked up on the housekeeping pass. The server starts with nothing

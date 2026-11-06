@@ -135,7 +135,7 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   returns the engine's console lines as `log` events). `builder.pid` is not consulted:
   a direct-mode builder writes the same file for its own state dir, so it proves nothing about a
   server. No server, or a server whose builder is not up, and the command writes in its own process; the route creates no file or directory and starts nothing. The requests are
-  `codegraph/indexWrite` (`init`, `index`, `reindex`, `sync`, `release`) and `codegraph/indexWriteEnd`; the
+  `codegraph/indexWrite` (`init`, `index`, `reindex`, `sync`, `release`, `seed`) and `codegraph/indexWriteEnd`; the
   server's `codegraph/indexWriteEvent` notifications (relayed from the builder's progress events) carry an
   init's `initialized` event and the indexing progress, which the CLI renders with the same code as in-process. An `index` request leaves
   a lease on the connection (the root's `rebuild.pid` and `writer.pid`, held by the builder) so the
@@ -194,6 +194,17 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   builder (see "CLI writes"), otherwise it writes in its own process. All three keep `selectIndexRoot`: a worktree with no
   index gets the not-indexed guidance there, and a nested repository the outer index leaves out gets the
   nested text.
+- **Seeding and pinned projects** (`worktree-lifecycle/seed.ts` `seedWorktreeNow`, `worktree-lifecycle/pinned-open.ts`).
+  A seed copies a worktree's index from its nearest sibling worktree that has a complete one; it never
+  cold-builds. `codegraph project seed <path>` seeds one now (exit 0 when it has or now has an index, 3 when
+  no sibling has one or it is not in a git worktree, 1 on a failure); with a server whose builder is up it
+  is the `seed` request above and runs on the builder's queue, otherwise in the CLI's process.
+  `codegraph project pin <path>` records the pin in the project registry and seeds a worktree with no index
+  first. The machine server opens every pinned project with no tool call, at its start and after each
+  housekeeping pass: a pinned root with no index is seeded through the builder (`seedWorktree`), then held
+  and opened read-only like any other. A root with no indexed sibling, outside git, or with
+  `CODEGRAPH_NO_AUTO_SEED=1` is skipped with one `server.log` line saying why and is never cold-built; a
+  seed still queued on the builder is retried on the next pass.
 
 ## Avoiding an import cycle
 
