@@ -20,9 +20,21 @@
  * What "open" means is the tool handler's own path (ToolHandler.openPinnedProject
  * is awaitProjectGate with no session): the builder is asked to hold the root
  * (its watcher, its writer slot, a catch-up sync), then the server opens it
- * read-only. The server writes nothing here, and a root with no index is never
- * given one: the opener skips it rather than cold-building it, because a pin is
- * a request to keep an existing project current, not to index a directory.
+ * read-only. The server writes nothing here.
+ *
+ * A pinned root with no index (isInitialized in src/directory.ts is false: no
+ * `codegraph.db`, or one that is not a CodeGraph index) goes to a seed first when the
+ * engine gives a `seed` dependency (the machine server wires it to the
+ * builder's `seedWorktree` op, which runs seedWorktreeNow in
+ * src/extensions/host/worktree-lifecycle/seed.ts): the index is copied from the
+ * nearest sibling worktree that has a complete one, on the builder's job queue,
+ * and the root is then opened as any indexed root is. It is never cold-built: a
+ * root with no indexed sibling, or one not in a git worktree, is skipped with a
+ * line saying why, because a pin is a request to keep a project current, not to
+ * index a directory. A seed still queued on the builder is logged and retried
+ * on the next pass. The copy goes only where no database file is in the way: over
+ * an unusable `codegraph.db` the seed answers `failed`, and that is logged. Without a
+ * `seed` dependency a root with no index is skipped.
  *
  * Unpinning needs nothing from the opener: the project stays cached with the
  * time it was opened, and the handler's idle release closes it once it has been
@@ -30,9 +42,10 @@
  * after each housekeeping pass, because no call arms it).
  */
 import * as fs from 'fs';
-import * as path from 'path';
-import { getCodeGraphDir } from '../../../directory';
+import { isInitialized } from '../../../directory';
 import { listRegisteredProjects, PROJECT_FLAG_PINNED } from './project-registry';
+// Type only: the opener does not load seed.ts at runtime (the builder does the seeding).
+import type { WorktreeSeedOutcome } from './seed';
 
 /** What the opener needs from the engine's tool handler, and where it logs. */
 export interface PinnedOpenerDeps {
@@ -53,6 +66,12 @@ export interface PinnedOpenerDeps {
   log(line: string): void;
   /** The roots of the pinned projects. Default: the registry's. An unreadable registry yields none. */
   listPinned?(): string[];
+  /**
+   * Give `root`, which has no index, one copied from its nearest indexed sibling
+   * worktree; never a cold build. Optional: without it a root with no index is
+   * skipped. A rejection reads as a failed seed.
+   */
+  seed?(root: string): Promise<WorktreeSeedOutcome>;
 }
 
 /**
@@ -101,8 +120,8 @@ export class PinnedProjectOpener {
   }
 
   /**
-   * One pass: open every pinned root that has an index and is not open and held. Never
-   * rejects. A pass already running is awaited, not repeated.
+   * One pass: open every pinned root that is not open and held, seeding first one
+   * that has no index when the opener has a `seed`. Never rejects. A pass already running is awaited, not repeated.
    */
   pass(): Promise<void> {
     if (this.stopped) return Promise.resolve();
@@ -132,7 +151,11 @@ export class PinnedProjectOpener {
         continue;
       }
       const skip = unopenableReason(root);
-      if (skip !== null) {
+      if (skip === NO_INDEX && this.deps.seed) {
+        if (!(await this.seedRoot(root, this.deps.seed))) continue;
+        // The engine may have closed while the seed ran.
+        if (this.stopped) return;
+      } else if (skip !== null) {
         this.note(root, `skipped: ${skip}`);
         continue;
       }
@@ -142,6 +165,43 @@ export class PinnedProjectOpener {
       } catch (err) {
         this.note(root, `not opened: ${reasonOf(err)}`);
       }
+    }
+  }
+
+  /**
+   * Seed `root` and log the outcome. True when the root now has an index and is
+   * to be opened (`indexed`, `seeded`); false when it is skipped this pass.
+   */
+  private async seedRoot(root: string, seed: (root: string) => Promise<WorktreeSeedOutcome>): Promise<boolean> {
+    let outcome: WorktreeSeedOutcome;
+    try {
+      outcome = await seed(root);
+    } catch (err) {
+      outcome = { kind: 'failed', root, reason: err instanceof Error ? err.message : String(err) };
+    }
+    switch (outcome.kind) {
+      case 'indexed':
+        return true;
+      case 'seeded':
+        this.note(root, `seeded from ${outcome.source} (${outcome.method})`);
+        return true;
+      case 'no-source':
+        this.note(root, 'skipped: no index and no sibling worktree has one');
+        return false;
+      case 'not-git':
+        this.note(root, 'skipped: no index, and it is not in a git worktree (a pin never builds one)');
+        return false;
+      case 'disabled':
+        this.note(root, 'skipped: no index (automatic seeding is off: CODEGRAPH_NO_AUTO_SEED=1)');
+        return false;
+      case 'queued':
+        this.note(root, 'not opened yet: its seed is queued on the index builder');
+        return false;
+      case 'failed':
+        this.note(root, `not seeded: ${reasonOf(outcome.reason)}`);
+        return false;
+      default:
+        return false;
     }
   }
 
@@ -157,11 +217,17 @@ export class PinnedProjectOpener {
   }
 }
 
+/** unopenableReason's answer for a directory with no index (isInitialized false): the one a seed can cure. */
+const NO_INDEX = 'no index';
+
 /**
- * Why `root` must not be opened, or null. A directory that is gone has nothing
- * to hold (the builder's sweep tears its registration down on its own
+ * Why `root` must not be opened as it is, or null. A directory that is gone has
+ * nothing to hold (the builder's sweep tears its registration down on its own
  * schedule), nor does a path that exists but is not a directory; a root with no
- * database is never built from here.
+ * index ({@link NO_INDEX}: isInitialized is false, so a missing, empty, schema-less
+ * or foreign `codegraph.db` alike) goes to the opener's `seed` when it has one, and
+ * is never built from here. The seed copies only where no database file is in the
+ * way: an unusable `codegraph.db` stays, and the seed answers `failed`.
  */
 function unopenableReason(root: string): string | null {
   try {
@@ -169,6 +235,6 @@ function unopenableReason(root: string): string | null {
   } catch {
     return 'directory is gone';
   }
-  if (!fs.existsSync(path.join(getCodeGraphDir(root), 'codegraph.db'))) return 'no index';
+  if (!isInitialized(root)) return NO_INDEX;
   return null;
 }

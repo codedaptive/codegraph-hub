@@ -66,14 +66,14 @@ describe('registering the host extension is light (built modules)', () => {
 });
 
 describe('host extension registers the project command', () => {
-  it('the default export adds `project` with list (-j/--json), pin <path>, unpin <path>, remove <path>', async () => {
+  it('the default export adds `project` with list (-j/--json), pin <path>, unpin <path>, remove <path>, seed <path>', async () => {
     // Imported here rather than at the top so a missing module fails this test alone.
     const { default: hostExtension } = await import('../../../src/extensions/host/extension');
     const program = new Command();
     hostExtension.registerCommands!(program);
     const project = program.commands.find((c) => c.name() === 'project');
     expect(project, 'project command registered').toBeDefined();
-    expect(project!.commands.map((c) => c.name()).sort()).toEqual(['list', 'pin', 'remove', 'unpin']);
+    expect(project!.commands.map((c) => c.name()).sort()).toEqual(['list', 'pin', 'remove', 'seed', 'unpin']);
 
     const list = project!.commands.find((c) => c.name() === 'list')!;
     expect(list.registeredArguments).toEqual([]);
@@ -81,7 +81,7 @@ describe('host extension registers the project command', () => {
     expect(json, 'list --json option').toBeDefined();
     expect(json!.short).toBe('-j');
 
-    for (const name of ['pin', 'unpin', 'remove']) {
+    for (const name of ['pin', 'unpin', 'remove', 'seed']) {
       const sub = project!.commands.find((c) => c.name() === name)!;
       const args = sub.registeredArguments;
       expect(args.map((a) => a.name()), `${name} arguments`).toEqual(['path']);
