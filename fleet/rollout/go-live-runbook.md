@@ -25,8 +25,9 @@ picks, one repository at a time.
 
 `codegraph project pin` and the seeding that copies an indexed sibling's index into a new worktree arrive with
 host's `worktree-lifecycle`; the one machine server, the index builder and the CLI's routing of `init`/`index`/`sync`
-through the builder arrive with `machine-server`, `index-builder` and `cli-builder-route` (`fleet/README.md` lists
-each). Pack and install an sm.N cut from an `ours` that carries them (`global-install.md`). `codegraph project --help`
+through the builder arrive with `machine-server`, `index-builder` and `cli-builder-route`. Pin's seed, the pinned-open
+pass's seed and `codegraph project seed` arrive with host's `pinned-seed` (exchange `85467837`)
+(`fleet/README.md` lists each). Pack and install an sm.N cut from an `ours` that carries them (`global-install.md`). `codegraph project --help`
 on the installed sm.8 lists `list`, `pin`, `unpin` and `remove`.
 
 Re-checked 2026-11-01 with the installed sm.8, `CODEGRAPH_STATE_DIR` and `HOME` pointed at a scratch folder (the real
@@ -79,8 +80,9 @@ When this runbook was written (2026-10-30) none of these worktrees had an index;
 those. The forge design checkout (`/Users/bob/devlop/forge`) had an older release's index and is not one of the seven.
 
 A CLI `codegraph init` builds the index but registers nothing, whether it runs in its own process or is routed
-through the builder (`src/extensions/host/builder/cli-jobs.ts`). Only the builder's seeding and cold builds
-(`seed.ts`, `cold-build.ts`; the registry record is SEEDED) and `codegraph project pin` write the registry. The index is
+through the builder (`src/extensions/host/builder/cli-jobs.ts`). The builder's seeding and cold builds
+(`seed.ts`, `cold-build.ts`), and seeds by `codegraph project seed` or `pin` in the CLI's own process when no
+server builder is up, register the worktree SEEDED. `codegraph project pin` also writes the pin to the registry. The index is
 what seeding needs: a new worktree copies the index of its nearest sibling that has a complete one (`seed.ts`), whether
 or not that sibling is registered. Nothing needs registering for a new worktree to be seeded, or for a repository whose
 worktrees have all gone to be cold-built in the background: there is no gate (R-12).
@@ -110,16 +112,27 @@ On 2026-11-01 (codeteam `3157a61`) it lists 99, all present:
 | moot | design, exchange, integration | 40 | 43 |
 | tessera | design, exchange, integration | 7 | 10 |
 
-Pinning only writes the registry (`<state dir>/projects/`, by default `~/.codegraph/projects/`): it creates no index and
-touches no worktree. The machine server closes an open project after 10 idle minutes
-(`CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS`, `src/mcp/tools.ts`) and has no cap on how many are open; a pinned project is
-exempt from that close, so the builder's hold on it (its watcher and writer slot) stays too. The server opens every
-pinned project that has an index when it starts and again after each housekeeping pass (60 s by default,
-`CODEGRAPH_HOUSEKEEPING_INTERVAL_MS`; `src/extensions/host/worktree-lifecycle/pinned-open.ts`), so a restart does not leave
-a pinned worktree closed until a call names it; a pinned root with no index is skipped, never cold-built. Teardown still
-treats a pinned worktree that has gone like any other.
-A pinned worktree with no index yet gets one on its first call, not from the pin: copied from its indexed sibling, or
-cold-built when it has none; pinning does not change which. Pin after step 1 so the pinned worktrees are the ones with indexes.
+Pinning writes the registry (`<state dir>/projects/`, by default `~/.codegraph/projects/`). If the path's own index or
+an indexed ancestor resolves, pin keeps that root and does not seed. Otherwise, for a git worktree with automatic seeding
+on, pin first tries to copy an index into the worktree root, through the server's builder if available or in the CLI's
+own process. It prints the outcome and pins the worktree root if seeded, indexed or queued; otherwise it pins the resolved
+path as before. The copy comes from the sibling with a complete index whose HEAD is fewest commits away, and is registered
+SEEDED with a seed nonce. Pin never cold-builds. Pin after step 1 so an unindexed worktree has an indexed sibling to copy.
+
+The machine server closes an open project after 10 idle minutes (`CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS`, `src/mcp/tools.ts`)
+and has no cap on how many are open; a pinned project is exempt, so the builder's hold on it (its watcher and writer slot)
+stays too. At start and after each housekeeping pass (60 s by default, `CODEGRAPH_HOUSEKEEPING_INTERVAL_MS`;
+`src/extensions/host/worktree-lifecycle/pinned-open.ts`), the server seeds a pinned root with no index through the builder,
+then holds and opens it read-only. It skips a root with no indexed sibling, outside git, or with automatic seeding off,
+logging the reason in `server.log` without repeating the same reason. Queued and failed seeds are retried on the next pass;
+a gone path or non-directory is skipped. With the interval set to 0, a later pin is picked up at the next start only.
+The pass never cold-builds. Teardown still treats a pinned worktree that has gone like any other.
+
+To seed now or check before pinning, run `codegraph project seed <path>`: it uses the server's builder when available,
+otherwise the CLI's own process. Exit 0 means it already has or now has an index; 3 means no indexed sibling or not in a
+git worktree; 1 means failure (a missing directory, a seed or build of it already queued in the server, a failed
+copy). Neither pin nor the pass builds a worktree with no index and no indexed sibling; its first
+tool call can still queue a cold build on the builder, as for any unindexed worktree.
 
 Tested 2026-10-30 on a throwaway build, not re-run since (the four `project` commands it calls were re-run on sm.8, see
 the Precondition): the list mode against the live manifests (89 lines, exit 0; 99 on 2026-11-01). `--apply` and
@@ -157,7 +170,8 @@ worktree comes back on that session's next call, within seconds (`docs/SPEC.md` 
 - Step 2: `python3 -I -B fleet/rollout/pin-standing.py --undo` (reads `pin-standing.log`, written by `--apply`):
   unpins what the step pinned and unregisters only the projects it registered; projects already registered or pinned
   before stay so. With no `pin-standing.log` it changes nothing (none was found under `fleet/` on 2026-11-01); then unpin by hand,
-  `codegraph project unpin <path>` per worktree, for the ones whose earlier state you know.
+  `codegraph project unpin <path>` per worktree, for the ones whose earlier state you know. A copied index from pin or
+  the pinned-open pass remains after unpin or remove; unregistering deletes no file.
 - Step 1: only for the worktrees `test -e <worktree>/.codegraph` found without an index before step 1 (see the table's
   note), not for any other checkout: `codegraph uninit -f <worktree>`. `uninit` has the machine server and the builder let go of
   the root before it deletes `.codegraph/` (`src/extensions/host/uninit.ts`); `rm -rf <worktree>/.codegraph` does not, and
