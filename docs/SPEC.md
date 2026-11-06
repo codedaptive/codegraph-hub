@@ -44,8 +44,9 @@ their own state directory. They never connect to, replace or write through the l
 - A database lives in its worktree's `.codegraph/` and always covers the whole repository of that worktree [B3]
   (not a subdirectory; `--focus` narrows answers, never the index).
 - Opened when a call needs it; closed after **10 minutes** with no call; no limit on how many are open [B2].
-  Closing releases handles and keeps the file. Every pinned project that has an index is also opened without a
-  call: when the server starts and after each housekeeping pass (`pinned-open-at-start`).
+  Closing releases handles and keeps the file. Every pinned project is also opened without a call: when the server
+  starts and after each housekeeping pass (`pinned-open-at-start`). A pinned project with no index is first seeded
+  from its nearest indexed sibling, when it is pinned and on that pass (S-57, `pinned-seed`).
 - **Pinned** databases (standing worktrees) stay open and current: never closed for idleness, always synced, so they
   are always a good copy source [B13]. Who pins: codeteam, with `codegraph project pin`, for the worktrees it
   calls standing [B14].
@@ -119,7 +120,7 @@ Ours (on `ours` since sm.2–sm.4; enabled by name in `CODEGRAPH_MCP_TOOLS`):
 | `orphans --base <ref>` | Symbols added since `<ref>` with no incoming edges; implementations of protocols/traits and tests excluded. |
 | `suspects` | Name-only or low-confidence call edges, ranked; `grep`/`blast` mark them, `--strict` drops them. |
 | `checkpoint`, `fresh` | What an answer describes (HEAD, uncommitted-change hash, files pending); `fresh` waits until the index matches the tree. |
-| `project list/pin/unpin/remove` | The worktree registry; pin as in §3. |
+| `project list/pin/unpin/remove/seed` | The worktree registry; pin as in §3. `project seed <path>` seeds a worktree from its nearest indexed sibling now: exit 0 when it has an index afterwards, 3 when no sibling has one, 1 on an error (S-57). |
 | `upgrade`, update notice | Install and announce the hub's releases (`codedaptive/codegraph-hub`), never upstream's package; `-sm.N` versions compared by number (R-32). |
 
 ## 7. Acceptance
@@ -161,7 +162,8 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 |---|---|
 | A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen once in the sm.12 install and cleared; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md | host's todo |
 | `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
-| The hub's monthly update, next due 2026-12-04 (S-54) | Bob (team/questions.md) |
+| The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
+| Pinned projects with no index seeded, and `codegraph project seed` (S-57, host 85467837) | ships as sm.13 |
 
 ## 9. Out of scope (R-12)
 
