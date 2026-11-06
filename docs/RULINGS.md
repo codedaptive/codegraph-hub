@@ -474,3 +474,14 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word.
 - Not chosen: the team running the 12-04 update; skipping it.
 - Supersedes: S-54's "who does it" (Orc-Codegraph and upstream-prs) while Bob handles the updates.
+
+## R-37. Fix the split server now; the team restarts for new features
+- Date: 2026-11-06 / Bob, direct, relayed by Orc-Codegraph (S-58: "Q-21 fix it now"; #2396: the team restarts for new
+  features).
+- Question: Q-21, fix the recurring split-server bug (F-1, F-2) past R-36's halt, or wait for a restart?
+- Ruling: fix it now as one host feature, split-server-fix, shipped as sm.14 by the sm.13 path; fleet updates the
+  install runbook to match. The team restarts for new features, with requests from Orc-Codegraph; while
+  split-server-fix is open, no other lane edits src/mcp/index.ts, src/mcp/daemon.ts or src/mcp/daemon-paths.ts.
+- Reason: the bug struck three times on 2026-11-06 at load ~90, each time leaving a second server and builder.
+- Not chosen: waiting for the restart.
+- Supersedes: R-36's halt (R-36's hub updates by Bob stand).
