@@ -143,8 +143,8 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-11-04)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.12** (ours
-4fdda779, 2026-11-04 15:30, R-33); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.13** (ours
+be5ab360, 2026-11-06, S-57); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
 `codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team stands down (R-34).
 
 | Release | What it shipped |
@@ -157,13 +157,13 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 | sm.10 (ours 182c04bb) | upstream 5cd8a9a8 merged in (16 commits); pinned projects opened at server start and after each housekeeping pass (`pinned-open-at-start`); slow tests wait on events with stated timeouts (`slow-tests`); a server that cannot bind any socket says why for each candidate |
 | sm.11 (ours ff092584, 2026-11-04) | upstream f72c9d2e merged in; the review fixes from our upstream pull requests carried back (S-52, R-29): locks, sync and readiness (host); `grep` (stale files unattributed), `blast` (per-line seeds, S-51) and `orphans` (queries); `suspects`, Swift and Rust resolution (resolution) |
 | sm.12 (ours 4fdda779, 2026-11-04) | `codegraph upgrade` and the update notice use the hub's releases, never upstream's package; `-sm.N` versions compared by number (R-32); comments and test names without internal citations (S-55); the hub's first release |
+| sm.13 (ours be5ab360, 2026-11-06) | a pinned project with no index is seeded from its nearest sibling; `codegraph project seed <path>` (S-57) |
 
 | Left (deferred under R-34) | State |
 |---|---|
-| A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen once in the sm.12 install and cleared; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md | host's todo |
+| A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen in the sm.12 install and three times on 2026-11-06 at load ~90; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md, release-gate-sm13.md | host's todo; fix now or later is Q-21 for Bob |
 | `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
 | The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
-| Pinned projects with no index seeded, and `codegraph project seed` (S-57, host 85467837) | ships as sm.13 |
 
 ## 9. Out of scope (R-12)
 
