@@ -4,8 +4,9 @@
  *   - `codegraph checkpoint [path] [--fresh] [-j, --json]` reports the workspace state the index
  *     reflects (git HEAD, a hash of the uncommitted changes, files the index has not caught up with)
  *     and exits 0 fresh, 3 not fresh, 1 on error;
- *   - `codegraph project list|pin|unpin|remove` lists, pins, unpins or unregisters the projects in the
- *     project registry (./worktree-lifecycle/project-registry.ts). A pinned project is never
+ *   - `codegraph project list|seed|pin|unpin|remove` lists, seeds, pins, unpins or unregisters projects.
+ *     A seed copies a sibling worktree's index, never cold-builds; pin tries it first for an unindexed root.
+ *     The project registry is ./worktree-lifecycle/project-registry.ts. A pinned project is never
  *     idle-released from an MCP server's project cache; `remove` deletes no file.
  *
  * The host loads this module on the main thread of every CLI invocation that reaches `program.parse()`
@@ -35,7 +36,7 @@ function registerCheckpointCommand(program: Command): void {
 function registerProjectCommand(program: Command): void {
   const project = program
     .command('project')
-    .description('List, pin, unpin or unregister the projects CodeGraph manages');
+    .description('List, seed, pin, unpin or unregister the projects CodeGraph manages');
 
   project
     .command('list')
@@ -47,8 +48,16 @@ function registerProjectCommand(program: Command): void {
     });
 
   project
+    .command('seed <path>')
+    .description('Give a worktree an index now, copied from its nearest sibling worktree that has one (exit 0 indexed, 3 no sibling has one, 1 failed)')
+    .action(async (pathArg: string) => {
+      const { runProjectSeed } = await import('./worktree-lifecycle/cli');
+      await runProjectSeed(pathArg);
+    });
+
+  project
     .command('pin <path>')
-    .description('Keep a project open in the CodeGraph MCP server (never idle-released)')
+    .description('Keep a project open in the CodeGraph MCP server (never idle-released); a worktree with no index is seeded first')
     .action(async (pathArg: string) => {
       const { runProjectPin } = await import('./worktree-lifecycle/cli');
       await runProjectPin(pathArg);

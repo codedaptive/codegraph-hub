@@ -1,5 +1,5 @@
 /**
- * The wire between a CLI command that writes an index (`init`, `index`, `sync`, the `--fresh` wait) or deletes one
+ * The wire between a CLI command that writes an index (`init`, `index`, `sync`, `project seed`, the `--fresh` wait) or deletes one
  * (`uninit`) and the running machine server, which relays the write to its index builder. Types and names only: the CLI side
  * is ./cli-route.ts, the server side ./cli-relay.ts, the builder's jobs ./cli-jobs.ts.
  *
@@ -24,6 +24,7 @@
  *   ← {"jsonrpc":"2.0","id":<n>,"result":{"ended":true}}
  */
 import type { IndexProgress, IndexResult, SyncResult } from '../../../extraction';
+import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 
 export const INDEX_WRITE_METHOD = 'codegraph/indexWrite';
 export const INDEX_WRITE_EVENT_METHOD = 'codegraph/indexWriteEvent';
@@ -36,6 +37,8 @@ export const INDEX_WRITE_END_METHOD = 'codegraph/indexWriteEnd';
  *   reindex  indexAll on the existing index: under this connection's lease when it holds one for the root
  *            (index's interactive re-run), else with no lock but the engine's own (init's re-run).
  *   sync     one sync of the root, on the builder's queue at sync priority.
+ *   seed     copy the nearest sibling worktree's index through the builder's seed queue, waiting for it;
+ *            never cold-build, take no connection lease, and report a WorktreeSeedOutcome.
  *   release  `uninit`: take a `release` lease (rebuild.pid, then the server and the builder let go of the root,
  *            then the root's builder jobs drain), and stop there: nothing is rebuilt. The CLI then deletes
  *            `.codegraph` and ends the lease.
@@ -44,7 +47,7 @@ export const INDEX_WRITE_END_METHOD = 'codegraph/indexWriteEnd';
  * console output comes back as `log` events, so the CLI prints what an in-process run prints.
  * `root` is absolute; the server resolves its realpath.
  */
-export type IndexWriteOp = 'init' | 'index' | 'reindex' | 'sync' | 'release';
+export type IndexWriteOp = 'init' | 'index' | 'reindex' | 'sync' | 'seed' | 'release';
 
 export interface IndexWriteParams {
   op: IndexWriteOp;
@@ -54,7 +57,7 @@ export interface IndexWriteParams {
 }
 
 /**
- * One event of a running init/index/reindex/sync, in order (a `release` sends none). `initialized` comes once, after CodeGraph.init
+ * One event of a running init/index/reindex/sync, in order (`release` and `seed` send none). `initialized` comes once, after CodeGraph.init
  * returned. `log` is one line the engine wrote with console.log during a `verbose` request (the `[worker] ...`
  * and `[wal-valve] ...` lines), in order with the progress events; the CLI prints it with console.log.
  */
@@ -76,12 +79,12 @@ export interface ReleaseResult {
  * `routed: false`: nothing was taken or written (the server has no builder up); the CLI writes in its own
  * process. Never sent once the lease or a job exists.
  * `routed: true`: the builder ran the job, or for `release` fenced the root and let it go; `result` is the
- * IndexResult (init/index/reindex), SyncResult (sync) or
+ * IndexResult (init/index/reindex), SyncResult (sync), WorktreeSeedOutcome (seed) or
  * ReleaseResult (release).
  */
 export type IndexWriteResult =
   | { routed: false; reason: string }
-  | { routed: true; result: IndexResult | SyncResult | ReleaseResult };
+  | { routed: true; result: IndexResult | SyncResult | WorktreeSeedOutcome | ReleaseResult };
 
 /** The JSON-RPC error's `data`: the thrown error's class name, so the CLI can match e.g. a LockUnavailableError by name. */
 export interface IndexWriteErrorData {

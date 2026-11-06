@@ -2276,7 +2276,7 @@ function pendingFileOf(root: string, relPath: string): PendingFile {
  * idle-released; it closes on shutdown, or when housekeeping releases it
  * (`releaseProjectRoot`: its worktree was torn down, or its directory or
  * database is gone). Only the machine server's engine (`openPinned`) opens
- * pinned projects with no call, and only those with an index
+ * pinned projects with no call, seeding an unindexed worktree from an indexed sibling first when possible
  * (src/extensions/host/worktree-lifecycle/pinned-open.ts); the time of that open
  * is the project's last use, so once the pin is removed it closes after this
  * timeout, at the next trim. Only that engine re-trims after each housekeeping

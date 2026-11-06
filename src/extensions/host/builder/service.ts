@@ -13,7 +13,7 @@
 import { canonicalProjectRoot } from '../../../directory';
 import type { WatchOptions } from '../../../sync/watcher';
 import { EngineHousekeeping } from '../worktree-lifecycle/housekeeping';
-import { ensureWorktreeIndex, isAbandonedIndex } from '../worktree-lifecycle/seed';
+import { ensureWorktreeIndex, isAbandonedIndex, seedWorktreeNow } from '../worktree-lifecycle/seed';
 import { selectOwnIndexRoot } from '../server/index-root';
 import { CliJobs, requireAbsoluteRoot } from './cli-jobs';
 import type { BuilderFreshness, EnsureOutcome } from './client';
@@ -115,6 +115,9 @@ export class BuilderService {
     switch (request.op) {
       // The anchor is IPC data: anything but a string is no anchor.
       case 'ensure': return this.ensure(request.projectPath, typeof request.anchorRoot === 'string' ? request.anchorRoot : undefined);
+      case 'seedWorktree': return seedWorktreeNow(requireAbsoluteRoot(request.root), {
+        host: this.seedHost, wait: request.wait === true, automatic: request.automatic === true,
+      });
       case 'caughtUp': return this.holders.caughtUp(request.root);
       case 'sync': return this.holders.sync(request.root);
       case 'release': return this.holders.release(request.root);

@@ -4,6 +4,7 @@
  * `project list [--json]`, `project pin <path>`, `project unpin <path>` and
  * `project remove <path>` drive the project registry
  * (src/extensions/host/worktree-lifecycle/project-registry.ts). `remove` only unregisters; it deletes nothing.
+ * `project seed <path>` copies an indexed sibling worktree's index without cold-building.
  *
  * Runs the BUILT binary, as __tests__/cli-unlock.test.ts does, so dist/ must be
  * rebuilt (`npm run build`) after the command changes. The child inherits the
