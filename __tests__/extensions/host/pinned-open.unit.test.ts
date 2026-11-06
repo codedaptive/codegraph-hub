@@ -17,11 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
 import { canonicalProjectRoot } from '../../../src/directory';
 import { pinProject } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
+import { PinnedProjectOpener } from '../../../src/extensions/host/worktree-lifecycle/pinned-open';
 import type { BuilderClient, BuilderFreshness, EnsureOutcome } from '../../../src/extensions/host/builder/client';
 
 /** How a stub builder answers an `ensure`: `call` counts the calls for that root from 1. */
@@ -101,6 +103,157 @@ async function indexProject(dir: string): Promise<void> {
   await cg.indexAll();
   cg.close();
 }
+
+describe('pinned-open seeding of pinned roots', () => {
+  let root: string;
+  const source = '/sibling/source';
+
+  beforeEach(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pinned-seed-unit-')));
+  });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  function deps() {
+    return {
+      listPinned: () => [root],
+      isOpen: () => false,
+      open: vi.fn(async (_root: string) => {}),
+      log: vi.fn((_line: string) => {}),
+    };
+  }
+  function line(what: string): string {
+    return `[CodeGraph MCP] Pinned project ${root} ${what}`;
+  }
+
+  it('seeds a missing index once, logs its source, then opens it', async () => {
+    const base = deps();
+    const calls: string[] = [];
+    const seed = vi.fn(async (arg: string) => {
+      calls.push(`seed ${arg}`);
+      return { kind: 'seeded' as const, root: arg, source, method: 'copy' as const };
+    });
+    base.open.mockImplementation(async (arg) => { calls.push(`open ${arg}`); });
+    const withSeed = { ...base, seed };
+    await new PinnedProjectOpener(withSeed).pass();
+    expect(seed).toHaveBeenCalledExactlyOnceWith(root);
+    expect(calls).toEqual([`seed ${root}`, `open ${root}`]);
+    expect(base.log.mock.calls.map(([text]) => text)).toEqual([line(`seeded from ${source} (copy)`)]);
+  });
+
+  it('opens when the seed reports an index already exists', async () => {
+    const base = deps();
+    const seed = vi.fn(async (arg: string) => ({ kind: 'indexed' as const, root: arg }));
+    const withSeed = { ...base, seed };
+    await new PinnedProjectOpener(withSeed).pass();
+    expect(base.open).toHaveBeenCalledExactlyOnceWith(root);
+    expect(seed).toHaveBeenCalledExactlyOnceWith(root);
+  });
+
+  it.each([
+    ['no-source', 'skipped: no index and no sibling worktree has one'],
+    ['not-git', 'skipped: no index, and it is not in a git worktree (a pin never builds one)'],
+    ['disabled', 'skipped: no index (automatic seeding is off: CODEGRAPH_NO_AUTO_SEED=1)'],
+    ['queued', 'not opened yet: its seed is queued on the index builder'],
+    ['failed', 'not seeded: copy failed'],
+  ] as const)('logs %s and does not open', async (kind, expected) => {
+    const base = deps();
+    const seed = vi.fn(async (arg: string) => kind === 'failed'
+      ? { kind, root: arg, reason: 'copy failed' }
+      : { kind, root: arg });
+    const withSeed = { ...base, seed };
+    await new PinnedProjectOpener(withSeed).pass();
+    expect(base.log.mock.calls.map(([text]) => text)).toEqual([line(expected)]);
+    expect(seed).toHaveBeenCalledExactlyOnceWith(root);
+    expect(base.open).not.toHaveBeenCalled();
+  });
+
+  it('treats a rejecting seed as failed and does not open', async () => {
+    const base = deps();
+    const seed = vi.fn(async (_arg: string) => { throw new Error('copy failed'); });
+    const withSeed = { ...base, seed };
+    await new PinnedProjectOpener(withSeed).pass();
+    expect(base.log.mock.calls.map(([text]) => text)).toEqual([line('not seeded: copy failed')]);
+    expect(base.open).not.toHaveBeenCalled();
+  });
+
+  it('retains the no-index skip when no seed dependency is supplied', async () => {
+    const base = deps();
+    await new PinnedProjectOpener(base).pass();
+    expect(base.log.mock.calls.map(([text]) => text)).toEqual([line('skipped: no index')]);
+    expect(base.open).not.toHaveBeenCalled();
+  });
+
+  it('opens an indexed root without calling seed', async () => {
+    await indexProject(root);
+    const base = deps();
+    const seed = vi.fn(async (arg: string) => ({ kind: 'indexed' as const, root: arg }));
+    const withSeed = { ...base, seed };
+    await new PinnedProjectOpener(withSeed).pass();
+    expect(base.open).toHaveBeenCalledExactlyOnceWith(root);
+    expect(seed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty file', Buffer.alloc(0)],
+    ['garbage bytes', Buffer.from('this is not a sqlite database\n')],
+    ['a SQLite database without the CodeGraph schema', null],
+  ] as const)('seeds a root whose codegraph.db is %s before any open', async (_label, bytes) => {
+    fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
+    const dbPath = path.join(root, '.codegraph', 'codegraph.db');
+    if (bytes === null) {
+      const db = new DatabaseSync(dbPath);
+      db.exec('CREATE TABLE unrelated (id INTEGER PRIMARY KEY)');
+      db.close();
+    } else {
+      fs.writeFileSync(dbPath, bytes);
+    }
+    const base = deps();
+    const calls: string[] = [];
+    const seed = vi.fn(async (arg: string) => {
+      calls.push(`seed ${arg}`);
+      return { kind: 'failed' as const, root: arg, reason: 'unusable database' };
+    });
+    base.open.mockImplementation(async (arg) => { calls.push(`open ${arg}`); });
+    await new PinnedProjectOpener({ ...base, seed }).pass();
+    expect(seed).toHaveBeenCalledExactlyOnceWith(root);
+    expect(calls).toEqual([`seed ${root}`]);
+  });
+
+  it('skips a root whose codegraph.db carries no schema as no index when no seed dependency is supplied', async () => {
+    fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.codegraph', 'codegraph.db'), 'garbage');
+    const base = deps();
+    await new PinnedProjectOpener(base).pass();
+    expect(base.log.mock.calls.map(([text]) => text)).toEqual([line('skipped: no index')]);
+    expect(base.open).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat the same seed skip on successive passes', async () => {
+    const base = deps();
+    const seed = vi.fn(async (arg: string) => ({ kind: 'no-source' as const, root: arg }));
+    const withSeed = { ...base, seed };
+    const opener = new PinnedProjectOpener(withSeed);
+    await opener.pass();
+    await opener.pass();
+    expect(base.log.mock.calls.map(([text]) => text)).toEqual([line('skipped: no index and no sibling worktree has one')]);
+    expect(seed).toHaveBeenCalledTimes(2);
+    expect(base.open).not.toHaveBeenCalled();
+  });
+
+  it('does not open when stopped while a seed is pending', async () => {
+    const base = deps();
+    let finish!: (outcome: { kind: 'indexed'; root: string }) => void;
+    const seed = vi.fn((_arg: string) => new Promise<{ kind: 'indexed'; root: string }>((resolve) => { finish = resolve; }));
+    const withSeed = { ...base, seed };
+    const opener = new PinnedProjectOpener(withSeed);
+    const pass = opener.pass();
+    expect(seed).toHaveBeenCalledExactlyOnceWith(root);
+    opener.stop();
+    finish({ kind: 'indexed', root });
+    await pass;
+    expect(base.open).not.toHaveBeenCalled();
+  });
+});
 
 describe('pinned-open opener, in process, against a stub builder', { timeout: 60_000 }, () => {
   let workspace: string;

@@ -37,6 +37,7 @@ import type { IndexResult, SyncResult } from '../../../extraction';
 import { canonicalProjectRoot, isInitialized, unsafeIndexRootReason } from '../../../directory';
 import { ErrorCodes, type JsonRpcRequest, type JsonRpcTransport } from '../../../mcp/transport';
 import type { CliIndexMode } from './protocol';
+import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 import {
   INDEX_WRITE_EVENT_METHOD,
   type IndexWriteErrorData,
@@ -67,6 +68,8 @@ export interface CliBuilder {
   cliIndex(root: string, mode: CliIndexMode, onEvent: (event: IndexWriteEvent) => void, verbose: boolean): Promise<IndexResult>;
   /** One sync job of the root at sync priority; `onEvent` receives the sync's progress events. */
   cliSync(root: string, onEvent: (event: IndexWriteEvent) => void): Promise<SyncResult>;
+  /** Copy a sibling's index through the seed queue and wait for its outcome; never cold-build. */
+  seedWorktree(root: string, opts: { wait: true }): Promise<WorktreeSeedOutcome>;
 }
 
 /** The engine surface the relay uses (MCPEngine implements it). */
@@ -77,7 +80,7 @@ export interface CliRelayEngine {
   releaseProjectRoot(root: string): Promise<void>;
 }
 
-const OPS: readonly IndexWriteOp[] = ['init', 'index', 'reindex', 'sync', 'release'];
+const OPS: readonly IndexWriteOp[] = ['init', 'index', 'reindex', 'sync', 'seed', 'release'];
 
 /** A request the relay answers with a JSON-RPC error: its code, text and the thrown error's class name. */
 class RelayError extends Error {
@@ -162,6 +165,8 @@ export class CliRelay {
     };
 
     switch (op) {
+      case 'seed':
+        return { routed: true, result: await builder.seedWorktree(root, { wait: true }) };
       case 'sync':
         return { routed: true, result: await builder.cliSync(root, onEvent) };
       case 'init':
@@ -252,8 +257,10 @@ function resolveRoot(root: string): string {
  * `init` and `index` refuse an unsafe root unless forced (a root that does not exist yet passes: init
  * creates it); `init` refuses an initialized root, the others an uninitialized one; `release` has no CLI refusal
  * (`uninit` warns and exits 0 first), so its check is the server's own, worded as uninit's warning.
+ * `seed` accepts an uninitialized root and leaves path validation to seedWorktreeNow in the builder.
  */
 function refuse(op: IndexWriteOp, root: string, force: boolean): void {
+  if (op === 'seed') return;
   if ((op === 'init' || op === 'index') && !force) {
     const unsafe = unsafeIndexRootReason(root);
     if (unsafe) {

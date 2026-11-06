@@ -19,8 +19,9 @@
  * and closes it once idle (pinned projects stay open). There is no cap on how
  * many are open. The one thing an engine may open with no call is a pinned
  * project, and only when its owner sets `openPinned` and gives a builder (the
- * machine server does): it opens each pinned project that has an index at
- * startup and after each housekeeping pass
+ * machine server does): it opens each pinned project at startup and after each
+ * housekeeping pass, first having the builder seed one with no index from its
+ * nearest indexed sibling worktree (never a cold build)
  * (src/extensions/host/worktree-lifecycle/pinned-open.ts).
  *
  * One engine, many sessions:
@@ -66,8 +67,10 @@ export interface MCPEngineOptions {
    */
   queryPoolDefaultMax?: number;
   /**
-   * Open every project the registry marks pinned (`codegraph project pin`) that
-   * has an index, with no tool call: once right after construction, and again
+   * Open every project the registry marks pinned (`codegraph project pin`), with
+   * no tool call, having the builder seed one with no index from its nearest
+   * indexed sibling worktree first (a pinned root with no indexed sibling is
+   * skipped, never cold-built): once right after construction, and again
    * after each housekeeping pass, which also re-runs the idle release so a project
    * unpinned later is closed with no call to trigger it. Effective only with a
    * `builder` (the opens have the builder hold each project, and the engine writes
@@ -162,7 +165,15 @@ export class MCPEngine {
    * a builder hold. A pass never rejects.
    */
   private startPinnedOpener(): void {
+    // Seeding goes through the builder's `seedWorktree` op (its job queue, fences and
+    // holds). A builder without that op (a stub in a test) gives no `seed`, and the
+    // opener then skips a root with no index as before.
+    const builder = this.builder;
+    const seed = builder && typeof builder.seedWorktree === 'function'
+      ? { seed: (root: string) => builder.seedWorktree(root, { automatic: true }) }
+      : {};
     const opener = new PinnedProjectOpener({
+      ...seed,
       // Open AND held. The handler caches a root even when the builder's `ensure`
       // answered `none` and recorded no hold (the builder not up in time, an IPC
       // failure); such a root is open but never watched or synced, so it counts as

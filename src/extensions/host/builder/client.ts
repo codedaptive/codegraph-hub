@@ -24,6 +24,7 @@ import { LockUnavailableError } from '../../../errors';
 import type { IndexResult, SyncResult } from '../../../extraction';
 import type { IndexWriteEvent } from './cli-wire';
 import type { FenceKind } from './fences';
+import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 import { isReply, type BuilderReply, type BuilderRequest, type BuilderToServer, type CliIndexMode } from './protocol';
 
 export interface BuilderFreshness {
@@ -147,6 +148,18 @@ export class BuilderClient {
     } catch (err) {
       this.log(`ensure of ${projectPath} failed: ${err instanceof Error ? err.message : String(err)}`);
       return { kind: 'none' };
+    }
+  }
+
+  /** Seed without holding the root or asking for a cold build. `wait: true` waits for the job without a timeout. Never rejects. */
+  async seedWorktree(root: string, opts: { wait?: boolean; automatic?: boolean } = {}): Promise<WorktreeSeedOutcome> {
+    try {
+      return await this.rpc(
+        { op: 'seedWorktree', root, wait: opts.wait === true, automatic: opts.automatic === true },
+        opts.wait === true ? undefined : ENSURE_TIMEOUT_MS,
+      ) as WorktreeSeedOutcome;
+    } catch (err) {
+      return { kind: 'failed', root, reason: err instanceof Error ? err.message : String(err) };
     }
   }
 

@@ -1,5 +1,5 @@
 /**
- * The actions of `codegraph project list|pin|unpin|remove`, the project
+ * The actions of `codegraph project list|seed|pin|unpin|remove`, the project
  * registry's CLI (./project-registry.ts). A PINNED project is never
  * idle-released from an MCP server's project cache; a SEEDED one
  * got its index from CodeGraph itself (copied from a sibling git worktree, or
@@ -13,7 +13,10 @@ import * as path from 'path';
 import { isInitialized } from '../../../directory';
 import { getGlyphs } from '../../../ui/glyphs';
 import { ansiColorsEnabled } from '../../../ui/color';
-import { gitCommonDirAsync } from './git';
+import { gitCommonDirAsync, gitWorktreeRootAsync } from './git';
+import { gitRootByStat } from '../server/index-root';
+import type { BuilderRoute } from '../builder/cli-route';
+import type { WorktreeSeedOutcome } from './seed';
 import {
   PROJECT_FLAG_PINNED,
   PROJECT_FLAG_SEEDED,
@@ -88,15 +91,95 @@ export function runProjectList(options: { json?: boolean }): void {
   }
 }
 
-/** `codegraph project pin <path>`: exits 1 when the directory does not exist. */
-export async function runProjectPin(pathArg: string): Promise<void> {
+type SeedProjectDeps = { route?: () => Promise<BuilderRoute | null> };
+
+/** Seed through the running server's builder, or in process when no builder takes the request. */
+export async function seedProjectNow(absolute: string, deps?: SeedProjectDeps): Promise<WorktreeSeedOutcome> {
+  try {
+    const route = await (deps?.route
+      ? deps.route()
+      : (await import('../builder/cli-route')).builderRoute());
+    if (route) {
+      try {
+        const answer = await route.seed(absolute);
+        if (answer.routed) return answer.result;
+      } finally {
+        route.close();
+      }
+    }
+    const { seedWorktreeNow } = await import('./seed');
+    return await seedWorktreeNow(absolute, { log: () => {} });
+  } catch (err) {
+    return { kind: 'failed', root: absolute, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** One result line, shared by explicit seeds and the seed attempted before a pin. */
+function printSeedOutcome(outcome: WorktreeSeedOutcome): 0 | 1 | 3 {
+  switch (outcome.kind) {
+    case 'indexed':
+      success(`${outcome.root} already has an index`);
+      return 0;
+    case 'seeded':
+      success(`Seeded ${outcome.root} from ${outcome.source} (${outcome.method})`);
+      return 0;
+    case 'no-source':
+      info(`Could not seed ${outcome.root}: no sibling worktree has an index`);
+      return 3;
+    case 'not-git':
+      info(`${outcome.root} is not in a git worktree, so no sibling can seed it`);
+      return 3;
+    case 'queued':
+      error(`Could not seed ${outcome.root}: a seed or build of it is already queued in the server`);
+      return 1;
+    case 'disabled':
+      error(`Could not seed ${outcome.root}: automatic seeding is off (CODEGRAPH_NO_AUTO_SEED=1)`);
+      return 1;
+    case 'failed':
+      error(`Could not seed ${outcome.root}: ${outcome.reason}`);
+      return 1;
+  }
+}
+
+/** `codegraph project seed <path>`: 0 indexed, 3 no sibling index, 1 failed. */
+export async function projectSeedExitCode(pathArg: string, deps?: SeedProjectDeps): Promise<0 | 1 | 3> {
+  const absolute = path.resolve(pathArg);
+  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isDirectory()) {
+    error(`No such directory: ${absolute}`);
+    return 1;
+  }
+  return printSeedOutcome(await seedProjectNow(absolute, deps));
+}
+
+export async function runProjectSeed(pathArg: string): Promise<void> {
+  process.exit(await projectSeedExitCode(pathArg));
+}
+
+/**
+ * `codegraph project pin <path>`: exit 1 only for a missing directory.
+ *
+ * The path first resolves as a tool call would resolve it (resolveProjectPath). When that finds an
+ * existing index (the path's own, a sub-index or an indexed ancestor), that root is pinned, with no seed.
+ * Only when the path has no index anywhere, is in a git worktree and CODEGRAPH_NO_AUTO_SEED is not 1 is
+ * the worktree root seeded, with the outcome printed: on `seeded`, `indexed` or `queued` the worktree root
+ * is pinned; on any other outcome the resolved path is, as it is with the kill switch on or outside git.
+ */
+export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Promise<void> {
   const absolute = path.resolve(pathArg);
   if (!fs.existsSync(absolute)) {
     error(`No such directory: ${absolute}`);
     process.exit(1);
   }
-  // Pin the index root a tool call would resolve to, as the MCP cache keys it.
-  const root = resolveProjectPath(absolute);
+  const resolved = resolveProjectPath(absolute);
+  let root = resolved;
+  if (!isInitialized(resolved) && process.env.CODEGRAPH_NO_AUTO_SEED !== '1') {
+    const worktree = await gitWorktreeRootAsync(absolute);
+    if (worktree) {
+      const outcome = await seedProjectNow(worktree, deps);
+      printSeedOutcome(outcome);
+      if (outcome.kind === 'seeded' || outcome.kind === 'indexed' || outcome.kind === 'queued') root = worktree;
+    }
+  }
   // Recorded on pin so the housekeeping sweep can tell when a pinned
   // worktree is removed; null when the root is not in a git repository.
   const commonDir = getRegisteredProject(root)?.commonDir ?? await gitCommonDirAsync(root);
@@ -105,11 +188,32 @@ export async function runProjectPin(pathArg: string): Promise<void> {
   success(`Pinned ${rec.root}`);
 }
 
+/**
+ * The roots unpin and remove try, in order, without duplicates: the index
+ * root a tool call would use (what pin records when the path has an index),
+ * the git worktree root (what pin records after seeding a worktree; only for a
+ * path that exists), then the path as given. A removed directory has no
+ * worktree root and may no longer resolve to its index root, so it is found
+ * by the last.
+ */
+function registeredRootCandidates(pathArg: string): string[] {
+  const absolute = path.resolve(pathArg);
+  const candidates = [resolveProjectPath(absolute)];
+  // For a removed directory gitRootByStat would name the repository around
+  // it, not the project the user named.
+  const worktree = fs.existsSync(absolute) ? gitRootByStat(absolute) : null;
+  if (worktree) candidates.push(worktree);
+  candidates.push(absolute);
+  return [...new Set(candidates)];
+}
+
 /** `codegraph project unpin <path>`. */
 export function runProjectUnpin(pathArg: string): void {
-  // The index root first (what pin recorded), then the path as given (a
-  // removed directory no longer resolves to its index root).
-  const rec = unpinProject(resolveProjectPath(pathArg)) ?? unpinProject(path.resolve(pathArg));
+  let rec = null;
+  for (const root of registeredRootCandidates(pathArg)) {
+    rec = unpinProject(root);
+    if (rec) break;
+  }
   if (!rec) {
     info(`${path.resolve(pathArg)} is not registered ${getGlyphs().dash} nothing to do`);
     return;
@@ -120,7 +224,7 @@ export function runProjectUnpin(pathArg: string): void {
 /** `codegraph project remove <path>`: unregisters, deletes nothing. */
 export function runProjectRemove(pathArg: string): void {
   // Same lookup order as unpin.
-  const removed = unregisterProject(resolveProjectPath(pathArg)) || unregisterProject(path.resolve(pathArg));
+  const removed = registeredRootCandidates(pathArg).some((root) => unregisterProject(root));
   if (!removed) {
     info(`${path.resolve(pathArg)} is not registered ${getGlyphs().dash} nothing to do`);
     return;

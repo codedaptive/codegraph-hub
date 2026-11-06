@@ -11,8 +11,8 @@
  * registry is what lets the housekeeping sweep (`teardown.ts`) find
  * a seeded worktree after it is removed and reclaim its index. The MCP server
  * reads it for pins: its idle release never closes a pinned root, and the
- * machine server opens each pinned root that has an index at start and after
- * each housekeeping pass (`pinned-open.ts`).
+ * machine server opens pinned roots at start and after each housekeeping pass,
+ * seeding an unindexed worktree from an indexed sibling when possible (`pinned-open.ts`).
  *
  * The SEEDED bit says that CodeGraph once made an index at the ROOT; the seed
  * nonce says WHICH index. Each seed or cold build writes a fresh random nonce

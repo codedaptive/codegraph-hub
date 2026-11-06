@@ -31,8 +31,8 @@ export function resolveSeedWaitMs(raw: string | undefined = process.env.CODEGRAP
 export class BuilderSeedHost implements SeedHost {
   /** Cold builds queued or running, by canonical root, with the root as it was queued. */
   private readonly cold = new Map<string, string>();
-  /** Seed copies queued or running, likewise. */
-  private readonly seeds = new Map<string, string>();
+  /** A root stays building until every seed of it settles, including one queued behind another. */
+  private readonly seeds = new Map<string, { root: string; count: number }>();
   /** Roots whose cold build failed in this builder: never retried until this builder restarts. */
   private readonly failed = new Set<string>();
 
@@ -53,7 +53,8 @@ export class BuilderSeedHost implements SeedHost {
     if (this.cold.size === 0 && this.seeds.size === 0) return null;
     const p = canonicalProjectRoot(projectPath);
     for (const map of [this.cold, this.seeds]) {
-      for (const [key, root] of map) {
+      for (const [key, entry] of map) {
+        const root = typeof entry === 'string' ? entry : entry.root;
         // A queued root above a git repository nested around `projectPath` is another repository's build: it
         // does not name the nested repository's path (a stat walk first, git only when a `.git` is below the root).
         if (isAtOrBelow(p, key) && ownIndexRootFor(projectPath, root) !== null) return root;
@@ -93,9 +94,11 @@ export class BuilderSeedHost implements SeedHost {
       .finally(() => this.cold.delete(key));
   }
 
-  async runSeed<T>(root: string, source: string, copy: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }> {
+  async runSeed<T>(root: string, source: string, copy: () => Promise<T>, opts: { wait?: boolean } = {}): Promise<{ done: true; value: T } | { done: false }> {
     const key = canonicalProjectRoot(root);
-    this.seeds.set(key, root);
+    const entry = this.seeds.get(key) ?? { root, count: 0 };
+    entry.count++;
+    this.seeds.set(key, entry);
     // The job is queued under the worktree but reads `source`'s database, so it is also a job of `source`: the
     // drain of a root being removed (queue.ts whenRootIdle) waits for it. `source` was chosen when the seed was
     // asked for, and the job may wait for minutes: when it starts it asks again, and a source or a target that
@@ -105,7 +108,10 @@ export class BuilderSeedHost implements SeedHost {
       this.opts.fences?.refuseIfRemoving(root);
       return copy();
     };
-    const settled = this.queue.enqueue('seed', root, checked, { alsoRoots: [source] }).finally(() => this.seeds.delete(key));
+    const settled = this.queue.enqueue('seed', root, checked, { alsoRoots: [source] }).finally(() => {
+      if (--entry.count === 0) this.seeds.delete(key);
+    });
+    if (opts.wait === true) return { done: true, value: await settled };
     let timer: NodeJS.Timeout | undefined;
     const waitMs = this.opts.seedWaitMs ?? resolveSeedWaitMs();
     const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), waitMs); });

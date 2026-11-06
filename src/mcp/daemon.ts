@@ -330,8 +330,9 @@ export class Daemon {
     // serialize and starve the MCP transport (clients time out). Read tools run
     // on a worker pool; `CODEGRAPH_QUERY_POOL_SIZE=0` disables it. The engine is
     // rootless: a project is opened when a tool call names it, or, with
-    // `openPinned`, when the registry pins it with an index: at start, and after
-    // each housekeeping pass (with CODEGRAPH_HOUSEKEEPING_INTERVAL_MS=0 a later
+    // `openPinned`, when the registry pins it: at start, and after each housekeeping
+    // pass, seeding an unindexed worktree from an indexed sibling when possible
+    // (with CODEGRAPH_HOUSEKEEPING_INTERVAL_MS=0 a later
     // pin is picked up at the next server start only).
     this.engine = new MCPEngine({ queryPool: true, builder: this.builder, openPinned: true });
   }
