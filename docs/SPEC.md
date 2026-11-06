@@ -145,7 +145,7 @@ On throwaway clones, never live team worktrees, and against a development server
 
 Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.13** (ours
 be5ab360, 2026-11-06, S-57); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
-`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team restarted for new features on 2026-11-06 (R-37).
+`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team is stood down apart from the split-server fix (R-37, S-58).
 
 | Release | What it shipped |
 |---|---|
