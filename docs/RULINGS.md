@@ -405,6 +405,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
   change (`src/upgrade/` is upstream-owned: hook-in edits only, with a fork README row), red tests first for each of
   (2)-(4), the gate, sm.12 promoted and packed, then the hub's first release from it. Installing sm.12 on this
   machine waits for Bob (R-18).
+- Done: 2026-11-04, Orc-Codegraph (#2352; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md): sm.12 (ours
+  4fdda779) carries the fix; the hub's main b1e626cb and release v1.6.2-sm.12 (Latest, the packed build attached).
 
 ## R-33. Install sm.12 when it is ready, with the reconnect script
 - Date: 2026-11-04 12:20 CST / Bob, direct ("install sm.12 and use the script to do the mcp reconnects").
@@ -420,6 +422,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Still binding: R-32 (sm.12 carries the upgrade fix and is the hub's first release), R-21, R-22.
 - Work implied: Orc-Codegraph installs sm.12 when it is packed and reports the version, the checks and any session
   the script could not reach.
+- Done: 2026-11-04 15:30-15:38 CST, Orc-Codegraph (#2352): 1.6.2-sm.12 installed, telemetry off; 39 sessions
+  reconnected, none left; all 8 teams answer with 10 tools; one server (48779) and one builder after a server split
+  during the install, cleared (host findings F-1, F-2, sev 3, in host's todo).
 
 ## R-34. Finish sm.12 and the hub's first release, then stand down
 - Date: 2026-11-04 12:58 CST / Bob, direct ("go. I would like to be done and able to set this work down for awhile
@@ -439,6 +444,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Work implied: Orc-Codegraph drives the in-flight list to done, reports done and the stand-down in one message,
   and the morning check on 2026-11-05 confirms sm.12 is stable (every team answers; no error in the server and
   builder logs since the install) before the lanes go idle for good.
+- Done: 2026-11-04 15:4x, Orc-Codegraph (#2352): the finish list is done and the team stands down. The
+  2026-11-05 09:00 check of sm.12 is in release-gate-sm12.md. The 12-04 hub update is Q-20 for Bob.
 
 ## R-35. Force pushes to the hub are allowed while no one uses it
 - Date: 2026-11-04 13:58 CST / Bob, direct ("no one knows we exist right now you can do whatever you want on your
@@ -456,3 +463,14 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: S-56 while the hub has no outside users.
 - Work implied: upstream-prs publishes sm.12's hub main as the single-parent commit (its c4ac845c has the same tree
   as f65d2441), backs up 900d223b first, and checks behind_by 0 and ahead_by 1.
+
+## R-36. Bob runs the hub's monthly updates himself (answers Q-20); the team halts
+- Date: 2026-11-04 ~17:00 CST / Bob, direct ("I'll handle the updates"; "we can halt your team and I'll run you
+  next week to practice pulling PR's").
+- Question: Q-20: the hub's monthly update falls due 2026-12-04 (S-54) while the team stands down (R-34); run it,
+  or skip it?
+- Ruling: Bob handles the hub's updates; the team does not schedule or run them. The team halts with sm.12
+  installed; Bob runs it next week to practise pulling PRs.
+- Reason: Bob's word.
+- Not chosen: the team running the 12-04 update; skipping it.
+- Supersedes: S-54's "who does it" (Orc-Codegraph and upstream-prs) while Bob handles the updates.
