@@ -20,11 +20,13 @@ cd /Users/bob/devlop/codeteam && patch -p1 -R < <fork>/fleet/rollout/mcp-json.pa
 python3 -I -B <fork>/fleet/rollout/pin-standing.py --undo --log <the pin-standing.log go-live wrote>
 
 # 1. Global install (global-install.md). R-30's rollback target is the previous sm.N (sm.8 today), by the same
-#    steps as global-install.md: install its tarball, check, stop, reconnect, every team answers.
+#    steps as global-install.md: install its tarball, check, wait and clear stale servers, reconnect, every team answers.
 #    --ignore-scripts keeps sm.N's preuninstall from removing every agent's global CodeGraph entry.
 npm install -g --ignore-scripts ~/devlop/team-codegraph/releases/colbymchenry-codegraph-1.6.2-sm.<prev>.tgz
 codegraph --version            # 1.6.2-sm.<prev>
-codegraph daemon --stop        # "Stopped the CodeGraph server (pid P, vX)." (outputs: global-install.md step 4)
+# Follow global-install.md step 4: do not stop the new owner or kill session helpers; wait about 30 s, SIGKILL
+# each detached server of this state directory not named by server.pid, then check one server and one builder
+# (commands and outputs: global-install.md step 4).
 ~/devlop/codeteam/bin/codeteam-type-all --dry-run "/mcp reconnect codegraph"   # who would get it; types nothing
 ~/devlop/codeteam/bin/codeteam-type-all "/mcp reconnect codegraph"             # report who it could not reach
 codegraph daemon               # after the reconnect: pid P  v1.6.2-sm.<prev>  up ...

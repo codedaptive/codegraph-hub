@@ -26,18 +26,31 @@ prints the unsupported-Node banner and exits 1 unless `CODEGRAPH_ALLOW_UNSAFE_NO
 # 1. Pack (any folder; the tarball and a .txt naming its commit land in the out dir).
 cd ~/devlop/team-codegraph/design/codegraph-ours        # or any worktree of the fork
 fleet/pack.sh <N> ours ~/devlop/team-codegraph/releases
-# 2. Swap the global install. Running helpers retain their old version until reconnected; the server may
-#    also remain old. Steps 4 and 5 move sessions without restarting them.
+# 2. Swap the global install. Running helpers retain their old version until reconnected. The old server
+#    detects the install change and exits; steps 4 and 5 move sessions without restarting them.
 npm uninstall -g --ignore-scripts @colbymchenry/codegraph
 npm install -g --ignore-scripts ~/devlop/team-codegraph/releases/colbymchenry-codegraph-1.6.2-sm.<N>.tgz
 # 3. Check.
 codegraph --version            # 1.6.2-sm.<N>, no banner
 npm ls -g --depth=0            # @colbymchenry/codegraph@1.6.2-sm.<N>
-# 4. Stop the old server. A newer -sm.N launcher never replaces an older server itself: isOlderRelease
-#    (src/mcp/version.ts) compares plain MAJOR.MINOR.PATCH only, and a -sm.N version never compares.
-codegraph daemon --stop        # "Stopped the CodeGraph server (pid P, vX)." or "No CodeGraph server running.";
-                               # exit 1 when it did not exit (stop it with the `kill -9 <pid>` printed) or did
-                               # not answer as the server (left running)
+# 4. Do not run `codegraph daemon --stop` after the install. The old server detects the replacement and
+#    exits itself; a new server may already own server.pid, so a stop would hit the new one. Wait about 30 s.
+sleep 30
+#    List detached servers on macOS: their environment carries CODEGRAPH_DAEMON_INTERNAL=1. Session helpers
+#    also run `codegraph.js serve --mcp` but are not detached servers; never kill helpers. This listing includes
+#    process environments, which may contain secrets; do not share its output. Read the owner's JSON lock pid.
+ps -ax -E -o pid= -o command= | grep 'CODEGRAPH_DAEMON_INTERNAL=1' | grep '[c]odegraph.js serve'
+node -e 'console.log(JSON.parse(require("fs").readFileSync(process.env.HOME + "/.codegraph/server.pid", "utf8")).pid)'
+#    If the lock is missing or unreadable, resolve that first; do not guess. Check each listed server's cwd
+#    with `lsof -a -p <pid> -d cwd`: only servers using ~/.codegraph belong to this lock. Do not kill servers
+#    using another state directory. Recheck the lock and list, then `kill -9 <pid>` each server of this state
+#    directory that the lock does not name.
+#    Never use SIGTERM: a stale server's graceful stop can unlink the live server's socket. See `Daemon.stop`
+#    in src/mcp/daemon.ts (the `fs.unlinkSync(this.socketPath)` after `cleanupLockfile()`, lines 482-484
+#    before split-server-fix). Its builder goes with it, though it may finish a job before exiting (sm.13 steps 4 and 8).
+#    Check one server at the installed version and one builder; repeat the process check if needed.
+codegraph daemon               # pid P  v1.6.2-sm.<N>  up ...
+ps -ax -o pid= -o ppid= -o command= | grep '[e]xtensions/host/builder/main.js'
 # 5. Reconnect every running session (codeteam's bin; /mcp reconnect restarts the session's helper from the new
 #    install). It is typed into every session of every team that is up and not HALTED, once its turn has ended,
 #    its box is empty, and it is not on a dialog; busy ones are retried every 20 s for up to --wait minutes
@@ -45,7 +58,7 @@ codegraph daemon --stop        # "Stopped the CodeGraph server (pid P, vX)." or 
 ~/devlop/codeteam/bin/codeteam-type-all --dry-run "/mcp reconnect codegraph"   # who would get it; types nothing
 ~/devlop/codeteam/bin/codeteam-type-all "/mcp reconnect codegraph"             # --teams a,b to limit it
 # 6. Every team answers a codegraph call. Check the server version after reconnecting: helpers start or attach
-#    in the background, not necessarily on a call. An old helper can retry after the stop and launch its own
+#    in the background, not necessarily on a call. An old helper can retry after the server exits and launch its own
 #    entry point, or fall back in-process on a version mismatch; a successful call alone does not prove the
 #    server version. If no server is running, this prints "No CodeGraph server running.".
 codegraph daemon               # pid P  v1.6.2-sm.<N>  up ...
@@ -57,7 +70,7 @@ A failed check at any step rolls back to the previous sm.N by the same steps: `r
 throwaway-prefix test of sm.1 from 835aaa32). No `EBADENGINE`: that ref's `engines` is `node >=20.0.0`.
 
 Each later sm.N+1 is step 1, `npm install -g --ignore-scripts <new tarball>` (no uninstall needed), then steps 3
-to 6: check, stop the old server, reconnect, every team answers.
+to 6: check, wait and clear stale servers, reconnect, every team answers.
 
 ## Who else this reaches
 
