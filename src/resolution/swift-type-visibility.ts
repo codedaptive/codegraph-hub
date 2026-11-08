@@ -136,10 +136,95 @@ export function declaresExtension(lines: readonly string[], node: Pick<Node, 'st
   return DECLARATION_KEYWORD.exec(head)?.[1] === 'extension';
 }
 
-/** A declaration's inheritance clause: `struct HomeView: View, Sendable {` → `View, Sendable`. */
-const INHERITANCE_CLAUSE = /\b(?:class|struct|enum|actor|protocol|extension)\s+[A-Za-z_][\w.]*\s*(?:<[^{}]*?>)?\s*:\s*([^{]*?)\s*(?:\bwhere\b[^{]*)?\{/;
+/** Anchor at the keyword so a nested declaration cannot supply the inheritance clause. */
+const INHERITANCE_CLAUSE = /^(?:class|struct|enum|actor|protocol|extension)\s+[A-Za-z_][\w.]*\s*(?:<[^{}]*?>)?\s*:\s*([^{]*?)\s*(?:\bwhere\b[^{]*)?\{/;
 
-/** The supertypes a Swift type node's own declaration names: `View`, `Sendable` for `struct HomeView: View, Sendable {`. */
+function swiftHeadBlockCommentEnd(text: string, at: number): number {
+  let depth = 1;
+  while (at < text.length) {
+    if (text.startsWith('/*', at)) {
+      depth++;
+      at += 2;
+    } else if (text.startsWith('*/', at)) {
+      at += 2;
+      if (--depth === 0) return at;
+    } else {
+      at++;
+    }
+  }
+  return text.length;
+}
+
+function swiftHeadStringEnd(text: string, at: number, quotes: string, hashes: string): number {
+  const closing = quotes + hashes;
+  const escape = `\\${hashes}`;
+  while (at < text.length) {
+    if (text.startsWith(closing, at)) return at + closing.length;
+    if (text.startsWith(escape, at)) at += escape.length + 1;
+    else at++;
+  }
+  return text.length;
+}
+
+/** Blank strings and comments in source order so comment markers inside strings stay inside strings. */
+function blankSwiftHead(text: string): string {
+  const blanked = text.split('');
+  for (let at = 0; at < text.length;) {
+    let end: number;
+    if (text.startsWith('//', at)) {
+      end = text.indexOf('\n', at);
+      if (end < 0) end = text.length;
+    } else if (text.startsWith('/*', at)) {
+      end = swiftHeadBlockCommentEnd(text, at + 2);
+    } else {
+      const opening = /^(#*)("""|")/.exec(text.slice(at));
+      if (!opening) {
+        at++;
+        continue;
+      }
+      end = swiftHeadStringEnd(text, at + opening[0].length, opening[2] ?? '', opening[1] ?? '');
+    }
+    blanked.fill(' ', at, end);
+    at = end;
+  }
+  return blanked.join('');
+}
+
+/** Skip an attribute or modifier argument, including closures and collection literals inside it. */
+function swiftHeadArgumentEnd(text: string, at: number): number {
+  let depth = 0;
+  for (; at < text.length; at++) {
+    if ('([{'.includes(text.charAt(at))) depth++;
+    if (')]}'.includes(text.charAt(at)) && --depth === 0) return at + 1;
+  }
+  return text.length;
+}
+
+function swiftHeadKeywordStart(text: string): number {
+  for (let at = 0; at < text.length;) {
+    const word = /^\s*(@[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|[A-Za-z_]\w*)/.exec(text.slice(at));
+    if (!word) return -1;
+    const token = word[1] ?? '';
+    at += word[0].length;
+    if (!token.startsWith('@') && DECLARATION_KEYWORD.test(token)) return at - token.length;
+    while (/\s/.test(text.charAt(at))) at++;
+    if (text[at] === '(') at = swiftHeadArgumentEnd(text, at);
+  }
+  return -1;
+}
+
+/** Only the type's head: nested declarations and braces inside bracketed arguments are not body openers. */
+function swiftDeclarationHead(text: string): string {
+  const start = swiftHeadKeywordStart(text);
+  if (start < 0) return '';
+  for (let at = start; at < text.length; at++) {
+    if (text[at] === '{') return text.slice(start, at + 1);
+    if (text[at] === '(' || text[at] === '[') at = swiftHeadArgumentEnd(text, at) - 1;
+  }
+  return '';
+}
+
+/** Supertypes from the node's own bounded declaration head, past attributes, modifiers, strings and comments. */
 function declaredSupertypes(node: Node, context: ResolutionContext): string[] {
   const memo = memoFor(context).clauses;
   const hit = memo.get(node.id);
@@ -147,8 +232,9 @@ function declaredSupertypes(node: Node, context: ResolutionContext): string[] {
   let names: string[] = [];
   const lines = linesOf(node.filePath, context);
   if (lines) {
-    const head = [(lines[node.startLine - 1] ?? '').slice(node.startColumn), ...lines.slice(node.startLine, Math.min(node.endLine, node.startLine + 6))].join(' ');
-    const clause = INHERITANCE_CLAUSE.exec(head.replace(/"(?:[^"\\\n]|\\.)*"/g, '""'))?.[1];
+    // KNOWN LIMIT: only the type's first 7 lines are read; a head whose `{` lies beyond them yields no supertypes.
+    const head = [(lines[node.startLine - 1] ?? '').slice(node.startColumn), ...lines.slice(node.startLine, Math.min(node.endLine, node.startLine + 6))].join('\n');
+    const clause = INHERITANCE_CLAUSE.exec(swiftDeclarationHead(blankSwiftHead(head)))?.[1];
     if (clause) {
       names = clause
         .split(',')
@@ -161,13 +247,11 @@ function declaredSupertypes(node: Node, context: ResolutionContext): string[] {
 }
 
 /**
- * The types a Swift type node's own declaration conforms to that the project
- * only extends — `View` for `struct HomeView: View` when `extension View {}`
- * is all the index holds of it. Those conformances resolve to nothing (an
- * extension is not the type), yet the members the extensions add are the
- * conformer's: getSupertypes' walk (the conformance pass) reads them from
- * here. From the source, once per node — the resolved edges it would
- * otherwise come from do not exist.
+ * The names in a Swift node's own inheritance clause for which the index has
+ * Swift type nodes but only extensions — `View` for `struct HomeView: View`
+ * when `extension View {}` is all the index holds of it. An extension is not
+ * the type, but its members can still be inherited: getSupertypes' walk reads
+ * these names from source, memoized per node, because resolved edges may be absent.
  */
 export function swiftExtendedConformances(node: Node, context: ResolutionContext): string[] {
   if (node.language !== 'swift') return [];
