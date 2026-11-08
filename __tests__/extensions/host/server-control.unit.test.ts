@@ -23,6 +23,7 @@ import { getStateDir } from '../../../src/extensions/host/server/state-dir';
 import { installFirmlinkAlias } from './firmlink-alias';
 import { encodeServerLock, getServerPidPath, getServerSocketCandidates, getServerSocketPath, type ServerLockInfo } from '../../../src/mcp/daemon-paths';
 import { tryAcquireDaemonLock } from '../../../src/mcp/daemon';
+import * as serverControl from '../../../src/mcp/server-control';
 import {
   isProcessAlive,
   namesThisStateDir,
@@ -251,6 +252,76 @@ describe.runIf(process.platform !== 'win32')('one state dir reached by two spell
     } finally {
       fs.rmSync(copy, { recursive: true, force: true });
     }
+  });
+});
+
+type ServerStatus =
+  | { state: 'running'; info: ServerLockInfo }
+  | { state: 'busy'; info: ServerLockInfo }
+  | { state: 'not-running' };
+
+function probeStatus(): Promise<ServerStatus> {
+  const probe = (serverControl as unknown as { probeServerStatus?: () => Promise<ServerStatus> }).probeServerStatus;
+  expect(probe, 'probeServerStatus must be exported').toBeTypeOf('function');
+  return probe!();
+}
+
+describe('probeServerStatus', () => {
+  it('reports a silent connected holder as busy with its lock', async () => {
+    fake = await startFakeServer({ hello: null });
+    const written = writeLock({ pid: process.pid, socketPath: fake.socketPath });
+    expect(await probeStatus()).toEqual({ state: 'busy', info: written });
+  });
+
+  it('reports a matching hello as running with its lock', async () => {
+    fake = await startFakeServer({ hello: { codegraph: '1.0.0', pid: process.pid, protocol: 1 } });
+    const written = writeLock({ pid: process.pid, socketPath: fake.socketPath });
+    expect(await probeStatus()).toEqual({ state: 'running', info: written });
+  });
+
+  it('reports not-running without a lock', async () => {
+    expect(await probeStatus()).toEqual({ state: 'not-running' });
+  });
+
+  it('reports not-running when the lock socket has no listener', async () => {
+    writeLock({ pid: process.pid });
+    expect(await probeStatus()).toEqual({ state: 'not-running' });
+  });
+
+  it('reports not-running for a hello naming another pid', async () => {
+    fake = await startFakeServer({ hello: { codegraph: '1.0.0', pid: process.pid + 1, protocol: 1 } });
+    writeLock({ pid: process.pid, socketPath: fake.socketPath });
+    expect(await probeStatus()).toEqual({ state: 'not-running' });
+  });
+
+  it('reports not-running for a hello naming another version', async () => {
+    fake = await startFakeServer({ hello: { codegraph: '9.9.9', pid: process.pid, protocol: 1 } });
+    writeLock({ pid: process.pid, socketPath: fake.socketPath });
+    expect(await probeStatus()).toEqual({ state: 'not-running' });
+  });
+
+  it('reports not-running for a lock naming another state dir', async () => {
+    writeLock({ pid: process.pid, stateId: 'another-dir:1' });
+    expect(await probeStatus()).toEqual({ state: 'not-running' });
+  });
+
+  it('reports not-running for a dead pid', async () => {
+    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    const pid = dead.pid!;
+    await new Promise((resolve) => dead.once('exit', resolve));
+    writeLock({ pid });
+    expect(await probeStatus()).toEqual({ state: 'not-running' });
+  });
+
+  it('throws for a relative state dir', async () => {
+    process.env.CODEGRAPH_STATE_DIR = 'relative/state';
+    await expect(probeStatus()).rejects.toThrow(/absolute path/);
+  });
+
+  it('keeps probeServer null for a silent connected holder', async () => {
+    fake = await startFakeServer({ hello: null });
+    writeLock({ pid: process.pid, socketPath: fake.socketPath });
+    expect(await probeServer()).toBeNull();
   });
 });
 

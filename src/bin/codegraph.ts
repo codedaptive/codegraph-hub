@@ -2198,8 +2198,8 @@ function printFileTree(
 /**
  * codegraph daemon [--stop] — the one machine server of this state dir
  * (`~/.codegraph`, or `CODEGRAPH_STATE_DIR`): show its pid, version, uptime,
- * socket and state dir, or stop it. Non-interactive: there is one server, so
- * there is nothing to pick.
+ * socket and state dir, report a silent connected server as busy, or stop it.
+ * Non-interactive: there is one server, so there is nothing to pick.
  */
 program
   .command('daemon')
@@ -2208,7 +2208,7 @@ program
   .option('--stop', 'Stop the server (clients reconnect and start a fresh one)')
   .action(async (options: { stop?: boolean }) => {
     try {
-      const { probeServer, stopServer } = await import('../mcp/server-control');
+      const { probeServerStatus, stopServer } = await import('../mcp/server-control');
 
       if (options.stop) {
         const stop = await stopServer();
@@ -2231,12 +2231,17 @@ program
         return;
       }
 
-      const server = await probeServer();
-      if (!server) {
+      const status = await probeServerStatus();
+      if (status.state === 'not-running') {
         info('No CodeGraph server running.');
         return;
       }
-      console.log(`pid ${server.pid}  v${server.version}  up ${formatDuration(Date.now() - server.startedAt)}`);
+      const server = status.info;
+      if (status.state === 'busy') {
+        info(`CodeGraph server running but busy (pid ${server.pid}, v${server.version}): it accepted the connection and sent no hello within 1 s.`);
+      } else {
+        console.log(`pid ${server.pid}  v${server.version}  up ${formatDuration(Date.now() - server.startedAt)}`);
+      }
       console.log(`socket: ${server.socketPath}`);
       console.log(`state dir: ${server.stateDir}`);
     } catch (err) {

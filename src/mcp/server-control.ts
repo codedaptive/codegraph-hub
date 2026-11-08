@@ -22,6 +22,7 @@ import {
   decodeServerLock,
   getServerPidPath,
   getServerSocketCandidates,
+  probeServerHello,
   probeServerIdentity,
   type ServerLockInfo,
 } from './daemon-paths';
@@ -85,16 +86,37 @@ function judgeLock(raw: string): ServerLockInfo | null {
   return info !== null && namesThisStateDir(info) ? info : null;
 }
 
+export type ServerStatus =
+  | { state: 'running'; info: ServerLockInfo }
+  | { state: 'busy'; info: ServerLockInfo }
+  | { state: 'not-running' };
+
+/**
+ * Status of this state dir's server lock. A matching hello proves the server
+ * is running. Busy is inconclusive, not identity proof: the lock names a live
+ * pid and its socket accepts the connection but sends no bytes through the
+ * hello timeout. No valid lock, a dead pid or a mismatched hello means
+ * not-running.
+ */
+export async function probeServerStatus(): Promise<ServerStatus> {
+  const info = readServerLock();
+  if (info === null || !isProcessAlive(info.pid)) return { state: 'not-running' };
+  switch (await probeServerHello(info)) {
+    case 'match': return { state: 'running', info };
+    case 'no-answer': return { state: 'busy', info };
+    case 'mismatch': return { state: 'not-running' };
+  }
+}
+
 /**
  * The server of this state dir, proven alive: the lock's pid is a live process
  * and its socket hello names that pid and the lock's version. Null when there
- * is no lock, the process is gone, or it does not answer as the server (a
- * reused pid, a server partway through shutdown).
+ * is no lock, the process is gone, or it does not answer as the server,
+ * including an inconclusive silent connection.
  */
 export async function probeServer(): Promise<ServerLockInfo | null> {
-  const info = readServerLock();
-  if (info === null || !isProcessAlive(info.pid)) return null;
-  return await probeServerIdentity(info) ? info : null;
+  const status = await probeServerStatus();
+  return status.state === 'running' ? status.info : null;
 }
 
 /**

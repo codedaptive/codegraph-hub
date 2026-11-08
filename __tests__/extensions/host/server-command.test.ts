@@ -34,15 +34,15 @@ function run(args: string[], env: Record<string, string> = {}): Promise<{ code: 
   });
 }
 
-/** Bind the state dir's socket in a child that answers the hello as `version`, and write its lock. */
-async function startStandInServer(version: string): Promise<number> {
+/** Bind the state dir's socket in a child, optionally answer the hello as `version`, and write its lock. */
+async function startStandInServer(version: string, silent = false): Promise<number> {
   const socketPath = path.join(stateDir, 'server.sock');
   const source = [
     "const net = require('net');",
     'const [sock, version] = process.argv.slice(1);',
     'net.createServer((c) => {',
     "  c.on('error', () => {});",
-    "  c.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath: sock, protocol: 1 }) + '\\n');",
+    ...(silent ? [] : ["  c.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath: sock, protocol: 1 }) + '\\n');"]),
     "}).listen(sock, () => console.log('ready'));",
   ].join('\n');
   child = spawn(process.execPath, ['-e', source, socketPath, version], { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -90,6 +90,18 @@ describe('codegraph daemon', () => {
     expect(result.stdout).toContain(`state dir: ${stateDir}`);
     expect(isProcessAlive(pid)).toBe(true);
   });
+
+  // slow: a child and the built CLI start, then the hello times out; 7.9 s in the file run at load ~110 on 18 cores.
+  it('reports a silent connected server as running but busy', async () => {
+    const pid = await startStandInServer(CodeGraphPackageVersion, true);
+    const result = await run(['daemon']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`CodeGraph server running but busy (pid ${pid}, v${CodeGraphPackageVersion})`);
+    expect(result.stdout).toContain(`socket: ${path.join(stateDir, 'server.sock')}`);
+    expect(result.stdout).toContain(`state dir: ${stateDir}`);
+    expect(result.stdout).not.toContain('No CodeGraph server running.');
+    expect(isProcessAlive(pid)).toBe(true);
+  }, 90_000);
 
   // Own timeout. It runs two CLI invocations (each re-execs the built CLI once) and a
   // stand-in server. Measured on 18 CPUs at 1-minute load average ~106-115: 20.5 s alone;
