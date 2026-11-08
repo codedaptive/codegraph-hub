@@ -487,3 +487,18 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-36's halt (R-36's hub updates by Bob stand).
 - Corrected 2026-11-06 (Orc #2416): "the team restarts for new features" was Orc's misreading of Bob, who was shutting
   herdr down; no new features are asked for (Q-22 withdrawn). The split-server fix stands (S-58, Bob's own words).
+
+## R-38. Catch up with upstream, then work the bug list
+- Date: 2026-11-08 / Bob, direct to Orc-Codegraph ("Check with upstream, catch up and then work your bug list"),
+  relayed in #2433.
+- Question: with the team stood down apart from the split-server fix (R-37 as corrected), what work runs now?
+- Ruling: first, catch up with upstream: upstream main is f72c9d2e (git ls-remote, 2026-11-08), already in ours
+  since sm.11 (its patch reverse-applies cleanly on ours d4de680e), so the catch-up is done with no merge. Then the
+  lanes work their bug list, as Orc-Codegraph routed it (#2429-#2432): resolution swift-member-decl-copy and
+  swift-nested-supertypes; queries tool-desc-fixes (Kong K-F4, K-F6); fleet install-runbook-sigkill; host
+  seed-locked-retry, upgrade-version-validate, hub-release-comments and host-test-flakes. Bug fixes only, no new
+  features. split-server-fix still ships alone as sm.14, and R-37's hold on src/mcp/index.ts, src/mcp/daemon.ts
+  and src/mcp/daemon-paths.ts stands while it is open. Installing any release still needs Bob's go-ahead (R-18).
+- Reason: Bob's word.
+- Not chosen: new features (none asked for: R-37's correction); folding the bug fixes into sm.14.
+- Supersedes: the stand-down left by R-37, for bug fixes.
