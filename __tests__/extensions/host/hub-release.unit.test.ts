@@ -2,8 +2,8 @@
  * The hub's release helpers (src/extensions/host/hub-release/) and the `-sm.N` version order they feed into
  * `compareVersions` / `isUpdateAvailable` in src/upgrade/index.ts.
  *
- * The fork ships as `1.6.2-sm.N` prereleases of codedaptive/codegraph-hub. Before the hub-release module, two
- * prereleases compared as plain text, so `1.6.2-sm.9` sorted after `1.6.2-sm.11` and an sm.11 install was offered sm.9
+ * The fork ships as `1.6.2-sm.N` versions of codedaptive/codegraph-hub. Before the hub-release module, two
+ * versions compared as plain text, so `1.6.2-sm.9` sorted after `1.6.2-sm.11` and an sm.11 install was offered sm.9
  * as an update. The order here is semver's (§11): dot-separated identifiers, all-digit ones compared as numbers, numeric
  * below alphanumeric, ASCII otherwise, and a longer set above a shorter one it extends.
  *

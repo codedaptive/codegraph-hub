@@ -6,7 +6,7 @@ export function hubReleaseTag(version: string): string {
   return `v${version.trim().replace(/^v/, '')}`;
 }
 
-/** The asset name matches the tarball produced by fleet/pack.sh. */
+/** The asset name matches the packed build attached to the release. */
 export function hubReleaseAssetUrl(version: string): string {
   const tag = hubReleaseTag(version);
   return `https://github.com/${HUB_REPO}/releases/download/${tag}/colbymchenry-codegraph-${tag.slice(1)}.tgz`;
