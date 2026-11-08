@@ -863,7 +863,7 @@ function memberTypePath(member: Node, context: ResolutionContext): string | null
  */
 const SUPERTYPE_KINDS: ReadonlySet<Node['kind']> = new Set<Node['kind']>(['class', 'interface', 'protocol']);
 
-/** The nodes of the type `decl` declares at `path`: `decl` and every `extension` of it, in any file. */
+/** `decl` and every Swift extension matching its `path`, in any file; same-path copies are not distinguished here. */
 function typeNodesAt(decl: Node, path: string, context: ResolutionContext): Node[] {
   const nodes = [decl];
   for (const n of context.getNodesByName(decl.name)) {
@@ -939,7 +939,8 @@ export function swiftExtensionOnlyNames(context: ResolutionContext): string[] {
  *   members). A raw type outside that list (a project type expressible by a
  *   literal) the project only extends is still walked as a supertype.
  *
- * Every supertype is visited once, so an inheritance cycle ends the walk.
+ * Each supertype path is visited once, so an inheritance cycle ends the walk;
+ * if multiple declarations share a path, the first reached supplies its nodes.
  */
 function swiftSupertypeChain(roots: readonly Node[], path: string, context: ResolutionContext): Map<string, Node[]> {
   const chain = new Map<string, Node[]>();
@@ -984,9 +985,13 @@ function chainKey(owner: string, chain: ReadonlyMap<string, Node[]>, context: Re
 
 /**
  * Does an indexed member match `decl`'s type at `path` (filtered to its copy
- * by ofDeclaration), or the owner path of a project supertype or protocol?
- * The latter match is by path alone, not by declaration copy. A member of a type
- * nested in it is not its member: `Tool.Inner.main` is no `Tool.main`. A case
+ * by ofDeclaration), or a project supertype or protocol's copy reached by
+ * the chain? ofDeclaration also filters the latter, so a member in a different
+ * copy's body does not suppress the receiver's external-member edge. Extension
+ * ownership is estimated by directory proximity; ties count for both copies.
+ * An extension-only supertype matches by path, since it has no project
+ * declaration to select. A member of a type nested in it is not its
+ * member: `Tool.Inner.main` is no `Tool.main`. A case
  * whose name is a keyword is indexed with its backticks (`` case `in`(…) ``
  * is `` `in` ``) while the call names it bare (`StoragePredicate.in(…)`), so
  * both spellings are asked.
@@ -1004,7 +1009,13 @@ function declaresMember(decl: Node, path: string, member: string, context: Resol
       return ofDeclaration([n], decl, projectTypes, path, context).length > 0;
     }
     chain ??= swiftSupertypeChain(typeNodesAt(decl, path, context), path, context);
-    return chainKey(owner, chain, context) !== undefined;
+    const key = chainKey(owner, chain, context);
+    if (key === undefined) return false;
+    const supDecl = chain.get(key)!.find((t) => !isSwiftExtension(t, context));
+    if (!supDecl) return true;
+    const supertypeCopies = context.getNodesByName(supDecl.name)
+      .filter((t) => t.language === 'swift' && TYPE_KINDS.has(t.kind) && !isSwiftExtension(t, context));
+    return ofDeclaration([n], supDecl, supertypeCopies, key, context).length > 0;
   }));
 }
 
@@ -1301,7 +1312,8 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  * - it is not a `typealias`: the index does not hold what an alias names, so
  *   whether that type declares the member cannot be told;
  * - and declaresMember finds no matching indexed member on the selected copy
- *   or at a project supertype or protocol's owner path.
+ *   or the supertype or protocol copy the chain reaches (by owner path alone
+ *   for an extension-only supertype).
  *
  * Every rule here can only suppress an edge; none aims one anywhere but the
  * receiver's own declaration.
