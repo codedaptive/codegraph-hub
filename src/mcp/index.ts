@@ -58,7 +58,7 @@ import { CodeGraphPackageVersion } from './version';
 import {
   getServerLogPath,
   getServerSocketCandidates,
-  probeServerIdentity,
+  probeServerHello,
 } from './daemon-paths';
 import { ensureStateDir } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
@@ -592,8 +592,8 @@ export class MCPServer {
         return; // the net.Server keeps the process alive
       }
 
-      // Taken. If the holder is alive, another server already serves (or is
-      // binding) — we're redundant; exit cleanly so the launcher proxies to it.
+      // Taken. Check the live holder's state directory and, after startup grace,
+      // its hello before deciding whether to defer or attempt takeover.
       const existing = lock.existing;
       let disprovedLiveIdentity = false;
       if (existing && existing.pid > 0 && isProcessAlive(existing.pid)) {
@@ -603,24 +603,36 @@ export class MCPServer {
         // server's own lock, reached through another spelling of this dir (a macOS
         // firmlink, a bind mount), names the same identity and is not a copy's.
         const copied = !namesThisStateDir(existing);
-        // Give a newly-elected server time to bind, then require its socket hello
-        // to match the lock PID/version. PID existence alone accepts an unrelated
-        // process after OS PID reuse and permanently wedges startup (#1553).
+        // Give a newly-elected server time to bind, then check its socket hello
+        // against the lock PID/version. PID existence alone accepts an unrelated
+        // process after OS PID reuse (#1553), but silence after connecting is
+        // inconclusive: leave a busy holder to its own liveness watchdog.
         const age = Date.now() - existing.startedAt;
         const startupGraceMs = 10_000;
         const stillStarting = existing.startedAt > 0 && age >= 0 && age < startupGraceMs;
-        if (!copied && (stillStarting || await probeServerIdentity(existing))) {
-          process.stderr.write(
-            `[CodeGraph daemon] Another server (pid ${existing.pid}) already holds the lock; exiting.\n`
-          );
-          process.exit(0);
+        if (!copied) {
+          const answer = stillStarting ? 'match' : await probeServerHello(existing);
+          if (answer === 'match') {
+            process.stderr.write(
+              `[CodeGraph daemon] Another server (pid ${existing.pid}) already holds the lock; exiting.\n`
+            );
+            process.exit(0);
+          }
+          if (answer === 'no-answer') {
+            process.stderr.write(
+              `[CodeGraph daemon] The holder (pid ${existing.pid}) is alive but did not answer its hello in time; ` +
+              'leaving it to its own liveness watchdog; exiting.\n'
+            );
+            process.exit(0);
+          }
         }
         disprovedLiveIdentity = true;
       }
 
-      // The holder is dead, the record is unreadable, or a completed socket hello
-      // (or a foreign state dir) disproved a live PID's identity. Revalidate the
-      // exact record and retry the acquire only after cleanup succeeds safely.
+      // The holder is dead, the record is unreadable, or a failed connection,
+      // invalid/closed hello, or foreign state dir disproved a live PID's identity.
+      // A connected timeout is not disproof. Revalidate the exact record and retry
+      // the acquire only after cleanup succeeds safely.
       if (lock.lockContents !== null) {
         clearStaleDaemonLock(lock.pidPath, existing?.pid, {
           expectedLockContents: lock.lockContents,

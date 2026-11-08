@@ -163,62 +163,75 @@ export interface ServerLockInfo {
   stateId: string;
 }
 
+export type ServerHelloAnswer = 'match' | 'mismatch' | 'no-answer';
+
 /**
- * Verify that the process named by a lockfile is the CodeGraph server serving
+ * Probe whether the process named by a lockfile is the CodeGraph server serving
  * its socket. A bare PID liveness probe is insufficient because OSes reuse PIDs
  * after an OOM/SIGKILL (#1553): the server's immediate hello must name this pid
  * and exactly this version. No version string is a wildcard: the server writes
  * the lock and the hello from one value, even the "0.0.0-unknown" fallback of
- * src/mcp/version.ts, so equality covers it.
+ * src/mcp/version.ts, so equality covers it. Only a timeout after connecting
+ * with zero bytes received is inconclusive ('no-answer'); a partial line is
+ * a mismatch.
  */
-export function probeServerIdentity(info: ServerLockInfo, timeoutMs = 1_000): Promise<boolean> {
+export function probeServerHello(info: ServerLockInfo, timeoutMs = 1_000): Promise<ServerHelloAnswer> {
   if (
     !Number.isInteger(info.pid) || info.pid <= 0 ||
     typeof info.socketPath !== 'string' || info.socketPath.length === 0
   ) {
-    return Promise.resolve(false);
+    return Promise.resolve('mismatch');
   }
-  return new Promise<boolean>((resolve) => {
+  return new Promise<ServerHelloAnswer>((resolve) => {
     let socket: net.Socket;
-    let buffer = '';
+    let buffer = Buffer.alloc(0);
+    let connected = false;
     let done = false;
-    const finish = (ok: boolean) => {
+    const finish = (answer: ServerHelloAnswer) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(ok);
+      resolve(answer);
     };
-    const timer = setTimeout(() => finish(false), timeoutMs);
+    const timer = setTimeout(() => finish(connected && buffer.length === 0 ? 'no-answer' : 'mismatch'), timeoutMs);
     timer.unref?.();
     try {
       socket = net.createConnection(info.socketPath);
     } catch {
       clearTimeout(timer);
-      resolve(false);
+      resolve('mismatch');
       return;
     }
-    socket.setEncoding('utf8');
-    socket.on('data', (chunk) => {
-      buffer += String(chunk);
-      // Bounds the read: a server hello is a few hundred bytes at most; more is not our server.
-      if (buffer.length > 4096) return finish(false);
+    socket.on('connect', () => { connected = true; });
+    socket.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      // Bound all buffered bytes before inspecting even a completed hello line.
+      if (buffer.length > 4096) {
+        finish('mismatch');
+        return;
+      }
       const newline = buffer.indexOf('\n');
       if (newline < 0) return;
       try {
-        const hello = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>;
+        const hello = JSON.parse(buffer.subarray(0, newline).toString('utf8')) as Record<string, unknown>;
         finish(
           hello.protocol === 1 &&
           hello.pid === info.pid &&
-          hello.codegraph === info.version
+          hello.codegraph === info.version ? 'match' : 'mismatch'
         );
       } catch {
-        finish(false);
+        finish('mismatch');
       }
     });
-    socket.on('error', () => finish(false));
-    socket.on('close', () => finish(false));
+    socket.on('error', () => finish('mismatch'));
+    socket.on('close', () => finish('mismatch'));
   });
+}
+
+/** Return true only for a matching hello; an inconclusive timeout remains false. */
+export async function probeServerIdentity(info: ServerLockInfo, timeoutMs = 1_000): Promise<boolean> {
+  return (await probeServerHello(info, timeoutMs)) === 'match';
 }
 
 /**
