@@ -12,7 +12,7 @@
  * waitForFresh's bound, lock retry and failure paths run against a stub
  * CheckpointSource.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -322,9 +322,8 @@ describe('computeUncommittedHash: filenames round-trip to their own blobs', () =
 });
 
 /**
- * A gate a stub sync awaits. It stays closed until the test calls `release`, so a sync the test
- * describes as still running is still running by construction, whatever the machine's load. The test
- * calls `release` only after the assertions that need the sync running.
+ * A promise gate opened by `release`, without a timer. Tests use it to signal sync entry
+ * and to hold sync completion until assertions that need the sync running have finished.
  */
 function makeGate(): { gate: Promise<void>; release: () => void } {
   let release!: () => void;
@@ -339,12 +338,11 @@ function makeGate(): { gate: Promise<void>; release: () => void } {
  */
 describe('waitForFresh against a stub source: the bound, lock retry, and a real failure', () => {
   /**
-   * The wait's bound in the tests that time out: short, so they stay fast. Nothing else depends on its
-   * size: the sync that loses the race waits on a gate, not on a timer.
+   * Timeout tests advance the fake clock by this bound only after the stub sync signals it has started.
+   * This keeps a thread stall before sync from consuming the bound; the sync stays pending until after
+   * the timeout assertions, either indefinitely or on a gate the test releases.
    */
   const BOUND_MS = 100;
-  /** Node may fire a timer up to ~1 ms early by Date.now(), which waitedMs is measured with. */
-  const TIMER_SLACK_MS = 2;
   /** The pause between lock retries: small, so the retry tests stay fast. */
   const POLL_MS = 10;
   /** A bound the retry and failure tests never reach; reaching it would fail them on timedOut. */
@@ -352,6 +350,7 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
 
   const dirs: string[] = [];
   afterEach(() => {
+    vi.useRealTimers();
     for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
   });
 
@@ -371,14 +370,24 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
   }
 
   it('a sync still running when the bound passes ends the wait timed out, not fresh', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const { gate: started, release: markStarted } = makeGate();
     let calls = 0;
-    const src = stubSource(() => { calls++; return new Promise<never>(() => { /* never settles */ }); });
-    const out = await waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
+    const src = stubSource(() => {
+      markStarted();
+      calls++;
+      return new Promise<never>(() => { /* never settles */ });
+    });
+    const waiting = waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
+    await started;
+    vi.advanceTimersByTime(BOUND_MS);
+    const out = await waiting;
+    vi.useRealTimers();
     expect(out.timedOut).toBe(true);
     expect(out.fresh).toBe(false);
     expect(out.pending).toBe(1);
     expect(out.syncError).toBeUndefined();
-    expect(out.waitedMs).toBeGreaterThanOrEqual(BOUND_MS - TIMER_SLACK_MS);
+    expect(out.waitedMs).toBe(BOUND_MS);
     expect(calls).toBe(1);
   });
 
@@ -387,18 +396,25 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
     const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
     process.on('unhandledRejection', onUnhandled);
     try {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      const { gate: started, release: markStarted } = makeGate();
       let rejected = false;
       // The sync holds at `gate` until the test releases it, after the "not yet rejected" assertion.
       const { gate, release } = makeGate();
       // Opens just before the sync throws, so the test can wait for the rejection without a timer.
       const { gate: rejecting, release: markRejecting } = makeGate();
       const src = stubSource(async () => {
+        markStarted();
         await gate;
         rejected = true;
         markRejecting();
         throw new Error('late failure');
       });
-      const out = await waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
+      const waiting = waitForFresh(src, { timeoutMs: BOUND_MS, sync: src.sync });
+      await started;
+      vi.advanceTimersByTime(BOUND_MS);
+      const out = await waiting;
+      vi.useRealTimers();
       expect(out.timedOut).toBe(true);
       expect(out.syncError).toBeUndefined();
       expect(rejected).toBe(false);
@@ -452,18 +468,18 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
  * waitForFreshTracked: the same wait, plus `settled`, which resolves once no
  * sync the wait started is still running. Same stub shape as the block above.
  *
- * The stub sync does not sleep: it awaits a gate the test opens itself, and
- * the test opens it only after its "still pending" assertions. A real sleep
- * raced the probe under load (a stall longer than the sleep let the sync
- * finish before the assertions ran); the gate keeps the same claim, that the
- * sync has not finished when the wait's bound passes, by construction.
+ * The test waits for the stub sync's started gate before advancing the fake
+ * clock to the bound, so a thread stall cannot time out the wait before sync
+ * starts. The sync awaits a completion gate opened only after the "still pending"
+ * assertions. Real timers are restored before probes that wait a macrotask.
  */
 describe('waitForFreshTracked against a stub source: settled follows the sync that lost the race', () => {
-  /** The wait's bound: short, but far above timer granularity. */
+  /** The amount of fake time that expires the wait after the sync starts. */
   const BOUND_MS = 50;
 
   const dirs: string[] = [];
   afterEach(() => {
+    vi.useRealTimers();
     for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
   });
 
@@ -488,10 +504,16 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
   }
 
   it('settled is pending when the wait times out and resolves once the late sync resolves', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const { gate: started, release: markStarted } = makeGate();
     let syncDone = false;
     const { gate, release } = makeGate();
-    const src = stubSource(async () => { await gate; syncDone = true; });
-    const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
+    const src = stubSource(async () => { markStarted(); await gate; syncDone = true; });
+    const waiting = waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
+    await started;
+    vi.advanceTimersByTime(BOUND_MS);
+    const { checkpoint, settled } = await waiting;
+    vi.useRealTimers();
     expect(checkpoint.timedOut).toBe(true);
     expect(checkpoint.fresh).toBe(false);
     expect(syncDone).toBe(false);
@@ -506,14 +528,21 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
     const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
     process.on('unhandledRejection', onUnhandled);
     try {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      const { gate: started, release: markStarted } = makeGate();
       let rejected = false;
       const { gate, release } = makeGate();
       const src = stubSource(async () => {
+        markStarted();
         await gate;
         rejected = true;
         throw new Error('late failure');
       });
-      const { checkpoint, settled } = await waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
+      const waiting = waitForFreshTracked(src, { timeoutMs: BOUND_MS, sync: src.sync });
+      await started;
+      vi.advanceTimersByTime(BOUND_MS);
+      const { checkpoint, settled } = await waiting;
+      vi.useRealTimers();
       expect(checkpoint.timedOut).toBe(true);
       expect(checkpoint.syncError).toBeUndefined();
       expect(rejected).toBe(false);

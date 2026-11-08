@@ -455,6 +455,11 @@ describe('query pool idle retirement (real workers)', () => {
     engine = new BuiltEngine({ watch: false, queryPool: true });
     pool = (engine as unknown as { queryPool: QueryPool | null }).queryPool;
     expect(pool).not.toBeNull();
+    // Hold retirement: under load the 500 ms idle timer can race both the
+    // live-worker count and the fd snapshot after the burst.
+    const retirement = pool as unknown as { retireIdle(): void };
+    const retireIdle = retirement.retireIdle;
+    retirement.retireIdle = () => {};
     await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 15000 });
     const handler = engine.getToolHandler();
     await handler.execute('codegraph_status', { projectPath: alpha }, undefined, ADMIT_ALL);
@@ -478,6 +483,9 @@ describe('query pool idle retirement (real workers)', () => {
     const [alphaWal, betaWal] = [alpha, beta].map((r) => path.join(fs.realpathSync(path.join(r, '.codegraph')), 'codegraph.db-wal'));
     const totalAfterBurst = HAS_LSOF ? openFdCount([alphaWal, betaWal]) : 0;
 
+    // Resume through the pool's own retirement path, which re-arms any remaining deadline.
+    retirement.retireIdle = retireIdle;
+    retirement.retireIdle();
     await vi.waitFor(() => expect(pool!.liveWorkers).toBe(1), { timeout: 15000 });
     expect(pool!.healthy).toBe(true);
     expect(pool!.ready).toBe(true);
