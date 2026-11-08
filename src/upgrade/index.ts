@@ -27,6 +27,7 @@ import * as https from 'https';
 import { spawnSync } from 'child_process';
 import { ansiColorsEnabled } from '../ui/color';
 import { HUB_REPO, comparePrerelease, hubNpmInstallArgs, hubManualInstallCommand, hubPackageManagerCommand } from '../extensions/host/hub-release';
+import { upgradeTargetRefusal } from '../extensions/host/upgrade/version-guard';
 
 export const REPO = 'colbymchenry/codegraph';
 export const NPM_PACKAGE = '@colbymchenry/codegraph';
@@ -420,6 +421,12 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
     return 1;
   }
 
+  const refusal = upgradeTargetRefusal(latest);
+  if (refusal) {
+    deps.error(refusal);
+    return 1;
+  }
+
   const currentDisplay = normalizeVersion(currentVersion);
   deps.log(`${c.bold('CodeGraph')}  current ${c.cyan(currentDisplay)}  ${opts.version ? 'target' : 'latest'} ${c.cyan(latest)}`);
 
@@ -800,6 +807,12 @@ export function upgradeWindowsBundle(
   latest: string,
   deps: UpgradeDeps
 ): number {
+  const refusal = upgradeTargetRefusal(latest);
+  if (refusal) {
+    deps.error(refusal);
+    return 1;
+  }
+
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
   const script = buildWindowsUpgradeScript(method.bundleRoot, latest, arch);
   // -EncodedCommand (base64 UTF-16LE), NOT -Command: Node's Windows argv→command
