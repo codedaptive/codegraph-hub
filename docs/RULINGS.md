@@ -502,3 +502,16 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word.
 - Not chosen: new features (none asked for: R-37's correction); folding the bug fixes into sm.14.
 - Supersedes: the stand-down left by R-37, for bug fixes.
+
+## R-39. Kill the orphan servers now; install sm.14 when it is ready (answers Q-23)
+- Date: 2026-11-08 13:1x CST / Bob, direct ("both", to the two answers Q-23 offered).
+- Question: Q-23: install 1.6.2-sm.14 (split-server-fix), and remove the two orphan servers the F-1 bug left, at the
+  install or now?
+- Ruling: both. (1) Now: SIGKILL the orphan servers 15638 and 45260 and their builders 15979 and 45652 (each
+  checked first to still be that codegraph process; never SIGTERM or `daemon --stop`, F-2); the live server 14042
+  (sm.13, named by ~/.codegraph/server.pid) is left alone. (2) Install sm.14 by the runbook once it is gated,
+  promoted, packed and tarball-checked, then reconnect and verify every team; this go covers that install with no
+  second question. Any orphan found then is removed the same way.
+- Reason: Bob's word. The orphans serve no session and hold ~2.9 GB on a machine at load ~94; a SIGKILL runs no
+  shutdown code, so it cannot remove the live socket.
+- Not chosen: keeping the orphans until the sm.14 install (Orc-Codegraph's one-step recommendation).
