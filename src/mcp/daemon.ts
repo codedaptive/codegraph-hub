@@ -67,7 +67,7 @@ import {
   getServerSocketPath,
 } from './daemon-paths';
 import { CodeGraphPackageJsonPath, CodeGraphPackageVersion } from './version';
-import { isProcessAlive } from './server-control';
+import { isProcessAlive, resolveServerStopGraceMs } from './server-control';
 import { removeLockIfUnchanged, snapshotLock, writeExclusiveTemp } from './lock-takeover';
 import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
@@ -313,10 +313,12 @@ export class Daemon {
   // The index builder: a child of this process that does every index write
   // (cold builds, seeds, syncs, the watchers) for the engine's read-only
   // projects. It lives as long as the server does and has no idle exit of its
-  // own; this process restarts it if it dies and stops it after the engine.
+  // own; this process restarts it if it dies and stops it after the engine's
+  // graceful shutdown (or its grace expiring).
   private builder: BuilderClient;
   private stopping = false;
   private socketPath: string;
+  private boundSocketIdentity: { dev: number; ino: number } | null = null;
   private pidPath: string;
 
   constructor() {
@@ -410,6 +412,10 @@ export class Daemon {
     // unusable state-dir location. Everything downstream (lockfile, chmod,
     // cleanup, status) keys off this real path, not the preferred guess.
     this.socketPath = bound.socketPath;
+    if (process.platform !== 'win32') {
+      const { dev, ino } = fs.lstatSync(this.socketPath);
+      this.boundSocketIdentity = { dev, ino };
+    }
 
     const lock: ServerLockInfo = {
       pid: process.pid,
@@ -465,29 +471,76 @@ export class Daemon {
       this.installCheckTimer = null;
     }
     process.stderr.write(`[CodeGraph daemon] Shutting down (${reason}; clients=${this.clients.size}).\n`);
-    for (const session of [...this.clients]) {
-      try { session.stop(); } catch { /* best-effort */ }
+    const graceMs = resolveServerStopGraceMs();
+    const logFailure = (phase: string, error: unknown): void => {
+      process.stderr.write(`[CodeGraph daemon] Shutdown ${phase} failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    };
+    let graceTimer: NodeJS.Timeout | undefined;
+    const graceExpired = new Promise<boolean>((resolve) => {
+      graceTimer = setTimeout(() => resolve(true), graceMs);
+      graceTimer.unref?.();
+    });
+    const graceful = (async () => {
+      for (const session of [...this.clients]) {
+        try { session.stop(); } catch (error) { logFailure('session', error); }
+      }
+      this.clients.clear();
+      for (const socket of this.acceptedSockets) {
+        try { socket.destroy(); } catch (error) { logFailure('socket', error); }
+      }
+      this.acceptedSockets.clear();
+      const server = this.server;
+      if (server && (process.platform === 'win32' || this.ownsSocketPath())) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+          });
+        } catch (error) {
+          logFailure('server close', error);
+        }
+        this.server = null;
+      } else {
+        // libuv's POSIX close unlinks the bound pathname too, even if another
+        // server has rebound it. Leave a displaced listener for process exit
+        // (which closes its fd without unlinking), not server.close(). stop()
+        // rejects any new connection meanwhile; unref lets the loop drain.
+        server?.unref();
+      }
+      // Normally release each project before stopping its builder. A catch-up
+      // gate can depend on builder.stop(), so never await this without a bound.
+      await this.engine.stop();
+    })().then(() => false, (error) => {
+      // Keep this handler attached even after grace wins the race.
+      logFailure('engine', error);
+      return false;
+    });
+    try {
+      if (await Promise.race([graceful, graceExpired])) {
+        process.stderr.write(`[CodeGraph daemon] Shutdown grace (${graceMs} ms) expired; stopping the builder and exiting.\n`);
+      }
+    } finally {
+      clearTimeout(graceTimer);
+      try {
+        // Always stop the builder, including when engine.stop() failed or is
+        // still waiting for caughtUp: this also fails its pending requests.
+        await this.builder.stop();
+      } catch (error) {
+        logFailure('builder', error);
+      } finally {
+        try {
+          // Sockets BEFORE the lock: once it is released a successor may bind.
+          this.cleanupSocket();
+          this.cleanupLockfile();
+        } finally {
+          // POSIX bound: grace + builder's 5 s cap. Windows adds the 2 s
+          // finalizeDaemonExit drain backstop; that bound is UNTESTED (macOS
+          // only for sm.14, R-21). The default grace covers WORKER_START_SETTLE_MS:
+          // the query pool waits for starting workers because exiting during
+          // their startup crashes Windows. A shorter override forgoes that wait.
+          finalizeDaemonExit(process.platform, (code) => process.exit(code));
+        }
+      }
     }
-    this.clients.clear();
-    for (const socket of this.acceptedSockets) socket.destroy();
-    this.acceptedSockets.clear();
-    if (this.server) {
-      await new Promise<void>((resolve) => this.server!.close(() => resolve()));
-      this.server = null;
-    }
-    // The engine first (it tells the builder to let go of each project it
-    // holds), then the builder itself.
-    await this.engine.stop();
-    await this.builder.stop();
-    this.cleanupLockfile();
-    if (process.platform !== 'win32') {
-      try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
-    }
-    // POSIX exits here; Windows drains first (builder.stop() above waited for
-    // the builder's file watchers to close with its exit, and exiting
-    // mid-teardown aborts the process). See
-    // finalizeDaemonExit / DAEMON_SHUTDOWN_BACKSTOP_MS.
-    finalizeDaemonExit(process.platform, (code) => process.exit(code));
   }
 
   private handleConnection(socket: net.Socket): void {
@@ -616,6 +669,27 @@ export class Daemon {
       reaped++;
     }
     return reaped;
+  }
+
+  private ownsSocketPath(): boolean {
+    if (this.boundSocketIdentity === null) return false;
+    try {
+      const { dev, ino } = fs.lstatSync(this.socketPath);
+      if (dev !== this.boundSocketIdentity.dev || ino !== this.boundSocketIdentity.ino) return false;
+      try {
+        return decodeServerLock(fs.readFileSync(this.pidPath, 'utf8'))?.pid === process.pid;
+      } catch (error) {
+        // Absence is fine; an unreadable or malformed lock is not proof of ownership.
+        return (error as NodeJS.ErrnoException).code === 'ENOENT';
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  private cleanupSocket(): void {
+    if (process.platform === 'win32' || !this.ownsSocketPath()) return;
+    try { fs.unlinkSync(this.socketPath); } catch { /* may already be gone */ }
   }
 
   private cleanupLockfile(): void {

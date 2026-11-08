@@ -112,12 +112,18 @@ export async function probeServer(): Promise<ServerLockInfo | null> {
 export type StopOutcome = 'not-running' | 'stopped' | 'kept' | 'still-running' | 'unverified';
 
 /**
- * How long {@link stopServer} waits for a signalled server to exit. The
- * server's shutdown can wait up to {@link WORKER_START_SETTLE_MS} for a query
- * worker still starting up before it exits; the rest covers closing the
- * projects and the socket.
+ * Grace for sessions, sockets and the engine to stop before stopping the builder.
+ * The default covers the query pool's wait for workers still starting: exiting
+ * during that startup can crash Windows, so it shares WORKER_START_SETTLE_MS.
  */
-const SERVER_STOP_WAIT_MS = WORKER_START_SETTLE_MS + 5_000;
+export function resolveServerStopGraceMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.CODEGRAPH_SERVER_STOP_GRACE_MS;
+  if (raw === undefined || raw.trim() === '') return WORKER_START_SETTLE_MS;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0
+    ? Math.min(value, 120_000)
+    : WORKER_START_SETTLE_MS;
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -132,7 +138,10 @@ async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
 
 /**
  * Stop the server of this state dir: verify its identity by socket hello, send
- * SIGTERM (its graceful shutdown), wait up to `graceMs` for the pid to go.
+ * SIGTERM, then wait for the pid to go. `graceMs` overrides the controller's
+ * wait; by default it reads the controller's own environment for the server
+ * grace and adds the builder's 5 s cap and a 2 s margin. The server may have a
+ * different environment. Windows shutdown timing is untested for sm.14 (R-21).
  *
  * `onlyIfOlderThan` makes it the launcher's replace step (#2335): the server is
  * stopped only when it runs a release older than that version
@@ -164,7 +173,11 @@ export async function stopServer(
   if (current === null || current.raw !== snapshot.raw) return { outcome: 'unverified', pid, version };
 
   try { process.kill(pid, 'SIGTERM'); } catch { /* raced to exit */ }
-  if (!await waitForDeath(pid, opts.graceMs ?? SERVER_STOP_WAIT_MS)) {
+  // Resolve at call time: grace + the builder's 5 s cap + 2 s margin (also
+  // covering Windows' drain backstop). This controller reads its own env,
+  // which may differ from the running server's; explicit callers keep theirs.
+  const waitMs = opts.graceMs ?? (resolveServerStopGraceMs() + 5_000 + 2_000);
+  if (!await waitForDeath(pid, waitMs)) {
     return { outcome: 'still-running', pid, version };
   }
   sweepStoppedServer(pidPath, snapshot.raw);

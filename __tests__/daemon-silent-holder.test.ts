@@ -136,9 +136,12 @@ describe('a probe of a pipe holder that never says hello', () => {
  * candidate gives a live holder (refreshed every second, atomically): such a
  * holder is never displaced, so each candidate the launcher spawns defers to it
  * and exits, and the launcher's wall-clock budget is all that stands between
- * the session and its first answer. (A holder past the grace, whose hello never
- * comes, is displaced by the candidate instead; that is the server lock's
- * concern, not this budget's.)
+ * the session and its first answer. (A live holder that accepts a connection and
+ * stays silent through the hello timeout is not displaced, even past the grace:
+ * the candidate defers and exits. Its liveness watchdog
+ * can kill it, allowing takeover once its pid is dead. Displacement otherwise
+ * requires a disproving probe: refused connection, missing socket, close before
+ * hello, garbled hello, or a hello naming another pid or version.)
  */
 describe('a session whose server never says hello', () => {
   // Set by project(); undefined outside a test, so the teardown can tell.
