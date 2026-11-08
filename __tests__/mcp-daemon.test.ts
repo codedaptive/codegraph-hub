@@ -797,7 +797,11 @@ describe('The machine server', () => {
       );
       const serverPid = readLockPid()!;
       expect(attached).toContain(`(pid ${serverPid},`);
-      expect(server.stderr.some((l) => l.includes('proxying this session to it instead of serving in-process'))).toBe(true);
+      // A separate stderr write from 'Attached': wait for it rather than check once.
+      await waitFor(
+        () => server.stderr.some((l) => l.includes('proxying this session to it instead of serving in-process')),
+        5000, 25, 'the proxying line after attach',
+      );
       sendToolCall(server.child, 3, 'codegraph_status', tempDir);
       const viaServer = await waitFor(() => findResponse(server.stdout, 3), 15000, 25, 'tools/call through the server');
       expect(viaServer.error).toBeUndefined();
