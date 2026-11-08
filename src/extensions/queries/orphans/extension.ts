@@ -37,7 +37,7 @@ interface OrphansCommandOptions {
 export function registerOrphansCommand(program: Command): void {
   program
     .command('orphans')
-    .description('List the symbols added since the merge base of a base ref and HEAD that nothing uses')
+    .description('List the symbols added from the merge base of a base ref and HEAD to the working tree (uncommitted edits to tracked files included) that nothing uses')
     .option('-b, --base <ref>', 'Git ref whose merge base with HEAD the additions are counted from (required)')
     .option('--json', 'Print the report as JSON')
     .option('-p, --path <path>', 'Project path')
@@ -81,11 +81,13 @@ export const orphansTool: ExtensionTool = {
   definition: {
     name: 'codegraph_orphans',
     description:
-      'Dead code a branch adds: the functions, methods and types added since the merge base of a base git ref ' +
-      'and HEAD that nothing uses: no incoming edge in the index, no unresolved reference by that name from the same ' +
+      'Dead code a branch adds: the functions, methods and types added from the merge base of a base git ref ' +
+      'and HEAD to the working tree (uncommitted edits to tracked files included, untracked files excluded) ' +
+      'that nothing uses: no incoming edge in the index, no unresolved reference by that name from the same ' +
       'language, and (for an identifier name) no text match elsewhere in the indexed files (the report counts any ' +
       'the search could not read). Interface/protocol/trait implementations and the ' +
-      'requirements of used ones, tests and code nested in them, program entry points (main, @main) and constructors ' +
+      'requirements of used ones, tests and code nested in them, program entry points (main, Swift @main types ' +
+      'and their main, Go top-level init, Python dunder methods and module-level __getattr__/__dir__) and constructors ' +
       'of used types are excluded and counted. Symbols whose only uses are name-only or low-confidence resolver ' +
       'guesses, unresolved references by name, or text mentions (comments and strings included) are listed ' +
       'separately as "orphaned unless the guess is right", with that evidence. Use it before review to find ' +

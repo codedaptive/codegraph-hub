@@ -25,11 +25,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { Command } from 'commander';
 import { CodeGraph } from '../../../src';
 import { ToolHandler, getStaticTools } from '../../../src/mcp/tools';
 import { __resetExtensionsForTests, registerExtension } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
-import { orphansTool } from '../../../src/extensions/queries/orphans/extension';
+import { orphansTool, registerOrphansCommand } from '../../../src/extensions/queries/orphans/extension';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 
@@ -55,6 +56,36 @@ const A = "import { helper } from './util';\n\nexport function useA(): number {\
 
 let repo = '';
 let firstLine = '';
+
+describe('orphans description pins', () => {
+  it('tool describes the working tree diff', () => {
+    const description = orphansTool.definition.description;
+    expect(description).toMatch(/working tree/i);
+    expect(description).toMatch(/uncommitted/i);
+    expect(description).toMatch(/from the merge base of a base git ref and HEAD to the working tree/i);
+  });
+
+  it('tool says untracked files are excluded', () => {
+    expect(orphansTool.definition.description).toMatch(/untracked files excluded/i);
+  });
+
+  it('tool names Go and Python entry points', () => {
+    const description = orphansTool.definition.description;
+    expect(description).toMatch(/\binit\b/);
+    expect(description).toMatch(/dunder/i);
+    expect(description).toMatch(/__getattr__/);
+    expect(description).toMatch(/__dir__/);
+  });
+
+  it('CLI describes the working tree diff', () => {
+    const program = new Command();
+    registerOrphansCommand(program);
+    const description = program.commands.find((command) => command.name() === 'orphans')!.description();
+    expect(description).toMatch(/working tree/i);
+    expect(description).toMatch(/uncommitted/i);
+    expect(description).toMatch(/from the merge base of a base ref and HEAD to the working tree/i);
+  });
+});
 
 beforeAll(async () => {
   repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-orphans-ext-')));
