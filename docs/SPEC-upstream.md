@@ -58,7 +58,9 @@ was first left out on upstream's guide; the upstream code at 60b0d7a9 still refu
 refresh shows upstream has since fixed it, it drops.)
 
 Two Swift issues already drafted (Orc-Codegraph's todo) go upstream with the PRs: the 0.7.3 `if try await` mis-parse,
-and `declaredSupertypes` reading a nested type's inheritance clause.
+and `declaredSupertypes` reading a nested type's inheritance clause. Status: both filed 2026-11-01, #3212 and #3213,
+open with no replies (checked 2026-11-08). Our fix for #3213, `swift-nested-supertypes`, landed on `integration`
+2026-11-08 (2f1b826a); it is not yet offered upstream as a PR.
 
 ## 4. The public fork and its issue
 
