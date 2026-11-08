@@ -55,9 +55,10 @@ describe.skipIf(process.platform === 'win32')('bindServerSocket permissions', ()
   });
 
   it('puts the umask back when the bind fails', async () => {
-    // A path past the socket path limit: listen cannot bind it.
-    const tooLong = path.join(dir, 'x'.repeat(200));
-    await expect(bindServerSocket(tooLong, () => undefined)).rejects.toBeDefined();
+    // A path in a folder that does not exist: listen cannot bind it. (A path past the socket length limit used to
+    // be the failing case; Node 26 binds long paths, so that case no longer fails.)
+    const unbindable = path.join(dir, 'missing-folder', 's');
+    await expect(bindServerSocket(unbindable, () => undefined)).rejects.toBeDefined();
     expect(process.umask()).toBe(0);
   });
 });
