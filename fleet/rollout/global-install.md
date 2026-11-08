@@ -35,6 +35,11 @@ codegraph --version            # 1.6.2-sm.<N>, no banner
 npm ls -g --depth=0            # @colbymchenry/codegraph@1.6.2-sm.<N>
 # 4. Do not run `codegraph daemon --stop` after the install. The old server detects the replacement and
 #    exits itself; a new server may already own server.pid, so a stop would hit the new one. Wait about 30 s.
+#    From sm.14 the 30 s rests on CODEGRAPH_SERVER_STOP_GRACE_MS: how long the old server's install-change
+#    shutdown waits before builder.stop (5 s cap); default 15 s, cap 120 s (resolveServerStopGraceMs in
+#    src/mcp/server-control.ts; Daemon.stop). That shutdown starts at the next install check
+#    (CODEGRAPH_DAEMON_INSTALL_CHECK_MS, default every 30 s; 0 turns it off and the server never exits itself), so
+#    the worst case is check interval + grace + 5 s (about 50 s at the defaults): repeat the listing below until it is gone.
 sleep 30
 #    List detached servers on macOS: their environment carries CODEGRAPH_DAEMON_INTERNAL=1. Session helpers
 #    also run `codegraph.js serve --mcp` but are not detached servers; never kill helpers. This listing includes
