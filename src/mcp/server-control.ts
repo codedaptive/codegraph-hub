@@ -8,7 +8,7 @@
  * server is, never that it is alive and never that it is CodeGraph: a SIGKILL'd
  * server leaves its record behind, and the OS reuses pids. So every action that
  * signals a process first proves the lock with the server's socket hello
- * ({@link probeServerIdentity}: the hello must name the lock's pid and version).
+ * ({@link probeServerHello}: the hello must name the lock's pid and version).
  * A pid that fails the proof is never signalled.
  *
  * Cross-platform by construction: files, sockets and `process.kill(pid,
@@ -23,7 +23,6 @@ import {
   getServerPidPath,
   getServerSocketCandidates,
   probeServerHello,
-  probeServerIdentity,
   type ServerLockInfo,
 } from './daemon-paths';
 import { removeLockIfUnchanged, snapshotLock } from './lock-takeover';
@@ -121,17 +120,21 @@ export async function probeServer(): Promise<ServerLockInfo | null> {
 
 /**
  * What {@link stopServer} found:
- *   - `not-running`: no lock, or its process is gone (the next server start
- *     clears the leftover).
- *   - `stopped`: the server was signalled and exited.
+ *   - `not-running`: no readable, valid lock for this state dir, or its process
+ *     is gone (the next server start clears a leftover lock).
+ *   - `stopped`: SIGTERM was attempted and the pid is no longer alive.
  *   - `kept`: `onlyIfOlderThan` was given and the server is the same, a newer or
  *     an unknown release; it was not signalled.
- *   - `still-running`: signalled, but still alive after the wait. Never
+ *   - `still-running`: SIGTERM was attempted, but the pid is still alive after the wait. Never
  *     escalated to SIGKILL: the server holds open databases, and its builder holds the writer locks.
- *   - `unverified`: a live process holds the lock but its hello did not name the
- *     lock's pid and version. It is not signalled: it may be a reused pid.
+ *   - `busy`: the lock names a live pid and its socket accepted the connection
+ *     but sent no bytes through the hello timeout. Inconclusive, not identity
+ *     proof; it was not signalled.
+ *   - `unverified`: the lock names a live process, but the hello did not match,
+ *     the socket failed, or the lock disappeared or changed during the probe.
+ *     The process is not signalled: identity was not proven for the current lock.
  */
-export type StopOutcome = 'not-running' | 'stopped' | 'kept' | 'still-running' | 'unverified';
+export type StopOutcome = 'not-running' | 'stopped' | 'kept' | 'still-running' | 'busy' | 'unverified';
 
 /**
  * Grace for sessions, sockets and the engine to stop before stopping the builder.
@@ -186,7 +189,11 @@ export async function stopServer(
   if (!isProcessAlive(pid)) return { outcome: 'not-running', pid, version };
   // Never signal a process merely because it reuses a stale server pid: the
   // server's own hello is the identity proof (#1553).
-  if (!await probeServerIdentity(info)) return { outcome: 'unverified', pid, version };
+  switch (await probeServerHello(info)) {
+    case 'no-answer': return { outcome: 'busy', pid, version };
+    case 'mismatch': return { outcome: 'unverified', pid, version };
+    case 'match': break;
+  }
   if (opts.onlyIfOlderThan !== undefined && !isOlderRelease(version, opts.onlyIfOlderThan)) {
     return { outcome: 'kept', pid, version };
   }

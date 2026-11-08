@@ -325,8 +325,8 @@ const OLDER_SERVER_SHUTDOWN_GRACE_MS = 5_000;
  * {@link stopServer} proves the server by its socket hello and never stops one
  * of the same, a newer or an unknown version. `answered` says an older server
  * answered this launcher's own probe. Resolves `stopped` (the way is clear to
- * spawn one), `none` (no server holds the state dir), or `kept` (one does,
- * unverified, still shutting down, or not older).
+ * spawn one), `none` (no valid lock for this state dir or its pid is dead), or
+ * `kept` (the lock's process is unverified or busy, still running, or not older).
  */
 async function replaceOlderServer(answered: boolean): Promise<'stopped' | 'none' | 'kept'> {
   const result = await stopServer({

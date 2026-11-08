@@ -138,6 +138,7 @@ describe('codegraph daemon', () => {
     const result = await run(['daemon', '--stop']);
     expect(result.code).toBe(1);
     expect(result.stderr + result.stdout).toContain('did not answer as the CodeGraph server');
+    expect(result.stderr + result.stdout).toContain('delete the stale server.pid in the state dir');
     expect(isProcessAlive(stranger.pid!)).toBe(true);
     expect(stranger.signalCode).toBeNull();
   });

@@ -2220,8 +2220,15 @@ program
           const kill = process.platform === 'win32' ? `taskkill /PID ${stop.pid} /F` : `kill -9 ${stop.pid}`;
           error(`The CodeGraph server (pid ${stop.pid}) did not exit when asked to stop. Stop it with \`${kill}\`.`);
           process.exit(1);
+        } else if (stop.outcome === 'busy') {
+          error(
+            `The CodeGraph server is running but busy (pid ${stop.pid}, v${stop.version}): ` +
+            'it accepted the connection and sent no hello within 1 s, so it was left running. ' +
+            'Retry `codegraph daemon --stop` in a moment, or wait for it to finish.'
+          );
+          process.exit(1);
         } else {
-          // 'unverified'; 'kept' is only returned for `onlyIfOlderThan`, which this command never passes.
+          // 'unverified'; 'kept' requires `onlyIfOlderThan`, which this command never passes.
           error(
             `Process ${stop.pid} holds the server lock but did not answer as the CodeGraph server, so it was left running. ` +
             'If it is not a CodeGraph server, delete the stale server.pid in the state dir.'
