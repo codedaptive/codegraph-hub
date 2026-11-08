@@ -141,11 +141,12 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-11-04)
+## 8. Status (2026-11-08)
 
 Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.13** (ours
 be5ab360, 2026-11-06, S-57); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
-`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team is stood down apart from the split-server fix (R-37, S-58).
+`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38), beside the split-server fix (R-37, S-58); upstream main
+f72c9d2e is already in ours.
 
 | Release | What it shipped |
 |---|---|
@@ -162,7 +163,9 @@ be5ab360, 2026-11-06, S-57); running sessions moved to it with `/mcp reconnect c
 | Left | State |
 |---|---|
 | A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen in the sm.12 install and three times on 2026-11-06 at load ~90; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md, release-gate-sm13.md | host, split-server-fix, ships as sm.14 (R-37, S-58) |
-| `grep` and `orphans` tool descriptions (Kong K-F4, K-F6); fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
+| `grep` and `orphans` tool descriptions (Kong K-F4, K-F6) | queries, tool-desc-fixes (R-38) |
+| The bug list (R-38): swift-member-decl-copy, swift-nested-supertypes; install-runbook-sigkill; seed-locked-retry, upgrade-version-validate, hub-release-comments, host-test-flakes | resolution; fleet; host (R-38) |
+| fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
 | The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
 
 ## 9. Out of scope (R-12)
