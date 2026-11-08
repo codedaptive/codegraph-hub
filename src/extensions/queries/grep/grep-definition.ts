@@ -12,7 +12,9 @@ export const GREP_TOOL = {
     'symbol (function, method, class) and the groups ranked by how many incoming calls, references, imports and ' +
     'inheritance edges they have; a count marked `(N questionable)` includes N calls bound by name only, which ' +
     '`strict: true` leaves out. Use it when you need EVERY occurrence of a string or name, not the top ' +
-    'matches. Hits outside any symbol are listed as module level. Capped at 300 hits; narrow with `in`. ' +
+    'matches. Hits outside any symbol are listed as module level. ' +
+    'Hits in a file changed since indexing are listed per file, not attributed to a symbol, and marked stale. ' +
+    'Capped at 300 hits; narrow with `in`. ' +
     'In a session started with --focus it searches only inside the focus, unless scope: "repo".',
   inputSchema: {
     type: 'object' as const,

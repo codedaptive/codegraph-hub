@@ -490,6 +490,12 @@ describe('MCP tool', () => {
     );
   });
 
+  it('describes stale hits in files changed since indexing', () => {
+    expect(GREP_TOOL.description).toMatch(/changed since indexing/i);
+    expect(GREP_TOOL.description).toMatch(/not attributed/i);
+    expect(GREP_TOOL.description).toMatch(/stale/i);
+  });
+
   it('a hit result: content text equals formatGrepResult', async () => {
     const expected = formatGrepResult(await grepIndex(root, 'TOKEN', { in: 'src/ab' }));
     const res = await handleGrepTool({ pattern: 'TOKEN', in: 'src/ab' }, root);
