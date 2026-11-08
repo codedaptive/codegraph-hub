@@ -23,10 +23,11 @@
  * someone else indexed meanwhile is not registered (that index is theirs).
  *
  * Return codes of {@link runColdBuild}: 0 built (or already indexed by someone
- * else), 1 failed (the database it made is removed, so the root reads as not
- * indexed again; an index another initializer made meanwhile is left alone,
- * see runColdBuild), 3 another live process holds `rebuild.pid`. A builder
- * killed mid-build leaves its partial database and a `rebuild.pid` naming a
+ * else), 1 failed, 3 another live process holds `rebuild.pid`, 4 a retryable
+ * SQLite lock thrown by indexAll or reported in its errors, or thrown by init
+ * with no database file at dbFile. On 1 or 4, removal of this build's database
+ * is best-effort and only if its identity still matches; see runColdBuild.
+ * A builder killed mid-build leaves its partial database and a `rebuild.pid` naming a
  * dead pid, and what the next builder does depends on the root:
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
@@ -36,8 +37,8 @@
  *     with a full catch-up, and reads may be answered from it before that
  *     catch-up ends.
  * The job itself ({@link BuilderSeedHost.queueColdBuild}) runs `admitColdBuild`
- * (seed.ts) right before this function, so a root that changed while the job
- * waited is not built; this function takes the root as it is given.
+ * (seed.ts) before each attempt to reject a root that no longer passes admission
+ * after queueing or a retry delay; this function takes the root as it is given.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -50,6 +51,18 @@ import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-loc
 export const COLD_BUILD_EXIT_BUILT = 0;
 export const COLD_BUILD_EXIT_FAILED = 1;
 export const COLD_BUILD_EXIT_BUSY = 3;
+export const COLD_BUILD_EXIT_LOCKED = 4;
+
+/** SQLite can wrap a lock in a cause or report an extended SQLITE_BUSY code. */
+function isSqliteLock(error: unknown): boolean {
+  while (typeof error === 'object' && error !== null) {
+    if ('message' in error && typeof error.message === 'string' && /database is locked/i.test(error.message)) return true;
+    // The low byte is the primary result code; 5 is SQLITE_BUSY.
+    if ('errcode' in error && typeof error.errcode === 'number' && (error.errcode & 0xff) === 5) return true;
+    error = 'cause' in error ? error.cause : undefined;
+  }
+  return false;
+}
 
 /**
  * Write a fresh seed nonce into the database this build just made
@@ -101,7 +114,12 @@ function isCreatedDatabase(dbFile: string, created: string | null): boolean {
  * throws without creating anything. That index, or one that lands while init
  * fails for another reason, is the user's and stays. So does a file init left
  * behind when it threw after creating it: with no handle returned, nothing
- * proves it is this call's rather than that other initializer's.
+ * proves it is this call's rather than that other initializer's. A SQLite lock
+ * thrown by indexAll or reported in its errors returns LOCKED, as does one thrown
+ * by init with no file left at dbFile. On an indexAll lock, removal of the
+ * created database is best-effort and subject to the identity check above.
+ * An init lock leaving a file returns FAILED; registration errors are handled
+ * best-effort, not returned as LOCKED. A held rebuild.pid returns BUSY.
  */
 export async function runColdBuild(root: string): Promise<number> {
   const lock = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
@@ -113,6 +131,8 @@ export async function runColdBuild(root: string): Promise<number> {
   // identity (null where the platform has no inode) is `created`.
   let initReturned = false;
   let created: string | null = null;
+  // Only these engine steps can make a failure retryable, not registration or bookkeeping.
+  let step: 'init' | 'indexAll' | null = null;
   try {
     await coldBuildTestDelay();
     // A seed or a `codegraph init` may have landed between the decision and now.
@@ -120,15 +140,25 @@ export async function runColdBuild(root: string): Promise<number> {
       ok = true;
       return COLD_BUILD_EXIT_BUILT;
     }
+    step = 'init';
     cg = await CodeGraph.init(root, { index: false });
+    step = null;
     initReturned = true;
     created = statInode(dbFile);
+    step = 'indexAll';
     const result = await cg.indexAll();
+    step = null;
     ok = result.success;
+    if (result.success === false && result.errors?.some((error) => /database is locked/i.test(error.message))) {
+      process.stderr.write(`[CodeGraph] Cold build of ${root} failed: database is locked\n`);
+      return COLD_BUILD_EXIT_LOCKED;
+    }
     if (ok) await registerColdBuilt(root, dbFile);
     return ok ? COLD_BUILD_EXIT_BUILT : COLD_BUILD_EXIT_FAILED;
   } catch (err) {
-    process.stderr.write(`[CodeGraph] Cold build of ${root} failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    const locked = step !== null && isSqliteLock(err);
+    process.stderr.write(`[CodeGraph] Cold build of ${root} failed${locked ? ' (database is locked)' : ''}: ${err instanceof Error ? err.message : String(err)}\n`);
+    if (locked && (step === 'indexAll' || !fs.existsSync(dbFile))) return COLD_BUILD_EXIT_LOCKED;
     return COLD_BUILD_EXIT_FAILED;
   } finally {
     try { cg?.close(); } catch { /* already closed */ }

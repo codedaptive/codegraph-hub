@@ -837,9 +837,9 @@ export interface SeedHost {
    */
   buildingRootFor(projectPath: string): string | null;
   /**
-   * Whether the cold build of `root` failed in this process: not retried on
-   * every call. A build killed with the builder is not recorded: it was
-   * killed, not failed, and the next call builds again.
+   * Whether a cold build of `root` returned FAILED in this builder: subsequent
+   * calls do not retry it. Exhausted LOCKED retries and a build killed with the
+   * builder are not recorded; a later call can queue another build.
    */
   hasFailedBuild(root: string): boolean;
   /**
@@ -910,9 +910,8 @@ export function unseededWorktreeNote(projectPath: string, worktree: string): str
  * The answer for a plain directory (no git) whose build root `root` codegraph
  * will not build or could not build: `unsafe` is why codegraph refuses the root
  * ({@link admitColdBuild}: what it looks like, "your home directory", or the
- * sensitive-folder refusal), absent when its build failed (a failed build is
- * not retried until the CodeGraph server restarts: the memo lives in the
- * builder process). Success-shaped, like every expected condition, and it never tells
+ * sensitive-folder refusal), absent when its build returned FAILED (the builder
+ * remembers that result until it restarts). Success-shaped, like every expected condition, and it never tells
  * the agent to stop calling codegraph: a project inside the directory (a git
  * repository, or a directory the user ran `codegraph init` in) is served
  * when named, so the agent is pointed at one.
@@ -1168,7 +1167,7 @@ async function seedOrBuild(
   }
 
   // No sibling to copy: build W's index. There is no opt-in and no earlier
-  // registration to ask for; a build that failed here is never retried until this builder restarts.
+  // registration to ask for; a build returning FAILED is not retried until this builder restarts.
   if (host.hasFailedBuild(worktree)) return considered;
   // The same refusal `codegraph init` applies (home directory, filesystem root), and the admission the
   // build's job runs again when it starts.

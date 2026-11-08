@@ -8,7 +8,7 @@
  */
 import { canonicalProjectRoot } from '../../../directory';
 import { ownIndexRootFor } from '../server/index-root';
-import { COLD_BUILD_EXIT_BUSY, COLD_BUILD_EXIT_FAILED, runColdBuild } from '../worktree-lifecycle/cold-build';
+import { COLD_BUILD_EXIT_BUSY, COLD_BUILD_EXIT_FAILED, COLD_BUILD_EXIT_LOCKED, runColdBuild } from '../worktree-lifecycle/cold-build';
 import { admitColdBuild, isAtOrBelow, type ColdBuildApproval, type SeedHost } from '../worktree-lifecycle/seed';
 import { isRebuildInProgress } from '../../../mcp/writer-lock';
 import type { RebuildFences } from './fences';
@@ -16,6 +16,11 @@ import type { JobQueue } from './queue';
 
 /** How long a call waits for its seed copy before it answers "building" and leaves the job queued. */
 const DEFAULT_SEED_WAIT_MS = 10_000;
+
+// Allow a competing writer time to release a transient lock, but bound the wait:
+// this job holds the COLD slot throughout the two-second delays between attempts.
+const DEFAULT_COLD_BUILD_ATTEMPTS = 3;
+const DEFAULT_COLD_BUILD_RETRY_DELAY_MS = 2_000;
 
 /**
  * `CODEGRAPH_BUILDER_ENSURE_WAIT_MS`: how long an `ensure` waits for a seed copy that is queued behind a
@@ -33,7 +38,7 @@ export class BuilderSeedHost implements SeedHost {
   private readonly cold = new Map<string, string>();
   /** A root stays building until every seed of it settles, including one queued behind another. */
   private readonly seeds = new Map<string, { root: string; count: number }>();
-  /** Roots whose cold build failed in this builder: never retried until this builder restarts. */
+  /** Roots whose cold build returned FAILED: remembered until this builder restarts. */
   private readonly failed = new Set<string>();
 
   /**
@@ -42,7 +47,12 @@ export class BuilderSeedHost implements SeedHost {
    */
   constructor(
     private readonly queue: JobQueue,
-    private readonly opts: { seedWaitMs?: number; log?: (line: string) => void; fences?: RebuildFences } = {},
+    private readonly opts: {
+      seedWaitMs?: number;
+      log?: (line: string) => void;
+      fences?: RebuildFences;
+      coldBuildRetry?: { attempts?: number; delayMs?: number };
+    } = {},
   ) {}
 
   rebuildHeld(root: string): boolean {
@@ -73,22 +83,29 @@ export class BuilderSeedHost implements SeedHost {
     this.cold.set(key, root);
     this.queue
       .enqueue('cold-build', root, async () => {
-        // The same admission as at queue time (seed.ts), on what the root names now: a worktree removed while its
-        // build waited must not be re-created by the lock's mkdir, and a root swapped for a link to another
-        // directory (or into a git repository, for a plain build) must not be built. A refusal fails the job
-        // (the job log carries the reason) and is not a failed build: nothing was tried, so a later call asks again.
-        const admission = admitColdBuild(root, approval.plain, approval);
-        if (!admission.ok) throw new Error(`the cold build was not started: ${admission.reason}`);
-        // A `codegraph index` fenced the root while this job waited. runColdBuild would take the fence's own
-        // `rebuild.pid` (same pid: re-acquired), and its release at the end would end the lease under it.
-        if (this.opts.fences?.isFenced(root)) throw new Error('the cold build was not started: an index rebuild holds the root');
-        const code = await runColdBuild(root);
-        if (code === COLD_BUILD_EXIT_FAILED) {
-          this.failed.add(key);
-          throw new Error('the cold build failed');
+        const attempts = this.opts.coldBuildRetry?.attempts ?? DEFAULT_COLD_BUILD_ATTEMPTS;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+          // Repeat admission before each attempt: the root can change while queued or during a retry delay.
+          // A removed worktree must not be re-created by the lock's mkdir, nor a root swapped for a link (or
+          // into git, for a plain build) built. Refusal is not a failed build, so a later call asks again.
+          const admission = admitColdBuild(root, approval.plain, approval);
+          if (!admission.ok) throw new Error(`the cold build was not started: ${admission.reason}`);
+          // A `codegraph index` fenced the root while this job waited. runColdBuild would take the fence's own
+          // `rebuild.pid` (same pid: re-acquired), and its release at the end would end the lease under it.
+          if (this.opts.fences?.isFenced(root)) throw new Error('the cold build was not started: an index rebuild holds the root');
+          const code = await runColdBuild(root);
+          if (code === COLD_BUILD_EXIT_FAILED) {
+            this.failed.add(key);
+            throw new Error('the cold build failed');
+          }
+          // Someone else holds rebuild.pid: their build or `codegraph index` is at it. Not a failure of ours.
+          if (code === COLD_BUILD_EXIT_BUSY) throw new Error('another process holds rebuild.pid');
+          if (code !== COLD_BUILD_EXIT_LOCKED) return;
+          if (attempt < attempts) {
+            await new Promise<void>((resolve) => setTimeout(resolve, this.opts.coldBuildRetry?.delayMs ?? DEFAULT_COLD_BUILD_RETRY_DELAY_MS));
+          }
         }
-        // Someone else holds rebuild.pid: their build or `codegraph index` is at it. Not a failure of ours.
-        if (code === COLD_BUILD_EXIT_BUSY) throw new Error('another process holds rebuild.pid');
+        throw new Error(`the database stayed locked after ${attempts} attempts; a later call asks again`);
       })
       .catch(() => { /* the job log has it */ })
       .finally(() => this.cold.delete(key));
