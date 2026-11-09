@@ -39,17 +39,29 @@ function isAlive(pid: number): boolean {
   }
 }
 
-function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
+/** Polls `done` every 100ms; resolves false once `timeoutMs` passes without it holding. */
+function waitUntil(done: () => boolean, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const start = Date.now();
     const tick = () => {
-      if (!isAlive(pid)) return resolve(true);
+      if (done()) return resolve(true);
       if (Date.now() - start > timeoutMs) return resolve(false);
       setTimeout(tick, 100);
     };
     tick();
   });
 }
+
+function readLog(file: string): string {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '<no stderr captured>';
+}
+
+/**
+ * Hang backstops, not expected durations: each wait ends as soon as its
+ * condition holds, so a loaded machine only makes it take longer.
+ */
+const READY_BACKSTOP_MS = 60_000;
+const EXIT_BACKSTOP_MS = 60_000;
 
 describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => {
   let wrapper: ChildProcessWithoutNullStreams | null = null;
@@ -75,6 +87,8 @@ describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => 
   });
 
   it("shuts down when its parent is SIGKILL'd and stdin stays open", async () => {
+    // slow: spawns a real server and waits on its start and its shutdown; the
+    // timeout covers both backstops.
     // The wrapper:
     //   1. Spawns a "stdin-holder" — a tiny long-lived node process whose
     //      `stdout` pipe is dup'd into codegraph's `stdin`. As long as the
@@ -88,11 +102,6 @@ describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => 
     // production default is 5000ms.
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-ppid-watchdog-'));
     const stderrLog = path.join(tmpDir, 'codegraph.stderr.log');
-    // The wrapper waits 800ms before reporting the PIDs so the codegraph
-    // child has time to finish its async start() (dynamic import + transport
-    // setup + watchdog registration). Otherwise the test races: it
-    // SIGKILL's the wrapper before the watchdog interval is installed, and
-    // nothing terminates codegraph.
     const wrapperSrc = `
       const { spawn } = require('child_process');
       const fs = require('fs');
@@ -113,9 +122,7 @@ describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => 
         detached: true,
       });
       child.unref();
-      setTimeout(() => {
-        process.stdout.write(JSON.stringify({ pid: child.pid, stdinHolderPid: stdinHolder.pid }) + '\\n');
-      }, 800);
+      process.stdout.write(JSON.stringify({ pid: child.pid, stdinHolderPid: stdinHolder.pid }) + '\\n');
       setInterval(() => {}, 60000);
     `;
     wrapper = spawn(process.execPath, ['-e', wrapperSrc], {
@@ -147,6 +154,16 @@ describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => 
     childPid = pids.pid;
     stdinHolderPid = pids.stdinHolderPid;
 
+    // Readiness: the server installs its PPID watchdog before it constructs its
+    // engine, and the engine's constructor logs the query pool ('Query pool:
+    // up to …', 'Query pool disabled' or 'Query pool unavailable'). That line
+    // proves the watchdog is in place; a SIGKILL before it would race the
+    // watchdog's installation, and nothing would terminate codegraph.
+    const ready = await waitUntil(() => /Query pool/.test(readLog(stderrLog)), READY_BACKSTOP_MS);
+    expect(
+      ready,
+      `codegraph child (pid=${childPid}) did not log its query pool within ${READY_BACKSTOP_MS}ms.\nstderr:\n${readLog(stderrLog)}`,
+    ).toBe(true);
     expect(isAlive(childPid)).toBe(true);
     expect(isAlive(stdinHolderPid)).toBe(true);
 
@@ -156,12 +173,15 @@ describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => 
     // doesn't close: only the watchdog can take it down.
     wrapper.kill('SIGKILL');
 
-    // Watchdog runs every 200ms in this test → 5s gives ~25 polls of headroom.
-    const exited = await waitForExit(childPid, 5000);
-    const stderrContent = fs.existsSync(stderrLog) ? fs.readFileSync(stderrLog, 'utf-8') : '<no stderr captured>';
+    // The watchdog polls every 200ms; the wait ends when the child exits. The
+    // watched pid is the relaunch shim (the spawn carries no WASM runtime
+    // flags), which exits once the inner server, watching the wrapper's pid
+    // through CODEGRAPH_HOST_PPID, has shut down.
+    const exited = await waitUntil(() => !isAlive(pids.pid), EXIT_BACKSTOP_MS);
+    const stderrContent = readLog(stderrLog);
     expect(
       exited,
-      `codegraph child (pid=${childPid}) did not exit within 5s after wrapper was SIGKILL'd.\nstderr:\n${stderrContent}`,
+      `codegraph child (pid=${childPid}) did not exit within ${EXIT_BACKSTOP_MS}ms after wrapper was SIGKILL'd.\nstderr:\n${stderrContent}`,
     ).toBe(true);
     // The watchdog announces itself before tearing down — assert that the
     // shutdown came from the parent-death path, not from any other signal.
@@ -173,5 +193,5 @@ describe.skipIf(process.platform === 'win32')('MCP PPID watchdog (#277)', () => 
     if (isAlive(stdinHolderPid)) {
       try { process.kill(stdinHolderPid, 'SIGKILL'); } catch { /* race */ }
     }
-  }, 20000);
+  }, 150_000);
 });

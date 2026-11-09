@@ -364,24 +364,39 @@ describe('graph links land on the right token', () => {
 });
 
 describe('cost', () => {
-  it('classifies three thousand lines of TypeScript well inside the budget', async () => {
+  it('classifies three thousand lines of TypeScript at a small multiple of the parse alone', async () => {
     clearHighlightCache();
     const lines = fs
       .readFileSync(path.join(__dirname, '..', 'src', 'extraction', 'tree-sitter.ts'), 'utf-8')
       .split('\n')
       .slice(0, 3000);
+    const text = lines.join('\n');
+    await initGrammars();
+    await loadGrammarsForLanguages(['typescript']);
+    const parser = getParser('typescript');
+    if (!parser) throw new Error('TypeScript grammar is required for the parse baseline');
     // Warm the grammar load, which is a one-off per language per process.
     await highlightLines(lines.slice(0, 5), { language: 'typescript' });
-    clearHighlightCache();
 
-    const started = Date.now();
-    const result = await highlightLines(lines, { language: 'typescript' });
-    const elapsed = Date.now() - started;
+    const parseMs: number[] = [];
+    const highlightMs: number[] = [];
+    for (let round = 0; round < 5; round++) {
+      const parseStarted = performance.now();
+      const tree = parser.parse(text);
+      parseMs.push(performance.now() - parseStarted);
+      tree?.delete();
 
-    expect(result.engine).toBe('tree-sitter');
-    // The whole point of CG-57's swap: the TextMate grammar took ~700 ms here.
-    // Generous against a loaded CI box; the dev Mac measures 24–41 ms.
-    expect(elapsed).toBeLessThan(400);
+      clearHighlightCache();
+      const highlightStarted = performance.now();
+      const result = await highlightLines(lines, { language: 'typescript' });
+      highlightMs.push(performance.now() - highlightStarted);
+      expect(result.engine).toBe('tree-sitter');
+    }
+
+    // Interleaving both sides in one process helps account for load; the minima
+    // reduce interference from slow rounds. Measured 1.82x versus roughly 19.56x
+    // for TextMate's ~700 ms over a parse minimum at load ~52; 6x leaves >3x headroom.
+    expect(Math.min(...highlightMs) / Math.min(...parseMs)).toBeLessThan(6);
   });
 
   it('answers a cached slice without re-classifying it', async () => {
