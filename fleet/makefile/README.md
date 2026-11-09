@@ -6,17 +6,17 @@ manifest leaves changes outside the lanes' paths to the orchestrator: `codeteam/
 
 ## The gap
 
-Reviewers and test runners cannot make a test record in this repository: `make zone-test-one DIR=...` fails with
+Before S-15, reviewers and test runners could not make a test record in this repository: `make zone-test-one DIR=...` failed with
 `No rule to make target 'test-one'` (queries' `blast-base.md`, host's `extension-hooks.md` EH-INFRA-01).
-So every record so far is a lead's own run.
+So every record so far was a lead's own run.
 
 How make is wired here (codeteam 34c2667):
 - codeteam exports `MAKEFILES=<codeteam>/zone/zone.mk` for every lane (`bin/codeteam:1448`, `v2/codeteam2/team.py:387`).
   GNU make reads that file first, then the worktree's own Makefile.
 - zone.mk supplies `zone-test` and `zone-test-one`, which record a run through `zone-tool`, and
   `zone-test-status`, which only reads the records. `zone-test-one`'s run is the repository's own
-  `test-one DIR=<path>` target, in the worktree root. The fork has no Makefile
-  (upstream has none), so there is no `test-one`.
+  `test-one DIR=<path>` target, in the worktree root. Before S-15, the fork had no Makefile
+  (upstream has none), so there was no `test-one`.
 - `zone-test` runs `ZONE_TEST`. A lane's `test` key in the manifest sets it (exported as `ZONE_TEST`,
   `bin/codeteam:1441`); otherwise zone.mk's default is `test-one DIR=$(ZONE)` then `test-one DIR=$(ZONE)/rust`.
   Every codegraph lane has `path = "."`, so that default would run the whole suite and then a folder that does
@@ -29,10 +29,10 @@ targets onto `team/claude/rules/product.md` "Test calls":
 
 | Target | Runs |
 |---|---|
-| `test-one DIR=<test file or folder> [TEST="<regex>"]` | `npx --no-install vitest run <DIR> [-t <regex>]`; `TEST` is refused under `zone-test-one` (below) |
+| `test-one DIR=<test file or folder> [TEST="<regex>"] [GROUP=unit\|integration\|validation\|all]` | `npx --no-install vitest run <DIR> [-t <regex>]`; `GROUP` defaults to unit and is passed as `CODEGRAPH_TEST_GROUP`. `TEST` and non-unit `GROUP` are refused under `zone-test-one` and `zone-test` (below). |
 | `typecheck` | `npx --no-install tsc --noEmit -p .` (the push gate) |
-| `test-times DIR=<...>` | vitest's JSON report, listing tests over 5 s (the zone rules name `make test-times`) |
-| zone suite (`ZONE_TEST`) | when the manifest gives the lane no `test`: `typecheck`, then `test-one` on each folder under `__tests__/` in the lane's `owns` (`CODETEAM_OWNS`). host gets `__tests__/extensions/host`, queries and resolution theirs, and fleet gets `typecheck` alone. A manifest `test` still wins (the Makefile checks `$(origin ZONE_TEST)`). |
+| `test-times DIR=<...> [GROUP=unit\|integration\|validation\|all]` | vitest's JSON report, listing tests over 5 s (the zone rules name `make test-times`) |
+| zone suite (`ZONE_TEST`) | when the manifest gives the lane no `test`: `typecheck`, then `test-one` on each folder under `__tests__/` in the lane's `owns` (`CODETEAM_OWNS`), running the unit group. host gets `__tests__/extensions/host`, queries and resolution theirs, and fleet gets `typecheck` alone. A manifest `test` still wins (the Makefile checks `$(origin ZONE_TEST)`). |
 
 Each target says "run npm ci once" when the worktree has no `node_modules`, instead of failing inside npx.
 `DIR` and `TEST` reach the shell as environment variables, so quotes and backticks in them arrive as typed on
@@ -40,10 +40,22 @@ Each target says "run npm ci once" when the worktree has no `node_modules`, inst
 `zone-test-one`, `DIR` first passes zone.mk's unquoted `DIR=$(DIR)` (below).
 
 `TEST` and the record: zone.mk keys a `zone-test-one` record on `DIR`, `SWIFT_TEST_ARGS` and `CARGO_TEST_ARGS`
-(`zone.mk:44`), not `TEST`. A filtered run would be stored under the unfiltered key and replayed for a later
+(`zone.mk`'s `ZONE_TEST_ONE_KEY`), not `TEST`. A filtered run would be stored under the unfiltered key and replayed for a later
 unfiltered request. So the Makefile stops with an error when `TEST` is set and the goal is `zone-test-one` or
 `zone-test`; a filtered run is `make test-one`, unrecorded. vitest 2.1.9 has no `file:line` filter that could
 carry the filter inside `DIR`.
+
+`GROUP` and the record: zone.mk's record key does not include `GROUP` either, so a non-unit `GROUP` is refused for
+`zone-test-one` and `zone-test` until zone.mk keys it. `make test-one DIR=... GROUP=...` runs another group,
+unrecorded.
+
+A file's suffix takes precedence: `.integration.test.ts` and `.gate.test.ts` are integration, and
+`.validation.test.ts` is validation. Otherwise, paths or globs under `integration` or `validation` in the root
+`test-groups.json` select the group; a file without a recognized suffix that matches both lists is an error, and an
+unmatched file defaults to unit. `GROUP=all` leaves the engine group unrestricted. Upstream test files are grouped
+by `test-groups.json` entries rather than renamed, reducing merge churn. Groups narrow the engine project;
+the ui project is unchanged. With `CODEGRAPH_TEST_GROUP` unset, `npx vitest run` runs the unit engine group.
+The Makefile's `GROUP` overrides any command-line or environment `CODEGRAPH_TEST_GROUP`.
 
 The extraction-path switches are refused the same way: any non-empty `CODEGRAPH_KERNEL*` (`CODEGRAPH_KERNEL=0`, the
 TypeScript path instead of the Rust kernel, or a `CODEGRAPH_KERNEL_<PASS>=0` pass switch), from the command line or
@@ -81,8 +93,8 @@ With `MAKEFILES` set to codeteam's real `zone/zone.mk`, `CODETEAM_ZONE=.`, and `
   (each `zone-test-one`) show as untracked in `git status` (the `.log` files are already ignored by `*.log`).
   codeteam already adds `.codegraph/` to each team repository's `info/exclude` (decision 82); `.test-record*.json`
   could go there too.
-- `zone-test-one` could add `$(TEST)` to its record key (`zone.mk:44`); the Makefile's refusal can then go.
-- `zone-test-one` passes `DIR=$(DIR)` unquoted to its inner make (`zone.mk:44`), so a path with a space, a quote or
+- `zone-test-one` could add `$(TEST)` and `$(GROUP)` to its record key (`zone.mk`'s `ZONE_TEST_ONE_KEY`); the Makefile's refusals can then go.
+- By default, `zone-test-one` passes `DIR=$(DIR)` unquoted to its inner make (`zone.mk`'s `ZONE_TEST_ONE_CMD`), so a path with a space, a quote or
   a backtick is changed there, before this Makefile sees it.
 
 ## Applied / undo
