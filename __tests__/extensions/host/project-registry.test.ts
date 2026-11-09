@@ -13,7 +13,7 @@
  * every test fails on the missing module rather than the file failing once.
  *
  * A change to a record waits for its record lock on a time budget (about
- * 2 s), not a count of attempts: a lock held by a live process that keeps
+ * 30 s), not a count of attempts: a lock held by a live process that keeps
  * reading as released (the immediate retry a release earns) does not use the
  * wait up before the holder lets go.
  */

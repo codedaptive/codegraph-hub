@@ -1,8 +1,8 @@
 /**
- * Fresh answers, CLI surface: the CLI never closes its writer while
- * the sync its `--fresh` wait started is still running.
+ * Fresh answers, CLI surface: standalone waits settle before closing their writer;
+ * a routed sync with a zero settle cap can finish on the builder after the CLI exits.
  *
- * When `--fresh` passes its bound with a sync in flight, the CLI prints the
+ * When standalone `--fresh` passes its bound with a sync in flight, the CLI prints the
  * answer, the not-fresh checkpoint and a `Note:` line at once, then waits
  * (capped by CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS) for that sync to settle before
  * closing the index and exiting 3. Closing the writer mid-sync cuts the sync
@@ -21,7 +21,7 @@
  *
  * Driven through the built binary as __tests__/extensions/host/fresh-answers.cli.test.ts is.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -29,6 +29,7 @@ import * as path from 'path';
 import { performance } from 'perf_hooks';
 import { createRequire } from 'module';
 import { CodeGraph } from '../../../src';
+import { Fixtures, builderLogLines, waitUntil } from './machine-server.harness';
 
 // Loaded through require: vite's transform drops the `node:` prefix of a static import and then
 // cannot resolve `sqlite`.
@@ -52,16 +53,18 @@ const CUT_ATTEMPTS = 5;
 const ORDER_GAP_MS = 100;
 /** A child still running after this is killed; the run then fails on its signal. */
 const CHILD_TIMEOUT_MS = 180_000;
-/**
- * G2's catch-up bound gives more time than the default 30 s under gate load: one measured run left
- * 252 of 400 files pending after 30 s (load 95–191 on 18 cores). Extrapolating that observed progress
- * gives about 80 s for 400 files; 150 s provides headroom, but cannot guarantee completion under load.
- * It leaves 30 s before CHILD_TIMEOUT_MS for startup and exit, though the child can still be killed.
- */
-const CATCH_UP_TIMEOUT_MS = 150_000;
+/** A hang bound for the builder to finish G2's FILE_COUNT-file sync after the first CLI has exited. */
+const SYNC_END_WAIT_MS = 600_000;
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+/** Wait for this CLI's builder job, excluding jobs logged before it was spawned. */
+async function waitForSyncEnd(stateDir: string, root: string, fromIndex: number): Promise<void> {
+  expect(await waitUntil(() => builderLogLines(stateDir).slice(fromIndex)
+    .some((line) => line.endsWith(` job end sync ${root} ok`)), SYNC_END_WAIT_MS, 100),
+  `CLI sync of ${root} did not finish within ${SYNC_END_WAIT_MS} ms after builder.log line ${fromIndex}`).toBe(true);
 }
 
 /** One stderr line and when the parent received it, in ms since the spawn. */
@@ -220,16 +223,22 @@ function fileBody(i: number, attempt?: number): string {
 interface Attempt { boundMs: number; pending: unknown; timedOut: unknown; fresh: unknown }
 
 /** The accepted run of cutRun, its checkpoint, and every attempt it took. */
-interface Cut { run: CliRun; cp: Record<string, unknown>; attempts: Attempt[]; calibration: Calibration }
+interface Cut { run: CliRun; cp: Record<string, unknown>; attempts: Attempt[]; calibration: Calibration; syncLogBaseline: number }
 
 describe('fresh answers: CLI with a sync still in flight at the bound', () => {
+  const fx = new Fixtures();
   let dir: string;
+  let stateDir: string;
   /** The setup's indexAll wall time: calibrateBound's sync estimate S. */
   let indexAllMs: number;
 
   // Over 5 s: indexes FILE_COUNT files, and that indexAll's duration is the calibration's S.
   beforeEach(async () => {
-    dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fresh-inflight-')));
+    // An indexed ancestor must not supply a different index or machine server to this CLI fixture.
+    dir = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'codegraph-fresh-inflight-')));
+    // Keep the isolated server state under the ignored index directory, not among the source files being counted.
+    stateDir = path.join(dir, '.codegraph', 'test-state');
+    vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
     git(dir, ['init', '-q']);
     git(dir, ['config', 'user.name', 'Fresh Test']);
     git(dir, ['config', 'user.email', 'fresh@example.invalid']);
@@ -249,9 +258,11 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     }
   }, 120_000);
 
-  afterEach(() => {
+  afterEach(async () => {
+    await fx.teardown();
+    vi.unstubAllEnvs();
     fs.rmSync(dir, { recursive: true, force: true });
-  });
+  }, 180_000);
 
   /** Rewrites every file with attempt `n`'s body, so all FILE_COUNT are pending again. */
   function editAll(n: number): void {
@@ -292,6 +303,7 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
       expect(preCp?.pending, `attempt ${n} does not start with every file pending: plain checkpoint stdout ` +
         `${JSON.stringify(pre.stdout)}; ${fixture()}`).toBe(FILE_COUNT);
 
+      const syncLogBaseline = builderLogLines(stateDir).length;
       const run = await runCli(args, { ...extra, CODEGRAPH_FRESH_TIMEOUT_MS: String(bound) });
       const cp = readCp(run);
       if (!cp) {
@@ -307,8 +319,10 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
         tooLong = bound;
         bound = tooShort !== undefined ? Math.round(Math.sqrt(bound * tooShort)) : Math.max(1, Math.round(bound / 2));
       } else {
-        return { run, cp, attempts, calibration: calibration! };
+        return { run, cp, attempts, calibration: calibration!, syncLogBaseline };
       }
+      // A routed zero-settle calibration miss can leave its job alive. Finish it before the next calibration edit.
+      if (run.stderr.some((line) => /still running/i.test(line.text))) await waitForSyncEnd(stateDir, dir, syncLogBaseline);
     }
     throw new Error(`no attempt cut a running sync with at least ${FILE_COUNT * CUT_MIN_LEFT} files left. ` +
       `pending ${FILE_COUNT} = no sync started before the bound; pending near 0 = the sync finished or nearly. ` +
@@ -358,12 +372,26 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect(integrityCheck(dir)).toBe('ok');
   }, 600_000);
 
-  // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, then a second CLI run
-  // with a CATCH_UP_TIMEOUT_MS fresh wait for up to FILE_COUNT files, on a loaded machine.
+  // Over 5 s: a server and builder start, up to CUT_ATTEMPTS CLI runs over FILE_COUNT-file edits,
+  // and a bounded condition wait for the accepted run's builder sync to finish before the next checkpoint.
   //
   // No ordering-against-exit assertion here: with a settle cap of 0 the CLI does not wait for the
   // sync to settle after output, and whether the parent sees that output or the exit first is a race.
   it('G2 query --fresh with a settle cap of 0 says the sync is still running; the next --fresh checkpoint catches up and the index is intact', async () => {
+    // Only a routed sync outlives its CLI and logs job end. The other gates exercise the standalone writer.
+    // Prove readiness on a different indexed root: holding dir would start a watcher that could sync calibration edits.
+    const probe = fx.makeRepo(path.join(stateDir, 'ready-probe'), { 'probe.ts': 'export function readyProbe() {}\n' });
+    fx.index(probe, stateDir);
+    const session = fx.session({ cwd: probe, stateDir, env: {
+      CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0',
+      CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
+      CODEGRAPH_BUILDER_ENSURE_WAIT_MS: '90000',
+    } });
+    await session.initialize();
+    await session.tool('codegraph_search', { query: 'readyProbe', projectPath: probe }, 180_000);
+    expect(await waitUntil(() => builderLogLines(stateDir).some((line) => line.endsWith(` job end catch-up ${probe} ok`)),
+      180_000, 100), 'G2 setup: the isolated builder finished the readiness probe catch-up').toBe(true);
+
     const cut = await cutRun(['query', 'freshlyAdded0', '-p', dir, '--fresh', '--json'],
       { CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0' }, stderrCheckpoint);
     const r = cut.run;
@@ -377,13 +405,12 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect.soft(lines.filter(l => !l.startsWith(CHECKPOINT_PREFIX) && !l.startsWith('Note:') && !/still running/i.test(l)))
       .toEqual([]);
 
-    // Allow extra time for catch-up under load; settle 0 avoids waiting for a timed-out sync after
-    // the checkpoint is printed. The assertion can still fail if catch-up exceeds the bound.
+    await waitForSyncEnd(stateDir, dir, cut.syncLogBaseline);
     const after = await runCli(['checkpoint', dir, '--fresh', '--json'], {
-      CODEGRAPH_FRESH_TIMEOUT_MS: String(CATCH_UP_TIMEOUT_MS), CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0',
+      CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0',
     });
     const cp2 = stdoutCheckpoint(after);
-    expect(cp2?.pending, `--fresh checkpoint after (bound ${CATCH_UP_TIMEOUT_MS} ms, timedOut ${String(cp2?.timedOut)}); ` +
+    expect(cp2?.pending, `--fresh checkpoint after the first CLI's sync finished; timedOut ${String(cp2?.timedOut)}; ` +
       `attempts used ${cut.attempts.length}`).toBe(0);
     expect(after.status).toBe(0);
     expect(integrityCheck(dir)).toBe('ok');

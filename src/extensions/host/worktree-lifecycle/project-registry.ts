@@ -135,30 +135,24 @@ function writeRecord(rec: RegisteredProject): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Age past which a record lock is taken over whatever pid it names. A holder
- * keeps it for one read and one rename, except the teardown's settle, which
- * under it also judges the root once more (one `git worktree list`, bounded at
- * 5 s by teardown.ts), judges the root again and recursively deletes
- * `<root>/.codegraph`: well under a second on a loaded
- * machine unless git hangs, and below this age even when git takes its whole
- * bound (the age counts from the create that took the lock, not from the wait
- * before it). So a lock this old was left by a process killed inside one
- * whose pid the OS has since given to another process. Residual: a holder
- * stalled longer than this (its process stopped, or descheduled that long)
- * loses the lock, and its write can then overwrite the next holder's.
+ * File age past which a record lock with no parseable pid may be taken over.
+ * On filesystems without hard links, the lock is empty between its exclusive
+ * create and its write; allow 10 s for that write before treating it as
+ * abandoned. A lock naming another live process is never taken by age, even
+ * when its timestamp is invalid or its pid has been reused by the OS.
  */
 const RECORD_LOCK_STALE_MS = 10_000;
 
 /**
- * How long a change waits for a record lock another live process holds:
- * about 2 s. Most holders keep it for milliseconds, so this outlasts a queue
- * of them; past it the change throws rather than wait on a wedged holder. A
- * deadline, not a count of attempts: a lock released between a failed create
- * and the look that follows is tried again at once, and however many such
- * retries contention brings, they use up no more of the wait than the time
- * they take. The wait is synchronous: every registry call is.
+ * How long a change waits for a record lock: about 30 s. A live holder can be
+ * descheduled for seconds under load; teardown also holds the lock across a
+ * git call bounded at 5 s (teardown.ts) and a recursive index deletion. Past
+ * this deadline the change throws rather than wait indefinitely. This is a
+ * time budget, not an attempt count: a lock released between a failed create
+ * and the look that follows is tried again at once. The wait is synchronous
+ * (Atomics.wait), blocking the builder's main thread when it calls here.
  */
-const RECORD_LOCK_WAIT_MS = 2_000;
+const RECORD_LOCK_WAIT_MS = 30_000;
 
 /**
  * Pauses between attempts on a held lock double from the first to the
@@ -183,30 +177,26 @@ function isAlive(pid: number): boolean {
 }
 
 /**
- * Whether the record lock `lockPath`, read as `snap`, may be taken over:
- * judged from those bytes alone (`<pid>\n<ISO8601 time it was taken>`), except
- * that a lock whose bytes do not parse is judged by the file's age, since a
- * lock created on a filesystem without hard links is empty for the moment
- * between its create and its write. Stale: a dead pid; this process's own pid
- * (registry calls are synchronous and never nest, so a lock naming this
- * process while it waits for one is a leftover of a release that failed; this
- * assumes no other thread of the process changes the registry, true today:
- * only the main thread of the index builder and the CLI do); or
- * older than {@link RECORD_LOCK_STALE_MS}.
+ * Whether the record lock `lockPath`, read as `snap`, may be taken over.
+ * A parseable pid is judged independently of the timestamp: a dead pid or
+ * this process's own pid is stale; another live pid is never stale by age.
+ * Registry calls are synchronous and never nest, and only the builder's main
+ * thread and the CLI change the registry, so our own pid means a leftover
+ * from a failed release. Without a parseable pid, use the file's age against
+ * {@link RECORD_LOCK_STALE_MS}, allowing the empty create-to-write interval
+ * on filesystems without hard links.
  */
 function isStaleRecordLock(lockPath: string, snap: LockSnapshot): boolean {
-  const [pidLine = '', takenAt = ''] = snap.raw.split('\n');
+  const [pidLine = ''] = snap.raw.split('\n');
   const pid = Number(pidLine);
-  const taken = Date.parse(takenAt);
-  if (!/^\d+$/.test(pidLine) || pid <= 0 || !Number.isFinite(taken)) {
+  if (!/^\d+$/.test(pidLine) || pid <= 0 || !Number.isSafeInteger(pid)) {
     try {
       return Date.now() - fs.statSync(lockPath).mtimeMs > RECORD_LOCK_STALE_MS;
     } catch {
       return false; // gone or unreadable: the next create attempt decides
     }
   }
-  if (pid === process.pid || !isAlive(pid)) return true;
-  return Date.now() - taken > RECORD_LOCK_STALE_MS;
+  return pid === process.pid || !isAlive(pid);
 }
 
 /**
@@ -216,10 +206,11 @@ function isStaleRecordLock(lockPath: string, snap: LockSnapshot): boolean {
  * succeeds. A lock judged stale ({@link isStaleRecordLock}) is removed only
  * while it is still the very file judged, under its `.takeover` guard
  * ({@link removeLockIfUnchanged}), then the create is tried again; a lock gone
- * by the time it is looked at is tried again at once; a live holder is waited
- * for, with growing pauses, until {@link RECORD_LOCK_WAIT_MS} has passed since
- * the first attempt. Throws when the lock cannot be had in that time. The lock
- * is removed afterwards only if it is still the one this call wrote.
+ * by the time it is looked at is tried again at once. Another live pid's lock
+ * is never taken by age: wait synchronously with growing Atomics.wait pauses
+ * until {@link RECORD_LOCK_WAIT_MS} has passed since the first attempt, then
+ * throw if it is still held. In the builder this blocks the main thread. The
+ * lock is removed afterwards only if it is still the one this call wrote.
  */
 function withRecordLock<T>(canonicalRoot: string, fn: () => T): T {
   fs.mkdirSync(registryDir(), { recursive: true, mode: 0o700 });

@@ -2939,9 +2939,11 @@ export class ToolHandler {
    * checkout is such a worktree: the checkout's index is another repository's),
    * a directory outside git with no
    * index is cold-built at `anchorRoot` (the session's anchor root; the path
-   * itself when the call has no session), and a call that finds it still
-   * building is answered with the building note (success-shaped, through
-   * NotIndexedError) until it is done. Only on a handler that has a builder
+   * itself when the call has no session). A building outcome answers with the
+   * building note (success-shaped, through NotIndexedError), except when the
+   * rebuild fence handles it. A pending outcome answers with that note only if
+   * the call selects no index; otherwise the handler opens the index on disk.
+   * Only on a handler that has a builder
    * (the engine's; CLI, worker and fallback handlers never seed or build). A
    * path in a git worktree the builder could not give an index (no sibling is
    * complete yet, the copy failed, or the builder is not answering) is
@@ -2959,6 +2961,15 @@ export class ToolHandler {
     this.refuseSensitivePath(projectPath, this.selectIndexRootForCall(projectPath));
     if (!this.needsBuilderEnsure(projectPath, builder)) return;
     const outcome = await builder.ensure(projectPath, anchorRoot);
+    if (outcome.kind === 'none' && outcome.pending) {
+      this.unseededWorktrees.delete(projectPath);
+      this.unbuiltDirectories.delete(projectPath);
+      // Building guidance is only for calls with no index to serve; an existing
+      // index stays readable from disk while the builder's preparation is pending.
+      if (this.selectIndexRootForCall(projectPath) !== null) return;
+      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
+      throw new NotIndexedError(worktreeSeedModule.buildingNote(gitRootByStat(projectPath) ?? anchorRoot ?? projectPath));
+    }
     if (outcome.kind === 'building') {
       // A `codegraph index` rebuild of an index that exists is not a build the
       // builder runs: the open's rebuild fence answers it ("a rebuild is in

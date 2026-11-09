@@ -149,7 +149,7 @@ export class BuilderService {
   async ensure(projectPath: string, anchorRoot?: string): Promise<EnsureOutcome> {
     const decision = await ensureWorktreeIndex(projectPath, this.seedHost, anchorRoot);
     if (decision.kind === 'building') return decision;
-    if (decision.kind === 'none' && (decision.worktree !== undefined || decision.unbuilt !== undefined)) return decision;
+    if (decision.kind === 'none' && (decision.pending || decision.worktree !== undefined || decision.unbuilt !== undefined)) return decision;
     if (decision.kind === 'seeded') {
       const held = await this.holdRoot(decision.root);
       return held.kind === 'building' ? held : { ...decision, root: held.root };

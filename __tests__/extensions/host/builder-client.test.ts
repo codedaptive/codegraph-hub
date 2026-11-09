@@ -81,13 +81,15 @@ function alive(pid: number): boolean {
   }
 }
 
-describe('the index builder process, through BuilderClient', { timeout: 120_000 }, () => {
+// Engine startup, builds and replacement processes can each take minutes at host load 175; wait on events.
+describe('the index builder process, through BuilderClient', { timeout: 600_000 }, () => {
   let workspace: string;
   let stateDir: string;
   let client: BuilderClient | undefined;
 
   beforeEach(() => {
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-builder-client-')));
+    // Plain-directory cases must be outside git and indexed ancestors; the harness's POSIX TMPDIR can be in a checkout.
+    workspace = real(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-builder-client-')));
     stateDir = path.join(workspace, 'state');
     // The builder is forked with this environment.
     vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
@@ -101,13 +103,15 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     client = undefined;
     vi.unstubAllEnvs();
     fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
+  }, 180_000);
 
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('holds an indexed root as the builder: writer.pid names the builder, a sync and a release do what they say', async () => {
     const root = path.join(workspace, 'repo');
     makeRepo(root);
     await indexDir(root);
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     const outcome = await client.ensure(root);
     expect(outcome).toEqual({ kind: 'ready', root: real(root) });
@@ -122,11 +126,11 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
 
     // Resolves once the first catch-up has run, and marks the writer ready.
     await client.caughtUp(root);
-    expect(await waitUntil(() => readWriterLock(root)?.ready === true, 10_000)).toBe(true);
+    expect(await waitUntil(() => readWriterLock(root)?.ready === true, 120_000)).toBe(true);
     expect(builderLog(stateDir).some((l) => / job end catch-up \S+ ok$/.test(l))).toBe(true);
 
     // The watcher state is pushed: watching, nothing pending.
-    expect(await waitUntil(() => client!.freshness(root)?.watching === true, 10_000)).toBe(true);
+    expect(await waitUntil(() => client!.freshness(root)?.watching === true, 120_000)).toBe(true);
     expect(client.freshness(root)).toMatchObject({ root: real(root), degradedReason: null, recovering: false, pendingFiles: [] });
 
     // An edit, then a sync job: counted, logged as the builder's job, and visible to a read-only open.
@@ -150,6 +154,7 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     await expect(client.sync(root)).rejects.toThrow(/not held/);
   });
 
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('cold-builds a worktree with no index and no sibling under the builder\'s own rebuild.pid, no opt-in needed', async () => {
     const main = path.join(workspace, 'main');
     makeRepo(main);
@@ -157,17 +162,18 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     git(main, 'worktree', 'add', '-q', '-b', 'feature', wt);
     vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '1500');
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     const first = await client.ensure(wt);
     expect(first).toEqual({ kind: 'building', root: real(wt) });
     // The build holds rebuild.pid for the delay: the holder is the builder.
-    expect(await waitUntil(() => readWriterLock(wt, 'rebuild.pid') !== null, 15_000)).toBe(true);
+    expect(await waitUntil(() => readWriterLock(wt, 'rebuild.pid') !== null, 120_000)).toBe(true);
     expect(readWriterLock(wt, 'rebuild.pid')?.pid).toBe(client.pid());
     expect(readWriterLock(wt, 'rebuild.pid')?.mode).toBe('cold-build');
     // A second call for the same worktree while it builds queues no second build.
     expect(await client.ensure(path.join(wt, 'src'))).toEqual({ kind: 'building', root: real(wt) });
 
-    expect(await waitUntil(() => isInitialized(wt) && readWriterLock(wt, 'rebuild.pid') === null, 60_000)).toBe(true);
+    expect(await waitUntil(() => isInitialized(wt) && readWriterLock(wt, 'rebuild.pid') === null, 180_000)).toBe(true);
     const log = builderLog(stateDir);
     expect(log.filter((l) => / job start cold-build /.test(l))).toHaveLength(1);
     expect(log.some((l) => / job end cold-build \S+ ok$/.test(l))).toBe(true);
@@ -177,37 +183,44 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     expect(readWriterLock(wt)?.pid).toBe(client.pid());
   });
 
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('answers none, never an error, for a path that does not exist', async () => {
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
     await expect(client.ensure(path.join(workspace, 'missing'))).resolves.toEqual({ kind: 'none' });
   });
 
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('cold-builds a directory that is not in git and has no index at the path itself when the call carries no anchor', async () => {
     const plain = path.join(workspace, 'plain');
     fs.mkdirSync(path.join(plain, 'src'), { recursive: true });
     fs.writeFileSync(path.join(plain, 'src', 'a.ts'), 'export function plainSymbol() { return 1; }\n');
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     expect(await client.ensure(plain)).toEqual({ kind: 'building', root: real(plain) });
-    expect(await waitUntil(() => isInitialized(plain) && readWriterLock(plain, 'rebuild.pid') === null, 60_000)).toBe(true);
+    expect(await waitUntil(() => isInitialized(plain) && readWriterLock(plain, 'rebuild.pid') === null, 180_000)).toBe(true);
     expect(await client.ensure(plain)).toEqual({ kind: 'ready', root: real(plain) });
   });
 
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('carries the session anchor over IPC: a call on a subdirectory builds the anchor, never an index in the subdirectory', async () => {
     const anchor = path.join(workspace, 'plain');
     const sub = path.join(anchor, 'src');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, 'a.ts'), 'export function plainSymbol() { return 1; }\n');
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     expect(await client.ensure(sub, anchor)).toEqual({ kind: 'building', root: real(anchor) });
-    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 60_000)).toBe(true);
+    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 180_000)).toBe(true);
     expect(isInitialized(sub), 'the build root is the anchor, not the call\'s path').toBe(false);
     expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
   });
 
   // The replacement builder is sent the anchor with the path: it rebuilds the anchor. Told only the path (an
   // `ensure` that lost its anchor) it would build the subdirectory, which the last two assertions catch.
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('after SIGKILL the anchored plain-directory build is queued again at the anchor, not at the call\'s path', async () => {
     const anchor = path.join(workspace, 'plain');
     const sub = path.join(anchor, 'src');
@@ -215,23 +228,26 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     fs.writeFileSync(path.join(sub, 'a.ts'), 'export function plainSymbol() { return 1; }\n');
     vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '4000');
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     expect(await client.ensure(sub, anchor)).toEqual({ kind: 'building', root: real(anchor) });
     const killed = client.pid()!;
-    expect(await waitUntil(() => readWriterLock(anchor, 'rebuild.pid')?.pid === killed, 15_000)).toBe(true);
+    expect(await waitUntil(() => readWriterLock(anchor, 'rebuild.pid')?.pid === killed, 120_000)).toBe(true);
 
     process.kill(killed, 'SIGKILL');
-    expect(await waitUntil(() => !alive(killed), 5_000)).toBe(true);
-    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 20_000)).toBe(true);
+    expect(await waitUntil(() => !alive(killed), 120_000)).toBe(true);
+    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 120_000)).toBe(true);
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     // The killed build is built again with no further call, at the anchor.
-    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 90_000)).toBe(true);
+    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 180_000)).toBe(true);
     expect(isInitialized(sub)).toBe(false);
     expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
   });
 
   // About 10 s on an overloaded machine, by design: two builder processes (the killed one and its replacement)
   // each load the whole engine, and the replacement runs a 4 s held cold build (the delay knob) to its end.
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('after SIGKILL the client starts a new builder, whose own pid reclaims the dead one\'s locks and takes the roots up again', async () => {
     const held = path.join(workspace, 'held');
     makeRepo(held);
@@ -242,24 +258,26 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     git(main, 'worktree', 'add', '-q', '-b', 'feature', wt);
     vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '4000');
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
     expect(await client.ensure(held)).toMatchObject({ kind: 'ready' });
     expect((await client.ensure(wt)).kind).toBe('building');
     const killed = client.pid()!;
-    expect(await waitUntil(() => readWriterLock(wt, 'rebuild.pid')?.pid === killed, 15_000)).toBe(true);
+    expect(await waitUntil(() => readWriterLock(wt, 'rebuild.pid')?.pid === killed, 120_000)).toBe(true);
     expect(readWriterLock(held)?.pid).toBe(killed);
 
     process.kill(killed, 'SIGKILL');
-    expect(await waitUntil(() => !alive(killed), 5_000)).toBe(true);
+    expect(await waitUntil(() => !alive(killed), 120_000)).toBe(true);
     // The builder is replaced, and says so in builder.pid.
-    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 20_000)).toBe(true);
+    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 120_000)).toBe(true);
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
     const replacement = client.pid()!;
-    expect(await waitUntil(() => pidFilePid(stateDir) === replacement, 20_000)).toBe(true);
+    expect(await waitUntil(() => pidFilePid(stateDir) === replacement, 120_000)).toBe(true);
 
     // The held root is held again, by the new pid (the dead pid's writer.pid was reclaimed).
-    expect(await waitUntil(() => readWriterLock(held)?.pid === replacement, 30_000)).toBe(true);
+    expect(await waitUntil(() => readWriterLock(held)?.pid === replacement, 120_000)).toBe(true);
     // The killed cold build is built again, with no further call: the client queued it for the new builder.
-    expect(await waitUntil(() => isInitialized(wt) && readWriterLock(wt, 'rebuild.pid') === null, 90_000)).toBe(true);
+    expect(await waitUntil(() => isInitialized(wt) && readWriterLock(wt, 'rebuild.pid') === null, 180_000)).toBe(true);
     expect(builderLog(stateDir).some((l) => / job end cold-build \S+ ok$/.test(l))).toBe(true);
     expect(client.pid()).toBe(replacement);
   });
@@ -267,6 +285,7 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
   // The channel is closed before the builder has started, so its `ready` message is written to a pipe nobody
   // reads: the write fails (EPIPE) asynchronously to the send call. Before the fix that became an unhandled
   // 'error' event on `process`, exit code 1, builder.pid left behind.
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('a builder started on an already closed channel shuts down normally: exit 0, no unhandled EPIPE, builder.pid removed', async () => {
     const entry = builderEntry();
     expect(entry).not.toBeNull();
@@ -290,13 +309,15 @@ describe('the index builder process, through BuilderClient', { timeout: 120_000 
     expect(pidFilePid(stateDir)).toBeNull();
   });
 
+  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
   it('stop() ends the builder and removes builder.pid', async () => {
     client = BuilderClient.start();
+    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
     await client.ensure(path.join(workspace, 'nothing'));
-    expect(await waitUntil(() => pidFilePid(stateDir) !== null, 20_000)).toBe(true);
+    expect(await waitUntil(() => pidFilePid(stateDir) !== null, 120_000)).toBe(true);
     const pid = client.pid()!;
     await client.stop();
-    expect(await waitUntil(() => !alive(pid), 10_000)).toBe(true);
+    expect(await waitUntil(() => !alive(pid), 120_000)).toBe(true);
     expect(pidFilePid(stateDir)).toBeNull();
     // After stop nothing restarts it, and a request answers as failed.
     expect(client.pid()).toBeNull();

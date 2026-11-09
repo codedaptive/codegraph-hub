@@ -6,11 +6,11 @@
  * the tool answers, `<state>/builder.pid` and `builder.log`, the lock files under each root's `.codegraph/`,
  * `<state>/server.pid`, and whether pids are alive. The helpers are in `machine-server.harness.ts`.
  *
- * Without a builder, the waits are short. IB1-IB3 and IB5 record that (no builder.pid within 15 s) and still run
+ * Without a builder, the job waits are short. IB1-IB3 and IB5 record the missing builder and still run
  * their steps on short waits, so the run shows where each write lands. IB4 and IB6 fail on their own answers.
  * IB7 is a regression guard for the edit path.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -33,11 +33,11 @@ import {
 const EXPLORE = 'codegraph_explore';
 const STATUS = 'codegraph_status';
 /** How long a builder may take to appear in builder.pid after its server starts. */
-const BUILDER_APPEAR_MS = 15_000;
+const BUILDER_APPEAR_MS = 180_000;
 /** The lock sampler's period: the gate reads the lock files every ~20 ms. */
 const SAMPLE_MS = 20;
-/** How long a gate waits for one job line in builder.log: a small-repo job is seconds, the rest is headroom for load 16-29. */
-const JOB_WAIT_MS = 90_000;
+/** How long a gate waits for one job line in builder.log: a small-repo job is seconds, the rest is headroom for heavily loaded scheduling. */
+const JOB_WAIT_MS = 180_000;
 /** The wait used for the same job lines when no builder exists: short, so the run stays quick. */
 const NO_BUILDER_WAIT_MS = 10_000;
 /** Job kinds whose end line means the root's working tree was synced (the fresh sync, the watcher, a catch-up). */
@@ -183,10 +183,31 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     const saved = process.env.CODEGRAPH_AUTO_INDEX;
     delete process.env.CODEGRAPH_AUTO_INDEX;
     try {
-      return fx.session(opts);
+      return fx.session({ ...opts, env: {
+        CODEGRAPH_STARTUP_HANDSHAKE_TIMEOUT_MS: '180000',
+        CODEGRAPH_DAEMON_RETRY_MS: '100', CODEGRAPH_DAEMON_RETRY_MAX_MS: '1000',
+        CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0', CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
+        CODEGRAPH_BUILDER_ENSURE_WAIT_MS: '110000', CODEGRAPH_FRESH_TIMEOUT_MS: '180000',
+        ...opts.env,
+      } });
     } finally {
       if (saved !== undefined) process.env.CODEGRAPH_AUTO_INDEX = saved;
     }
+  }
+
+  /** A probe job proves the server received ready without touching the gate's first-call root. */
+  async function waitForBuilderReady(stateDir: string): Promise<void> {
+    const probe = fx.makeRepo(path.join(fx.tempRoot(), 'probe'), {
+      'src/probe.ts': 'export function readyProbe() { return "builder-ready-probe-marker"; }\n',
+    });
+    const session = startSession({ cwd: probe, stateDir });
+    await session.initialize();
+    await vi.waitFor(async () => {
+      expect(answers(await session.tool(EXPLORE, { query: 'readyProbe', projectPath: probe }, JOB_WAIT_MS),
+        'readyProbe', 'builder-ready-probe-marker')).toBe(true);
+    }, { timeout: JOB_WAIT_MS, interval: 250 });
+    expect(findJob(stateDir, 0, (job) => job.root === probe && job.kind === 'cold-build'
+      && job.edge === 'end' && job.status === 'ok'), 'probe job completed through the server client').toBeDefined();
   }
 
   // IB1: every writer lock is the builder's. Across a cold build, a seed's catch-up and a sync after an edit, every
@@ -224,7 +245,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     // Phase 1: cold build of X1, a worktree with no index and no sibling. The delay knob holds its rebuild.pid for 2 s.
     const coldSampler = startLockSampler(stateDir, roots);
     const coldFrom = builderLogLines(stateDir).length;
-    const coldCall = await sx.tool(EXPLORE, { query: 'ib1ColdSymbol', projectPath: x1 });
+    const coldCall = await sx.tool(EXPLORE, { query: 'ib1ColdSymbol', projectPath: x1 }, JOB_WAIT_MS);
     const coldEnd = await waitForJob(stateDir, coldFrom, (j) => j.edge === 'end' && j.kind === 'cold-build' && j.root === x1, jobWait);
     await coldSampler.stop();
     if (coldEnd === undefined) {
@@ -241,7 +262,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     // Phase 2: a seed of W2 (a sibling of an indexed repository), then its queued catch-up.
     const seedSampler = startLockSampler(stateDir, roots);
     const seedFrom = builderLogLines(stateDir).length;
-    const seedCall = await sw.tool(EXPLORE, { query: 'ib1SeedSymbol', projectPath: w2 });
+    const seedCall = await sw.tool(EXPLORE, { query: 'ib1SeedSymbol', projectPath: w2 }, JOB_WAIT_MS);
     const seedEnd = await waitForJob(stateDir, seedFrom, (j) => j.edge === 'end' && j.kind === 'catch-up' && j.root === w2, jobWait);
     await seedSampler.stop();
     if (!answers(seedCall, 'ib1SeedSymbol', 'ib1-seed-body-marker')) {
@@ -262,7 +283,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       path.join(r3, 'src', 'sync.ts'),
       'export const ib1SyncBase = 1;\nexport function ib1SyncEdit(): string {\n  return "ib1-sync-body-marker";\n}\n',
     );
-    const freshCall = await sr.tool(STATUS, { projectPath: r3, fresh: true });
+    const freshCall = await sr.tool(STATUS, { projectPath: r3, fresh: true }, JOB_WAIT_MS);
     const syncEnd = await waitForJob(stateDir, syncFrom, (j) => j.edge === 'end' && SYNC_KINDS.includes(j.kind) && j.root === r3, jobWait);
     await syncSampler.stop();
     if (syncEnd === undefined) {
@@ -274,11 +295,11 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     console.info(`IB1 sync lock samples: ${samplerCounts(syncSampler)}`);
 
     expect(problems, 'IB1 problems (empty when every lock holder is the builder, and the cold build sampled one)').toEqual([]);
-  }, 300_000);
+  }, 600_000);
 
   // IB2: queue order. A sync of Z sent while cold build X runs waits for X to end, and runs before cold build Y starts.
   it('IB2: a sync sent while cold build X runs ends before cold build Y starts', async () => {
-    // Over 5 s by design: three repositories, a CLI index run, three serve --mcp spawns, and two cold builds held open for 6 s each.
+    // Over 5 s by design: three repositories, a CLI index run, three serve --mcp spawns, and two cold builds held open for 60 s each so requests can queue under heavy load.
     const root = fx.tempRoot();
     const stateDir = stateDirUnder(root);
     const rx = fx.makeRepo(path.join(root, 'rx'), { 'src/x.ts': 'export const ib2XBase = 1;\n' });
@@ -289,7 +310,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       'src/z.ts': 'export function ib2ZBase(): string {\n  return "ib2-z-base-marker";\n}\n',
     });
     fx.index(rz, stateDir);
-    const env = { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '6000' };
+    const env = { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '60000' };
     const sz = startSession({ cwd: rz, stateDir, env });
     const sx = startSession({ cwd: x, stateDir, env });
     const sy = startSession({ cwd: y, stateDir, env });
@@ -305,14 +326,14 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     const jobWait = builderUp ? JOB_WAIT_MS : NO_BUILDER_WAIT_MS;
 
     // Z is held first, so the only Z work the window below sees is the sync the gate sends.
-    await sz.tool(EXPLORE, { query: 'ib2ZBase', projectPath: rz });
-    const xCall = await sx.tool(EXPLORE, { query: 'ib2XOnly', projectPath: x });
+    await sz.tool(EXPLORE, { query: 'ib2ZBase', projectPath: rz }, JOB_WAIT_MS);
+    const xCall = await sx.tool(EXPLORE, { query: 'ib2XOnly', projectPath: x }, JOB_WAIT_MS);
     const xStart = await waitForJob(stateDir, 0, (j) => j.edge === 'start' && j.kind === 'cold-build' && j.root === x, jobWait);
     if (xStart === undefined) {
       problems.push(`cold build of X never started within ${jobWait / 1000} s (first call answered ${excerpt(xCall)})`);
     } else {
       // Y's cold build is queued behind X: a cold-build job while X runs waits for it.
-      await sy.tool(EXPLORE, { query: 'ib2YOnly', projectPath: y });
+      await sy.tool(EXPLORE, { query: 'ib2YOnly', projectPath: y }, JOB_WAIT_MS);
       // The sync: an edit in Z, then a fresh status call. The window must be open when the call is sent (X started
       // and has not ended), so the sync is queued while X runs.
       fs.writeFileSync(
@@ -321,7 +342,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       );
       const xEndedBeforeSend = findJob(stateDir, xStart.index, (j) => j.edge === 'end' && j.kind === 'cold-build' && j.root === x);
       if (xEndedBeforeSend !== undefined) problems.push('X had already ended when the sync was sent: the window the gate needs was missed');
-      const syncCall = await sz.tool(STATUS, { projectPath: rz, fresh: true });
+      const syncCall = await sz.tool(STATUS, { projectPath: rz, fresh: true }, JOB_WAIT_MS);
       if (syncCall.rpcError !== null) problems.push(`the fresh status call on Z answered a JSON-RPC error: ${excerpt(syncCall)}`);
 
       const isZSync = (j: Job, edge: 'start' | 'end'): boolean =>
@@ -348,18 +369,18 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     }
 
     expect(problems, 'IB2 problems (empty when Z sync ends before Y cold build starts, and was sent while X ran)').toEqual([]);
-  }, 300_000);
+  }, 600_000);
 
   // IB3: the builder is a restartable child. SIGKILL during a cold build leaves the server running, the server starts
   // a new builder, and the next call on the worktree answers from its index.
   it('IB3: after SIGKILL of the builder during a cold build, the server starts a new builder and the next call answers from the index', async () => {
-    // Over 5 s by design: a cold build held open for 4 s, a builder kill and restart, and polling calls on an overloaded machine.
+    // Over 5 s by design: a cold build held open for 30 s to observe and kill its lock holder under load, a builder kill and restart, and polling calls on an overloaded machine.
     const root = fx.tempRoot();
     const stateDir = stateDirUnder(root);
     const repo = fx.makeRepo(path.join(root, 'main'), { 'src/base.ts': 'export const ib3Base = 1;\n' });
     const wt = fx.addWorktree(repo, 'ib3-wt', path.join(root, 'wt'));
     fx.commitFiles(wt, { 'src/kill.ts': 'export function ib3KillSymbol(): string {\n  return "ib3-kill-body-marker";\n}\n' }, 'ib3: symbol');
-    const session = startSession({ cwd: wt, stateDir, env: { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '4000' } });
+    const session = startSession({ cwd: wt, stateDir, env: { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '30000' } });
     await session.initialize();
 
     const problems: string[] = [];
@@ -370,7 +391,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     const jobWait = builderUp ? JOB_WAIT_MS : NO_BUILDER_WAIT_MS;
 
     const serverBefore = serverPidOf(stateDir);
-    const firstCall = await session.tool(EXPLORE, { query: 'ib3KillSymbol', projectPath: wt });
+    const firstCall = await session.tool(EXPLORE, { query: 'ib3KillSymbol', projectPath: wt }, JOB_WAIT_MS);
     const started = await waitForJob(stateDir, 0, (j) => j.edge === 'start' && j.kind === 'cold-build' && j.root === wt, jobWait);
     const killed = builderPidOf(stateDir);
     if (started === undefined) {
@@ -379,7 +400,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       problems.push('a cold build started but builder.pid names no builder to kill');
     } else {
       // The cold build holds its locks while the delay runs: the builder's pid must be in one of them.
-      if (!(await waitUntil(() => lockFileHolders(wt).some((h) => h.pid === killed), 30_000, 20))) {
+      if (!(await waitUntil(() => lockFileHolders(wt).some((h) => h.pid === killed), 180_000, 20))) {
         problems.push(`while the cold build ran, no lock under the worktree's .codegraph named builder pid ${killed}`);
       }
       try {
@@ -390,9 +411,9 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       const restarted = await waitUntil(() => {
         const pid = builderPidOf(stateDir);
         return pid !== null && pid !== killed && isAlive(pid);
-      }, 30_000, 50);
+      }, 180_000, 100);
       if (!restarted) {
-        problems.push(`no new builder pid in builder.pid within 30 s of SIGKILL on ${killed} (builder.pid still ${builderPidOf(stateDir)})`);
+        problems.push(`no new builder pid in builder.pid within 180 s of SIGKILL on ${killed} (builder.pid still ${builderPidOf(stateDir)})`);
       }
       const serverAfter = serverPidOf(stateDir);
       if (serverBefore === null || serverAfter !== serverBefore) {
@@ -401,21 +422,21 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       if (serverBefore !== null && !isAlive(serverBefore)) problems.push(`server pid ${serverBefore} is not running after the builder was killed`);
 
       // The next write on the worktree: call until one answers from its index.
-      const deadline = Date.now() + 120_000;
+      const deadline = Date.now() + 180_000;
       let last: ToolAnswer | undefined;
       let answered = false;
       while (!answered && Date.now() < deadline) {
-        last = await session.tool(EXPLORE, { query: 'ib3KillSymbol', projectPath: wt });
+        last = await session.tool(EXPLORE, { query: 'ib3KillSymbol', projectPath: wt }, JOB_WAIT_MS);
         answered = answers(last, 'ib3KillSymbol', 'ib3-kill-body-marker');
         if (!answered) await sleep(500);
       }
       if (!answered) {
-        problems.push(`the next write on the worktree did not complete: no call answered from its index within 120 s (last answer ${last === undefined ? 'none' : excerpt(last)})`);
+        problems.push(`the next write on the worktree did not complete: no call answered from its index within 180 s (last answer ${last === undefined ? 'none' : excerpt(last)})`);
       }
     }
 
     expect(problems, 'IB3 problems (empty when the server restarted a builder and the worktree answers from its index)').toEqual([]);
-  }, 300_000);
+  }, 600_000);
 
   // IB4: a worktree with no index, no sibling and no registration answers the building note first (success-shaped),
   // then answers from its own index once the cold build has finished.
@@ -429,31 +450,32 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     const session = startSession({ cwd: wt, stateDir });
     await session.initialize();
 
+    await waitForBuilderReady(stateDir);
     const problems: string[] = [];
-    const first = await session.tool(EXPLORE, { query: 'ib4Symbol', projectPath: wt });
+    const first = await session.tool(EXPLORE, { query: 'ib4Symbol', projectPath: wt }, JOB_WAIT_MS);
     if (first.rpcError !== null || first.isError) {
       problems.push(`(1) the first call must be success-shaped, not an error: ${excerpt(first)}`);
     }
     if (!first.text.includes('is building the index')) {
       problems.push(`(1) the first call should answer the building note ("is building the index"): ${excerpt(first)}`);
     } else {
-      const deadline = Date.now() + 120_000;
+      const deadline = Date.now() + 180_000;
       let last: ToolAnswer = first;
       let answered = false;
       while (!answered && Date.now() < deadline) {
         await sleep(500);
-        last = await session.tool(EXPLORE, { query: 'ib4Symbol', projectPath: wt });
+        last = await session.tool(EXPLORE, { query: 'ib4Symbol', projectPath: wt }, JOB_WAIT_MS);
         answered = answers(last, 'ib4Symbol', 'ib4-body-marker');
       }
       if (!answered) {
-        problems.push(`(2) no call on the worktree answered from its index within 120 s (last answer ${excerpt(last)})`);
+        problems.push(`(2) no call on the worktree answered from its index within 180 s (last answer ${excerpt(last)})`);
       } else if (!fs.existsSync(path.join(wt, '.codegraph', 'codegraph.db'))) {
         problems.push(`(2) the answer did not come from the worktree's own index: ${path.join(wt, '.codegraph', 'codegraph.db')} is missing`);
       }
     }
 
     expect(problems, 'IB4 problems (empty when the first call is the building note and a later call answers from the worktree index)').toEqual([]);
-  }, 240_000);
+  }, 600_000);
 
   // IB5: the builder has no idle exit. With the three idle timers at 1500 ms, the builder and the server are still
   // running 5 s after the last client closes.
@@ -516,17 +538,17 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     await session.initialize();
 
     const problems: string[] = [];
-    const a = await session.tool(EXPLORE, { query: 'ib6WOnlySymbol', projectPath: sub });
+    const a = await session.tool(EXPLORE, { query: 'ib6WOnlySymbol', projectPath: sub }, JOB_WAIT_MS);
     if (!answers(a, 'ib6WOnlySymbol', 'ib6-w-only-body-marker')) {
       problems.push(`(a) projectPath ${sub} was not answered from the worktree's index (a symbol only the worktree has): ${excerpt(a)}`);
     }
-    const b = await session.tool(EXPLORE, { query: 'ib6WOnlySymbol', projectPath: w });
+    const b = await session.tool(EXPLORE, { query: 'ib6WOnlySymbol', projectPath: w }, JOB_WAIT_MS);
     if (!answers(b, 'ib6WOnlySymbol', 'ib6-w-only-body-marker')) {
       problems.push(`(b) control: projectPath ${w} did not answer its own symbol: ${excerpt(b)}`);
     }
 
     expect(problems, 'IB6 problems (empty when the sub-project call is answered from the worktree index)').toEqual([]);
-  }, 180_000);
+  }, 600_000);
 
   // IB7: an edit reaches the read path. After an edit in a held root, a read through the server shows it within a
   // bounded wait. This is a regression guard for the edit path.
@@ -542,7 +564,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     await session.initialize();
 
     const problems: string[] = [];
-    const before = await session.tool(EXPLORE, { query: 'ib7BeforeSymbol', projectPath: repo });
+    const before = await session.tool(EXPLORE, { query: 'ib7BeforeSymbol', projectPath: repo }, JOB_WAIT_MS);
     if (!answers(before, 'ib7BeforeSymbol', 'ib7-before-body-marker')) {
       problems.push(`before the edit the call did not answer its symbol: ${excerpt(before)}`);
     }
@@ -551,20 +573,20 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       'export function ib7BeforeSymbol(): string {\n  return "ib7-before-body-marker";\n}\n' +
         'export function ib7AfterSymbol(): string {\n  return "ib7-after-body-marker";\n}\n',
     );
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 180_000;
     let last: ToolAnswer | undefined;
     let seen = false;
     while (!seen && Date.now() < deadline) {
-      last = await session.tool(EXPLORE, { query: 'ib7AfterSymbol', projectPath: repo });
+      last = await session.tool(EXPLORE, { query: 'ib7AfterSymbol', projectPath: repo }, JOB_WAIT_MS);
       seen = answers(last, 'ib7AfterSymbol', 'ib7-after-body-marker');
       if (!seen) await sleep(250);
     }
     if (!seen) {
-      problems.push(`the edit is not visible through the server 60 s after it was written (last answer ${last === undefined ? 'none' : excerpt(last)})`);
+      problems.push(`the edit is not visible through the server 180 s after it was written (last answer ${last === undefined ? 'none' : excerpt(last)})`);
     }
 
     expect(problems, 'IB7 problems (empty when the edit shows through the server within the bounded wait)').toEqual([]);
-  }, 180_000);
+  }, 600_000);
 
   // IB8: a directory that is not a git worktree and has no index is its own build root. The first call answers the
   // building note (success-shaped, never the "don't call codegraph" guidance), a call in one of its subdirectories
@@ -578,12 +600,13 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     const sub = path.join(dir, 'src');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, 'a.ts'), 'export function ib8PlainSymbol(): string {\n  return "ib8-plain-body-marker";\n}\n');
-    // The cold build waits 5 s after it takes rebuild.pid, so the subdirectory call below lands while the build still runs.
-    const session = startSession({ cwd: dir, stateDir, env: { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '5000' } });
+    // The cold build waits 30 s after it takes rebuild.pid, so the subdirectory call below lands while the build still runs.
+    const session = startSession({ cwd: dir, stateDir, env: { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '30000' } });
     await session.initialize();
 
+    await waitForBuilderReady(stateDir);
     const problems: string[] = [];
-    const first = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir });
+    const first = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir }, JOB_WAIT_MS);
     if (first.rpcError !== null || first.isError) {
       problems.push(`(1) the first call must be success-shaped, not an error: ${excerpt(first)}`);
     }
@@ -597,17 +620,17 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
         problems.push(`(1) the building note should name the session's directory ${dir} as the build root: ${excerpt(first)}`);
       }
       // A call on the subdirectory while the build is held: it must not start a build of its own there.
-      await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: sub });
-      const deadline = Date.now() + 120_000;
+      await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: sub }, JOB_WAIT_MS);
+      const deadline = Date.now() + 180_000;
       let last: ToolAnswer = first;
       let answered = false;
       while (!answered && Date.now() < deadline) {
         await sleep(500);
-        last = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir });
+        last = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir }, JOB_WAIT_MS);
         answered = answers(last, 'ib8PlainSymbol', 'ib8-plain-body-marker');
       }
       if (!answered) {
-        problems.push(`(2) no call on the directory answered from its index within 120 s (last answer ${excerpt(last)})`);
+        problems.push(`(2) no call on the directory answered from its index within 180 s (last answer ${excerpt(last)})`);
       } else if (!fs.existsSync(path.join(dir, '.codegraph', 'codegraph.db'))) {
         problems.push(`(2) the answer did not come from the directory's own index: ${path.join(dir, '.codegraph', 'codegraph.db')} is missing`);
       }
@@ -618,7 +641,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     }
 
     expect(problems, 'IB8 problems (empty when the first call is the building note and a later call answers from the directory index, with no subdirectory index)').toEqual([]);
-  }, 240_000);
+  }, 600_000);
 
   // IB9: a git repository nested in an indexed checkout is its own build root. A session in it is answered building for
   // itself, never from the outer checkout's index (the outer one gitignores the repository and holds none of its files).
@@ -642,7 +665,8 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
 
     const problems: string[] = [];
     const seen: string[] = [];
-    const first = await session.tool(EXPLORE, { query: 'ib9NestedSymbol', projectPath: nested });
+    await waitForBuilderReady(stateDir);
+    const first = await session.tool(EXPLORE, { query: 'ib9NestedSymbol', projectPath: nested }, JOB_WAIT_MS);
     seen.push(first.text);
     if (first.rpcError !== null || first.isError) {
       problems.push(`(1) the first call must be success-shaped, not an error: ${excerpt(first)}`);
@@ -652,17 +676,17 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     }
 
     // Polled until the nested index answers with its body: a small repository is seconds, under load a minute or two.
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + 180_000;
     let last: ToolAnswer = first;
     let answered = false;
     while (!answered && Date.now() < deadline) {
       await sleep(500);
-      last = await session.tool(EXPLORE, { query: 'ib9NestedSymbol', projectPath: nested });
+      last = await session.tool(EXPLORE, { query: 'ib9NestedSymbol', projectPath: nested }, JOB_WAIT_MS);
       seen.push(last.text);
       answered = answers(last, 'ib9NestedSymbol', 'ib9-nested-body-marker');
     }
     if (!answered) {
-      problems.push(`(2) no call on ${nested} answered from its own index within 120 s (last answer ${excerpt(last)})`);
+      problems.push(`(2) no call on ${nested} answered from its own index within 180 s (last answer ${excerpt(last)})`);
     }
     if (!fs.existsSync(path.join(nested, '.codegraph', 'codegraph.db'))) {
       problems.push(`(2) ${path.join(nested, '.codegraph', 'codegraph.db')} is missing: the nested repository has no index of its own`);
@@ -672,7 +696,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     const outerSession = startSession({ cwd: outer, stateDir });
     await outerSession.initialize();
     for (const [label, projectPath] of [['nested2', nested2], ['nested', nested]] as const) {
-      const guided = await outerSession.tool(EXPLORE, { query: 'ib9Other', projectPath });
+      const guided = await outerSession.tool(EXPLORE, { query: 'ib9Other', projectPath }, JOB_WAIT_MS);
       seen.push(guided.text);
       if (guided.isError || guided.rpcError !== null) {
         problems.push(`(3) a path in ${label} must be answered success-shaped by the outer session: ${excerpt(guided)}`);
@@ -692,7 +716,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       problems.push('(5) an answer says indexing is the user\'s decision');
     }
     expect(problems, 'IB9 problems (empty when the nested repository is built for itself and the outer session is guided away from it)').toEqual([]);
-  }, 300_000);
+  }, 600_000);
 
   // IB10: the instructions the server sends at initialize do not call indexing the user's decision, and still name codegraph init.
   it('IB10: the initialize instructions from serve --mcp do not call indexing the user\'s decision, and name codegraph init', async () => {

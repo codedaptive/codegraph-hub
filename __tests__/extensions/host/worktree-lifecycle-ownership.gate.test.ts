@@ -123,7 +123,7 @@ class Gate {
 // O1: a failed cold build deletes only what it created
 // ---------------------------------------------------------------------------
 
-describe('O1: a failed cold build never deletes an index someone else made', { timeout: 60_000 }, () => {
+describe('O1: a failed cold build never deletes an index someone else made', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let root: string;
 
@@ -158,6 +158,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     return { rows: () => built! };
   }
 
+  // slow: a real index is built during the competing initializer call, even under load.
   it('init throws "already initialized": the other initializer\'s index and rows survive', async () => {
     const user = userIndexesDuringInit('real-init');
     const code = await runColdBuild(root);
@@ -170,6 +171,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     expect(getRegisteredProject(root)).toBeNull();
   });
 
+  // slow: a real index is built during the competing initializer call, even under load.
   it('init fails before creating anything while the other index lands: that index survives', async () => {
     const user = userIndexesDuringInit('fail-before-create');
     const code = await runColdBuild(root);
@@ -179,6 +181,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
     expect(getRegisteredProject(root)).toBeNull();
   });
 
+  // slow: real SQLite initialization precedes the injected indexing failure.
   it('an index the build created and failed to fill is still removed', async () => {
     vi.spyOn(CodeGraph.prototype, 'indexAll').mockResolvedValue({ success: false } as Awaited<ReturnType<CodeGraph['indexAll']>>);
     const code = await runColdBuild(root);
@@ -192,7 +195,7 @@ describe('O1: a failed cold build never deletes an index someone else made', { t
 // O2: teardown of a replaced seeded worktree
 // ---------------------------------------------------------------------------
 
-describe('O2: teardown never deletes an index the user built at a seeded root', { timeout: 60_000 }, () => {
+describe('O2: teardown never deletes an index the user built at a seeded root', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let main: string;
   let wt: string;
@@ -239,6 +242,7 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
       expect(before.nodes).toContain('ownSymbol');
     });
 
+    // slow: real repository seeding and re-indexing arrange a replaced index before the sweep.
     it('its index survives the sweep', async () => {
       await sweepWorktrees({ release: async () => { /* nothing open here */ } });
       expect(fs.existsSync(dbFile(wt))).toBe(true);
@@ -259,6 +263,7 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
       expect(before.nodes).toContain('appSymbol');
     });
 
+    // slow: real repository seeding and re-indexing arrange a replaced index before the sweep.
     it('its index survives the sweep', async () => {
       await sweepWorktrees({ release: async () => { /* nothing open here */ } });
       expect(fs.existsSync(dbFile(wt))).toBe(true);
@@ -273,7 +278,7 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
 // O3: engine release of a reopened root
 // ---------------------------------------------------------------------------
 
-describe('O3: a root reopened during its release is held until it is released again', { timeout: 60_000 }, () => {
+describe('O3: a root reopened during its release is held until it is released again', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let root: string;
   let engine: MCPEngine | undefined;
@@ -283,6 +288,7 @@ describe('O3: a root reopened during its release is held until it is released ag
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
+    vi.stubEnv('CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS', '0');
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-own-lease-')));
     // The builder's own state dir: its pid and job files stay out of the sandbox home.
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
@@ -301,12 +307,13 @@ describe('O3: a root reopened during its release is held until it is released ag
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
+  }, 180_000);
 
   async function search(handler: ToolHandler): Promise<ToolResult> {
     return handler.execute('codegraph_search', { projectPath: root, query: 'appSymbol' }, undefined, ADMIT_ALL);
   }
 
+  // slow: a real builder must acquire the root before the test races reopening against release.
   it('the builder frees the writer slot and the engine closes its database on the second release', async () => {
     builder = BuilderClient.start();
     engine = new MCPEngine({ builder });
@@ -314,7 +321,7 @@ describe('O3: a root reopened during its release is held until it is released ag
     const first = await search(handler);
     expect(first.isError).toBeFalsy();
     // The writer is the builder, never this (server) process.
-    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 5000 });
+    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 180_000 });
     expect(builder.pid()).not.toBe(process.pid);
 
     // Hold the next call in flight before it resolves its project, so the
@@ -405,7 +412,7 @@ class HoldingFake implements PoolWorker {
   terminate(): Promise<number> { return Promise.resolve(1); }
 }
 
-describe('O4: QueryPool.releaseProject waits for a retiring worker to exit', () => {
+describe('O4: QueryPool.releaseProject waits for a retiring worker to exit', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let pool: QueryPool | null = null;
   let fakes: HoldingFake[] = [];
 
@@ -417,25 +424,26 @@ describe('O4: QueryPool.releaseProject waits for a retiring worker to exit', () 
     fakes = [];
   });
 
+  // slow under load: real worker-idle timers trigger retirement before the explicit exit releases the gate.
   it('does not resolve while a retiring worker still runs, and resolves once it exits', async () => {
     const gates = [new Gate(), new Gate()];
     pool = new QueryPool({
-      root: null, size: 2, idleTimeoutMs: 50, startSettleMs: 30_000,
+      root: null, size: 2, idleTimeoutMs: 50, startSettleMs: 180_000,
       createWorker: () => { const f = new HoldingFake(gates); fakes.push(f); return f; },
     });
     // Grow to two workers, then let both go idle: one retires.
     const calls = [0, 1].map((i) => pool!.run('codegraph_search', { i }));
-    await vi.waitFor(() => expect(pool!.liveWorkers).toBe(2));
+    await vi.waitFor(() => expect(pool!.liveWorkers).toBe(2), { timeout: 180_000 });
     gates[0].open();
     gates[1].open();
     await Promise.all(calls);
-    await vi.waitFor(() => expect(fakes.filter((f) => f.retired)).toHaveLength(1), { timeout: 5000 });
+    await vi.waitFor(() => expect(fakes.filter((f) => f.retired)).toHaveLength(1), { timeout: 180_000 });
     const retiring = fakes.find((f) => f.retired)!;
     const live = fakes.find((f) => !f.retired)!;
 
     let settled = false;
     const release = pool.releaseProject('/some/root').then(() => { settled = true; });
-    await vi.waitFor(() => expect(live.posted.some((m) => m.type === 'release')).toBe(true));
+    await vi.waitFor(() => expect(live.posted.some((m) => m.type === 'release')).toBe(true), { timeout: 180_000 });
     await new Promise((r) => setTimeout(r, 50));
     expect(settled).toBe(false);
 

@@ -105,6 +105,7 @@ import { loadNodeSqlite, type NodeSqliteModule } from '../../../db/node-sqlite';
 import { gitRootByStat, ownIndexRootFor, realLocation, selectIndexRoot, selectOwnIndexRoot } from '../server/index-root';
 import {
   canonicalGitPath,
+  GitTimeoutError,
   commitDistance,
   gitCommonDirAsync,
   gitWorktreeRootAsync,
@@ -143,7 +144,7 @@ export type SeedOutcome =
   // plain directory (no git) whose build root this module refused or could
   // not build: `unsafe` is what the root looks like (`unsafeIndexRootReason`),
   // absent when its build failed; the answer is {@link unbuiltDirectoryNote}.
-  | { kind: 'none'; worktree?: string; unbuilt?: { root: string; unsafe?: string } };
+  | { kind: 'none'; pending?: true; worktree?: string; unbuilt?: { root: string; unsafe?: string } };
 
 export type WorktreeSeedOutcome =
   | { kind: 'indexed'; root: string }
@@ -188,7 +189,7 @@ function worktreeRootOf(projectPath: string): Promise<string | null> {
   let hit = toplevelMemo.get(key);
   if (!hit) {
     if (toplevelMemo.size >= TOPLEVEL_MEMO_MAX) toplevelMemo.clear();
-    hit = gitWorktreeRootAsync(key);
+    hit = gitWorktreeRootAsync(key, true);
     // A path that does not exist yet may become a worktree later: remember
     // only answers about an existing path. Concurrent calls share the pending
     // lookup; once it settles without a toplevel the entry is dropped.
@@ -372,7 +373,7 @@ function removeDeadSeedStaging(dir: string): void {
 /** How many `git rev-list --count` runs at once: enough to overlap, never a fork storm. */
 const DISTANCE_CONCURRENCY = 4;
 
-async function pickFromEntries(worktreeRoot: string, entries: GitWorktreeEntry[], rebuildHeld: RebuildHeld): Promise<string | null> {
+async function pickFromEntries(worktreeRoot: string, entries: GitWorktreeEntry[], rebuildHeld: RebuildHeld, throwOnTimeout = false): Promise<string | null> {
   const self = entries.find((e) => sameRoot(e.path, worktreeRoot));
   const candidates = entries.filter((e) => !sameRoot(e.path, worktreeRoot) && hasCompleteIndex(e.path, rebuildHeld));
   const scored: Array<{ path: string; distance: number | null }> = [];
@@ -380,7 +381,7 @@ async function pickFromEntries(worktreeRoot: string, entries: GitWorktreeEntry[]
     const batch = candidates.slice(i, i + DISTANCE_CONCURRENCY);
     scored.push(...await Promise.all(batch.map(async (e) => ({
       path: e.path,
-      distance: self?.head && e.head ? await commitDistance(worktreeRoot, self.head, e.head) : null,
+      distance: self?.head && e.head ? await commitDistance(worktreeRoot, self.head, e.head, throwOnTimeout) : null,
     }))));
   }
   // Fewest commits first; a distance git could not compute sorts after every
@@ -1066,6 +1067,7 @@ export async function ensureWorktreeIndex(projectPath: string, host: SeedHost, a
     }
     return await pending;
   } catch (err) {
+    if (err instanceof GitTimeoutError) return { kind: 'none', pending: true };
     process.stderr.write(
       `[CodeGraph MCP] Could not prepare an index for ${projectPath}: ${err instanceof Error ? err.message : String(err)}\n`
     );
@@ -1122,7 +1124,7 @@ async function seedOrBuild(
   host: SeedHost,
 ): Promise<SeedOutcome> {
   if (validateProjectPath(worktree)) return NONE;
-  const entries = await listGitWorktrees(worktree);
+  const entries = await listGitWorktrees(worktree, true);
   if (!entries) return NONE;
   // The own-root selection above drops an index above a nested clone W, and one git could not vouch for, so an
   // index still above W is a sibling worktree's of W's repository. Anything else (a plain ancestor directory's
@@ -1133,9 +1135,9 @@ async function seedOrBuild(
   // With the abandoned index kept, the call answers from it: no not-indexed text.
   const considered: SeedOutcome = replaceAbandoned ? NONE : { kind: 'none', worktree };
 
-  const commonDir = await gitCommonDirAsync(worktree);
+  const commonDir = await gitCommonDirAsync(worktree, true);
   const rebuildHeld = rebuildHeldBy(host);
-  const source = await pickFromEntries(worktree, entries, rebuildHeld);
+  const source = await pickFromEntries(worktree, entries, rebuildHeld, true);
   if (source) {
     // A live process took W's locks meanwhile, or a rebuild holds W: its index is not abandoned.
     if (replaceAbandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return NONE;

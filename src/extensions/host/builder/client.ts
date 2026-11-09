@@ -5,12 +5,16 @@
  * the server opens databases read-only and asks the builder for the rest through this class.
  *
  * {@link BuilderClient.start} forks the builder with an IPC channel and keeps it running: a builder that
- * exits for any reason but {@link BuilderClient.stop} is started again after a short backoff, and every root
- * this client still holds, or has been told is being built, is sent to it again so the new builder holds it
- * as the old one did. A request while the builder is down waits for the next one (bounded) and then answers
- * as if it had failed: `ensure` answers `none`, `caughtUp` and `release` return, `unfence` and `drain` return, and
- * `sync`, `fence`, `cliIndex` and `cliSync` reject. A request in flight when the builder exits rejects
- * ('the index builder exited'); a rebuild lease does not outlive its builder (its locks name a dead pid).
+ * exits for any reason but {@link BuilderClient.stop} is started again after a short backoff. Each ready
+ * builder is sent the held roots, builds, and bounded remembered `ensure` asks that failed while it is down
+ * or exited in flight. A request while the builder is down waits for readiness (bounded), then fails:
+ * `ensure` answers `none` with `pending: true`, `caughtUp`, `release`, `unfence` and `drain` return, and
+ * `sync`, `fence`, `cliIndex` and `cliSync` reject. If stopped or unavailable, ensure answers `none` without
+ * the pending marker. An answered ensure forgets its remembered ask. Release forgets remembered asks at or
+ * below its project path and cancels ensures there still waiting for readiness (they send nothing and answer
+ * `none`); an ensure already sent is not cancelled: its answer is recorded, and only its retry after a failure
+ * is dropped. Stop prevents retries. A builder exit rejects in-flight RPCs; a rebuild lease does not outlive
+ * its builder (its locks name a dead pid).
  *
  * The builder exits once this process goes away (its IPC channel closes): a job already running gets the
  * exit grace to finish first, so the builder does not outlive its server for long.
@@ -19,6 +23,7 @@ import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'ch
 import * as fs from 'fs';
 import * as path from 'path';
 import { canonicalProjectRoot } from '../../../directory';
+import { selectOwnIndexRoot } from '../server/index-root';
 import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm-runtime-flags';
 import { LockUnavailableError } from '../../../errors';
 import type { IndexResult, SyncResult } from '../../../extraction';
@@ -39,8 +44,9 @@ export type EnsureOutcome =
   | { kind: 'ready'; root: string }                                   // own complete index, the root to read; the hold's writable open (migrations) was waited for at most a bounded time, so it may still be queued, or the hold could not open it (another live writer, an open failure); the catch-up is queued once it opened
   | { kind: 'seeded'; root: string; source: string; method: 'clone' | 'copy' | 'backup' } // copied from nearest sibling; held as `ready` is (the writable open was waited for at most a bounded time, so it may still be queued); the catch-up is queued once it opened
   | { kind: 'building'; root: string }                                // cold build queued or running (here or by another process)
-  | {                                                                 // nothing to serve: nothing to build here / kill switch / unsafe root / failed build / seed failed
+  | {                                                                 // no builder-provided index: pending / nothing to build / kill switch / unsafe root / failed build / seed failed
       kind: 'none';
+      pending?: true;                                                 // builder unavailable or preparation not settled; no failed-build guidance
       worktree?: string;                                              //   set when the path is in a git worktree a later call may still give an index
       unbuilt?: { root: string; unsafe?: string };                    //   set when the path is a plain directory (no git) whose build root cannot be built: `unsafe` is what the root looks like ("your home directory"), absent when its build failed
     };
@@ -51,9 +57,10 @@ const RESTART_MAX_MS = 5_000;
 /** A builder that ran this long before it exited starts the next backoff over from the minimum. */
 const STABLE_RUN_MS = 10_000;
 /**
- * How long a request waits for a builder that is starting or restarting: one worst-case restart backoff
- * (RESTART_MAX_MS) plus a builder's start-up, so a request that arrives during a restart is served by the
- * new builder rather than failed.
+ * Eight seconds allows one maximum 5 s restart backoff plus startup without making callers with a readable
+ * index wait through a slow startup. An ensure with no index of its own waits 120 s (ENSURE_TIMEOUT_MS)
+ * instead. If readiness still times out, ensure answers `none` with `pending: true` and remembers the ask
+ * to re-send when the builder says ready.
  */
 const UP_WAIT_MS = 8_000;
 /**
@@ -63,7 +70,7 @@ const UP_WAIT_MS = 8_000;
 const ENSURE_TIMEOUT_MS = 120_000;
 /** How long `stop` waits for the builder to exit after the channel closes. */
 const STOP_WAIT_MS = 5_000;
-/** Bound on the roots remembered as "being built", so a server that is asked about many worktrees never grows without limit. */
+/** Bound on each of the building-root and down-builder ask lists, so many worktrees cannot grow them without limit. */
 const MAX_BUILDING_ROOTS = 256;
 
 /**
@@ -75,6 +82,31 @@ export function builderEntry(): string | null {
   if (fs.existsSync(sibling)) return sibling;
   const built = path.resolve(__dirname, '../../../../dist/extensions/host/builder/main.js');
   return fs.existsSync(built) ? built : null;
+}
+
+/** Distinguishes a down builder from a live builder's refusal or reply timeout. */
+class BuilderDownError extends Error {}
+
+/** A release invalidated an ensure before it reached the builder. */
+class EnsureCancelledError extends Error {}
+
+interface EnsureAsk {
+  projectPath: string;
+  anchorRoot?: string;
+}
+
+/** Path-bound invalidation needs no release history once the call settles. */
+interface EnsureAttempt {
+  key: string;
+  projectPath: string;
+  retry: boolean;
+  /** Only release cancels sending; an answered sibling attempt can disable retry without cancelling. */
+  cancelled: boolean;
+}
+
+function atOrBelow(projectPath: string, root: string): boolean {
+  const relative = path.relative(root, projectPath);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 interface PendingRequest {
@@ -116,7 +148,10 @@ export class BuilderClient {
    * and the session anchor it carried (a plain directory is rebuilt at the anchor, not at the call's path).
    * Oldest first.
    */
-  private readonly building = new Map<string, { projectPath: string; anchorRoot?: string }>();
+  private readonly building = new Map<string, EnsureAsk>();
+  /** Asks that failed because the builder was down, oldest first; distinct anchors remain distinct asks. */
+  private readonly deferred = new Map<string, EnsureAsk>();
+  private readonly ensuring = new Set<EnsureAttempt>();
   private readonly fresh = new Map<string, BuilderFreshness>();
 
   private constructor(private readonly opts: { onLog?: (line: string) => void }) {}
@@ -131,23 +166,45 @@ export class BuilderClient {
   /** Resolve projectPath with selectOwnIndexRoot (never an index above a git repository nested around the path); hold an indexed root, else seed or queue a cold build. Resolves once the builder opened
    *  (and migrated) the index, or after a bounded wait (CODEGRAPH_BUILDER_ENSURE_WAIT_MS, default 10 s) when that open is queued behind
    *  a running job, or when the hold could not open it (another live writer, an open failure); the server then opens read-only whatever
-   *  is on disk. Never rejects: a dead builder or IPC failure answers { kind: 'none' }.
+   *  is on disk. Never rejects: a starting or exited builder answers { kind: 'none', pending: true }; a stopped or
+   *  unavailable builder and other failures answer { kind: 'none' }.
    *
    *  `anchorRoot` is the calling session's anchor root (src/extensions/host/server/repo-anchor.ts), passed only for
    *  a call that has one. A projectPath outside git with no index is cold-built at that root rather than at the
    *  path itself; with none (no session) the path is the build root. The builder checks the anchor against the
    *  path before it builds anything. */
   async ensure(projectPath: string, anchorRoot?: string): Promise<EnsureOutcome> {
+    const canonicalPath = canonicalProjectRoot(projectPath);
+    const attempt = { key: JSON.stringify([canonicalPath, anchorRoot]), projectPath: canonicalPath, retry: true, cancelled: false };
+    this.ensuring.add(attempt);
     try {
       const outcome = await this.rpc(
         anchorRoot === undefined ? { op: 'ensure', projectPath } : { op: 'ensure', projectPath, anchorRoot },
         ENSURE_TIMEOUT_MS,
+        undefined,
+        selectOwnIndexRoot(projectPath) === null ? ENSURE_TIMEOUT_MS : UP_WAIT_MS,
+        attempt,
       ) as EnsureOutcome;
-      this.record(outcome, projectPath, anchorRoot);
+      this.record(outcome, projectPath, anchorRoot, attempt);
       return outcome;
     } catch (err) {
+      if (err instanceof EnsureCancelledError) return { kind: 'none' };
+      if (err instanceof BuilderDownError && attempt.retry && !this.stopping && !this.unavailable) {
+        this.rememberAsk(attempt.key, { projectPath, anchorRoot });
+      }
       this.log(`ensure of ${projectPath} failed: ${err instanceof Error ? err.message : String(err)}`);
-      return { kind: 'none' };
+      return err instanceof BuilderDownError ? { kind: 'none', pending: true } : { kind: 'none' };
+    } finally {
+      this.ensuring.delete(attempt);
+    }
+  }
+
+  private rememberAsk(key: string, ask: EnsureAsk): void {
+    this.deferred.delete(key);
+    this.deferred.set(key, ask);
+    if (this.deferred.size > MAX_BUILDING_ROOTS) {
+      const oldest = this.deferred.keys().next().value;
+      if (oldest !== undefined) this.deferred.delete(oldest);
     }
   }
 
@@ -252,6 +309,15 @@ export class BuilderClient {
     this.held.delete(key);
     this.building.delete(key);
     this.fresh.delete(key);
+    for (const [askKey, ask] of this.deferred) {
+      if (atOrBelow(canonicalProjectRoot(ask.projectPath), key)) this.deferred.delete(askKey);
+    }
+    for (const attempt of this.ensuring) {
+      if (atOrBelow(attempt.projectPath, key)) {
+        attempt.retry = false;
+        attempt.cancelled = true;
+      }
+    }
     // A builder that is down holds nothing; waiting for its restart would only delay the caller.
     if (!this.up) return;
     try {
@@ -277,6 +343,7 @@ export class BuilderClient {
   /** Stop restarting, disconnect, wait for the child's exit (time-boxed). */
   async stop(): Promise<void> {
     this.stopping = true;
+    this.deferred.clear();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
     this.settleUpWaiters(false);
@@ -346,7 +413,7 @@ export class BuilderClient {
     this.up = false;
     // Whatever the old builder held is gone with it: its states are stale, and the new one pushes fresh ones.
     this.fresh.clear();
-    this.failPending(new Error('the index builder exited'));
+    this.failPending(new BuilderDownError('the index builder exited'));
     const exitWaiters = this.exitWaiters;
     this.exitWaiters = [];
     for (const w of exitWaiters) w();
@@ -388,6 +455,7 @@ export class BuilderClient {
         }
         return;
       case 'ready':
+        if (this.stopping) return;
         this.up = true;
         this.settleUpWaiters(true);
         this.resendRoots();
@@ -406,14 +474,17 @@ export class BuilderClient {
     }
   }
 
-  /** A new builder is up: hold again every root the old one held, and queue again every build it was asked for. */
+  /** A ready builder gets held roots, builds and down-builder asks; clear retry lists before sending. */
   private resendRoots(): void {
-    const asks: Array<{ key: string; projectPath: string; anchorRoot?: string }> = [
-      ...[...this.held.entries()].map(([key, projectPath]) => ({ key, projectPath })),
-      ...[...this.building.entries()].map(([key, ask]) => ({ key, ...ask })),
+    if (this.stopping) return;
+    const asks: EnsureAsk[] = [
+      ...[...this.held.values()].map((projectPath) => ({ projectPath })),
+      ...this.building.values(),
+      ...this.deferred.values(),
     ];
-    for (const { key, projectPath, anchorRoot } of asks) {
-      this.building.delete(key);
+    this.building.clear();
+    this.deferred.clear();
+    for (const { projectPath, anchorRoot } of asks) {
       void this.ensure(projectPath, anchorRoot);
     }
   }
@@ -448,11 +519,14 @@ export class BuilderClient {
   /**
    * One request and its one reply. `timeoutMs` (absent: none) bounds the wait for the reply. `onEvent` receives
    * the `requestEvent` pushes the builder sends for this request until it answers.
+   * A released ensure must not take its root back when its readiness wait settles, including a ready-triggered re-ask.
    */
-  private async rpc(request: DistributiveOmit<BuilderRequest, 'id'>, timeoutMs?: number, onEvent?: (event: IndexWriteEvent) => void): Promise<unknown> {
-    if (!(await this.whenUp(UP_WAIT_MS))) throw new Error('the index builder is not running');
+  private async rpc(request: DistributiveOmit<BuilderRequest, 'id'>, timeoutMs?: number, onEvent?: (event: IndexWriteEvent) => void, upWaitMs = UP_WAIT_MS, ensureAttempt?: EnsureAttempt): Promise<unknown> {
+    const up = await this.whenUp(upWaitMs);
+    if (ensureAttempt?.cancelled) throw new EnsureCancelledError();
+    if (this.stopping || this.unavailable) throw new Error('the index builder is not running');
     const child = this.child;
-    if (!child) throw new Error('the index builder is not running');
+    if (!up || !child) throw new BuilderDownError('the index builder is not running');
     const id = this.nextId++;
     return new Promise<unknown>((resolve, reject) => {
       let timer: NodeJS.Timeout | undefined;
@@ -478,8 +552,18 @@ export class BuilderClient {
     });
   }
 
-  /** Remember what an `ensure` answered, so a restarted builder is told the same. */
-  private record(outcome: EnsureOutcome, projectPath: string, anchorRoot: string | undefined): void {
+  /** An answer forgets its deferred ask and older pending retries; ready/seeded holds and bounded builds are re-sent. */
+  private record(outcome: EnsureOutcome, projectPath: string, anchorRoot: string | undefined, answered: EnsureAttempt): void {
+    this.deferred.delete(answered.key);
+    // Set insertion order keeps a successful earlier call from suppressing a later call's down-builder retry.
+    for (const attempt of this.ensuring) {
+      if (attempt.key === answered.key) attempt.retry = false;
+      if (attempt === answered) break;
+    }
+    // A release that runs while this ensure is already with the builder does not cancel it: the answer is
+    // recorded here as the builder gave it, and the builder may hold the root after the release answered. The
+    // builder handles an ensure and a release of one root concurrently (main.ts message handling, service.ts
+    // ensure, holder.ts release); ordering them per root in the builder closes this.
     if (this.stopping) return;
     if (outcome.kind === 'ready' || outcome.kind === 'seeded') {
       const key = canonicalProjectRoot(outcome.root);
