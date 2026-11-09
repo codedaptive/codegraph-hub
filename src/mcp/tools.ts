@@ -2268,7 +2268,8 @@ function pendingFileOf(root: string, relPath: string): PendingFile {
  * engine, the builder's hold on it (its watcher and writer lock) — which
  * otherwise stays held for the whole life of the machine server, locking
  * `codegraph index` out. The next call has the builder hold it again, and it
- * catches up. This idle close is the ONLY bound on
+ * catches up. Roots used while calls are in flight are re-stamped when all
+ * handler calls drain. This idle close is the ONLY bound on
  * how many projects stay open: there is no count cap (a repository with many
  * worktrees keeps all of them open while they are in use).
  * `CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS` overrides it; `0` never releases. A
@@ -2278,8 +2279,8 @@ function pendingFileOf(root: string, relPath: string): PendingFile {
  * database is gone). Only the machine server's engine (`openPinned`) opens
  * pinned projects with no call, seeding an unindexed worktree from an indexed sibling first when possible
  * (src/extensions/host/worktree-lifecycle/pinned-open.ts); the time of that open
- * is the project's last use, so once the pin is removed it closes after this
- * timeout, at the next trim. Only that engine re-trims after each housekeeping
+ * records a use; if calls are active it is re-stamped when they drain. Once
+ * the pin is removed, it can close after the timeout at the next trim. Only that engine re-trims after each housekeeping
  * pass; any other engine trims on the events listed at {@link ToolHandler.trimProjects}.
  */
 const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
@@ -2377,8 +2378,9 @@ export type HandlerBuilder = Pick<BuilderClient, 'ensure' | 'sync' | 'freshness'
  * `projectPath` (#1835). `open` opens it (read-only, after the builder holds
  * it), `activate` returns the promise of the builder's catch-up of it, which
  * the handler awaits (time-boxed) before calls against that project. `release`
- * runs after active calls drain, so the engine can close the handle and let go
- * of the builder's hold safely on idle release or shutdown.
+ * runs after active calls drain (including worker reads), so the engine can
+ * close the handle and let go of the builder's hold safely on idle release,
+ * explicit release or shutdown.
  */
 export interface ProjectLifecycle {
   open(root: string, open: () => CodeGraph): CodeGraph;
@@ -2395,11 +2397,13 @@ export interface ProjectLifecycle {
 export class ToolHandler {
   // Cache of opened CodeGraph instances for cross-project queries, keyed by the
   // CANONICAL (realpath) index root. Map insertion order doubles as last-use order:
-  // a hit re-inserts. No cap bounds the size; the idle close does (#2087).
+  // hits and the final call's drain re-insert. No cap bounds the size; the idle close does (#2087).
   private projectCache: Map<string, CodeGraph> = new Map();
-  // When each cached root was last handed to a call, and the one timer that
-  // releases the oldest once it has been idle long enough (#2087).
+  // Each cached root's latest open or cache hit, re-stamped when all active
+  // calls drain if it was used while calls were active (#2087).
   private projectUsedAt: Map<string, number> = new Map();
+  // Roots accessed while calls are active, in last-access order; re-stamped on drain.
+  private projectsUsedByCalls = new Set<string>();
   private idleReleaseTimer: NodeJS.Timeout | null = null;
   // Engine hook that opens, catches up and releases an explicit project (null
   // for the CLI and worker-thread handlers).
@@ -2839,7 +2843,7 @@ export class ToolHandler {
       // Refresh the last-use position.
       this.projectCache.delete(canonicalRoot);
       this.projectCache.set(canonicalRoot, cached);
-      this.projectUsedAt.set(canonicalRoot, Date.now());
+      this.recordProjectUse(canonicalRoot);
       return this.freshen(cached);
     }
 
@@ -2849,7 +2853,7 @@ export class ToolHandler {
       if (isSameIndexRoot(root, resolvedRoot)) {
         this.projectCache.delete(root);
         this.projectCache.set(root, open);
-        this.projectUsedAt.set(root, Date.now());
+        this.recordProjectUse(root);
         return this.freshen(open);
       }
     }
@@ -2865,7 +2869,7 @@ export class ToolHandler {
     const open = () => loadCodeGraph().openSync(canonicalRoot, { readOnly });
     const cg = this.projectLifecycle?.open(canonicalRoot, open) ?? open();
     this.projectCache.set(canonicalRoot, cg);
-    this.projectUsedAt.set(canonicalRoot, Date.now());
+    this.recordProjectUse(canonicalRoot);
     this.trimProjects();
     return cg;
   }
@@ -3024,6 +3028,32 @@ export class ToolHandler {
     return null;
   }
 
+  private recordProjectUse(root: string): void {
+    this.projectUsedAt.set(root, Date.now());
+    if (this.activeCalls > 0) {
+      this.projectsUsedByCalls.delete(root);
+      this.projectsUsedByCalls.add(root);
+    }
+  }
+
+  private finishCall(): void {
+    this.activeCalls--;
+    if (this.activeCalls === 0) {
+      // Trimming waits for all calls, so start their roots' idle clocks here and
+      // preserve access order for the oldest-first trim.
+      const now = Date.now();
+      for (const root of this.projectsUsedByCalls) {
+        const cg = this.projectCache.get(root);
+        if (!cg) continue;
+        this.projectUsedAt.set(root, now);
+        this.projectCache.delete(root);
+        this.projectCache.set(root, cg);
+      }
+      this.projectsUsedByCalls.clear();
+    }
+    this.trimProjects();
+  }
+
   /**
    * Never evict a graph while a tool call or its timed-out reconcile uses it.
    * Evicts on close and once idle past the timeout (#2087); no cap bounds how
@@ -3151,8 +3181,8 @@ export class ToolHandler {
    * session's admission check and anchor, which belong to a call. The pinned-project
    * opener (src/extensions/host/worktree-lifecycle/pinned-open.ts) uses it, so a
    * pinned project is held and open before anyone asks. The project is cached with
-   * the time of this open: once it is unpinned, the idle release closes it after
-   * the idle timeout like any other. Rejects with what a call would have been
+   * the time of this open, re-stamped when active calls drain if any overlap it.
+   * Once unpinned, it is eligible for idle release like any other. Rejects with what a call would have been
    * answered with (a sensitive path, a project the builder is still building, an
    * index that cannot be opened). A no-op once the handler is closing.
    */
@@ -3853,8 +3883,7 @@ export class ToolHandler {
         'continue without codegraph for this task.'
       );
     } finally {
-      this.activeCalls--;
-      this.trimProjects();
+      this.finishCall();
     }
   }
 
@@ -3920,9 +3949,11 @@ export class ToolHandler {
    * in-process fallback for {@link execute}. It deliberately does NOT run the
    * catch-up gate or the staleness/worktree notices — those need the main
    * thread's handler state and stay on the main thread. Cross-cutting allowlist +
-   * path validation already ran in {@link execute} before routing here.
+   * path validation already ran in {@link execute} before routing here. It counts
+   * as an active call so release and trimming wait for the read to finish.
    */
   async executeReadTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
+    this.activeCalls++;
     try {
       return await this.dispatchTool(toolName, args);
     } catch (err) {
@@ -3943,6 +3974,8 @@ export class ToolHandler {
         'This is an internal codegraph error — retry the call once; if it persists, ' +
         'continue without codegraph for this task.'
       );
+    } finally {
+      this.finishCall();
     }
   }
 
