@@ -298,7 +298,12 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
  * Bounded wait until the index matches the working tree. Always returns a checkpoint; never throws for an
  * expected condition (lock contention, the bound passing, a read-only index).
  *
- * Each round measures pending and, while it is above zero, runs `opts.sync()` raced against the time left:
+ * The deadline is start + timeoutMs, measured before the first pending measurement. With `opts.sync`,
+ * pending files and a nonzero bound always start the first sync, even if the deadline has passed.
+ * It races against the time left (zero if the deadline has passed). If the timer wins, the wait
+ * measures pending again and returns timed out without waiting for the sync; `waitForFreshTracked`'s
+ * `settled` follows it. If the sync settles first, its outcome wins. Later rounds start only while
+ * time remains. Each sync is raced against the time left:
  *   - LockUnavailableError: another writer holds the lock (a watcher sync, a daemon, `codegraph index`);
  *     that is transient, so sleep pollMs and try again.
  *   - any other sync error (e.g. `attempt to write a readonly database`) will not clear by retrying;
@@ -347,10 +352,12 @@ export async function waitForFreshTracked(
   if (!sync) return done(pending, false, pending === 0 ? undefined : READ_ONLY_SYNC_ERROR);
   if (timeoutMs === 0) return done(pending, pending !== 0);
 
+  let first = true;
   for (;;) {
     if (pending === 0) return done(pending, false);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) return done(pending, true);
+    if (!first && remaining <= 0) return done(pending, true);
+    first = false;
 
     // Settle the sync into a value up front, so one that loses the race
     // cannot surface later as an unhandled rejection.
@@ -358,7 +365,7 @@ export async function waitForFreshTracked(
       .then(() => sync())
       .then(() => ({ ok: true as const }), (err: unknown) => ({ ok: false as const, err }));
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const bound = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), remaining); });
+    const bound = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), Math.max(0, remaining)); });
     const result = await Promise.race([outcome, bound]);
     clearTimeout(timer);
 

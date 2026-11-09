@@ -338,9 +338,9 @@ function makeGate(): { gate: Promise<void>; release: () => void } {
  */
 describe('waitForFresh against a stub source: the bound, lock retry, and a real failure', () => {
   /**
-   * Timeout tests advance the fake clock by this bound only after the stub sync signals it has started.
-   * This keeps a thread stall before sync from consuming the bound; the sync stays pending until after
-   * the timeout assertions, either indefinitely or on a gate the test releases.
+   * Timeout tests advance the fake clock by this bound after the stub sync signals it has started,
+   * ensuring the timer is exercised with the sync pending. The sync stays pending until after the
+   * timeout assertions, either indefinitely or on a gate the test releases.
    */
   const BOUND_MS = 100;
   /** The pause between lock retries: small, so the retry tests stay fast. */
@@ -468,10 +468,11 @@ describe('waitForFresh against a stub source: the bound, lock retry, and a real 
  * waitForFreshTracked: the same wait, plus `settled`, which resolves once no
  * sync the wait started is still running. Same stub shape as the block above.
  *
- * The test waits for the stub sync's started gate before advancing the fake
- * clock to the bound, so a thread stall cannot time out the wait before sync
- * starts. The sync awaits a completion gate opened only after the "still pending"
- * assertions. Real timers are restored before probes that wait a macrotask.
+ * The timeout tests wait for the stub sync's started gate before advancing the fake
+ * clock to exercise the timer with the sync pending. One also advances the clock
+ * during the first measurement to test starting sync after the deadline. Gated
+ * syncs are released after the pending assertions. Real timers are restored before
+ * probes that wait a macrotask.
  */
 describe('waitForFreshTracked against a stub source: settled follows the sync that lost the race', () => {
   /** The amount of fake time that expires the wait after the sync starts. */
@@ -502,6 +503,55 @@ describe('waitForFreshTracked against a stub source: settled follows the sync th
     await sleep(0);
     return done;
   }
+
+  it('starts the first sync after the deadline and tracks it until it settles', async () => {
+    // A stalled first measurement must not suppress the first sync or reset the deadline.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const { gate: started, release: markStarted } = makeGate();
+    const { gate, release } = makeGate();
+    let calls = 0;
+    let measurements = 0;
+    const src = stubSource(async () => { calls++; markStarted(); await gate; });
+    try {
+      const waiting = waitForFreshTracked(src, {
+        timeoutMs: BOUND_MS,
+        sync: src.sync,
+        measurePending: async () => {
+          measurements++;
+          if (measurements === 1) vi.advanceTimersByTime(BOUND_MS + 1);
+          return measurements === 1 ? 1 : 2;
+        },
+      });
+      // Also observe an early return so a missing sync fails the assertion instead of hanging.
+      await Promise.race([started, waiting]);
+      expect(calls).toBe(1);
+      await started;
+      vi.advanceTimersByTime(0);
+      const { checkpoint, settled } = await waiting;
+      vi.useRealTimers();
+      expect(checkpoint.timedOut).toBe(true);
+      expect(checkpoint.fresh).toBe(false);
+      expect(checkpoint.pending).toBe(2);
+      expect(checkpoint.waitedMs).toBe(BOUND_MS + 1);
+      expect(await isResolved(settled)).toBe(false);
+      release();
+      await expect(settled).resolves.toBeUndefined();
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not start a sync for pending files when the timeout is zero', async () => {
+    // Zero requests no sync and no wait.
+    let calls = 0;
+    const src = stubSource(async () => { calls++; });
+    const { checkpoint } = await waitForFreshTracked(src, { timeoutMs: 0, sync: src.sync });
+    expect(calls).toBe(0);
+    expect(checkpoint.timedOut).toBe(true);
+    expect(checkpoint.fresh).toBe(false);
+    expect(checkpoint.pending).toBe(1);
+  });
 
   it('settled is pending when the wait times out and resolves once the late sync resolves', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
