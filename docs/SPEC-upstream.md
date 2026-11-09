@@ -136,11 +136,13 @@ Linux and Windows, if they want it.
    updates the count grows as upstream moves; that is the monthly cadence, not a fault. (2026-11-04: the hub's
    `main` is 900d223b, upstream 5cd8a9a8 plus one commit, 20 behind upstream's f72c9d2e, which `ours` has carried
    since sm.11.)
-9. **Upgrade and update notice (R-32).** `codegraph upgrade` installs the hub's latest release (or the hub version
-   named) and never upstream's package or install script; a source checkout keeps "git pull && npm run build". The
-   update check reads the hub's releases. Versions keep the `-sm.N` suffix, compared by its number.
 6. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
-   cycle, through the owning lane and the same gate.
+   cycle, through the owning lane and the same gate. An open upstream PR comes into `ours` before upstream merges
+   it only on Bob's word, PR by PR (R-40: #3249 and #3215); when upstream merges it, the monthly update takes
+   upstream's version.
 7. **The PRs.** S-53's restack leaves all 14 PRs mergeable; after that they stay open as offered, with no further
    pushes, restacks or bot replies. If the maintainer himself comments on one, upstream-prs answers him.
 8. **Issue #3211.** Its body is edited to name the hub; no new comment (R-25).
+9. **Upgrade and update notice (R-32).** `codegraph upgrade` installs the hub's latest release (or the hub version
+   named) and never upstream's package or install script; a source checkout keeps "git pull && npm run build". The
+   update check reads the hub's releases. Versions keep the `-sm.N` suffix, compared by its number.

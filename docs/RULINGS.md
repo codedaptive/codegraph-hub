@@ -515,3 +515,23 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word. The orphans serve no session and hold ~2.9 GB on a machine at load ~94; a SIGKILL runs no
   shutdown code, so it cannot remove the live socket.
 - Not chosen: keeping the orphans until the sm.14 install (Orc-Codegraph's one-step recommendation).
+
+## R-40. Take upstream PRs #3249 and #3215 into the fork before upstream merges them
+- Date: 2026-11-09 ~10:37 CST / Bob, direct ("yes pull those two that you are recommending"), on
+  Designer-Codegraph's upstream check (design/Designer-Codegraph/ledger/reports/upstream-status-2026-11-09.md).
+- Question: upstream has merged nothing since 2026-11-01; may open upstream fixes come into `ours` now, ahead of the
+  monthly update, which takes only what upstream main has merged (SPEC-upstream §7.5)?
+- Ruling: yes, for these two, each as its own bug-fix work order under R-38, taken as the PR's head commit with no
+  change of ours beyond what a conflict needs:
+  (1) #3249, head b536579b32: impact reads a node's incoming edges in one unlimited query again (fixes upstream
+  #3248, the 2-3x slowdown since #3125, which `ours` carries, so `codegraph_impact` is slow); files
+  src/db/queries.ts, src/graph/traversal.ts, __tests__/graph.test.ts.
+  (2) #3215, head b9d7af9f3f, the maintainer's own: four resolution lookups no longer answer by who asked first;
+  files src/resolution/{c-macro-renames,cpp-includers,import-resolver,index,name-matcher,pascal-scope}.ts,
+  __tests__/resolution-order-independence.test.ts, __tests__/sync-module-config-change.test.ts.
+  Both applied cleanly to integration f2359dee (`git apply --cached --check`, CHANGELOG excluded, 2026-11-09).
+  They ship in the release after sm.14 (sm.14 stays split-server-fix alone); its install needs Bob's go (R-18).
+  When upstream merges either, the monthly update takes upstream's version.
+- Reason: Bob's word. #3249 fixes a slowdown our build has today; #3215 fixes wrong answers in resolution; both are
+  small and apply cleanly.
+- Not chosen: the other clean-applying fixes (#3261, #3256, #3226, #3196); waiting for upstream to merge.
