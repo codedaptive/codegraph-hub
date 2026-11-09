@@ -24,11 +24,14 @@ import { CodeGraph } from '../src';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
-function spawn(cwd: string, args: string[]) {
+/** A hang backstop for one run of the built CLI, not a performance bound. */
+const CLI_BACKSTOP_MS = 120_000;
+
+function spawn(cwd: string, args: string[], timeout = 30_000) {
   return spawnSync(process.execPath, [BIN, ...args], {
     cwd,
     encoding: 'utf-8',
-    timeout: 30_000,
+    timeout,
     env: {
       ...process.env,
       CODEGRAPH_NO_DAEMON: '1',
@@ -39,13 +42,13 @@ function spawn(cwd: string, args: string[]) {
   });
 }
 
-function run(cwd: string, args: string[]): { status: number | null; out: string } {
-  const result = spawn(cwd, args);
+function run(cwd: string, args: string[], timeout?: number): { status: number | null; out: string } {
+  const result = spawn(cwd, args, timeout);
   return { status: result.status, out: (result.stdout ?? '') + (result.stderr ?? '') };
 }
 
-function runJson(cwd: string, args: string[]): any {
-  const result = spawn(cwd, args);
+function runJson(cwd: string, args: string[], timeout?: number): any {
+  const result = spawn(cwd, args, timeout);
   expect(result.status, (result.stdout ?? '') + (result.stderr ?? '')).toBe(0);
   return JSON.parse(result.stdout);
 }
@@ -123,6 +126,8 @@ describe('status reports files indexed without their symbols (#2336, #2335)', ()
     expect(files.find((f: any) => f.path === 'src/constants/index.ts').errors).toEqual([]);
   });
 
+  // slow: one index plus six runs of the built CLI, sync among them. The timeout is a hang
+  // backstop for the whole test, not a performance bound.
   it('rows stored without their symbols ask for a sync, and the sync repairs them', async () => {
     await index();
 
@@ -138,27 +143,27 @@ describe('status reports files indexed without their symbols (#2336, #2335)', ()
     db.prepare('UPDATE files SET node_count = 0 WHERE path = ?').run('src/types/database.ts');
     db.close();
 
-    const human = run(dir, ['status']);
+    const human = run(dir, ['status'], CLI_BACKSTOP_MS);
     expect(human.status, human.out).toBe(0);
     expect(human.out).not.toContain('Index is up to date');
     expect(human.out).toMatch(/2 files are missing their symbols/);
     expect(human.out).toContain('codegraph sync');
 
-    const json = runJson(dir, ['status', '--json']);
+    const json = runJson(dir, ['status', '--json'], CLI_BACKSTOP_MS);
     expect(json.index.filesNeedingReindex).toBe(2);
     expect(json.index.filesWithParseErrors).toBe(0);
     expect(json.pendingChanges).toEqual({ added: 0, modified: 0, removed: 0 });
 
-    const synced = run(dir, ['sync']);
+    const synced = run(dir, ['sync'], CLI_BACKSTOP_MS);
     expect(synced.status, synced.out).toBe(0);
 
-    const after = runJson(dir, ['status', '--json']);
+    const after = runJson(dir, ['status', '--json'], CLI_BACKSTOP_MS);
     expect(after.index.filesNeedingReindex).toBe(0);
-    expect(run(dir, ['status']).out).toContain('Index is up to date');
-    const files = runJson(dir, ['files', '--json']);
+    expect(run(dir, ['status'], CLI_BACKSTOP_MS).out).toContain('Index is up to date');
+    const files = runJson(dir, ['files', '--json'], CLI_BACKSTOP_MS);
     for (const f of files) {
       expect(f.nodeCount).toBeGreaterThan(1);
       expect(f.errors).toEqual([]);
     }
-  });
+  }, 240_000);
 });

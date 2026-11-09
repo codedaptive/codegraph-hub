@@ -47,11 +47,11 @@ function kit() {
   return { root, preload, python, lua, record: path.join(root, 'record.jsonl') };
 }
 
-function check(k: ReturnType<typeof kit>, args: string[], env: NodeJS.ProcessEnv = {}) {
+function check(k: ReturnType<typeof kit>, args: string[], env: NodeJS.ProcessEnv = {}, timeout = 60_000) {
   const preload = `--require "${k.preload.replace(/\\/g, '/')}"`;
   return spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: 'utf8',
-    timeout: 60_000,
+    timeout,
     env: {
       ...process.env,
       NODE_OPTIONS: [process.env.NODE_OPTIONS, preload].filter(Boolean).join(' '),
@@ -89,13 +89,28 @@ describe('add-lang check-grammar (#2464)', () => {
     expect(run.stdout).toMatch(/RESULT: FAIL — the parses finished, but the process running them then died/);
   }, 90_000);
 
+  // slow: runs a healthy check, then waits out a hang deadline of at least 10s or 3x the healthy run.
+  // Ten minutes backs both load-scaled runs rather than judging the grammar's speed.
   it('fails when the process running the grammar hangs instead of exiting', () => {
     const k = kit();
-    const run = check(k, [PYTHON, k.python], { CG_TEST_AT_EXIT: 'hang', CODEGRAPH_CHECK_GRAMMAR_TIMEOUT_MS: '5000' });
+    const started = Date.now();
+    // A hang backstop only: the healthy run must finish to size the deadline.
+    const healthy = check(k, [PYTHON, k.python], {}, 180_000);
+    const healthyMs = Date.now() - started;
+    expect(healthy.status, healthy.stdout + healthy.stderr).toBe(0);
+    expect(healthy.stdout).toMatch(/RESULT: PASS/);
+    // Scale from the same work under the same load: the script fixes its deadline
+    // at spawn, and the parse time is only known after the healthy run finishes.
+    const deadline = Math.max(10_000, 3 * healthyMs);
+    // Leave startup room beyond the child's load-scaled deadline in the parent.
+    const run = check(k, [PYTHON, k.python], {
+      CG_TEST_AT_EXIT: 'hang',
+      CODEGRAPH_CHECK_GRAMMAR_TIMEOUT_MS: String(deadline),
+    }, deadline + Math.max(60_000, 2 * healthyMs));
     expect(run.status, run.stdout + run.stderr).toBe(1);
     expect(run.stdout).not.toMatch(/RESULT: PASS/);
     expect(run.stdout).toMatch(/RESULT: FAIL — the parses finished, but the process running them had not exited/);
-  }, 90_000);
+  }, 600_000);
 
   it('still fails the tree-sitter-wasms Lua grammar, which corrupts the shared heap on reuse', () => {
     const k = kit();

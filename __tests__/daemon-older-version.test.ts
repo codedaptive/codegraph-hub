@@ -346,6 +346,7 @@ describe('a launcher meeting a server of another version (#2335)', () => {
   }
 
   it('keeps the older server\'s sessions answering through the replacement, even mid-call', async () => {
+    // slow: starts real servers of two installs; the timeout covers the 90s attach backstop below.
     const before = await sessionWithServer(olderInstall, OLDER);
     // The older session calls every 20ms throughout, so it serves itself
     // in-process the instant its server goes: every call must still get its one
@@ -354,8 +355,12 @@ describe('a launcher meeting a server of another version (#2335)', () => {
     const calling = setInterval(() => sendStatus(before.session, next++), 20);
     let after: Session;
     try {
-      after = startSession(null);
-      await waitFor(() => attachedLine(after), 30000, 'the new session to attach');
+      // On a loaded machine the launcher's first attempt (stop the older server,
+      // spawn, poll) can miss, leaving the session in-process. Each proxy retry
+      // runs that attempt again, here every 300-600ms, so the attach is reached
+      // by the proxy's own retries; the 90s bound is only a backstop against a hang.
+      after = startSession(null, { CODEGRAPH_DAEMON_RETRY_MS: '300', CODEGRAPH_DAEMON_RETRY_MAX_MS: '600' });
+      await waitFor(() => attachedLine(after), 90000, 'the new session to attach');
       await new Promise((r) => setTimeout(r, 500));
     } finally {
       clearInterval(calling);
@@ -371,7 +376,7 @@ describe('a launcher meeting a server of another version (#2335)', () => {
     const stderr = before.session.stderr.join('\n');
     expect(stderr).toContain('Serving reads in-process without auto-sync');
     expect(stderr).not.toContain('File watcher active');
-  }, 120000);
+  }, 240000);
 
   it('stops a server from an older install and starts one from its own', async () => {
     const before = await sessionWithServer(olderInstall, OLDER);

@@ -1324,7 +1324,8 @@ def opaque(pool):
     } finally { cg.close(); }
   });
 
-  // One index per adversarial case: several seconds on a loaded machine.
+  // slow: one full index per adversarial case, 62 of them in sequence. The timeout is a hang
+  // backstop for all 62 indexes, not a performance bound.
   it('#1820: a module global never binds through a shadow, an unknown value or a deeper chain', async () => {
     const header = `from store import Store
 from decoy import Decoy
@@ -1473,23 +1474,25 @@ def init():
     };
     const got: Record<string, string[]> = {};
     for (const [name, [files, _]] of Object.entries(cases)) {
-      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `cg-fnref-global-${name}-`));
+      // Each case owns its directory and never touches the shared `tmpDir`: vitest does not
+      // stop a timed-out test, and this loop must not delete a later test's directory.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), `cg-fnref-global-${name}-`));
       const all = { 'store.py': 'class Store:\n    def fetch(self, ids):\n        return ids\n',
         'decoy.py': 'class Decoy:\n    def fetch(self, ids):\n        return []\n', ...files };
       for (const [file, content] of Object.entries(all)) {
-        fs.mkdirSync(path.dirname(path.join(tmpDir, file)), { recursive: true });
-        fs.writeFileSync(path.join(tmpDir, file), content);
+        fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+        fs.writeFileSync(path.join(dir, file), content);
       }
-      const cg = CodeGraph.initSync(tmpDir);
+      const cg = CodeGraph.initSync(dir);
       try {
         await cg.indexAll();
         got[name] = cg.getNodesByName('fetch').flatMap(t => cg.getIncomingEdges(t.id)
           .filter(e => e.kind === 'references' && e.metadata?.fnRef === true)
           .map(e => `${cg.getNode(e.source)?.name} -> ${t.qualifiedName}`)).sort();
-      } finally { cg.close(); fs.rmSync(tmpDir, { recursive: true, force: true }); tmpDir = undefined; }
+      } finally { cg.close(); fs.rmSync(dir, { recursive: true, force: true }); }
     }
     expect(got).toEqual(Object.fromEntries(Object.entries(cases).map(([name, [, want]]) => [name, want])));
-  }, 60_000);
+  }, 300_000);
 
   it('#1820: a module global re-resolves after its module changes (sync)', async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-fnref-global-sync-'));
