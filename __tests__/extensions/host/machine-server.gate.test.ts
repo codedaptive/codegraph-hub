@@ -283,12 +283,12 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
 
   // G4b: the project idle timer. One worktree is pinned; the others are not.
   // After a call on each worktree and a wait for the idle close, the pinned
-  // worktree's database is still open and no other codegraph.db is. A later
-  // call on an unpinned worktree answers its own worktree-only symbol, and its
-  // database is open again.
+  // worktree's database is still open and no other codegraph.db is. Worktree 2
+  // is then pinned and checked closed before a later call answers its own
+  // worktree-only symbol and its database is observed open again.
   it.runIf(LSOF_AVAILABLE)('G4b: a pinned worktree stays open through the project idle timer, the others close, and a later call reopens one', async () => {
-    // Over 5 s by design: eleven CLI index runs, a `project pin` CLI run, a
-    // `serve --mcp` cold start, ten tool calls, and a poll of lsof that waits
+    // Over 5 s by design: eleven CLI index runs, two `project pin` CLI runs, a
+    // `serve --mcp` cold start, eleven tool calls, and a poll of lsof that waits
     // for the 1500 ms project idle timer to close the unpinned databases.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
@@ -305,7 +305,13 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     for (const wt of worktrees) fx.index(wt, stateDir);
     const pinned = worktrees[0]!;
     fx.pin(pinned, stateDir);
-    const session = fx.session({ cwd: repo, stateDir, env: { CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '1500' } });
+    // With housekeeping disabled, the pinned opener runs only at server start,
+    // so pinning worktree 2 later cannot open its database on its own.
+    const session = fx.session({
+      cwd: repo,
+      stateDir,
+      env: { CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '1500', CODEGRAPH_HOUSEKEEPING_INTERVAL_MS: '0' },
+    });
     await session.initialize();
 
     const problems: string[] = [];
@@ -341,10 +347,17 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
       problems.push(`(3) a codegraph.db that is neither the pinned worktree's nor an unpinned worktree's is open: ${others.join(', ')}`);
     }
 
+    fx.pin(worktrees[1]!, stateDir);
+    if (openCodegraphDbs(pid!).includes(unpinnedDbs[0]!)) {
+      problems.push(`(4a) worktree 2's database is open after its pin and before the later call; the pin must not open it: ${unpinnedDbs[0]}`);
+    }
+
     const later = await session.tool(EXPLORE, { query: 'g4bWtOnly02', projectPath: worktrees[1]! });
     if (!answers(later, 'g4bWtOnly02', 'g4b-body-marker-02')) {
-      problems.push(`(4) a later call on unpinned worktree 2 did not answer with its own symbol's source: ${excerpt(later)}`);
+      problems.push(`(4) a later call on idle-closed worktree 2 did not answer with its own symbol's source: ${excerpt(later)}`);
     }
+    // The pin protects worktree 2 from the call's closing trim and idle release,
+    // giving the bounded poll time to observe the reopened database.
     const reopened = await waitUntil(() => openCodegraphDbs(pid!).includes(unpinnedDbs[0]!), 5_000, 100);
     if (!reopened) {
       problems.push(`(5) worktree 2's database is not open again after the later call: ${unpinnedDbs[0]}`);
@@ -352,8 +365,9 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
 
     // Each entry below starts with the number of the step it reports: (1) pinned
     // database open, (2) unpinned databases closed, (3) no other database open,
-    // (4) a later call answers its symbol, (5) its database reopened. No entries
-    // means every step held.
+    // (4a) worktree 2's database is closed after pinning and before the later call,
+    // (4) that call answers its symbol, (5) its database is observed open again.
+    // No entries means every step held.
     expect(problems, 'G4b: entries are the failing steps, each named by its number; empty means every step held').toEqual([]);
   }, 300_000);
 
