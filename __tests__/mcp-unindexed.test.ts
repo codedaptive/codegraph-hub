@@ -214,7 +214,11 @@ describe('No-error policy on expected conditions', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noerror-'));
+    // "Unindexed" must hold for every ancestor too: os.tmpdir() can sit inside an
+    // indexed tree (a TMPDIR under a project), and then the path resolves to that
+    // index. /tmp has no index above it on POSIX.
+    const base = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+    tempDir = fs.mkdtempSync(path.join(base, 'codegraph-noerror-'));
   });
 
   afterEach(() => {
