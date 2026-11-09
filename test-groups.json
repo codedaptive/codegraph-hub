@@ -8,7 +8,9 @@
     "__tests__/function-ref.test.ts",
     "__tests__/frontload-hook.test.ts",
     "__tests__/liveness-watchdog.test.ts",
-    "__tests__/ui-trails.test.ts"
+    "__tests__/ui-trails.test.ts",
+    "__tests__/mcp-projectpath-lifecycle.test.ts",
+    "__tests__/ui-events-api.test.ts"
   ],
   "validation": [
     "__tests__/ui-highlight.test.ts"
