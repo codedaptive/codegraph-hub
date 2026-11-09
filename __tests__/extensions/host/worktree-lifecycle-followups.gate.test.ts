@@ -136,6 +136,18 @@ async function waitUntil(check: () => boolean, timeoutMs: number, stepMs = 100):
   return check();
 }
 
+function builderLog(stateDir: string): string[] {
+  try {
+    return fs.readFileSync(path.join(stateDir, 'builder.log'), 'utf8').split('\n').filter((l) => l.trim() !== '');
+  } catch {
+    return [];
+  }
+}
+
+function coldBuildOkCount(stateDir: string, root: string): number {
+  return builderLog(stateDir).filter((l) => l.endsWith(` job end cold-build ${root} ok`)).length;
+}
+
 type FileRow = { path: string; content_hash: string; indexed_at: number };
 
 function fileRows(root: string): FileRow[] {
@@ -307,8 +319,8 @@ const ENV_KEYS = [
 ] as const;
 
 // Every case builds an index, waits out a catch-up sync, or waits for a cold
-// build on the index builder (process start + index); the bounds only catch a
-// hang on a loaded machine.
+// build on the index builder (process start + index). The killed-build case also
+// waits for the restarted builder's readiness; the bounds catch hangs under load.
 describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 }, () => {
   let workspace: string;
   let main: string;
@@ -426,18 +438,20 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(getRegisteredProject(real(wt))!.flags & PROJECT_FLAG_SEEDED).not.toBe(0);
   });
 
-  // Two cold builds (the first killed with its builder), of 150 generated
-  // files so the first is still running when it is killed: well over 5 s under load.
+  // slow: two cold build attempts, two builder engine loads, and the readiness
+  // wait take well over 5 s under load. The 150 generated files make the first
+  // build long enough to interrupt in practice.
   it('F5: a cold build killed with its builder by SIGKILL is built again by the restarted builder, not marked failed', async () => {
     makeRepo(main, 150);
     const wt = path.join(workspace, 'wt-killed');
     addWorktree(main, wt, 'killed');
     const root = real(wt);
+    const stateDir = path.join(workspace, 'state');
     const first = await search(wt, 'alphaSymbol');
     expect(first.text).toContain(buildingNote(root));
 
-    // The builder takes rebuild.pid before it creates the database; kill it
-    // the moment it shows, long before 150 files are indexed.
+    // The builder takes rebuild.pid before it creates the database; poll for it
+    // so the kill has a chance to interrupt the build.
     let pid: number | null = null;
     expect(await waitUntil(() => {
       pid = readWriterLock(root, 'rebuild.pid')?.pid ?? null;
@@ -447,14 +461,23 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     const killed = pid!;
     process.kill(killed, 'SIGKILL');
     expect(await waitUntil(() => !pidAlive(killed), 5000, 20)).toBe(true);
-    // The server's client starts another builder, and a call during the restart
-    // waits for it: success-shaped, never the not-indexed text.
+    // No successful job end is logged after the kill; a later ok line and
+    // complete index provide evidence of the restarted builder's work.
+    expect(coldBuildOkCount(stateDir, root)).toBe(0);
     expect(await waitUntil(() => builder.pid() !== null && builder.pid() !== killed, 10_000, 20)).toBe(true);
+    // A new pid exists from the fork, but the builder answers only after loading
+    // the engine and saying ready (seconds under load). The client waits up to 8 s
+    // for readiness; a timeout can lead to worktree retry guidance.
+    expect(await waitUntil(() => builder.isUp(), 60_000, 20)).toBe(true);
 
+    // The call is success-shaped, but the builder's 5 s git bound can still yield
+    // retry guidance under load. The checks below prove the rebuild, not one answer.
     const again = await search(wt, 'alphaSymbol');
     expect(again.isError).toBe(false);
-    expect(again.text).not.toContain(NOT_INDEXED);
+    // An answer, a gone rebuild.pid, complete state, and an ok job line after
+    // the kill together check that the restarted builder completed the build.
     await waitForAnswer(wt, 60_000);
     expect(indexState(wt)).toBe('complete');
-  });
+    expect(await waitUntil(() => coldBuildOkCount(stateDir, root) >= 1, 10_000)).toBe(true);
+  }, 300_000);
 });
