@@ -52,6 +52,13 @@ const CUT_ATTEMPTS = 5;
 const ORDER_GAP_MS = 100;
 /** A child still running after this is killed; the run then fails on its signal. */
 const CHILD_TIMEOUT_MS = 180_000;
+/**
+ * G2's catch-up bound gives more time than the default 30 s under gate load: one measured run left
+ * 252 of 400 files pending after 30 s (load 95–191 on 18 cores). Extrapolating that observed progress
+ * gives about 80 s for 400 files; 150 s provides headroom, but cannot guarantee completion under load.
+ * It leaves 30 s before CHILD_TIMEOUT_MS for startup and exit, though the child can still be killed.
+ */
+const CATCH_UP_TIMEOUT_MS = 150_000;
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -351,11 +358,11 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect(integrityCheck(dir)).toBe('ok');
   }, 600_000);
 
-  // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, then a second CLI run syncing
-  // up to FILE_COUNT files, on a loaded machine.
+  // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, then a second CLI run
+  // with a CATCH_UP_TIMEOUT_MS fresh wait for up to FILE_COUNT files, on a loaded machine.
   //
-  // No ordering-against-exit assertion here: with a settle cap of 0 the CLI exits right after its
-  // output, and whether the parent sees that output or the exit first is a race.
+  // No ordering-against-exit assertion here: with a settle cap of 0 the CLI does not wait for the
+  // sync to settle after output, and whether the parent sees that output or the exit first is a race.
   it('G2 query --fresh with a settle cap of 0 says the sync is still running; the next --fresh checkpoint catches up and the index is intact', async () => {
     const cut = await cutRun(['query', 'freshlyAdded0', '-p', dir, '--fresh', '--json'],
       { CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0' }, stderrCheckpoint);
@@ -370,12 +377,17 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect.soft(lines.filter(l => !l.startsWith(CHECKPOINT_PREFIX) && !l.startsWith('Note:') && !/still running/i.test(l)))
       .toEqual([]);
 
-    const after = await runCli(['checkpoint', dir, '--fresh', '--json']);
+    // Allow extra time for catch-up under load; settle 0 avoids waiting for a timed-out sync after
+    // the checkpoint is printed. The assertion can still fail if catch-up exceeds the bound.
+    const after = await runCli(['checkpoint', dir, '--fresh', '--json'], {
+      CODEGRAPH_FRESH_TIMEOUT_MS: String(CATCH_UP_TIMEOUT_MS), CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0',
+    });
     const cp2 = stdoutCheckpoint(after);
-    expect(cp2?.pending, `--fresh checkpoint after; attempts used ${cut.attempts.length}`).toBe(0);
+    expect(cp2?.pending, `--fresh checkpoint after (bound ${CATCH_UP_TIMEOUT_MS} ms, timedOut ${String(cp2?.timedOut)}); ` +
+      `attempts used ${cut.attempts.length}`).toBe(0);
     expect(after.status).toBe(0);
     expect(integrityCheck(dir)).toBe('ok');
-  }, 600_000);
+  }, 600_000 + CHILD_TIMEOUT_MS);
 
   // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, the accepted one waiting out
   // the sync, then a second CLI run, on a loaded machine.
