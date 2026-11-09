@@ -3,18 +3,10 @@
  * `src/extensions/queries/extension.ts` contributes the `orphans` CLI command
  * and the `codegraph_orphans` MCP tool (./orphans/extension).
  *
- * Three parts:
- *   - in-process (src), as blast-extension.test.ts: the zone's default export
- *     registered with `registerExtension`, then listed and executed through
- *     `ToolHandler`;
- *   - startup cost (dist/extensions/queries/orphans/extension.js required
- *     alone in a child `node`): the registration loads none of the report's
- *     code, so `require.cache` holds no dist/index.js, nothing under dist/db/
- *     and no web-tree-sitter;
- *   - built binary (dist/bin/codegraph.js), as blast-extension.test.ts: the
- *     zone module found by the hook's discovery under dist/extensions/, with
- *     CODEGRAPH_EXTENSION_MODULES removed from the child's env so nothing else
- *     can supply it.
+ * In-process (src), as blast-extension.test.ts: the zone's default export
+ * registered with `registerExtension`, then listed and executed through
+ * `ToolHandler`.
+ * Spawned-process tests are in orphans-extension.integration.test.ts.
  *
  * Fixture: C1 (tagged) holds src/util.ts with `helper`, called from src/a.ts;
  * C2 appends the uncalled `lonelyNew` to src/util.ts, so the report has one
@@ -31,8 +23,6 @@ import { ToolHandler, getStaticTools } from '../../../src/mcp/tools';
 import { __resetExtensionsForTests, registerExtension } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
 import { orphansTool, registerOrphansCommand } from '../../../src/extensions/queries/orphans/extension';
-
-const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 
 /** Run git in `root` with a local identity; throws on failure so a broken fixture is loud. */
 function git(root: string, ...args: string[]): string {
@@ -180,93 +170,5 @@ describe('codegraph_orphans through ToolHandler (in-process)', () => {
     const res = await new ToolHandler(cg).execute('codegraph_orphans', { projectPath: repo, base: 'nope' });
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain('nope');
-  });
-});
-
-/** Base env for one fast child: no daemon, no wasm-flag re-exec, and no extension module but what discovery finds. */
-function childEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    CODEGRAPH_NO_DAEMON: '1',
-    CODEGRAPH_WASM_RELAUNCHED: '1',
-    CODEGRAPH_ALLOW_UNSAFE_NODE: '1',
-  };
-  delete env.CODEGRAPH_EXTENSION_MODULES;
-  delete env.CODEGRAPH_MCP_TOOLS;
-  return env;
-}
-
-function cli(args: string[], cwd?: string) {
-  return spawnSync(process.execPath, [BIN, ...args], {
-    encoding: 'utf-8',
-    env: childEnv(),
-    cwd,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
-describe("orphans' registration adds nothing to startup (built module, child node)", () => {
-  const DIST = path.resolve(__dirname, '../../../dist');
-  const EXT = path.join(DIST, 'extensions', 'queries', 'orphans', 'extension.js');
-  /** Requires the module named by argv[1] with Node's own require and prints its exports and the require cache. */
-  const PROBE =
-    'const m = require(process.argv[1]);' +
-    'process.stdout.write(JSON.stringify({ exports: Object.keys(m), cache: Object.keys(require.cache) }));';
-
-  it('requiring orphans/extension.js alone loads no dist/index.js, nothing under dist/db/, dist/resolution/ or dist/extraction/, and no web-tree-sitter', () => {
-    const res = spawnSync(process.execPath, ['-e', PROBE, EXT], { encoding: 'utf-8', env: childEnv() });
-    expect(res.status, res.stderr).toBe(0);
-    const { exports, cache } = JSON.parse(res.stdout) as { exports: string[]; cache: string[] };
-    expect(exports).toEqual(expect.arrayContaining(['orphansTool', 'registerOrphansCommand']));
-    // Cache keys are real paths.
-    const dist = fs.realpathSync(DIST);
-    expect(cache).toContain(fs.realpathSync(EXT));
-    expect(cache).not.toContain(path.join(dist, 'index.js'));
-    expect(cache.filter((k) => k.startsWith(path.join(dist, 'db') + path.sep))).toEqual([]);
-    expect(cache.filter((k) => k.startsWith(path.join(dist, 'resolution') + path.sep))).toEqual([]);
-    expect(cache.filter((k) => k.startsWith(path.join(dist, 'extraction') + path.sep))).toEqual([]);
-    expect(cache.filter((k) => k.includes(`${path.sep}web-tree-sitter${path.sep}`))).toEqual([]);
-  });
-});
-
-describe('codegraph orphans (built binary, zone module found by discovery)', () => {
-  it('--help lists orphans', () => {
-    const res = cli(['--help']);
-    expect(res.status).toBe(0);
-    expect(res.stdout).toMatch(/^\s+orphans\b/m);
-  });
-
-  it('orphans --base C1 -p <repo> prints the text report and exits 0', () => {
-    const res = cli(['orphans', '--base', 'C1', '-p', repo]);
-    expect(res.status).toBe(0);
-    const lines = res.stdout.split('\n');
-    expect(lines[0]).toBe(firstLine);
-    expect(lines.some((l) => l.startsWith('orphaned ('))).toBe(true);
-    expect(lines.some((l) => l.startsWith('orphaned unless the guess is right ('))).toBe(true);
-    expect(lines.some((l) => l.startsWith('excluded:'))).toBe(true);
-    expect(lines.some((l) => l.startsWith('added symbols:'))).toBe(true);
-    expect(res.stdout).toContain('lonelyNew');
-  });
-
-  it('orphans --json prints parseable JSON', () => {
-    const res = cli(['orphans', '--base', 'C1', '--json', '-p', repo]);
-    expect(res.status).toBe(0);
-    const report = JSON.parse(res.stdout) as { basis: string; orphans: { name: string }[] };
-    expect(report.basis).toBe('C1...HEAD');
-    expect(report.orphans.map((o) => o.name)).toContain('lonelyNew');
-  });
-
-  it('orphans with no --base exits 1 with a message on stderr naming --base', () => {
-    const res = cli(['orphans', '-p', repo]);
-    expect(res.status).toBe(1);
-    expect(res.stderr).toContain('--base');
-    expect(res.stdout).toBe('');
-  });
-
-  it('orphans --base nope exits 1 with the message on stderr and nothing on stdout', () => {
-    const res = cli(['orphans', '--base', 'nope', '-p', repo]);
-    expect(res.status).toBe(1);
-    expect(res.stderr).toContain('nope');
-    expect(res.stdout).toBe('');
   });
 });
