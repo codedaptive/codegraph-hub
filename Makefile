@@ -4,10 +4,11 @@
 # and zone-test-one record a run of the targets below (zone-test through ZONE_TEST); zone-test-status reads
 # those records.
 #
-#   make test-one DIR=<test file or folder> [TEST="<name regex>"]  one file or folder through vitest (TEST is vitest -t)
-#   make typecheck                                                   the push gate (tsc --noEmit)
-#   make test-times DIR=<test file or folder>                        tests over 5 s, slowest first
+#   make test-one DIR=<test file or folder> [TEST="<name regex>"] [GROUP=unit|integration|validation|all]  one file or folder through vitest (TEST is vitest -t)
+#   make typecheck                                                                                        the push gate (tsc --noEmit)
+#   make test-times DIR=<test file or folder> [GROUP=unit|integration|validation|all]                     tests over 5 s, slowest first
 #
+# GROUP defaults to unit; a file's group comes from its suffix or test-groups.json (fleet/test-groups.mts).
 # A worktree needs `npm ci` once before its first test; every target says so instead of failing in npx.
 
 .PHONY: test-one typecheck test-times
@@ -16,9 +17,14 @@ NPX := npx --no-install
 # quote or a backtick in a path or a test name arrives at vitest as typed. A $ in a command-line value is
 # still make's: write $$ there (TEST='a $$b'); a value from the environment needs no escaping.
 export DIR TEST
+GROUP ?= unit
+# Only GROUP selects the test group; command-line or environment CODEGRAPH_TEST_GROUP cannot bypass it.
+override CODEGRAPH_TEST_GROUP = $(GROUP)
+export CODEGRAPH_TEST_GROUP
 
-# zone.mk keys a zone-test-one record on DIR, SWIFT_TEST_ARGS and CARGO_TEST_ARGS only. A TEST filter would be
-# recorded under the unfiltered key and answer later unfiltered runs, so it is refused there.
+# zone.mk's zone-test-one key includes DIR, SWIFT_TEST_ARGS and CARGO_TEST_ARGS, not TEST or GROUP.
+# A TEST filter or non-unit GROUP could be recorded under the unfiltered unit key and replayed later.
+# Both are also refused for zone-test, whose record likewise does not distinguish TEST or GROUP.
 # The same holds for the extraction-path switches: CODEGRAPH_KERNEL=0 sends every file to the TypeScript (wasm)
 # extractors instead of the Rust kernel, and CODEGRAPH_KERNEL_<PASS>=0 turns one kernel pass off. A record taken
 # on one path would replay as if it covered the other, so any non-empty CODEGRAPH_KERNEL* (command line or
@@ -26,6 +32,9 @@ export DIR TEST
 ifneq ($(filter zone-test-one zone-test,$(MAKECMDGOALS)),)
 ifneq ($(TEST),)
 $(error TEST is not part of zone-test-one's record key; run `make test-one DIR=... TEST=...` for a filtered, unrecorded run)
+endif
+ifneq ($(GROUP),unit)
+$(error GROUP is not part of zone-test-one's record key; run `make test-one DIR=... GROUP=...` for an unrecorded run of another group)
 endif
 KERNEL_SET := $(strip $(foreach v,$(filter CODEGRAPH_KERNEL%,$(.VARIABLES)),$(if $(strip $($(v))),$(v))))
 ifneq ($(KERNEL_SET),)

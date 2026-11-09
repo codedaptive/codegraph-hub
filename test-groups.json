@@ -1,0 +1,16 @@
+{
+  "$comment": "Test groups for upstream files without renaming them, to keep merges clean. Our own tests use a suffix instead: .integration.test.ts, .gate.test.ts (integration), .validation.test.ts. Read by fleet/test-groups.mts.",
+  "integration": [
+    "__tests__/daemon-older-version.test.ts",
+    "__tests__/mcp-ppid-watchdog.test.ts",
+    "__tests__/add-lang-check-grammar.test.ts",
+    "__tests__/status-index-health.test.ts",
+    "__tests__/function-ref.test.ts",
+    "__tests__/frontload-hook.test.ts",
+    "__tests__/liveness-watchdog.test.ts",
+    "__tests__/ui-trails.test.ts"
+  ],
+  "validation": [
+    "__tests__/ui-highlight.test.ts"
+  ]
+}

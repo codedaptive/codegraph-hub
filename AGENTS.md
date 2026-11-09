@@ -18,7 +18,7 @@ npm run build:lib       # the viewer's components as @colbymchenry/codegraph-ui 
 npm run dev             # tsc --watch
 npm run clean           # rm -rf dist
 
-npm test                # vitest run (all)
+npm test                # vitest run: the unit group only (CODEGRAPH_TEST_GROUP=integration, validation or all for the rest; test-groups.json)
 npm run test:watch
 npm run test:eval       # only __tests__/evaluation/
 npm run eval            # build then run __tests__/evaluation/runner.ts via tsx

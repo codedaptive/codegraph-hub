@@ -2,6 +2,19 @@ import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 import { WASM_RUNTIME_FLAGS } from './src/extraction/wasm-runtime-flags';
+import { engineSelection, listTestFiles, parseTestGroup, readTestGroupManifest } from './fleet/test-groups.mts';
+
+/**
+ * Engine test groups select unit, integration, validation or all; Makefile's
+ * GROUP sets CODEGRAPH_TEST_GROUP, which defaults to unit. Suffixes win over
+ * manifest paths/globs, then unlisted files are unit. Explicit file lists keep
+ * that precedence, which include/exclude globs alone cannot express.
+ */
+const engineGroup = engineSelection(
+  parseTestGroup(process.env.CODEGRAPH_TEST_GROUP),
+  listTestFiles(fileURLToPath(new URL('./', import.meta.url))),
+  readTestGroupManifest(fileURLToPath(new URL('./test-groups.json', import.meta.url))),
+);
 
 /**
  * One process, two Vitest projects. The engine stays in Node; the UI package
@@ -58,9 +71,17 @@ export default defineConfig({
     projects: [
       {
         extends: true,
+        plugins: [{
+          name: 'engine-test-group',
+          configResolved(config) {
+            // Inheritance concatenates the root and engine include arrays, so
+            // replace the merged list to remove the root's all-tests glob.
+            if (engineGroup.include) config.test.include = engineGroup.include;
+          },
+        }],
         test: {
           name: 'engine',
-          include: ['__tests__/**/*.test.ts'],
+          include: engineGroup.include ?? ['__tests__/**/*.test.ts'],
           // A lazy `require` of a `.ts` file can't run under vitest's module
           // transform: see src/lazy-engine.ts.
           alias: [
@@ -73,7 +94,7 @@ export default defineConfig({
               replacement: fileURLToPath(new URL('./__tests__/lazy-frameworks-eager.ts', import.meta.url)),
             },
           ],
-          exclude: ['**/node_modules/**', '**/dist/**', '__tests__/ui-package.test.ts'],
+          exclude: ['**/node_modules/**', '**/dist/**', '__tests__/ui-package.test.ts', ...engineGroup.exclude],
         },
       },
       {
