@@ -10,7 +10,10 @@
     "__tests__/liveness-watchdog.test.ts",
     "__tests__/ui-trails.test.ts",
     "__tests__/mcp-projectpath-lifecycle.test.ts",
-    "__tests__/ui-events-api.test.ts"
+    "__tests__/ui-events-api.test.ts",
+    "__tests__/mcp-daemon.test.ts",
+    "__tests__/oversize-file-not-read.test.ts",
+    "__tests__/ui-server-api.test.ts"
   ],
   "validation": [
     "__tests__/ui-highlight.test.ts"
