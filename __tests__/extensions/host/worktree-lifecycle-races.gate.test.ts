@@ -73,6 +73,8 @@ import { sweepWorktrees } from '../../../src/extensions/host/worktree-lifecycle/
 import { runProjectPin } from '../../../src/extensions/host/worktree-lifecycle/cli';
 
 const DIST = path.resolve(__dirname, '../../../dist');
+// The harness's POSIX TMPDIR can have an indexed ancestor, changing pin targets and adding nested-repo git probes.
+const FIXTURE_TMP = process.platform === 'win32' ? os.tmpdir() : '/tmp';
 
 // vite's resolver strips the `node:` prefix from an import of node:sqlite,
 // so it is loaded with require (as the upstream suites do).
@@ -145,7 +147,7 @@ async function repoWithWorktree(workspace: string): Promise<{ main: string; wt: 
 
 // Builds an index and serves two calls through a real engine and a real index
 // builder process; the bound only catches a hang on a loaded machine.
-describe('a seed that fails while a sibling qualifies never queues a cold build', { timeout: 60_000 }, () => {
+describe('a seed that fails while a sibling qualifies never queues a cold build', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let wt: string;
   let stateDir: string;
@@ -157,7 +159,10 @@ describe('a seed that fails while a sibling qualifies never queues a cold build'
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_WATCH_DEBOUNCE_MS', '100');
     vi.stubEnv('CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f1-')));
+    vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
+    // Stay below the client's 120 s RPC backstop while allowing the seed to finish under load.
+    vi.stubEnv('CODEGRAPH_BUILDER_ENSURE_WAIT_MS', '90000');
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-f1-')));
     // The builder's own state dir, so its job log (builder.log) is this case's alone.
     stateDir = path.join(workspace, 'state');
     vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
@@ -169,7 +174,7 @@ describe('a seed that fails while a sibling qualifies never queues a cold build'
     __setLoadCodeGraphForTests(CodeGraph);
     builder = BuilderClient.start();
     engine = new MCPEngine({ builder });
-  }, 60_000);
+  }, 180_000);
 
   afterEach(async () => {
     await engine?.stop();
@@ -180,13 +185,14 @@ describe('a seed that fails while a sibling qualifies never queues a cold build'
     vi.unstubAllEnvs();
     clearRegistry();
     fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
+  }, 180_000);
 
   async function search(): Promise<{ text: string; isError: boolean }> {
     const res = await engine!.getToolHandler().execute('codegraph_search', { query: 'appSymbol', projectPath: wt }, undefined, ADMIT_ALL);
     return { text: res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n'), isError: Boolean(res.isError) };
   }
 
+  // slow: a real builder must finish a failed seed and retry it after the held target lock is released.
   it('answers the not-indexed guidance, starts no build, and seeds on the next call', async () => {
     const first = await search();
     expect(first.isError).toBe(false);
@@ -194,7 +200,9 @@ describe('a seed that fails while a sibling qualifies never queues a cold build'
     expect(first.text).toContain("isn't indexed with codegraph yet");
     // A cold build takes rebuild.pid first thing; none may appear, and the
     // builder's job log shows the seed attempt and no cold-build job.
-    await sleep(1000);
+    await vi.waitFor(() => {
+      expect(fs.readFileSync(path.join(stateDir, 'builder.log'), 'utf8')).toMatch(/job end seed \S+ failed/);
+    }, { timeout: 180_000 });
     const jobLog = fs.readFileSync(path.join(stateDir, 'builder.log'), 'utf8');
     expect(jobLog).toMatch(/job end seed \S+ failed/);
     expect(jobLog).not.toContain('cold-build');
@@ -218,13 +226,13 @@ describe('a seed that fails while a sibling qualifies never queues a cold build'
 
 // Builds a real index and runs real git in a temp repository; the bound only
 // catches a hang on a loaded machine.
-describe('the sweep keeps a root re-registered while it awaited the release', { timeout: 60_000 }, () => {
+describe('the sweep keeps a root re-registered while it awaited the release', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let wt: string;
 
   beforeEach(async () => {
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f2-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-f2-')));
     let main: string;
     ({ main, wt } = await repoWithWorktree(workspace));
     expect((await ensureWorktreeIndex(wt, seedHost())).kind).toBe('seeded');
@@ -240,6 +248,7 @@ describe('the sweep keeps a root re-registered while it awaited the release', { 
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('the new record, its pin and the index survive', async () => {
     const before = getRegisteredProject(wt)!;
     expect(before.seedNonce).toBe(readSeedNonce(wt));
@@ -293,7 +302,7 @@ class TerminationFake implements PoolWorker {
   get sawRelease(): boolean { return this.posted.some((m) => m.type === 'release'); }
 }
 
-describe('QueryPool.releaseProject resolves only once the workers have stopped', () => {
+describe('QueryPool.releaseProject resolves only once the workers have stopped', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let pool: QueryPool | null = null;
   let fakes: TerminationFake[] = [];
 
@@ -306,18 +315,19 @@ describe('QueryPool.releaseProject resolves only once the workers have stopped',
 
   function makePool(): QueryPool {
     return new QueryPool({
-      root: null, size: 1, idleTimeoutMs: 0, startSettleMs: 30_000,
+      root: null, size: 1, idleTimeoutMs: 0, startSettleMs: 180_000,
       createWorker: () => { const f = new TerminationFake(); fakes.push(f); return f; },
     });
   }
 
+  // slow under load: real timer callbacks deliver worker readiness and release before explicit termination.
   it('a release pending at destroy(), and one asked for after it starts, wait for terminate() to settle', async () => {
     pool = makePool();
-    await vi.waitFor(() => expect(pool!.ready).toBe(true));
+    await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 180_000 });
     const worker = fakes[0]!;
     let released = false;
     const release = pool.releaseProject('/some/root').then(() => { released = true; });
-    await vi.waitFor(() => expect(worker.sawRelease).toBe(true));
+    await vi.waitFor(() => expect(worker.sawRelease).toBe(true), { timeout: 180_000 });
 
     let destroyed = false;
     const destroy = pool.destroy().then(() => { destroyed = true; });
@@ -335,13 +345,14 @@ describe('QueryPool.releaseProject resolves only once the workers have stopped',
     expect(late).toBe(true);
   });
 
+  // slow under load: real timer callbacks deliver worker readiness and release before explicit termination.
   it('a release pending when a worker errors waits for that worker\'s terminate() to settle', async () => {
     pool = makePool();
-    await vi.waitFor(() => expect(pool!.ready).toBe(true));
+    await vi.waitFor(() => expect(pool!.ready).toBe(true), { timeout: 180_000 });
     const worker = fakes[0]!;
     let released = false;
     const release = pool.releaseProject('/some/root').then(() => { released = true; });
-    await vi.waitFor(() => expect(worker.sawRelease).toBe(true));
+    await vi.waitFor(() => expect(worker.sawRelease).toBe(true), { timeout: 180_000 });
 
     worker.emitError();
     await sleep(50);
@@ -360,13 +371,13 @@ describe('QueryPool.releaseProject resolves only once the workers have stopped',
 
 // Builds a real index and runs real git in a temp repository; the bound only
 // catches a hang on a loaded machine.
-describe('a sweep keeps a live seeded worktree when git cannot answer', { timeout: 60_000 }, () => {
+describe('a sweep keeps a live seeded worktree when git cannot answer', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let wt: string;
 
   beforeEach(async () => {
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f4-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-f4-')));
     ({ wt } = await repoWithWorktree(workspace));
     expect((await ensureWorktreeIndex(wt, seedHost())).kind).toBe('seeded');
     // A valid registration: the record's nonce is the one in the index, so
@@ -388,11 +399,13 @@ describe('a sweep keeps a live seeded worktree when git cannot answer', { timeou
     expect(getRegisteredProject(wt)?.seedNonce).toBe(readSeedNonce(wt));
   }
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('with GIT_DIR=/nonexistent in the environment', async () => {
     vi.stubEnv('GIT_DIR', '/nonexistent');
     expectKept(await sweepWorktrees({ release: async () => { /* nothing open here */ } }));
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it.runIf(process.platform !== 'win32')('when every git call fails', async () => {
     const bin = path.join(workspace, 'fake-bin');
     fs.mkdirSync(bin);
@@ -408,17 +421,17 @@ describe('a sweep keeps a live seeded worktree when git cannot answer', { timeou
 
 // Builds a real index and runs real git in a temp repository; the bound only
 // catches a hang on a loaded machine.
-describe('a failed seed never removes another process\'s files from the target', { timeout: 60_000 }, () => {
+describe('a failed seed never removes another process\'s files from the target', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
   let main: string;
   let wt: string;
   let holder: ChildProcess | undefined;
 
   beforeEach(async () => {
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f5-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-f5-')));
     ({ main, wt } = await repoWithWorktree(workspace));
     holder = spawnHolder();
-    await vi.waitFor(() => expect(holder!.pid).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(holder!.pid).toBeGreaterThan(0), { timeout: 180_000 });
   });
 
   afterEach(() => {
@@ -433,6 +446,7 @@ describe('a failed seed never removes another process\'s files from the target',
     return fs.readdirSync(dir).filter((n) => n.startsWith(`codegraph.db.seed-${process.pid}-`));
   }
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('another initializer\'s lock and staged copy, planted after the seed made the directory, survive', async () => {
     const dir = path.join(wt, '.codegraph');
     expect(fs.existsSync(dir)).toBe(false);
@@ -463,6 +477,7 @@ describe('a failed seed never removes another process\'s files from the target',
       .toEqual([path.basename(lockPath), path.basename(otherStaging)].sort());
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a file another process staged while the target lock was busy survives; the seed\'s own files go', async () => {
     const dir = path.join(wt, '.codegraph');
     const lockPath = path.join(dir, 'codegraph.lock');
@@ -489,6 +504,7 @@ describe('a failed seed never removes another process\'s files from the target',
     expect(fs.readdirSync(dir)).toEqual([path.basename(otherStaging)]);
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a failed seed with nobody else in the target leaves no .codegraph behind', async () => {
     const dir = path.join(wt, '.codegraph');
     const lockPath = path.join(dir, 'codegraph.lock');
@@ -546,11 +562,11 @@ process.stdout.write(JSON.stringify({ violations }));
 
 // Spawns three node processes against the built registry; the bound only
 // catches a hang on a loaded machine.
-describe('concurrent pins and seed registrations of one root lose no bit and no nonce', { timeout: 60_000 }, () => {
+describe('concurrent pins and seed registrations of one root lose no bit and no nonce', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
 
   beforeEach(() => {
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f6-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-f6-')));
   });
 
   afterEach(() => {
@@ -558,8 +574,8 @@ describe('concurrent pins and seed registrations of one root lose no bit and no 
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
-  // Starts three node processes that load the built registry: a second or two
-  // under load.
+  // Three real node processes contend on one record through the built registry.
+  // slow: three node processes perform 150 contending updates each through the built registry.
   it('three processes updating one record: every read-back holds, and the record ends pinned with the last nonce', async () => {
     const root = path.join(workspace, 'project');
     fs.mkdirSync(root);
@@ -569,7 +585,7 @@ describe('concurrent pins and seed registrations of one root lose no bit and no 
     fs.mkdirSync(barrier);
     const registryModule = path.join(DIST, 'extensions', 'host', 'worktree-lifecycle', 'project-registry.js');
     // Enough rounds per process that three of them overlap inside the record
-    // lock many times; small enough to finish in a second or two.
+    // lock many times; the finite count bounds the stress workload.
     const n = 150;
     const roles = ['seeder', 'pinner', 'other'];
     const runs = roles.map((role) => new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
@@ -585,7 +601,7 @@ describe('concurrent pins and seed registrations of one root lose no bit and no 
     }));
     await vi.waitFor(() => {
       for (const role of roles) expect(fs.existsSync(path.join(barrier, `ready-${role}`))).toBe(true);
-    }, { timeout: 30_000 });
+    }, { timeout: 180_000 });
     fs.writeFileSync(path.join(barrier, 'go'), '');
     const results = await Promise.all(runs);
     for (const r of results) expect(r.code, r.err).toBe(0);
@@ -602,17 +618,17 @@ describe('concurrent pins and seed registrations of one root lose no bit and no 
 // ---------------------------------------------------------------------------
 
 const CASE_INSENSITIVE_TMP = process.platform === 'darwin'
-  && fs.existsSync(os.tmpdir().toUpperCase())
-  && fs.realpathSync.native(os.tmpdir().toUpperCase()) !== os.tmpdir().toUpperCase();
+  && fs.existsSync(FIXTURE_TMP.toUpperCase())
+  && fs.realpathSync.native(FIXTURE_TMP.toUpperCase()) !== FIXTURE_TMP.toUpperCase();
 
 // Makes a real repository and runs real git in it; the bound only catches a
 // hang on a loaded machine.
-describe('a root pinned through a wrong-case spelling stays registered while git lists it', { timeout: 60_000 }, () => {
+describe('a root pinned through a wrong-case spelling stays registered while git lists it', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-f7-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-f7-')));
   });
 
   afterEach(() => {
@@ -622,6 +638,7 @@ describe('a root pinned through a wrong-case spelling stays registered while git
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
+  // slow: pinning and sweeping invoke real git to check canonical worktree spelling.
   it.runIf(CASE_INSENSITIVE_TMP)('the sweep does not judge it gone', async () => {
     const repo = path.join(workspace, 'CaseRepo');
     makeRepo(repo);
@@ -664,13 +681,13 @@ async function seededWorktree(workspace: string, nested = false): Promise<{ main
 
 // Each case indexes one file, seeds one worktree and runs real git; the bound
 // only catches a hang on a loaded machine.
-describe('a registered root is gone only on positive evidence', { timeout: 60_000 }, () => {
+describe('a registered root is gone only on positive evidence', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '');
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-gone-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-gone-')));
   });
 
   afterEach(() => {
@@ -679,6 +696,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a worktree moved away and restored while its release is awaited keeps its index and its record', async () => {
     const { wt } = await seededWorktree(workspace);
     const before = getRegisteredProject(wt)!;
@@ -701,6 +719,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
     expect(getRegisteredProject(wt)).toEqual(before);
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a nested worktree whose .git link was removed and pruned is reclaimed, though git inside it finds the checkout above', async () => {
     const { main, wt } = await seededWorktree(workspace, true);
     fs.unlinkSync(path.join(wt, '.git'));
@@ -716,6 +735,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
     expect(getRegisteredProject(wt)).toBeNull();
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a live worktree keeps its index when the main checkout is moved and repaired, and its record takes the new common dir', async () => {
     const { main, wt } = await seededWorktree(workspace);
     const before = getRegisteredProject(wt)!;
@@ -732,6 +752,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
     expect(getRegisteredProject(wt)).toEqual({ ...before, commonDir: real(path.join(moved, '.git')) });
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it.runIf(CASE_INSENSITIVE_TMP)('a live worktree keeps its index when the main checkout\'s directory changes case', async () => {
     const { main, wt } = await seededWorktree(workspace);
     const before = getRegisteredProject(wt)!;
@@ -745,6 +766,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
 
   // A pin may name a directory inside a worktree (a subproject with its own
   // index); only a seeded root is always a worktree's toplevel.
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a pinned directory inside a live checkout stays registered', async () => {
     const main = path.join(workspace, 'main');
     makeRepo(main);
@@ -757,6 +779,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
     expect(getRegisteredProject(sub)).toEqual(rec);
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it('a live seeded worktree survives a sweep run with git config injected through the environment', async () => {
     const { wt } = await seededWorktree(workspace);
     const before = getRegisteredProject(wt)!;
@@ -772,6 +795,7 @@ describe('a registered root is gone only on positive evidence', { timeout: 60_00
   // git reads core.worktree only from the repository's own config file, so the
   // case above holds even when the injection reaches git. This one watches
   // the environment each git call of a seed and a sweep actually gets.
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it.runIf(process.platform !== 'win32')('no git call of a seed or a sweep gets config injected through the environment; the user\'s config files stay', async () => {
     const { wt } = await repoWithWorktree(workspace);
     const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8', windowsHide: true }).stdout.trim();
@@ -838,12 +862,12 @@ const CAN_DENY_READ = process.platform !== 'win32' && process.getuid?.() !== 0;
 
 // Builds an index and plants a partial one; the bound only catches a hang on a
 // loaded machine.
-describe('an index whose state cannot be read is never discarded as abandoned', { timeout: 60_000 }, () => {
+describe('an index whose state cannot be read is never discarded as abandoned', { timeout: 600_000, hookTimeout: 180_000 }, () => {
   let workspace: string;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '');
-    workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-race-unreadable-')));
+    workspace = real(fs.mkdtempSync(path.join(FIXTURE_TMP, 'cg-race-unreadable-')));
   });
 
   afterEach(() => {
@@ -852,6 +876,7 @@ describe('an index whose state cannot be read is never discarded as abandoned', 
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
+  // slow: real git and SQLite index setup exercise the filesystem lifecycle under load.
   it.runIf(CAN_DENY_READ)('an unreadable database beside a dead rebuild.pid survives a call a sibling could seed', async () => {
     // main has a complete index, so a seed over the worktree's would be allowed.
     const { wt } = await repoWithWorktree(workspace);

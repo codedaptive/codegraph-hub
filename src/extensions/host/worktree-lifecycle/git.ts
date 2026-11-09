@@ -117,14 +117,16 @@ export function canonicalGitPath(p: string): string {
   }
 }
 
+/** Opt-in timeout signal: index preparation is pending, not a failed seed or build. */
+export class GitTimeoutError extends Error {}
+
 /**
- * stdout of `git <args>` run in `cwd`, trimmed; null on any failure (git
- * missing, not a repository, a non-zero exit, the timeout). Async on purpose:
- * one sync spawn per sibling worktree on the server's main thread could stall
- * the event loop long enough to trip the 60 s liveness watchdog.
+ * stdout of `git <args>` run in `cwd`, trimmed; null on failure. With `throwOnTimeout`, a timeout rejects
+ * with GitTimeoutError so automatic index preparation can answer pending; other callers keep null.
+ * Async on purpose: one sync spawn per sibling worktree could stall the event loop past the watchdog.
  */
-function gitAsync(cwd: string, args: string[]): Promise<string | null> {
-  return new Promise((resolve) => {
+function gitAsync(cwd: string, args: string[], throwOnTimeout = false): Promise<string | null> {
+  return new Promise((resolve, reject) => {
     try {
       execFile(
         'git',
@@ -137,7 +139,13 @@ function gitAsync(cwd: string, args: string[]): Promise<string | null> {
           timeout: GIT_ASYNC_TIMEOUT_MS,
           maxBuffer: 8 * 1024 * 1024,
         },
-        (err, stdout) => resolve(err ? null : String(stdout).trim()),
+        (err, stdout) => {
+          if (throwOnTimeout && err?.killed && err.signal === 'SIGTERM' && err.code === null) {
+            reject(new GitTimeoutError(`git ${args.join(' ')} timed out in ${cwd}`));
+            return;
+          }
+          resolve(err ? null : String(stdout).trim());
+        },
       );
     } catch {
       resolve(null);
@@ -190,10 +198,10 @@ export function gitWorktreeRootMayBeBelow(startPath: string, indexRoot: string |
 }
 
 /** The toplevel of `dir`'s working tree (`git rev-parse --show-toplevel`), by {@link canonicalGitPath}, or null. */
-export async function gitWorktreeRootAsync(dir: string): Promise<string | null> {
+export async function gitWorktreeRootAsync(dir: string, throwOnTimeout = false): Promise<string | null> {
   const cwd = nearestExistingDirectory(dir);
   if (!cwd) return null;
-  const out = await gitAsync(cwd, ['rev-parse', '--show-toplevel']);
+  const out = await gitAsync(cwd, ['rev-parse', '--show-toplevel'], throwOnTimeout);
   return out ? canonicalGitPath(out) : null;
 }
 
@@ -201,10 +209,10 @@ export async function gitWorktreeRootAsync(dir: string): Promise<string | null> 
  * The git common dir of `dir`'s repository, by {@link canonicalGitPath} (`git rev-parse
  * --git-common-dir`, the `.git` every worktree of one repository shares), or null.
  */
-export async function gitCommonDirAsync(dir: string): Promise<string | null> {
+export async function gitCommonDirAsync(dir: string, throwOnTimeout = false): Promise<string | null> {
   const cwd = nearestExistingDirectory(dir);
   if (!cwd) return null;
-  const out = await gitAsync(cwd, ['rev-parse', '--git-common-dir']);
+  const out = await gitAsync(cwd, ['rev-parse', '--git-common-dir'], throwOnTimeout);
   if (!out) return null;
   return canonicalGitPath(path.isAbsolute(out) ? out : path.resolve(cwd, out));
 }
@@ -225,10 +233,10 @@ export interface GitWorktreeEntry {
  * each linked worktree, including prunable ones whose directory is gone), in
  * git's order. Null when `dir` is not in a repository or git failed.
  */
-export async function listGitWorktrees(dir: string): Promise<GitWorktreeEntry[] | null> {
+export async function listGitWorktrees(dir: string, throwOnTimeout = false): Promise<GitWorktreeEntry[] | null> {
   const cwd = nearestExistingDirectory(dir);
   if (!cwd) return null;
-  const out = await gitAsync(cwd, ['worktree', 'list', '--porcelain']);
+  const out = await gitAsync(cwd, ['worktree', 'list', '--porcelain'], throwOnTimeout);
   if (out === null) return null;
   const entries: GitWorktreeEntry[] = [];
   let current: GitWorktreeEntry | null = null;
@@ -254,11 +262,11 @@ export async function listGitWorktrees(dir: string): Promise<GitWorktreeEntry[] 
  * Takes object ids only (hex, as `git worktree list` reports HEADs), so no
  * argument can reach git as an option or a revision expression.
  */
-export async function commitDistance(dir: string, a: string, b: string): Promise<number | null> {
+export async function commitDistance(dir: string, a: string, b: string, throwOnTimeout = false): Promise<number | null> {
   if (!OBJECT_ID.test(a) || !OBJECT_ID.test(b)) return null;
   const cwd = nearestExistingDirectory(dir);
   if (!cwd) return null;
-  const out = await gitAsync(cwd, ['rev-list', '--count', `${a}...${b}`]);
+  const out = await gitAsync(cwd, ['rev-list', '--count', `${a}...${b}`], throwOnTimeout);
   if (out === null || !/^\d+$/.test(out)) return null;
   return Number(out);
 }

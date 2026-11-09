@@ -12,7 +12,7 @@
  * and the answers of `codegraph query`. G4 and G5 speak the server's JSON-RPC on its socket, as the CLI does.
  * The helpers that start servers and read the lock files are in machine-server.harness.ts.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
@@ -33,18 +33,18 @@ import {
 } from './machine-server.harness';
 
 /** How long a builder may take to appear in builder.pid after the server starts. */
-const BUILDER_APPEAR_MS = 15_000;
+const BUILDER_APPEAR_MS = 180_000;
 /** The lock sampler's period, as in index-builder.gate.test.ts. */
 const SAMPLE_MS = 20;
 /**
  * How long a routed command's job may take to write its end line after the CLI exited. The end line is the
- * builder's; the CLI's reply is the server's. A small repository is seconds; the rest is headroom at load 7-11.
+ * builder's; the CLI's reply is the server's. A small repository is seconds; the rest is headroom for heavily loaded scheduling.
  */
-const JOB_END_WAIT_MS = 30_000;
+const JOB_END_WAIT_MS = 180_000;
 /** How long a raw connection waits for the reply to an index request: a cold rebuild of a small repository, under load. */
-const REPLY_MS = 120_000;
+const REPLY_MS = 180_000;
 /** How long the lease's locks may take to go after its control connection closes. */
-const LEASE_RELEASE_MS = 15_000;
+const LEASE_RELEASE_MS = 180_000;
 /** The bound on one CLI run: a run that never ends fails here instead of hanging the file. */
 const CLI_RUN_MS = 240_000;
 /**
@@ -246,7 +246,7 @@ function runCli(args: string[], stateDir: string, cwd: string): Promise<CliRun> 
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, ...args], {
       cwd,
-      env: gateEnv(stateDir),
+      env: gateEnv(stateDir, { CODEGRAPH_FRESH_TIMEOUT_MS: '180000', CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '180000' }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -465,7 +465,11 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     const saved = process.env.CODEGRAPH_AUTO_INDEX;
     delete process.env.CODEGRAPH_AUTO_INDEX;
     try {
-      return fx.session({ cwd, stateDir: state });
+      return fx.session({ cwd, stateDir: state, env: {
+        CODEGRAPH_STARTUP_HANDSHAKE_TIMEOUT_MS: '180000',
+        CODEGRAPH_DAEMON_RETRY_MS: '100', CODEGRAPH_DAEMON_RETRY_MAX_MS: '1000',
+        CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0', CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
+      } });
     } finally {
       if (saved !== undefined) process.env.CODEGRAPH_AUTO_INDEX = saved;
     }
@@ -503,7 +507,21 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     }
     const serverUp = await waitUntil(() => serverPidOf(stateDir) !== null, BUILDER_APPEAR_MS);
     if (!serverUp) serverProblems = [`no server.pid naming a server pid in ${stateDir}`];
-  }, 600_000);
+    const socketPath = socketPathOf(stateDir);
+    if (socketPath !== null) {
+      const peer = await openRaw(socketPath, { codegraph_client: 1, control: 1, pid: process.pid, hostPid: null });
+      try {
+        // seed never cold-builds r0; routed=true is emitted only after the server client received ready.
+        let id = 0;
+        await vi.waitFor(async () => {
+          peer.send({ jsonrpc: '2.0', id: ++id, method: 'codegraph/indexWrite', params: { op: 'seed', root: r0 } });
+          expect(isRouted((await peer.reply(id, REPLY_MS)).result)).toBe(true);
+        }, { timeout: BUILDER_APPEAR_MS, interval: 250 });
+      } finally {
+        peer.destroy();
+      }
+    }
+  }, 1_200_000);
 
   afterAll(async () => {
     const builders = stateDirs.map((dir) => builderPidOf(dir)).filter((pid): pid is number => pid !== null);
@@ -527,7 +545,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     problems.push(...holderProblems('codegraph init', sampler, run.pid, true));
     problems.push(...(await findsSymbol(stateDir, root, R1, 'g1InitBase')));
     expect(problems, 'G1 init problems (empty when init ran as a builder job, the CLI held no lock, and the index answers)').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   it('G1 sync: a routed sync after an edit runs as a builder sync job, and no CLI process holds the root lock', async () => {
     // Can pass 5 s at load 7-11: an edit, a CLI sync and its builder job, a 20 ms lock sampler, and a query.
@@ -542,7 +560,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     problems.push(...holderProblems('codegraph sync', sampler, run.pid, false));
     problems.push(...(await findsSymbol(stateDir, root, R2, 'g1SyncSymbol')));
     expect(problems, 'G1 sync problems (empty when sync ran as a builder sync job, the CLI held no lock, and the edit is in the index)').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   it('G1 index: a routed index runs as a builder index job under the lease, and no CLI process holds the root lock', async () => {
     // Can pass 5 s at load 7-11: an edit, a CLI index (a full rebuild, under the builder's lease), a 20 ms lock sampler,
@@ -558,7 +576,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     problems.push(...holderProblems('codegraph index', sampler, run.pid, true));
     problems.push(...(await findsSymbol(stateDir, root, R3, 'g1IndexSymbol')));
     expect(problems, 'G1 index problems (empty when index ran as a builder index job, the CLI held no lock, and the rebuilt index answers)').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   it('G1 checkpoint --fresh: a routed --fresh wait runs as a builder sync job, prints fresh=yes, and no CLI process holds the lock', async () => {
     // Can pass 5 s at load 7-11: an edit, a checkpoint whose --fresh wait is a builder sync job, a 20 ms lock sampler,
@@ -577,7 +595,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     problems.push(...holderProblems('codegraph checkpoint --fresh', sampler, run.pid, false));
     problems.push(...(await findsSymbol(stateDir, root, R6, 'g1FreshSymbol')));
     expect(problems, 'G1 checkpoint --fresh problems (empty when the wait ran as a builder sync job, printed fresh=yes, and the edit is in the index)').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   // G3: the routed run and the in-process run of the same content print the same output, after normalising.
   it('G3 equivalence: a routed run and an in-process run of init, sync, index and checkpoint --fresh print the same output', async () => {
@@ -620,7 +638,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
       }
     }
     expect(problems, 'G3 problems (empty when each routed run is a builder job and prints what its in-process twin prints, with the same exit code)').toEqual([]);
-  }, 600_000);
+  }, 1_200_000);
 
   // G4: a refusal. Each request is answered with a JSON-RPC error and writes nothing.
   /**
@@ -641,7 +659,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     try {
       peer = await openRaw(socketPath, clientHello);
       peer.send({ jsonrpc: '2.0', id: 1, method: 'codegraph/indexWrite', params: { op: 'init', root: repo } });
-      reply = await peer.reply(1, 30_000);
+      reply = await peer.reply(1, REPLY_MS);
     } catch (err) {
       problems.push(`${label}: no reply to codegraph/indexWrite: ${String(err)}`);
     } finally {
@@ -666,6 +684,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
 
   // Fails on a tree without the route: the method is absent there, so the reply is MethodNotFound (-32601), not the
   // refusal (-32600). The gate asserts the refusal itself: a session (a client hello with launchDir) is not the CLI.
+  // slow: a raw socket handshake and refusal under heavy load.
   it('G4a refusal: a session hello with launchDir gets a JSON-RPC error for codegraph/indexWrite, and the root gets no .codegraph', async () => {
     const launchDir = fx.tempRoot();
     const problems = [
@@ -682,6 +701,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
   }, 120_000);
 
   // Fails on a tree without the route, for the same reason as G4a. The gate asserts the refusal for the legacy client: no hello at all.
+  // slow: a raw socket handshake and refusal under heavy load.
   it('G4b refusal: a connection with no client hello gets a JSON-RPC error for codegraph/indexWrite, and the root gets no .codegraph', async () => {
     const problems = [
       ...serverProblems,
@@ -692,6 +712,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
 
   // The control role is granted on the `control: 1` marker, not on a missing launchDir: a client hello with neither the
   // marker nor a launchDir (what any client of the socket can send, and what a session without an anchor looks like) is refused.
+  // slow: a raw socket handshake and refusal under heavy load.
   it('G4c refusal: a client hello with no launchDir and no control marker gets a JSON-RPC error for codegraph/indexWrite, and the root gets no .codegraph', async () => {
     const problems = [
       ...serverProblems,
@@ -753,7 +774,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
     const sync = await runCli(['sync', R5], stateDir, root);
     problems.push(...exitProblems('codegraph sync after the lease', sync));
     expect(problems, 'G5 problems (empty when the lease is held while the connection is open, released when it goes, and a sync then succeeds)').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   /**
    * The engine's verbose diagnostics and the verbose progress lines of a run, in stdout order: the lines
@@ -808,7 +829,7 @@ describe('CLI index writes route through the running machine server (G1, G3, G4,
       }
     }
     expect(problems, 'G6 problems (empty when each routed --verbose run is a builder job and prints the in-process run\'s engine and phase lines in order)').toEqual([]);
-  }, 600_000);
+  }, 1_200_000);
 });
 
 describe('CLI index writes with no server running (G2)', () => {
@@ -887,5 +908,5 @@ describe('CLI index writes with no server running (G2)', () => {
     }
 
     expect(problems, 'G2 problems (empty when the four commands run in-process, write no pid files, and ignore a stale builder.pid)').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 });

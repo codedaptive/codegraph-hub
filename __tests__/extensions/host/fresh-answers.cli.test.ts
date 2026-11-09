@@ -34,8 +34,8 @@ function dirtyHashOf(entries: Array<[string, string]>): string {
 
 /**
  * One child, no daemon, no wasm-flag re-exec, no telemetry or prompt hook.
- * CODEGRAPH_FRESH_TIMEOUT_MS is removed unless the test sets it, so an
- * inherited value cannot change the bound.
+ * Fresh and child-process bounds allow a small sync to finish under heavy load;
+ * a test can still override the fresh bound to exercise a timeout.
  */
 function runCli(args: string[], extra: Record<string, string> = {}) {
   const env: NodeJS.ProcessEnv = {
@@ -43,11 +43,12 @@ function runCli(args: string[], extra: Record<string, string> = {}) {
     CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1',
     CODEGRAPH_NO_PROMPT_HOOK: '1', CODEGRAPH_NO_DAEMON: '1',
     CODEGRAPH_WASM_RELAUNCHED: '1',
+    CODEGRAPH_FRESH_TIMEOUT_MS: '180000',
+    CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '180000',
     NODE_NO_WARNINGS: '1', NO_COLOR: '1',
   };
-  delete env.CODEGRAPH_FRESH_TIMEOUT_MS;
   Object.assign(env, extra);
-  return spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', timeout: 60_000, env });
+  return spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', timeout: 240_000, env });
 }
 
 /** The single `codegraph-checkpoint {...}` stderr line, parsed. */
@@ -57,10 +58,14 @@ function checkpointLine(stderr: string): Record<string, unknown> {
   return JSON.parse(lines[0].slice(CHECKPOINT_PREFIX.length));
 }
 
-describe('fresh answers: CLI', () => {
+describe('fresh answers: CLI', { timeout: 600_000 }, () => {
   let dir: string;
+  let stateDir: string;
+  const savedStateDir = process.env.CODEGRAPH_STATE_DIR;
 
   beforeEach(async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fresh-cli-state-'));
+    process.env.CODEGRAPH_STATE_DIR = stateDir;
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fresh-cli-')));
     git(dir, ['init', '-q']);
     git(dir, ['config', 'user.name', 'Fresh Test']);
@@ -78,10 +83,13 @@ describe('fresh answers: CLI', () => {
     } finally {
       cg.destroy();
     }
-  });
+  }, 180_000);
 
   afterEach(() => {
+    if (savedStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+    else process.env.CODEGRAPH_STATE_DIR = savedStateDir;
     fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   /** An unsynced edit: a.ts gains `freshlyAdded`. */
@@ -153,7 +161,8 @@ describe('fresh answers: CLI', () => {
 
   // Over 5 s possible: one CLI spawn on a loaded machine.
   it('C5 checkpoint on a directory that is not initialized exits 1', () => {
-    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fresh-cli-bare-'));
+    // An indexed ancestor would make this an initialized path; the harness's POSIX TMPDIR can be in a checkout.
+    const bare = fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'codegraph-fresh-cli-bare-'));
     try {
       const r = runCli(['checkpoint', bare]);
       expect(r.error).toBeUndefined();

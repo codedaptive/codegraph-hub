@@ -75,7 +75,7 @@ async function buildIndex(root: string): Promise<void> {
   try { await cg.indexAll(); } finally { cg.close(); }
 }
 
-describe('sweepWorktrees tears down gone worktrees (G11)', () => {
+describe('sweepWorktrees tears down gone worktrees (G11)', { timeout: 240_000, hookTimeout: 180_000 }, () => {
   let tempDir: string;
   let main: string;
   let commonDir: string;
@@ -86,6 +86,7 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
+    vi.stubEnv('CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS', '0');
     // Realpath'd, so every root below is already canonical (macOS /var).
     // os.tmpdir() is not inside a git repository, so a directory under it that
     // stops being a worktree is not a repository at all.
@@ -140,7 +141,7 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(res.isError).toBeFalsy();
     expect(res.content[0].text).toContain('appSymbol');
     expect(cachedRoots(handler)).toContain(root);
-    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 5000 });
+    await vi.waitFor(() => expect(readWriterLock(root)?.pid).toBe(builder!.pid()), { timeout: 180_000 });
     if (HAS_LSOF) expect(openFdCount(dbFiles(root))).toBeGreaterThan(0);
   }
 
@@ -158,9 +159,8 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     if (HAS_LSOF) expect(openFdCount(dbFiles(root))).toBe(0);
   }
 
-  // 30 s timeout (1.5 s alone): a real index builder process starts and holds the worktree, which on a
-  // machine at load 16-29, with the host folder running beside it, takes more than the 5 s default.
-  it('releases and unregisters a seeded worktree removed with git worktree remove', { timeout: 30_000 }, async () => {
+  // slow: a real index builder must start and acquire the worktree before teardown, even under heavy load.
+  it('releases and unregisters a seeded worktree removed with git worktree remove', { timeout: 240_000 }, async () => {
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
     const wt = await addIndexedWorktree('gone');
@@ -180,8 +180,8 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(reg.getRegisteredProject(wt)).toBeNull();
   });
 
-  // 30 s timeout, for the same reason as the test above.
-  it('deletes the index of a seeded worktree pruned while its directory remains', { timeout: 30_000 }, async () => {
+  // slow: a real index builder must hold the worktree before the sweep deletes its seeded index.
+  it('deletes the index of a seeded worktree pruned while its directory remains', { timeout: 240_000 }, async () => {
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
     const wt = await addIndexedWorktree('pruned');
@@ -202,6 +202,7 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
     expect(reg.getRegisteredProject(wt)).toBeNull();
   });
 
+  // slow: real SQLite indexes and worktree operations can exceed 5 s under load.
   it('never deletes the index of a non-seeded root, and leaves a live root registered', async () => {
     const reg = await loadRegistry();
     const { sweepWorktrees } = await loadTeardown();
@@ -224,6 +225,7 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
   // The machine server is one per state dir, not one per root: tearing a root
   // down touches only that root's index and registry record, never the
   // server's lock or socket (the server releases the root itself).
+  // slow: builds an index and prunes a worktree before checking state-file ownership.
   it('leaves the machine server\'s lock and socket alone, and keeps its registry under the state dir', async () => {
     const stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-teardown-state-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', stateDir);
@@ -256,12 +258,13 @@ describe('sweepWorktrees tears down gone worktrees (G11)', () => {
 // The built pool, so its default worker factory loads the compiled worker sibling.
 const BuiltQueryPool: typeof QueryPool = require('../../../dist/mcp/query-pool').QueryPool;
 
-describe('QueryPool.releaseProject closes the root on its workers (G13)', () => {
+describe('QueryPool.releaseProject closes the root on its workers (G13)', { hookTimeout: 180_000 }, () => {
   let tempDir: string;
   let pool: QueryPool | null = null;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', '0');
+    vi.stubEnv('CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS', '0');
     tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pool-release-')));
   });
 
@@ -284,7 +287,7 @@ describe('QueryPool.releaseProject closes the root on its workers (G13)', () => 
     // database below is the worker's.
     expect(openFdCount(dbFiles(beta))).toBe(0);
 
-    pool = new BuiltQueryPool({ root: null, size: 1, idleTimeoutMs: 0 });
+    pool = new BuiltQueryPool({ root: null, size: 1, idleTimeoutMs: 0, startSettleMs: 180_000 });
     const first = await pool.run('codegraph_search', { projectPath: beta, query: 'betaSymbol' });
     expect(first.isError).toBeFalsy();
     expect(first.content[0].text).toContain('betaSymbol');
@@ -297,5 +300,5 @@ describe('QueryPool.releaseProject closes the root on its workers (G13)', () => 
     const again = await pool.run('codegraph_search', { projectPath: beta, query: 'betaSymbol' });
     expect(again.isError).toBeFalsy();
     expect(again.content[0].text).toContain('betaSymbol');
-  }, 30000);
+  }, 420_000);
 });

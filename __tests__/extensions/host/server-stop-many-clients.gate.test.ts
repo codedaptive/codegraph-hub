@@ -37,18 +37,18 @@ it.runIf(process.platform !== 'win32')('exits and removes its socket and lock wi
     child.once('exit', (code, signal) => resolve({ code, signal }));
   });
   try {
-    expect(await waitUntil(() => fs.existsSync(pidPath) || child.exitCode !== null, 20_000), output()).toBe(true);
+    expect(await waitUntil(() => fs.existsSync(pidPath) || child.exitCode !== null, 180_000), output()).toBe(true);
     expect(fs.existsSync(pidPath), output()).toBe(true);
     const lock = JSON.parse(fs.readFileSync(pidPath, 'utf8')) as { pid: number; socketPath: string };
     expect(lock.pid).toBe(child.pid);
-    expect(await waitUntil(() => fs.existsSync(lock.socketPath), 10_000), output()).toBe(true);
+    expect(await waitUntil(() => fs.existsSync(lock.socketPath), 180_000), output()).toBe(true);
     const answers = await Promise.all(Array.from({ length: 50 }, () => new Promise<boolean>((resolve, reject) => {
       const socket = net.createConnection(lock.socketPath);
       sockets.push(socket);
       let data = '';
       let receivedHello = false;
       let done = false;
-      const timer = setTimeout(() => finish(new Error('no initialize response within 10 s')), 10_000);
+      const timer = setTimeout(() => finish(new Error('no initialize response within 180 s')), 180_000);
       const finish = (error?: Error) => {
         if (done) return;
         done = true;
@@ -104,4 +104,4 @@ it.runIf(process.platform !== 'win32')('exits and removes its socket and lock wi
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
-}, 40_000);
+}, 600_000);

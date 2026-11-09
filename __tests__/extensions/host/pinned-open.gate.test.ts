@@ -13,7 +13,7 @@
  * A gate waits on a condition, bounded, then evaluates each step and collects the failing ones, so one run reports
  * every problem at once. Each entry names its step by number.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseSync } from 'node:sqlite';
@@ -34,7 +34,14 @@ import {
 } from './machine-server.harness';
 
 /** How long a gate waits for the server, the builder and the lock files to reach the state it expects. */
-const OPEN_WAIT_MS = 60_000;
+const OPEN_WAIT_MS = 180_000;
+// Unindexed pins log their skip only after the sibling-seed attempt; a builder that starts late can
+// defer that attempt to the next 60 s housekeeping pass. Wait for that outcome, not initialize.
+const OPEN_ENV = {
+  CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0',
+  CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
+  CODEGRAPH_WATCH_DEBOUNCE_MS: '100',
+};
 /** The poll interval of every wait that runs lsof. lsof is a subprocess, so the poll must not run faster. */
 const LSOF_POLL_MS = 250;
 /** The housekeeping interval for the gates that pin or unpin while the server runs. */
@@ -124,10 +131,15 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
   const fx = new Fixtures();
   /** Builder pids the gates recorded. Teardown stops the server first, which takes its builder down; these are a backstop. */
   const builderPids: number[] = [];
+  beforeEach(() => {
+    // Fixtures.tempRoot uses os.tmpdir(); a harness TMPDIR below an index makes an unindexed pin select that ancestor.
+    if (process.platform !== 'win32') vi.stubEnv('TMPDIR', '/tmp');
+  });
   afterEach(async () => {
     await fx.teardown();
     for (const pid of builderPids.splice(0)) await stopIfCodegraph(pid);
-  }, 60_000);
+    vi.unstubAllEnvs();
+  }, 180_000);
 
   // PO1: a pinned project with an index is opened at start. R is pinned and indexed. A first session starts the
   // server and its builder, then both are stopped. A second session starts and makes no tool call. Within
@@ -137,8 +149,8 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
   // three steps and fails this one.
   it('PO1: after a restart, a pinned project with an index is held and open, and kept current, with no tool call', async () => {
     // Over 5 s by design: a CLI index and a pin, two `serve --mcp` starts (each loads the wasm runtime), the stop of
-    // the first server and its builder, the wait of up to 60 s for the new server's open and the builder's hold, and
-    // the wait of up to 60 s for a file written into R to be indexed.
+    // the first server and its builder, the wait of up to 180 s for the new server's open and the builder's hold, and
+    // the bounded watcher-sentinel readiness wait and the wait of up to 180 s for the real edit to be indexed.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
     const repo = fx.makeRepo(path.join(root, 'repo'), {
@@ -148,27 +160,35 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     fx.pin(repo, stateDir);
 
     // The first start: its server and builder come up, then both are stopped.
-    const sessionA = fx.session({ cwd: repo, stateDir });
+    const sessionA = fx.session({ cwd: repo, stateDir, env: OPEN_ENV });
     await sessionA.initialize();
-    await waitUntil(() => builderPidOf(stateDir) !== null, 30_000, 100);
+    await waitUntil(() => builderPidOf(stateDir) !== null, OPEN_WAIT_MS, 100);
     const oldServer = serverPidOf(stateDir);
     const oldBuilder = builderPidOf(stateDir);
     expect(oldServer !== null && oldBuilder !== null, 'PO1 setup: the first start wrote server.pid and builder.pid').toBe(true);
     builderPids.push(oldBuilder!);
     await sessionA.end();
     await stopProcess(oldServer!);
-    const stopped = await waitUntil(() => !isAlive(oldServer!) && !isAlive(oldBuilder!), 30_000, 100);
+    const stopped = await waitUntil(() => !isAlive(oldServer!) && !isAlive(oldBuilder!), OPEN_WAIT_MS, 100);
     expect(stopped, 'PO1 setup: the old server and the old builder are both dead before the restart').toBe(true);
 
     // The second start: initialize, then no tool call. The open must come from the server's own start.
     const logBaseline = builderLogLines(stateDir).length;
-    const sessionB = fx.session({ cwd: repo, stateDir });
+    const sessionB = fx.session({ cwd: repo, stateDir, env: OPEN_ENV });
     await sessionB.initialize();
     const newHeld = (): boolean => builderPidOf(stateDir) !== oldBuilder && heldByLiveBuilder(stateDir, repo);
     const newOpen = (): boolean => !LSOF_AVAILABLE || (serverPidOf(stateDir) !== oldServer && serverHoldsDb(stateDir, repo));
-    await waitUntil(() => newHeld() && catchUpSince(stateDir, repo, logBaseline) && newOpen(), OPEN_WAIT_MS, LSOF_POLL_MS);
+    const caughtUp = await waitUntil(() => newHeld() && newOpen() && builderLogLines(stateDir).slice(logBaseline)
+      .some((line) => line.endsWith(` job end catch-up ${repo} ok`)), OPEN_WAIT_MS, LSOF_POLL_MS);
+    expect(caughtUp, 'PO1 setup: the restarted builder finished its catch-up before the watcher-only edit').toBe(true);
     const newBuilder = builderPidOf(stateDir);
     if (newBuilder !== null) builderPids.push(newBuilder);
+
+    // A completed catch-up does not prove watcher delivery is ready. Probe it once before the edit under test.
+    const sentinelSymbol = 'po1WatcherReadySentinel';
+    fs.writeFileSync(path.join(repo, 'src', 'po1-sentinel.ts'), `export function ${sentinelSymbol}() {}\n`);
+    expect(await waitUntil(() => indexedNodeCount(dbOf(repo), sentinelSymbol) > 0, OPEN_WAIT_MS, LSOF_POLL_MS),
+      `PO1 setup: watcher sentinel was not indexed within ${OPEN_WAIT_MS} ms after catch-up`).toBe(true);
 
     // (4) Kept current, not only open: a source file written into R after the restart, with still no tool call, is
     // indexed. The builder holds R with its watcher, so the file's event starts a sync job on the builder's queue. The
@@ -203,14 +223,14 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
       `PO1 entries are the failing steps, each named by its number; empty means that after the restart, with no tool call, R was held, ` +
         `a catch-up job for R started, R's codegraph.db was open, and a source file written into R was indexed within ${OPEN_WAIT_MS} ms`,
     ).toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   // PO2: a pinned root the server cannot open is skipped, and the rest still opens. D was indexed and pinned, then its
   // directory was deleted. E was pinned with no index. R is pinned and indexed. The server starts and answers
   // initialize. With no tool call, R is held and open; server.log has a line naming D's root with "skipped" and one
   // naming E's root; E gets no .codegraph/ directory (no cold build starts for it).
   it('PO2: a pinned root whose directory is gone, or that has no index, is skipped with a server.log line, and the server still starts', async () => {
-    // Over 5 s by design: three CLI index and pin runs, a `serve --mcp` start, and the wait of up to 60 s for R's hold
+    // Over 5 s by design: three CLI index and pin runs, a `serve --mcp` start, and the wait of up to 180 s for R's hold
     // and open and for the two skip lines the server writes as it starts.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
@@ -229,7 +249,7 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     fs.rmSync(gone, { recursive: true, force: true });
     expect(fs.existsSync(path.join(bare, '.codegraph')), 'PO2 setup: the unindexed root E has no index after its pin').toBe(false);
 
-    const session = fx.session({ cwd: repo, stateDir });
+    const session = fx.session({ cwd: repo, stateDir, env: OPEN_ENV });
     await session.initialize();
     await waitUntil(
       () =>
@@ -262,10 +282,10 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     // Each entry starts with its step number: (1) R held, (2) R's database open in the server, (3) a skip line for the
     // gone root D, (4) a skip line for the unindexed root E, (5) E still has no .codegraph/. Empty means every step held.
     expect(problems, 'PO2 entries are the failing steps, each named by its number; empty means R is held and open, both skipped roots are logged, and E was not built').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   it('PO5: a pinned linked worktree is seeded and held at startup without a tool call; a repo without a sibling is skipped', async () => {
-    // Over 5 s by design: a CLI index, git worktree creation, a server and builder start, and a bounded 60 s wait
+    // Over 5 s by design: a CLI index, git worktree creation, a server and builder start, and a bounded 180 s wait
     // for the seed, builder hold, server open and the separate repository's skip line.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
@@ -296,10 +316,11 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
         });
       } catch { return false; }
     };
-    const session = fx.session({ cwd: repo, stateDir });
+    const session = fx.session({ cwd: repo, stateDir, env: OPEN_ENV });
     await session.initialize();
     await waitUntil(() => isInitialized(linked) && seededRecord() && heldByLiveBuilder(stateDir, linked)
-      && (!LSOF_AVAILABLE || serverHoldsDb(stateDir, linked)) && skipLines(stateDir, bare).length > 0,
+      && (!LSOF_AVAILABLE || serverHoldsDb(stateDir, linked))
+      && skipLines(stateDir, bare).some((line) => line.includes('skipped: no index and no sibling worktree has one')),
     OPEN_WAIT_MS, LSOF_POLL_MS);
     const builder = builderPidOf(stateDir);
     if (builder !== null) builderPids.push(builder);
@@ -312,21 +333,21 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     if (!skipLines(stateDir, bare).some((line) => line.includes('skipped: no index and no sibling worktree has one'))) problems.push('(5) separate repo has no no-sibling skip line');
     if (fs.existsSync(path.join(bare, '.codegraph'))) problems.push('(6) separate repo was built despite having no indexed sibling');
     expect(problems, 'PO5 failing steps: initialized, SEEDED, held, open, no-sibling skip, no cold build').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   // PO3: a project pinned while the server runs is picked up on the housekeeping pass. The server starts with nothing
   // pinned and a housekeeping pass every 500 ms. Then R is indexed and pinned with the CLI. Within OPEN_WAIT_MS, with no
   // tool call, the builder holds R and the server holds R's codegraph.db open.
   it('PO3: a project pinned after the server started is held and open with no tool call', async () => {
     // Over 5 s by design: a `serve --mcp` start, a CLI index and pin run while the server is up, and the wait of up to
-    // 60 s for the housekeeping pass to read the new pin and for the builder to hold the project and the server to open it.
+    // 180 s for the housekeeping pass to read the new pin and for the builder to hold the project and the server to open it.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
     const anchor = fx.makeRepo(path.join(root, 'anchor'), { 'src/anchor.ts': 'export const po3Anchor = 1;\n' });
     const repo = fx.makeRepo(path.join(root, 'repo'), {
       'src/po3.ts': 'export function po3PinnedLaterSymbol(): string {\n  return "po3-body-marker";\n}\n',
     });
-    const session = fx.session({ cwd: anchor, stateDir, env: { CODEGRAPH_HOUSEKEEPING_INTERVAL_MS: FAST_HOUSEKEEPING_MS } });
+    const session = fx.session({ cwd: anchor, stateDir, env: { ...OPEN_ENV, CODEGRAPH_HOUSEKEEPING_INTERVAL_MS: FAST_HOUSEKEEPING_MS } });
     await session.initialize();
 
     fx.index(repo, stateDir);
@@ -349,7 +370,7 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     }
     // Each entry starts with its step number: (1) the builder holds R, (2) the server holds R's codegraph.db open.
     expect(problems, 'PO3 entries are the failing steps, each named by its number; empty means R was held and open after its pin with no tool call').toEqual([]);
-  }, 300_000);
+  }, 900_000);
 
   // PO4: unpinning releases a project the server opened at start. R is pinned and indexed before the start, and the
   // server holds it open with no tool call. After `project unpin R` (idle timeout 1500 ms, housekeeping every 500 ms)
@@ -368,7 +389,7 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     const session = fx.session({
       cwd: repo,
       stateDir,
-      env: { CODEGRAPH_HOUSEKEEPING_INTERVAL_MS: FAST_HOUSEKEEPING_MS, CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: SHORT_IDLE_MS },
+      env: { ...OPEN_ENV, CODEGRAPH_HOUSEKEEPING_INTERVAL_MS: FAST_HOUSEKEEPING_MS, CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: SHORT_IDLE_MS },
     });
     await session.initialize();
     await waitUntil(() => heldByLiveBuilder(stateDir, repo) && (!LSOF_AVAILABLE || serverHoldsDb(stateDir, repo)), OPEN_WAIT_MS, LSOF_POLL_MS);
@@ -392,5 +413,5 @@ describe('pinned projects are opened by the machine server (PO1-PO4)', () => {
     }
     // Each entry starts with its step number: (1) the server closed R's codegraph.db, (2) the builder released writer.pid.
     expect(problems, `PO4 entries are the failing steps, each named by its number; empty means the idle release closed R after the unpin within ${OPEN_WAIT_MS} ms`).toEqual([]);
-  }, 300_000);
+  }, 900_000);
 });

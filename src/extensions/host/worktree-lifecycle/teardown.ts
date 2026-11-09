@@ -142,8 +142,8 @@ const GIT_TIMEOUT_MS = 10_000;
  * Bound on the git call of the judgement under the record lock. It is
  * synchronous, so it blocks the event loop while it runs, as the call path's
  * own synchronous git lookups (src/sync/worktree.ts) do with the same bound:
- * far inside the 60 s liveness watchdog, and short enough that the lock's
- * whole hold stays below the registry's 10 s stale age.
+ * far inside the 60 s liveness watchdog and limiting the time other registry
+ * operations wait for the record lock. A live pid's lock is not reclaimed by age.
  */
 const GIT_SYNC_TIMEOUT_MS = 5_000;
 

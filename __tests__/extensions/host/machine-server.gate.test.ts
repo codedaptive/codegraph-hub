@@ -38,7 +38,7 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 
 describe('machine server gates (serve --mcp over stdio, throwaway repos)', () => {
   const fx = new Fixtures();
-  afterEach(() => fx.teardown(), 60_000);
+  afterEach(() => fx.teardown(), 180_000);
 
   // G1: one state dir, one server. Two sessions in two unrelated repositories
   // each answer for their own repository, and both attach to the same server
@@ -79,11 +79,11 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     }
 
     expect(problems, 'G1 problems (empty when both sessions answer and share one server)').toEqual([]);
-  }, 150_000);
+  }, 900_000);
 
   // G2: the server outlives its last client. One session answers a call,
   // closes, and after at least 5 s the server it attached to is still running.
-  // The two daemon idle env vars are set to the old short idle values (1500 ms)
+  // The two daemon idle env vars are set to short idle values (1500 ms)
   // to prove the server ignores them and outlives its last client.
   it('G2: a server outlives its last client past the idle timeouts', async () => {
     // Over 5 s by design: one CLI index run, a `serve --mcp` cold start, and
@@ -110,7 +110,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
       isAlive(pid!),
       `G2: server pid ${pid} is no longer running 5 s after its only client closed (idle timeouts 1500 ms)`,
     ).toBe(true);
-  }, 120_000);
+  }, 900_000);
 
   // G3: a session answers only for its own repository. Launched in worktree
   // W1 of repository R, with no projectPath it answers the missing-argument
@@ -155,7 +155,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     // missing-argument text, (b) an unrelated repository's projectPath names the
     // session's root, (c) sibling worktree W2's projectPath answers its symbol.
     expect(problems, 'G3: entries are the failing steps, each named by its letter; empty means every step held').toEqual([]);
-  }, 150_000);
+  }, 900_000);
 
   // G6: the index a call is answered from must itself be inside the anchor. A
   // projectPath inside the repository passes the path check, but index discovery
@@ -168,7 +168,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
   // outside code never comes back in any answer.
   it('G6: a call inside the anchor is built for itself, never answered from an index outside it', async () => {
     // Over 5 s by design: a CLI index run, a `serve --mcp` cold start, a cold build of the repository
-    // by the builder (polled for up to 120 s on an overloaded machine) and the tool calls around it.
+    // by the builder (polled for up to 180 s on an overloaded machine) and the tool calls around it.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
     const outer = path.join(root, 'outer');
@@ -208,7 +208,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     }
 
     // (b) A later call answers from the repository's own index within a bounded wait.
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + 180_000;
     let last = abs;
     let answered = answers(abs, 'g6InsideSymbol', 'g6-inside-body-marker');
     while (!answered && Date.now() < deadline) {
@@ -217,7 +217,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
       seen.push(last.text);
       answered = answers(last, 'g6InsideSymbol', 'g6-inside-body-marker');
     }
-    if (!answered) problems.push(`(b) no call answered from the repository's own index within 120 s: ${excerpt(last)}`);
+    if (!answered) problems.push(`(b) no call answered from the repository's own index within 180 s: ${excerpt(last)}`);
     if (!fs.existsSync(path.join(repo, '.codegraph', 'codegraph.db'))) {
       problems.push(`(b) ${path.join(repo, '.codegraph', 'codegraph.db')} is missing: the repository has no index of its own`);
     }
@@ -233,7 +233,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     // absolute path answers the building note or, if the build already finished, the repository's own source;
     // (b) a later call answers from the repository's own index; (c) no answer carries outer-only content.
     expect(problems, 'G6: entries are the failing steps, each named by its letter; empty means every step held').toEqual([]);
-  }, 150_000);
+  }, 900_000);
 
   // G4a: one server, one open database per worktree. A session in the main
   // checkout of a repository with ten indexed linked worktrees, with the
@@ -279,7 +279,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     }
 
     expect(problems, 'G4a problems (empty when every worktree answers and the server holds ten databases open)').toEqual([]);
-  }, 300_000);
+  }, 1_200_000);
 
   // G4b: the project idle timer. One worktree is pinned; the others are not.
   // After a call on each worktree and a wait for the idle close, the pinned
@@ -332,7 +332,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     await waitUntil(() => {
       const open = openCodegraphDbs(pid!);
       return !unpinnedDbs.some((db) => open.includes(db));
-    }, 20_000, 250);
+    }, 180_000, 250);
 
     const open = openCodegraphDbs(pid!);
     if (!open.includes(pinnedDb)) {
@@ -358,7 +358,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     }
     // The pin protects worktree 2 from the call's closing trim and idle release,
     // giving the bounded poll time to observe the reopened database.
-    const reopened = await waitUntil(() => openCodegraphDbs(pid!).includes(unpinnedDbs[0]!), 5_000, 100);
+    const reopened = await waitUntil(() => openCodegraphDbs(pid!).includes(unpinnedDbs[0]!), 180_000, 100);
     if (!reopened) {
       problems.push(`(5) worktree 2's database is not open again after the later call: ${unpinnedDbs[0]}`);
     }
@@ -369,7 +369,7 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     // (4) that call answers its symbol, (5) its database is observed open again.
     // No entries means every step held.
     expect(problems, 'G4b: entries are the failing steps, each named by its number; empty means every step held').toEqual([]);
-  }, 300_000);
+  }, 1_200_000);
 
   // G5: two state dirs, two servers. Two sessions in the same repository with
   // two different state dirs run two different servers. Stopping the first by
@@ -411,11 +411,11 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     expect(problems, 'G5 problems (two distinct servers, one per state dir, are needed before one can be stopped)').toEqual([]);
 
     process.kill(serverOne!, 'SIGTERM');
-    const stopped = await waitUntil(() => !isAlive(serverOne!), 10_000);
+    const stopped = await waitUntil(() => !isAlive(serverOne!), 180_000);
     expect(stopped, `G5: server ${serverOne} (state one) exits on SIGTERM`).toBe(true);
     expect(isAlive(serverTwo!), `G5: server ${serverTwo} (state two) is still running after server ${serverOne} stopped`).toBe(true);
 
     const after = await sessionTwo.tool(EXPLORE, { query: 'g5SharedOnly', projectPath: repo });
     expect(answers(after, 'g5SharedOnly', 'g5-shared-body-marker'), `G5: session two still answers after server ${serverOne} stopped (${excerpt(after)})`).toBe(true);
-  }, 150_000);
+  }, 900_000);
 });

@@ -38,7 +38,7 @@ import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests, type ToolHandler } from '../../../src/mcp/tools';
 import { ADMIT_ALL } from '../../helpers/admit-all';
-import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
+import { buildingNote, unseededWorktreeNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
 import { BuilderClient } from '../../../src/extensions/host/builder/client';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
 import {
@@ -127,10 +127,10 @@ function cachedRoots(handler: ToolHandler): string[] {
   return cache instanceof Map ? [...cache.keys()] as string[] : [];
 }
 
-async function waitUntil(check: () => boolean, timeoutMs: number, stepMs = 100): Promise<boolean> {
+async function waitUntil(check: () => boolean | Promise<boolean>, timeoutMs: number, stepMs = 100): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (check()) return true;
+    if (await check()) return true;
     await new Promise((r) => setTimeout(r, stepMs));
   }
   return check();
@@ -197,9 +197,9 @@ function clearRegistry(): void {
 
 type TickingEngine = MCPEngine & { runHousekeepingTick?: () => Promise<void> };
 
-// Each case builds two small indexes and opens them through two engines; the
-// bound only catches a hang on a loaded machine.
-describe('F2: an engine releases its own cached roots another process tore down', { timeout: 60_000 }, () => {
+// slow: each case builds two indexes and starts a builder; condition waits allow engine loading and
+// writer acquisition under load, while the outer bound catches a hang.
+describe('F2: an engine releases its own cached roots another process tore down', { timeout: 600_000 }, () => {
   let workspace: string;
   let main: string;
   let commonDir: string;
@@ -231,7 +231,7 @@ describe('F2: an engine releases its own cached roots another process tore down'
     vi.unstubAllEnvs();
     clearRegistry();
     fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
+  }, 180_000);
 
   async function open(handler: ToolHandler, root: string, query: string): Promise<void> {
     const res = await handler.execute('codegraph_search', { projectPath: root, query }, undefined, ADMIT_ALL);
@@ -256,12 +256,13 @@ describe('F2: an engine releases its own cached roots another process tore down'
 
     // A has the index builder (so it is the writer's server); B reads only, with no builder.
     builderA = BuilderClient.start();
+    expect(await waitUntil(() => builderA?.isUp() === true, 180_000)).toBe(true);
     engineA = new MCPEngine({ builder: builderA });
     engineB = new MCPEngine({}) as TickingEngine;
     await open(engineA.getToolHandler(), wt, 'alphaSymbol');
     await open(engineB.getToolHandler(), wt, 'alphaSymbol');
     await open(engineB.getToolHandler(), main, 'betaSymbol');
-    await vi.waitFor(() => expect(readWriterLock(wt)?.pid).toBe(builderA!.pid()), { timeout: 5000 });
+    expect(await waitUntil(() => readWriterLock(wt)?.pid === builderA?.pid(), 180_000)).toBe(true);
     return wt;
   }
 
@@ -321,7 +322,7 @@ const ENV_KEYS = [
 // Every case builds an index, waits out a catch-up sync, or waits for a cold
 // build on the index builder (process start + index). The killed-build case also
 // waits for the restarted builder's readiness; the bounds catch hangs under load.
-describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 }, () => {
+describe('F3-F5: seeding and cold builds through the engine', { timeout: 600_000 }, () => {
   let workspace: string;
   let main: string;
   let engine: MCPEngine;
@@ -343,7 +344,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     __setLoadCodeGraphForTests(CodeGraph);
     builder = BuilderClient.start();
     engine = new MCPEngine({ builder });
-  }, 60_000);
+  }, 180_000);
 
   afterEach(async () => {
     await engine.stop();
@@ -355,7 +356,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     }
     clearRegistry();
     fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
+  }, 180_000);
 
   async function search(projectPath: string, query: string): Promise<{ text: string; isError: boolean }> {
     const res = await engine.getToolHandler().execute('codegraph_search', { query, projectPath }, undefined, ADMIT_ALL);
@@ -372,17 +373,17 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
       expect(Date.now()).toBeLessThan(deadline);
       await new Promise((r) => setTimeout(r, 100));
     }
-    expect(await waitUntil(() => !fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid')), 10_000)).toBe(true);
+    expect(await waitUntil(() => !fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid')), 180_000)).toBe(true);
   }
 
-  // Waits for a cold build of three files: a few seconds under load.
+  // slow: waits for a builder cold start and a real cold build of three files.
   it('F3: a cold-built worktree is registered SEEDED with its common dir and seed nonce', async () => {
     makeRepo(main);
     const wt = path.join(workspace, 'wt-cold');
     addWorktree(main, wt, 'cold');
     const first = await search(wt, 'alphaSymbol');
     expect(first.text).toContain(buildingNote(real(wt)));
-    await waitForAnswer(wt, 45_000);
+    await waitForAnswer(wt, 180_000);
 
     const rec = getRegisteredProject(real(wt));
     expect(rec).not.toBeNull();
@@ -393,7 +394,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(readSeedNonce(real(wt))).toBe(rec!.seedNonce);
   });
 
-  // Indexes the sibling and seeds the worktree; about 2 s.
+  // slow: indexes the sibling and waits for the builder process to seed the worktree.
   it('F4: a seed removes a dead seeder\'s leftover temp file and keeps a live one\'s', async () => {
     makeRepo(main);
     await indexDir(main);
@@ -418,7 +419,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(fs.existsSync(live)).toBe(true);
   });
 
-  // Indexes the sibling, seeds and catches up the worktree; about 2 s.
+  // slow: indexes the sibling, starts the builder, seeds and catches up the worktree.
   it('F5: a partial index with a dead rebuild.pid is discarded and the worktree seeded from its sibling', async () => {
     makeRepo(main);
     await indexDir(main);
@@ -456,28 +457,31 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 90_000 
     expect(await waitUntil(() => {
       pid = readWriterLock(root, 'rebuild.pid')?.pid ?? null;
       return pid !== null;
-    }, 20_000, 5)).toBe(true);
+    }, 180_000, 5)).toBe(true);
     expect(pid).toBe(builder.pid());
     const killed = pid!;
     process.kill(killed, 'SIGKILL');
-    expect(await waitUntil(() => !pidAlive(killed), 5000, 20)).toBe(true);
+    expect(await waitUntil(() => !pidAlive(killed), 180_000, 20)).toBe(true);
     // No successful job end is logged after the kill; a later ok line and
     // complete index provide evidence of the restarted builder's work.
     expect(coldBuildOkCount(stateDir, root)).toBe(0);
-    expect(await waitUntil(() => builder.pid() !== null && builder.pid() !== killed, 10_000, 20)).toBe(true);
-    // A new pid exists from the fork, but the builder answers only after loading
-    // the engine and saying ready (seconds under load). The client waits up to 8 s
-    // for readiness; a timeout can lead to worktree retry guidance.
-    expect(await waitUntil(() => builder.isUp(), 60_000, 20)).toBe(true);
+    expect(await waitUntil(() => builder.pid() !== null && builder.pid() !== killed, 180_000, 20)).toBe(true);
+    // A forked pid is not readiness: wait until the restarted builder has loaded its engine.
+    expect(await waitUntil(() => builder.isUp(), 180_000, 20)).toBe(true);
 
-    // The call is success-shaped, but the builder's 5 s git bound can still yield
-    // retry guidance under load. The checks below prove the rebuild, not one answer.
-    const again = await search(wt, 'alphaSymbol');
-    expect(again.isError).toBe(false);
+    // The builder process runs async git with GIT_ASYNC_TIMEOUT_MS (5 s). A lookup timeout is pending
+    // preparation, never a failed build. Observe building guidance without accepting failure guidance.
+    expect(await waitUntil(async () => {
+      const again = await search(wt, 'alphaSymbol');
+      expect(again.isError).toBe(false);
+      expect(again.text).not.toContain(unseededWorktreeNote(wt, root));
+      expect(again.text).not.toContain('the build failed');
+      return again.text.includes(buildingNote(root));
+    }, 180_000)).toBe(true);
     // An answer, a gone rebuild.pid, complete state, and an ok job line after
     // the kill together check that the restarted builder completed the build.
-    await waitForAnswer(wt, 60_000);
+    await waitForAnswer(wt, 180_000);
     expect(indexState(wt)).toBe('complete');
-    expect(await waitUntil(() => coldBuildOkCount(stateDir, root) >= 1, 10_000)).toBe(true);
-  }, 300_000);
+    expect(await waitUntil(() => coldBuildOkCount(stateDir, root) >= 1, 180_000)).toBe(true);
+  }, 1_200_000);
 });

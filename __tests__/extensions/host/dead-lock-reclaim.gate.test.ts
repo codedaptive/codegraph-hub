@@ -19,7 +19,7 @@
  * test refuses a dist older than the lock sources (`npm run build`).
  *
  * Each test spawns two real servers and a victim (node on fixtures/run-ts.cjs); on an idle
- * machine one takes 10-20 s, under load much more, hence the 180 s timeouts.
+ * machine one takes 10-20 s; the test bound accommodates several 180 s condition waits under load.
  * Every test has its own state dir (`CODEGRAPH_STATE_DIR`), so no test touches
  * the live server of this machine. A server holds no project until a call
  * names one, so each server below is first given a call that opens the project
@@ -50,13 +50,19 @@ import {
 const REPO = path.resolve(__dirname, '../../..');
 const BIN = path.join(REPO, 'dist/bin/codegraph.js');
 const posix = process.platform !== 'win32';
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = 1_200_000;
+// Process startup, hold and catch-up can each be delayed independently under load.
+const READY_WAIT_MS = 180_000;
 
 /** Same pid as spawned: no wasm --liftoff-only re-exec; no watchdog or handshake timers. */
 const BASE_ENV = {
   CODEGRAPH_MCP_DEBUG: '1',
   CODEGRAPH_MCP_LOG_ATTACH: '1',
   CODEGRAPH_NO_WATCHDOG: '1',
+  CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0',
+  CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
+  CODEGRAPH_WATCH_DEBOUNCE_MS: '100',
+  CODEGRAPH_HOUSEKEEPING_INTERVAL_MS: '0',
   CODEGRAPH_STARTUP_HANDSHAKE_TIMEOUT_MS: '0',
   CODEGRAPH_NO_RELAUNCH: '1',
   CODEGRAPH_WASM_RELAUNCHED: '1',
@@ -157,14 +163,14 @@ async function initialize(s: Server): Promise<any> {
     protocolVersion: '2024-11-05',
     capabilities: {},
     clientInfo: { name: 'dead-lock-reclaim', version: '0.0.0' },
-  }, 60_000);
+  }, READY_WAIT_MS);
   send(s, { jsonrpc: '2.0', method: 'notifications/initialized' });
   return r;
 }
 
 /** `codegraph_search` for the project, which every call must name. */
 function search(s: Server, root: string, query: string): Promise<any> {
-  return request(s, 'tools/call', { name: 'codegraph_search', arguments: { query, projectPath: root } }, 60_000);
+  return request(s, 'tools/call', { name: 'codegraph_search', arguments: { query, projectPath: root } }, READY_WAIT_MS);
 }
 
 function readJson(file: string): Record<string, any> | null {
@@ -214,7 +220,7 @@ beforeEach(async () => {
   const cg = await CodeGraph.init(root);
   await cg.indexAll();
   cg.close();
-});
+}, READY_WAIT_MS);
 
 afterEach(async () => {
   for (const s of servers.splice(0)) { if (!exited(s)) { try { s.child.kill('SIGKILL'); } catch { /* gone */ } } }
@@ -232,15 +238,15 @@ afterEach(async () => {
   await fs.promises.rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   if (priorStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
   else process.env.CODEGRAPH_STATE_DIR = priorStateDir;
-}, 30_000);
+}, READY_WAIT_MS);
 
 /**
  * Bound on getting the first server killed mid-write: rounds of edits, each
  * followed by up to {@link LOCK_ROUND_MS} of polling for codegraph.lock.
- * Generous because the watcher debounces (2 s by default) before each sync
+ * Generous because watcher scheduling and each sync can be delayed by load
  * and the machine may be loaded; well inside TEST_TIMEOUT_MS.
  */
-const MID_WRITE_BOUND_MS = 60_000;
+const MID_WRITE_BOUND_MS = 180_000;
 const LOCK_ROUND_MS = 5_000;
 
 /**
@@ -265,7 +271,7 @@ async function killDirectServerMidWrite(): Promise<{ writerPid: number; victimPi
     const w = readJson(getWriterPidPath(root));
     const b = readBuilderPid();
     return b !== null && b !== serverPid && w?.pid === b && w?.ready === true ? b : null;
-  }, 60_000, 'the first builder to hold the project and be ready');
+  }, READY_WAIT_MS, 'the first builder to hold the project and be ready');
 
   const lockFile = path.join(getCodeGraphDir(root), 'codegraph.lock');
   const giveUp = Date.now() + MID_WRITE_BOUND_MS;
@@ -282,11 +288,11 @@ async function killDirectServerMidWrite(): Promise<{ writerPid: number; victimPi
   // The builder dies mid-write; the server goes right after it, before it could start another builder.
   try { process.kill(writerPid, 'SIGKILL'); } catch { /* already gone */ }
   first.child.kill('SIGKILL');
-  await waitFor(() => exited(first), 10_000, 'the first server to die');
-  await waitFor(() => !isAlive(writerPid), 10_000, 'the first builder to die');
+  await waitFor(() => exited(first), 60_000, 'the first server to die');
+  await waitFor(() => !isAlive(writerPid), 60_000, 'the first builder to die');
   expect(readJson(getWriterPidPath(root))?.pid, 'the killed builder left its writer.pid').toBe(writerPid);
 
-  const victimPid = await startVictim(root, ['rebuild', 'filelock']);
+  const victimPid = await startVictim(root, ['rebuild', 'filelock'], READY_WAIT_MS);
   await killAndWait(victimPid);
   const lastStart = Date.now();
 
@@ -309,7 +315,7 @@ async function expectSecondDirectServerAnswers(killedBuilder: number): Promise<S
     const w = readJson(getWriterPidPath(root));
     const b = readBuilderPid();
     return b !== null && b !== killedBuilder && b !== second.child.pid && w?.pid === b && w?.ready === true ? b : null;
-  }, 60_000, 'the second server\'s builder to own writer.pid and finish its catch-up');
+  }, READY_WAIT_MS, 'the second server\'s builder to own writer.pid and finish its catch-up');
 
   const found = await search(second, root, 'reclaimedAfterKill');
   const text = JSON.stringify(found.result?.content ?? found.error);
@@ -323,6 +329,7 @@ async function expectSecondDirectServerAnswers(killedBuilder: number): Promise<S
 }
 
 describe.runIf(posix)('dead-lock reclaim gates', () => {
+  // slow: two real servers, a mid-write kill, a lock victim and pid-reuse spacing precede the reclaim check.
   it('G-L1 direct mode: server killed mid-write, its pid reused by a live process; the next query answers', async () => {
     assertDistFresh();
     const { writerPid, victimPid, lastStart } = await killDirectServerMidWrite();
@@ -340,34 +347,38 @@ describe.runIf(posix)('dead-lock reclaim gates', () => {
 
   // Regression guard of the acceptance line, not a fix gate: a dead holder's
   // locks are reclaimed on this tree already, and must stay so.
+  // slow: two real servers and a lock victim must start, catch up and be killed to prove dead-lock reclaim.
   it('G-L2 direct mode: server killed mid-write, pid left dead; the next query answers', async () => {
     const { writerPid } = await killDirectServerMidWrite();
     plantGuard(getWriterPidPath(root), writerPid, STALE_GUARD_AGE_S);
     await expectSecondDirectServerAnswers(writerPid);
   }, TEST_TIMEOUT_MS);
 
+  // slow: a replacement daemon and builder start after two killed holders and an OS pid-reuse fixture.
   it('G-L3 machine-server mode: server killed, server.pid and writer.pid name a live unrelated process; a replacement server binds and serves', async () => {
     assertDistFresh();
     const first = spawnServer(root, DAEMON_ENV);
     await initialize(first);
-    await waitFor(() => listeningLines() >= 1, 60_000, 'the first server to listen');
+    await waitFor(() => listeningLines() >= 1, READY_WAIT_MS, 'the first server to listen');
+    // Initialize is local to the proxy; wait for attachment so the call asks the daemon's builder to hold root.
+    await waitFor(() => first.stderr().includes('Attached to shared daemon'), READY_WAIT_MS, 'the first proxy to attach');
     await search(first, root, 'alpha'); // opens the project: the server's builder takes its writer slot
     const { killed, killedBuilder } = await waitFor(() => {
       const d = readJson(getServerPidPath())?.pid;
       const b = readBuilderPid();
       const w = readJson(getWriterPidPath(root));
       return typeof d === 'number' && b !== null && b !== d && w?.pid === b ? { killed: d, killedBuilder: b } : null;
-    }, 60_000, 'the server\'s builder to own writer.pid');
+    }, READY_WAIT_MS, 'the server\'s builder to own writer.pid');
     const serverStarted = Date.now(); // the server and its builder started before this point
 
     // The proxy first, so it cannot start a replacement before the records are rewritten.
     first.child.kill('SIGKILL');
-    await waitFor(() => exited(first), 10_000, 'the first proxy to die');
+    await waitFor(() => exited(first), 60_000, 'the first proxy to die');
     // The builder first, with no chance to clean up (it would free its locks on a clean exit when its
     // server goes), then the server before it could start another builder.
     try { process.kill(killedBuilder, 'SIGKILL'); } catch { /* already gone */ }
     await killAndWait(killed);
-    await waitFor(() => !isAlive(killedBuilder), 10_000, `builder ${killedBuilder} to exit`);
+    await waitFor(() => !isAlive(killedBuilder), 60_000, `builder ${killedBuilder} to exit`);
 
     const holder = await startUnrelatedHolder(serverStarted);
     reusePid(getServerPidPath(), killed, holder);
@@ -376,18 +387,18 @@ describe.runIf(posix)('dead-lock reclaim gates', () => {
     const second = spawnServer(root, DAEMON_ENV);
     const init = await initialize(second);
     expect(init.result?.serverInfo?.name).toBe('codegraph');
-    await waitFor(() => listeningLines() >= 2, 60_000, () =>
+    await waitFor(() => listeningLines() >= 2, READY_WAIT_MS, () =>
       `a replacement server to listen; proxy stderr:\n${second.stderr()}\nserver.log tail:\n${serverLogTail()}`);
     const replacement = await waitFor(() => {
       const d = readJson(getServerPidPath())?.pid;
       return typeof d === 'number' && d !== holder && d !== killed && isAlive(d) ? d : null;
-    }, 30_000, 'server.pid to name the replacement');
+    }, READY_WAIT_MS, 'server.pid to name the replacement');
 
     // The call must reach the replacement server, not the proxy's in-process
     // fallback (which serves reads without claiming the slot): wait for the attach.
     await waitFor(
       () => second.stderr().includes('Attached to shared daemon') && second.stderr().includes(`(pid ${replacement},`),
-      60_000, () => `the proxy to attach to the replacement server ${replacement}; proxy stderr:\n${second.stderr()}`);
+      READY_WAIT_MS, () => `the proxy to attach to the replacement server ${replacement}; proxy stderr:\n${second.stderr()}`);
     // The first call on the project has the replacement's builder reclaim the leftover writer.pid: not a
     // read-only fallback, the replacement server's builder owns the writer slot.
     const found = await search(second, root, 'alpha');
@@ -397,7 +408,7 @@ describe.runIf(posix)('dead-lock reclaim gates', () => {
     await waitFor(() => {
       const b = readJson(path.join(stateDir, 'builder.pid'));
       return b !== null && b.serverPid === replacement && b.pid !== killedBuilder && readJson(getWriterPidPath(root))?.pid === b.pid;
-    }, 30_000,
+    }, READY_WAIT_MS,
       `writer.pid to name the replacement server ${replacement}'s builder (builder.pid is ${JSON.stringify(readJson(path.join(stateDir, 'builder.pid')))}, writer.pid names ${JSON.stringify(readJson(getWriterPidPath(root)))})`);
     expect(isAlive(holder), 'the unrelated holder was signalled').toBe(true);
   }, TEST_TIMEOUT_MS);

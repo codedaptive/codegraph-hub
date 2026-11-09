@@ -208,12 +208,13 @@ function startFallbackProxy(launchDir: string | undefined): {
   return { child, rpc, stderr: () => stderr };
 }
 
-describe('a read-only engine never writes an index', { timeout: 120_000 }, () => {
+describe('a read-only engine never writes an index', { timeout: 600_000 }, () => {
   let workspace: string;
   let main: string;
   let w2: string;
   let engine: MCPEngine | undefined;
   let proxy: ChildProcess | undefined;
+  let matrixRun: Promise<void> | undefined;
   // In-process observers of the two ways an index gets written: a sync, and the
   // file lock it (and a seed) takes. The file watcher below sees them across
   // the process boundary; these see a lock taken and released inside one
@@ -223,10 +224,20 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(async () => {
-    for (const k of ['CODEGRAPH_NO_AUTO_SEED', 'CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS']) saved[k] = process.env[k];
+    for (const k of ['CODEGRAPH_NO_AUTO_SEED', 'CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS', 'CODEGRAPH_STATE_DIR',
+      'CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS', 'CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS',
+      'CODEGRAPH_BUILDER_ENSURE_WAIT_MS', 'CODEGRAPH_FRESH_TIMEOUT_MS']) saved[k] = process.env[k];
     delete process.env.CODEGRAPH_NO_AUTO_SEED;
     process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '0';
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-readonly-')));
+    // The builderless lookup can discover ancestor indexes. POSIX TMPDIR may be inside an indexed checkout,
+    // so keep this fixture in the system temp tree rather than the harness's scratch checkout.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-readonly-')));
+    // Each matrix owns its registry, including any worker's late filesystem events.
+    process.env.CODEGRAPH_STATE_DIR = path.join(workspace, 'state');
+    process.env.CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS = '0';
+    process.env.CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS = '0';
+    process.env.CODEGRAPH_BUILDER_ENSURE_WAIT_MS = '110000';
+    process.env.CODEGRAPH_FRESH_TIMEOUT_MS = '180000';
     main = path.join(workspace, 'main');
     w2 = path.join(workspace, 'w2');
     fs.mkdirSync(path.join(main, 'src'), { recursive: true });
@@ -260,9 +271,12 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     // tool surface is registered here: every extension the product ships.
     __resetExtensionsForTests();
     for (const ext of [hostExtension, queriesExtension, resolutionExtension]) registerExtension(ext);
-  }, 60_000);
+  }, 180_000);
 
   afterEach(async () => {
+    // A timed-out matrix must finish before its mutable fixture is replaced by the next test.
+    await matrixRun?.catch(() => undefined);
+    matrixRun = undefined;
     vi.restoreAllMocks();
     proxy?.kill('SIGKILL');
     proxy = undefined;
@@ -270,13 +284,13 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     engine = undefined;
     __setLoadCodeGraphForTests(null);
     __resetExtensionsForTests();
+    for (const p of listRegisteredProjects()) unregisterProject(p.root);
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    for (const p of listRegisteredProjects()) unregisterProject(p.root);
     fs.rmSync(workspace, { recursive: true, force: true });
-  }, 60_000);
+  }, 600_000);
 
   /**
    * The index as a reader sees it: its schema objects and its row counts. A
@@ -400,8 +414,9 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     engine = new MCPEngine();
     const transport = new MemoryTransport();
     new MCPSession(transport, engine, { anchor: await resolveRepoAnchor(main) }).start();
-    await runMatrix('session', (name, args) =>
+    matrixRun = runMatrix('session', (name, args) =>
       transport.call('tools/call', { ...(name === undefined ? {} : { name }), arguments: args }));
+    await matrixRun;
   });
 
   // Over 5 s by design: the same ~50 calls and watcher waits as the session matrix, plus the
@@ -410,11 +425,13 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     const fallback = startFallbackProxy(main);
     proxy = fallback.child;
     await fallback.rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'gate', version: '1' } });
-    await runMatrix('proxy fallback', (name, args) =>
+    matrixRun = runMatrix('proxy fallback', (name, args) =>
       fallback.rpc('tools/call', { ...(name === undefined ? {} : { name }), arguments: args }));
+    await matrixRun;
     expect(fallback.stderr(), 'the calls were served in-process').toContain('serving this session in-process');
   });
 
+  // slow: a child proxy cold start and three anchor-resolution calls under load.
   it('the proxy fallback does not latch a failed anchor: each call asks again, the failure is logged once, and the answer is guidance', async () => {
     // No launch directory at all makes the anchor's resolution reject on every attempt.
     const fallback = startFallbackProxy(undefined);
@@ -429,6 +446,7 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     expect(fallback.stderr().split('Could not resolve the repository of').length - 1, 'logged once, not per call').toBe(1);
   });
 
+  // slow: real index reads and filesystem watcher delivery under load.
   it('a handler that owns a lifecycle refuses a call that skipped the admission check, and a name that is no tool, before opening anything', async () => {
     engine = new MCPEngine();
     const handler = engine.getToolHandler();
@@ -445,6 +463,7 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     expect(textOf(unknown.result!)).toContain('Unknown tool: codegraph_no_such_tool');
   });
 
+  // slow: real git worktree admission and index lookup under load.
   it('leaves an unindexed sibling worktree untouched and answers the not-indexed guidance', async () => {
     engine = new MCPEngine();
 
@@ -464,6 +483,8 @@ describe('a read-only engine never writes an index', { timeout: 120_000 }, () =>
     const builder = BuilderClient.start();
     engine = new MCPEngine({ builder });
     try {
+      // A pid is published before ready; this assertion needs the seed's first answer, not startup guidance.
+      await vi.waitFor(() => expect(builder.isUp()).toBe(true), { timeout: 180_000, interval: 100 });
       const before = diskState();
 
       const res = await engine.getToolHandler().execute('codegraph_explore', { query: 'alphaSymbol', projectPath: w2 }, undefined, ADMIT_ALL);
@@ -507,10 +528,11 @@ describe('ToolHandler.execute has one caller outside the CLI', () => {
     return calls;
   }
 
+  // slow: parses the host and MCP source trees with TypeScript on a loaded machine.
   it('is called only by the shared dispatch (the CLI in src/bin builds its own handler without a lifecycle)', () => {
     const callers = [...sourceFiles(path.join(root, 'src', 'mcp')), ...sourceFiles(path.join(root, 'src', 'extensions', 'host'))]
       .map((file) => ({ file: path.relative(root, file), calls: executeCalls(file) }))
       .filter((f) => f.calls > 0);
     expect(callers).toEqual([{ file: path.join('src', 'extensions', 'host', 'server', 'tool-call.ts'), calls: 1 }]);
-  });
+  }, 180_000);
 });

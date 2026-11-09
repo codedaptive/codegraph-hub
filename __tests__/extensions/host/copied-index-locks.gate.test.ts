@@ -26,6 +26,9 @@ import { WASM_RUNTIME_FLAGS } from '../../../src/extraction/wasm-runtime-flags';
 import { canonicalProjectRoot, getCodeGraphDir, statInode } from '../../../src/directory';
 import { recordSpawns, recordedPids, removeSpawnLog, settleLosingCandidates } from '../../daemon-candidates';
 
+// Separate-state servers and builders each need a full startup/catch-up budget under load.
+const READY_WAIT_MS = 180_000;
+
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 
 interface SpawnedServer {
@@ -45,6 +48,9 @@ function spawnServer(cwd: string, stateDir: string): SpawnedServer {
       CODEGRAPH_MCP_LOG_ATTACH: '1',
       CODEGRAPH_MCP_TOOLS: 'explore,search',
       CODEGRAPH_STATE_DIR: stateDir,
+      CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0',
+      CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
+      CODEGRAPH_WATCH_DEBOUNCE_MS: '100',
     },
   }) as ChildProcessWithoutNullStreams;
   child.on('error', () => { /* ignore */ });
@@ -125,11 +131,15 @@ function waitFor<T>(
 
 /** Projects open lazily on an explicit tool call, not during initialize. */
 async function openProject(server: SpawnedServer, projectPath: string): Promise<void> {
+  // Initialize can answer locally before the daemon attaches. The tool call must reach the real server
+  // so its builder, rather than the read-only proxy fallback, is asked to hold this root.
+  await waitFor(() => server.stderr.some((line) => line.includes('Attached to shared daemon')),
+    READY_WAIT_MS, 100, `${projectPath} daemon attachment`);
   sendMessage(server.child, {
     jsonrpc: '2.0', id: 2, method: 'tools/call',
     params: { name: 'codegraph_search', arguments: { query: 'originalSymbol', projectPath } },
   });
-  const reply = await waitFor(() => findResponse(server.stdout, 2), 90_000, 50, `${projectPath} open response`);
+  const reply = await waitFor(() => findResponse(server.stdout, 2), READY_WAIT_MS, 50, `${projectPath} open response`);
   expect(reply.error).toBeUndefined();
   expect(reply.result?.isError).not.toBe(true);
   expect(JSON.stringify(reply.result)).toContain('originalSymbol');
@@ -203,7 +213,7 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
     try { await cg.indexAll(); } finally { cg.close(); }
     srcReal = fs.realpathSync(srcDir);
     srcServerPid = null;
-  });
+  }, READY_WAIT_MS);
 
   afterEach(async () => {
     await Promise.all(servers.map(async ({ child }) => {
@@ -238,7 +248,7 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
     for (const pid of pids) await waitProcessExit(pid, 5000);
     for (const { root } of fixtures) removeSpawnLog(root);
     await fs.promises.rm(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  }, 60_000);
+  }, READY_WAIT_MS);
 
   // Exceeds 5 s by design: two real state-isolated servers catch up their
   // projects, then a watcher syncs an edit. Loaded-machine startup and sync
@@ -251,22 +261,22 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
       const s = spawnServer(srcDir, srcState);
       servers.push(s);
       sendInitialize(s.child, 1);
-      const initialized = await waitFor(() => findResponse(s.stdout, 1), 60_000, 50, 'S initialize response');
+      const initialized = await waitFor(() => findResponse(s.stdout, 1), READY_WAIT_MS, 50, 'S initialize response');
       expect(initialized.error).toBeUndefined();
       await openProject(s, srcReal);
       srcServerPid = await waitFor(() => {
         const pid = serverPid(srcState);
         return pid && isAlive(pid) ? pid : null;
-      }, 60_000, 50, "S's server.pid naming a live server");
+      }, READY_WAIT_MS, 50, "S's server.pid naming a live server");
       // The writer is the server's index builder, a process of its own.
       const srcBuilderPid = await waitFor(() => {
         const pid = builderPid(srcState);
         return pid && pid !== srcServerPid && isAlive(pid) ? pid : null;
-      }, 60_000, 50, "S's builder.pid naming a live builder");
+      }, READY_WAIT_MS, 50, "S's builder.pid naming a live builder");
       await waitFor(() => {
         const writer = readJson(path.join(srcReal, '.codegraph', 'writer.pid'));
         return writer && writer.pid === srcBuilderPid && writer.ready === true;
-      }, 90_000, 50, "S's writer.pid ready:true for its builder");
+      }, READY_WAIT_MS, 50, "S's writer.pid ready:true for its builder");
 
       // Copy the live source and plant the FileLock it would carry mid-sync.
       copyProject(srcDir, copyDir);
@@ -286,7 +296,7 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
       const c = spawnServer(copyDir, copyState);
       servers.push(c);
       sendInitialize(c.child, 1);
-      const copyInitialized = await waitFor(() => findResponse(c.stdout, 1), 60_000, 50, 'C initialize response');
+      const copyInitialized = await waitFor(() => findResponse(c.stdout, 1), READY_WAIT_MS, 50, 'C initialize response');
       expect(copyInitialized.error).toBeUndefined();
 
       const diagnostics = () =>
@@ -303,15 +313,15 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
           const rec = readJson(path.join(copyState, 'server.pid'));
           const pid = rec && typeof rec.pid === 'number' ? rec.pid : null;
           return pid && pid !== srcServerPid && isAlive(pid) && rec!.stateDir === copyState ? pid : null;
-        }, 60_000, 50, "C's isolated server.pid naming its own live server");
+        }, READY_WAIT_MS, 50, "C's isolated server.pid naming its own live server");
         copyBuilderPid = await waitFor(() => {
           const pid = builderPid(copyState);
           return pid && pid !== srcBuilderPid && pid !== copyServerPid && isAlive(pid) ? pid : null;
-        }, 60_000, 50, "C's isolated builder.pid naming its own live builder");
+        }, READY_WAIT_MS, 50, "C's isolated builder.pid naming its own live builder");
         await waitFor(() => {
           const writer = readJson(path.join(copyReal, '.codegraph', 'writer.pid'));
           return writer && writer.pid === copyBuilderPid && writer.mode === 'builder' && writer.ready === true;
-        }, 90_000, 50, "C's writer.pid ready:true for C's builder");
+        }, READY_WAIT_MS, 50, "C's writer.pid ready:true for C's builder");
       } catch (err) {
         throw new Error(`${(err as Error).message}${diagnostics()}`);
       }
@@ -335,7 +345,7 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
             params: { name: 'codegraph_search', arguments: { query: NEW_SYMBOL, projectPath: copyReal } },
           });
           return null;
-        }, 90_000, 500, `C's MCP session finding ${NEW_SYMBOL}`);
+        }, READY_WAIT_MS, 500, `C's MCP session finding ${NEW_SYMBOL}`);
       } catch (err) {
         throw new Error(`${(err as Error).message}\nlast reply: ${lastText}${diagnostics()}`);
       }
@@ -348,6 +358,6 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
       expect(builderPid(srcState)).toBe(srcBuilderPid);
       expect(writerPid(srcReal)).toBe(srcBuilderPid);
     },
-    420_000,
+    1_200_000,
   );
 });
