@@ -336,7 +336,8 @@ export class HolderSet {
     // Taking the slot and opening writable is one job: the open can migrate, heal bulk-load state and start WAL
     // maintenance (not awaited by the job, see openWritable), so it waits for the running job like every write
     // does. Recovery and catch-up are separate jobs: the queue cannot wait on itself. Catch-up waits outside
-    // the queue for watcher delivery readiness, unless the hold is released first, so the scan covers startup.
+    // the queue for watcher readiness, unless released first, to narrow the scan-to-stream gap. A fallback
+    // can still leave delivery unproven.
     hold.openJobPending = true;
     const opened = await this.deps.queue.enqueue('open', hold.root, async () => {
       hold.openJobPending = false;
@@ -472,12 +473,13 @@ export class HolderSet {
   }
 
   /**
-   * The catch-up sync after watcher delivery readiness (or immediately without a watcher): one job that
-   * reconciles changes while nobody held the root and during stream startup. A released hold never queues it. Lock
-   * contention (a CLI index run holds `codegraph.lock`) is retried with a growing wait; any other failure is
-   * logged and left to the watcher's and the callers' syncs. A readiness publication afterwards that throws
-   * (logged) or leaves the record not ready (not logged) is retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock
-   * contention that is at the failure, before the retry, which is not waited for.
+   * The catch-up sync after watcher readiness (or immediately without a watcher): one job that reconciles
+   * changes since the last sync, including during stream startup. Readiness may leave delivery unproven.
+   * A hold released before queuing does not queue it. Lock contention (a CLI index run holds `codegraph.lock`)
+   * is retried with a growing wait; any other failure is logged and left to the watcher's and callers' syncs.
+   * A readiness publication afterwards that throws (logged) or leaves the record not ready (not logged) is
+   * retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock contention that
+   * is at the failure, before the retry, which is not waited for.
    */
   private queueCatchUp(hold: Hold, attempt: number): Promise<void> {
     return this.deps.queue.enqueue('catch-up', hold.root, () => this.openGraph(hold).sync()).then(

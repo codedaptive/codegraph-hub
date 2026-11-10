@@ -357,12 +357,11 @@ export class FileWatcher {
   private syncing = false;
   private stopped = false;
   /**
-   * True synchronously once the watch set is installed in start(): source
-   * events populate pendingFiles from then on. This does not imply delivery:
+   * True once start() installs the watch set. This does not imply delivery:
    * macOS starts its FSEvents stream asynchronously after fs.watch returns.
    */
   private ready = false;
-  /** Callbacks waiting for both installation and confirmed (or best-effort bounded) delivery. */
+  /** Callbacks waiting for installation and probe confirmation or best-effort fallback; each has its own timeout. */
   private readyWaiters: Array<() => void> = [];
   private deliveryConfirmed = false;
   private deliveryProbe: { path: string; relativePath: string; fd: number } | null = null;
@@ -455,8 +454,8 @@ export class FileWatcher {
       // strategies report exhaustion identically (start() === false).
       if (this.degradedReason) return false;
 
-      // Record events from installation onward, including while the macOS
-      // delivery probe is pending; confirmation must not clear those edits.
+      // Clear the startup baseline before probing; confirmation must not clear
+      // source events received while the macOS delivery probe is pending.
       this.pendingFiles.clear();
       this.ready = true;
       if (IS_TEST_RUNTIME) liveWatchersForTests.set(this.projectRoot, this);
@@ -517,9 +516,10 @@ export class FileWatcher {
 
   /**
    * FSEvents starts with since-now semantics on a separate thread. Repeated
-   * descriptor-only touches every 50ms let that stream prove it is delivering
-   * without following a replaced probe path. Failure or timeout is best effort:
-   * readiness proceeds with delivery unproven rather than blocking startup.
+   * descriptor-only touches every 50ms give the stream opportunities to show
+   * delivery without following a replaced probe path. Creation failure or the
+   * timeout lets startup proceed with delivery unproven; touch failures retry
+   * until the timeout.
    */
   private startDeliveryProbe(): void {
     if (process.platform !== 'darwin' || !supportsRecursiveWatch() || this.inertForTests) {
@@ -588,7 +588,7 @@ export class FileWatcher {
   }
 
   /**
-   * Remove only the regular file still matching our open descriptor. This
+   * Unlink only after checking for a regular file matching our descriptor. The
    * check-then-unlink narrows but does not eliminate a replacement race. No
    * stale sweep: a process killed mid-probe can leave one empty probe file,
    * ignored by both the indexer and watcher through its `.codegraph-*` name.
@@ -1117,11 +1117,11 @@ export class FileWatcher {
   }
 
   /**
-   * Resolves after installation and delivery confirmation (or its best-effort
-   * fallback). On macOS fs.watch returns before FSEvents delivers, so callers
-   * must await this before a catch-up scan to avoid a scan-to-stream gap.
-   * Events received during that wait still populate pendingFiles and sync.
-   * Stop does not settle a waiter; a later start can confirm it.
+   * Resolves after installation and a probe event or best-effort fallback.
+   * On macOS, waiting before a catch-up scan narrows the scan-to-stream gap,
+   * but the fallback does not prove delivery. Source events received during
+   * the wait can still be queued for sync. Stop does not settle a waiter; a
+   * later start can resolve it, or its own timeout rejects (default 10000ms).
    */
   waitUntilReady(timeoutMs = 10000): Promise<void> {
     if (this.ready && this.deliveryConfirmed) return Promise.resolve();
