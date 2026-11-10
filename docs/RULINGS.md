@@ -539,3 +539,19 @@ General as a RULING line. Decisions already settled by a document live in `team/
   as resolution's agent-a1aad0430fa44e9f5 (fca3b349) and its two tests as orc's upstream-pr-3215-tests (802cfea9,
   17:54 CST); #3249 whole as orc's upstream-pr-3249-impact (c5ddc1b7, 18:05 CST). Each passed the landing gate (type
   check; host, queries and resolution tests). They ship in the release after sm.14.
+
+## R-41. Land and install everything that is not waiting on upstream
+- Date: 2026-11-09 ~18:20 CST / Bob, direct ("Ok on the 3 items that are not the tied to upstream pleae drive the
+  team to get those done; landed and installed, let me know anything that blocks your success so I can fix that for
+  you"), on Designer-Codegraph's status table (installed; finished and merged but not installed; still being
+  worked; waiting on upstream).
+- Question: more than 30 landings have sat on integration since 2026-11-08 and are not in the installed
+  1.6.2-sm.13 (ours a678793f); do they ship now?
+- Ruling: yes. Everything not waiting on upstream is finished, landed and installed: the split-server fix (R-37,
+  S-58), the R-38 bug list, upstream PRs #3249 and #3215 (R-40) and what else has landed on integration since ours
+  a678793f, with the work orders still open. This go covers the install of the release that carries them (R-18),
+  with no second question. Whatever blocks it goes to Bob at once with its evidence; he clears it.
+- Reason: Bob's word.
+- Not chosen: halting the team with the work merged but not installed.
+- Supersedes: "split-server-fix still ships alone as sm.14" (R-38) and "the release after sm.14" (R-40), so far as
+  one release may now carry all of it (S-64). The 14 upstream PRs stay as they are (SPEC-upstream §7.7).
