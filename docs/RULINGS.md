@@ -535,3 +535,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word. #3249 fixes a slowdown our build has today; #3215 fixes wrong answers in resolution; both are
   small and apply cleanly.
 - Not chosen: the other clean-applying fixes (#3261, #3256, #3226, #3196); waiting for upstream to merge.
+- Done (landed, not yet shipped): 2026-11-09, on integration (land/landed.log). #3215: its six src/resolution files
+  as resolution's agent-a1aad0430fa44e9f5 (fca3b349) and its two tests as orc's upstream-pr-3215-tests (802cfea9,
+  17:54 CST); #3249 whole as orc's upstream-pr-3249-impact (c5ddc1b7, 18:05 CST). Each passed the landing gate (type
+  check; host, queries and resolution tests). They ship in the release after sm.14.
