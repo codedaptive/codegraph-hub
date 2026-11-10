@@ -35,11 +35,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { isSourceFile, buildScopeIgnore, type ScopeIgnore } from '../extraction';
 import { loadExtensionOverrides, PROJECT_CONFIG_FILENAME } from '../project-config';
 import { LockUnavailableError, logDebug, logWarn } from '../errors';
 import { escapesRoot, normalizePath } from '../utils';
-import { isCodeGraphDataDir } from '../directory';
+import { codeGraphDirNameFor, isCodeGraphDataDir } from '../directory';
 import { watchDisabledReason } from './watch-policy';
 
 /**
@@ -214,6 +215,13 @@ export interface WatchOptions {
   debounceMs?: number;
 
   /**
+   * Maximum wait for a macOS recursive watch delivery probe. Default: 5000ms,
+   * below waitUntilReady's 10000ms default. At the bound readiness is best
+   * effort: delivery remains unproven, so startup can continue.
+   */
+  deliveryProbeMaxMs?: number;
+
+  /**
    * Callback when a sync completes (for logging/diagnostics).
    */
   onSyncComplete?: (result: { filesChanged: number; durationMs: number }) => void;
@@ -349,20 +357,17 @@ export class FileWatcher {
   private syncing = false;
   private stopped = false;
   /**
-   * True once the initial watch set is established. Unlike the previous
-   * chokidar implementation there is no asynchronous initial "crawl" emitting
-   * an `add` per existing file — `fs.watch` only reports changes from the
-   * moment it's installed — so this flips to true synchronously at the end of
-   * `start()`. The startup reconcile against on-disk state is handled
-   * separately by the engine's catch-up sync, not by the watcher.
+   * True synchronously once the watch set is installed in start(): source
+   * events populate pendingFiles from then on. This does not imply delivery:
+   * macOS starts its FSEvents stream asynchronously after fs.watch returns.
    */
   private ready = false;
-  /**
-   * Callbacks that resolve when the watch set is established. Used by tests
-   * (and any production caller that cares about a clean baseline) to
-   * deterministically gate on watcher readiness.
-   */
+  /** Callbacks waiting for both installation and confirmed (or best-effort bounded) delivery. */
   private readyWaiters: Array<() => void> = [];
+  private deliveryConfirmed = false;
+  private deliveryProbe: { path: string; relativePath: string; fd: number } | null = null;
+  private deliveryProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private deliveryProbeBound: ReturnType<typeof setTimeout> | null = null;
   // The shared scope matcher from `buildScopeIgnore` (built-in defaults +
   // root `.gitignore` + `.git/info/exclude` + `core.excludesFile` + dirs
   // `git ls-files --exclude-standard` reports ignored + `codegraph.json`
@@ -376,6 +381,7 @@ export class FileWatcher {
 
   private readonly projectRoot: string;
   private readonly debounceMs: number;
+  private readonly deliveryProbeMaxMs: number;
   private readonly syncFn: (paths?: string[]) => Promise<{ filesChanged: number; durationMs: number }>;
   private readonly onSyncComplete?: WatchOptions['onSyncComplete'];
   private readonly onSyncError?: WatchOptions['onSyncError'];
@@ -398,6 +404,7 @@ export class FileWatcher {
     this.projectRoot = projectRoot;
     this.syncFn = syncFn;
     this.debounceMs = options.debounceMs ?? 2000;
+    this.deliveryProbeMaxMs = options.deliveryProbeMaxMs ?? 5000;
     this.onSyncComplete = options.onSyncComplete;
     this.onSyncError = options.onSyncError;
     this.onDegraded = options.onDegraded;
@@ -448,14 +455,12 @@ export class FileWatcher {
       // strategies report exhaustion identically (start() === false).
       if (this.degradedReason) return false;
 
-      // No async crawl to wait on: as soon as the watch set is installed we
-      // have a clean baseline (pendingFiles is only populated by post-start
-      // events). Clear defensively and flip ready.
+      // Record events from installation onward, including while the macOS
+      // delivery probe is pending; confirmation must not clear those edits.
       this.pendingFiles.clear();
       this.ready = true;
-      for (const cb of this.readyWaiters) cb();
-      this.readyWaiters.length = 0;
       if (IS_TEST_RUNTIME) liveWatchersForTests.set(this.projectRoot, this);
+      this.startDeliveryProbe();
 
       logDebug('File watcher started', {
         projectRoot: this.projectRoot,
@@ -488,7 +493,17 @@ export class FileWatcher {
     this.recursiveWatcher = watchImpl(
       this.projectRoot,
       { recursive: true, persistent: true },
-      (_event, filename) => this.handleDirEvent(this.projectRoot, filename)
+      (_event, filename) => {
+        if (filename != null) {
+          const name = String(filename);
+          if (!path.isAbsolute(name) && this.deliveryProbe?.relativePath ===
+              normalizePath(path.relative(this.projectRoot, path.join(this.projectRoot, name)))) {
+            this.confirmDelivery();
+            return;
+          }
+        }
+        this.handleDirEvent(this.projectRoot, filename);
+      }
     );
     this.recursiveWatcher.on('error', (err: unknown) => {
       if (isWatchResourceExhaustion(err)) {
@@ -498,6 +513,100 @@ export class FileWatcher {
       logWarn('File watcher error', { error: String(err) });
     });
     this.refreshWatchTree();
+  }
+
+  /**
+   * FSEvents starts with since-now semantics on a separate thread. Repeated
+   * descriptor-only touches every 50ms let that stream prove it is delivering
+   * without following a replaced probe path. Failure or timeout is best effort:
+   * readiness proceeds with delivery unproven rather than blocking startup.
+   */
+  private startDeliveryProbe(): void {
+    if (process.platform !== 'darwin' || !supportsRecursiveWatch() || this.inertForTests) {
+      this.confirmDelivery();
+      return;
+    }
+    try {
+      this.createDeliveryProbe();
+    } catch (error) {
+      logDebug('Could not create watcher delivery probe; delivery unproven', { error: String(error) });
+      this.confirmDelivery();
+      return;
+    }
+    this.deliveryProbeTimer = setInterval(() => {
+      if (!this.deliveryProbe) return;
+      try {
+        const now = new Date();
+        fs.futimesSync(this.deliveryProbe.fd, now, now);
+      } catch (error) {
+        logDebug('Could not touch watcher delivery probe', { error: String(error) });
+      }
+    }, 50);
+    this.deliveryProbeTimer.unref();
+    this.deliveryProbeBound = setTimeout(() => {
+      logWarn('Watcher delivery probe timed out; delivery unproven', {
+        projectRoot: this.projectRoot,
+        deliveryProbeMaxMs: this.deliveryProbeMaxMs,
+      });
+      this.confirmDelivery();
+    }, this.deliveryProbeMaxMs);
+    this.deliveryProbeBound.unref();
+  }
+
+  private createDeliveryProbe(): void {
+    const dataDir = path.join(this.projectRoot, codeGraphDirNameFor(this.projectRoot));
+    let dir = this.projectRoot;
+    try {
+      // The root stream cannot see inside a data-directory symlink to elsewhere.
+      if (fs.lstatSync(dataDir).isDirectory()) dir = dataDir;
+    } catch { /* missing or inaccessible: probe the project root */ }
+    // Exclusive creation never replaces someone else's entry. Retry a few UUID
+    // collisions, but keep startup bounded if a name cannot be claimed.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const probePath = path.join(dir, `.codegraph-watch-probe-${randomUUID()}`);
+      try {
+        this.deliveryProbe = {
+          path: probePath,
+          relativePath: normalizePath(path.relative(this.projectRoot, probePath)),
+          fd: fs.openSync(probePath, 'wx', 0o600),
+        };
+        return;
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'EEXIST') continue;
+        throw error;
+      }
+    }
+    throw new Error('Could not claim a watcher delivery probe name');
+  }
+
+  private confirmDelivery(): void {
+    if (!this.ready || this.stopped) return;
+    this.deliveryConfirmed = true;
+    this.clearDeliveryProbe();
+    for (const cb of this.readyWaiters) cb();
+    this.readyWaiters.length = 0;
+  }
+
+  /**
+   * Remove only the regular file still matching our open descriptor. This
+   * check-then-unlink narrows but does not eliminate a replacement race. No
+   * stale sweep: a process killed mid-probe can leave one empty probe file,
+   * ignored by both the indexer and watcher through its `.codegraph-*` name.
+   */
+  private clearDeliveryProbe(): void {
+    clearInterval(this.deliveryProbeTimer ?? undefined);
+    clearTimeout(this.deliveryProbeBound ?? undefined);
+    this.deliveryProbeTimer = null;
+    this.deliveryProbeBound = null;
+    const probe = this.deliveryProbe;
+    this.deliveryProbe = null;
+    if (!probe) return;
+    try {
+      const owned = fs.fstatSync(probe.fd);
+      const current = fs.lstatSync(probe.path);
+      if (current.isFile() && owned.dev === current.dev && owned.ino === current.ino) fs.unlinkSync(probe.path);
+    } catch { /* removed, replaced or inaccessible: leave it alone */ }
+    try { fs.closeSync(probe.fd); } catch { /* cleanup is best effort */ }
   }
 
   /** Reconcile logical directory paths with real targets, including retargeted links. */
@@ -942,6 +1051,8 @@ export class FileWatcher {
    */
   stop(): void {
     this.stopped = true;
+    this.clearDeliveryProbe();
+    this.deliveryConfirmed = false;
     if (this.treeRefreshTimer) clearTimeout(this.treeRefreshTimer);
     this.treeRefreshTimer = null;
     for (const check of this.goneChecks.values()) clearTimeout(check);
@@ -1006,16 +1117,14 @@ export class FileWatcher {
   }
 
   /**
-   * Resolves once the watch set has been installed (or immediately if it
-   * already has). Useful for tests that need a deterministic boundary before
-   * asserting on `pendingFiles`.
-   *
-   * Production callers don't need this: `pendingFiles` is read continuously,
-   * the staleness banner is always correct (empty or populated), and there is
-   * no asynchronous initial-scan window with `fs.watch`.
+   * Resolves after installation and delivery confirmation (or its best-effort
+   * fallback). On macOS fs.watch returns before FSEvents delivers, so callers
+   * must await this before a catch-up scan to avoid a scan-to-stream gap.
+   * Events received during that wait still populate pendingFiles and sync.
+   * Stop does not settle a waiter; a later start can confirm it.
    */
   waitUntilReady(timeoutMs = 10000): Promise<void> {
-    if (this.ready) return Promise.resolve();
+    if (this.ready && this.deliveryConfirmed) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => {
         const idx = this.readyWaiters.indexOf(handler);
