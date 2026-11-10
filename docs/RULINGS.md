@@ -555,3 +555,18 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: halting the team with the work merged but not installed.
 - Supersedes: "split-server-fix still ships alone as sm.14" (R-38) and "the release after sm.14" (R-40), so far as
   one release may now carry all of it (S-64). The 14 upstream PRs stay as they are (SPEC-upstream §7.7).
+
+## R-42. A test that fails for machine load is not a failed test
+- Date: 2026-11-09 ~18:35 CST / Bob, direct ("REPEAT AFTER ME TEST FAILING FOR MACHINE LOAD ARE NOT FAILED
+  TESTS"), on Designer-Codegraph naming machine load as the one blocker of the sm.14 release (R-41).
+- Question: do the load-sensitive failures in the full runs (11 in the sm.14 gate of 2026-11-08 at load 91-94;
+  three of the four full runs of 2026-11-09) hold the release?
+- Ruling: no. A test that fails because the machine is busy is not a failed test and holds nothing: not the
+  release gate, not the promote, not the install. It is a test in the wrong group, moved when it is seen
+  (team-codeteam/briefs/brief-three-kinds-of-test-2026-11-09.md §1: "A busy machine is never a reason for
+  anything: a test that cannot pass on a busy machine is in the wrong group"; §3: "It is not a failure and it
+  blocks nothing"). Machine load is not a blocker, and nobody waits for or asks for a quieter machine.
+- Reason: Bob's word, and his definition of the three kinds of test (D281).
+- Not chosen: holding the release for lower load.
+- Corrects: Designer-Codegraph's report to Bob of 18:25 and
+  design/Designer-Codegraph/ledger/reports/release-all-2026-11-09.md, which named load as a blocker.
