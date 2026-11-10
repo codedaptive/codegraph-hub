@@ -570,3 +570,16 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: holding the release for lower load.
 - Corrects: Designer-Codegraph's report to Bob of 18:25 and
   design/Designer-Codegraph/ledger/reports/release-all-2026-11-09.md, which named load as a blocker.
+- Extended: 2026-11-09 / Bob, to every team, relayed by codeteam (#2848): "There is no such thing as a test that
+  fails for load." "I never asked or implied that a test that failed because of load would bounce back to the
+  coding for a fix." A test that fails, times out or runs slowly because the machine is busy is not a defect in a
+  work order: it waits on a clock, a real process or a real file event, so it is an integration or validation test
+  in the wrong group. Do: move it out of the unit run into the integration or validation group, as a small patch,
+  when it is seen. Stop: bouncing or holding work orders for it, opening fix work for a coder, re-running to see
+  whether it passes, and reporting it to Bob as a failure. Named for codegraph, to move out of the unit run now:
+  __tests__/extensions/host/pinned-open.gate.test.ts (PO1), worktree-lifecycle-races.gate.test.ts and
+  query-pool-idle.test.ts (31 landings bounced on them on 2026-11-09, 20 on one).
+- Overrules: any ruling or settled entry of this team that has a test slow or failing under load fixed before the
+  work is done. In this register that is the host-test-flakes item of R-38's bug list (done 2026-11-08, on
+  integration 6077bb4e46): no item of that kind is opened again. team/settled.md holds no such entry (searched
+  2026-11-09).
