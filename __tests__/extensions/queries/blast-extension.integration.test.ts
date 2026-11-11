@@ -9,12 +9,12 @@
  * the built zone modules, required alone in a child `node`, load none of
  * dist/index.js, dist/db/, dist/resolution/ or dist/extraction/.
  *
- * The main fixture is a cut-down blast.test.ts repo A (util.ts and a.ts only):
+ * The main fixture is a cut-down blast.integration.test.ts repo A (util.ts and a.ts only):
  * C1 (tagged), then C2 edits the body of `helper`, which `useA` calls. A second
  * fixture is a parent repo whose `.gitignore` leaves out `vendor/`, holding
  * `vendor/child`, an independent git repository with its own commit and no
  * index. Indexing two files is cheap, so both are built once in beforeAll.
- * This file holds the spawned-process half of blast-extension.test.ts.
+ * This file holds the spawned-process half; the in-process half is blast-extension-inprocess.integration.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';

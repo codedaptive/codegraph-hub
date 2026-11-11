@@ -22,7 +22,7 @@
  * beta's 2 unstrict, and 1 against 2 strict, keep both rankings free of a tie. Both bodies hold MARKER, so one
  * pattern hits both groups. Indexed once in beforeAll and shared, read-only.
  *
- * Entry points mirror grep-extension.test.ts: the CLI through the registered
+ * Entry points mirror grep-extension-inprocess.integration.test.ts: the CLI through the registered
  * `codegraph grep` command on a fresh commander program, MCP through
  * ToolHandler.execute('codegraph_grep').
  */

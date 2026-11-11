@@ -8,7 +8,7 @@
  *   - `hasUnreadRanges(file)` names a file whose patch pass failed, without adding
  *     a property to the file.
  *
- * Real git in temp repos. The seed vectors index their repo, as blast.test.ts
+ * Real git in temp repos. The seed vectors index their repo, as blast.integration.test.ts
  * does. A failed patch pass is a vi.mock of the shared git runner that wraps the
  * real one and fails only the `--unified=0` call while `gitFault.failPatch` is on.
  */

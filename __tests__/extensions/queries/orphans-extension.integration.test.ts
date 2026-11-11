@@ -16,7 +16,7 @@
  * Fixture: C1 (tagged) holds src/util.ts with `helper`, called from src/a.ts;
  * C2 appends the uncalled `lonelyNew` to src/util.ts, so the report has one
  * orphan. Indexing two files is cheap, so it is built once in beforeAll.
- * This file holds the spawned-process half of orphans-extension.test.ts.
+ * This file holds the spawned-process half; the in-process half is orphans-extension-inprocess.integration.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
