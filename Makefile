@@ -54,10 +54,13 @@ endif
 
 need_node_modules = @test -d node_modules || { echo "$@: no node_modules in this worktree; run npm ci once" >&2; exit 2; }
 
+# A folder can hold no unit tests once its tests move to integration (S-65: real SQLite is integration), and
+# the landing check runs each zone folder as unit; --passWithNoTests on the unit group only, so an empty
+# integration or validation selection still fails.
 test-one:
 	@test -n "$$DIR" || { echo "test-one: set DIR (a test file or folder, e.g. __tests__/extensions/host)" >&2; exit 2; }
 	$(need_node_modules)
-	$(NPX) vitest run "$$DIR" $(if $(TEST),-t "$$TEST")
+	$(NPX) vitest run "$$DIR" $(if $(TEST),-t "$$TEST")$(if $(filter unit,$(GROUP)), --passWithNoTests)
 
 typecheck:
 	$(need_node_modules)
