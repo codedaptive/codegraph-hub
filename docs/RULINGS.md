@@ -576,10 +576,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
   work order: it waits on a clock, a real process or a real file event, so it is an integration or validation test
   in the wrong group. Do: move it out of the unit run into the integration or validation group, as a small patch,
   when it is seen. Stop: bouncing or holding work orders for it, opening fix work for a coder, re-running to see
-  whether it passes, and reporting it to Bob as a failure. Named for codegraph, to move out of the unit run now:
-  __tests__/extensions/host/pinned-open.gate.test.ts (PO1), worktree-lifecycle-races.gate.test.ts and
-  query-pool-idle.test.ts (31 landings bounced on them on 2026-11-09, 20 on one).
+  whether it passes, and reporting it to Bob as a failure. Named for codegraph (31 landings bounced on them on
+  2026-11-09, 20 on one), all three already out of the unit run: __tests__/extensions/host/pinned-open.gate.test.ts
+  (PO1) and worktree-lifecycle-races.gate.test.ts by their .gate suffix (fleet/test-groups.mts), and
+  query-pool-idle.test.ts by test-groups.json (test-groups-moves-3, d913ec5f).
 - Overrules: any ruling or settled entry of this team that has a test slow or failing under load fixed before the
   work is done. In this register that is the host-test-flakes item of R-38's bug list (done 2026-11-08, on
-  integration 6077bb4e46): no item of that kind is opened again. team/settled.md holds no such entry (searched
+  integration b608a04a1d): no item of that kind is opened again. team/settled.md holds no such entry (searched
   2026-11-09).
