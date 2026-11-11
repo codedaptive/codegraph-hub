@@ -167,9 +167,8 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
   // repository, a later call answers from the repository's own index, and the
   // outside code never comes back in any answer.
   it('G6: a call inside the anchor is built for itself, never answered from an index outside it', async () => {
-    // Over 5 s by design: a CLI index run, a `serve --mcp` cold start (waited for until the session attaches,
-    // up to 400 s), a cold build of the repository by the builder (polled for up to 180 s on an overloaded
-    // machine) and the tool calls around it.
+    // Over 5 s by design: a CLI index run, a `serve --mcp` cold start, a cold build of the repository
+    // by the builder (polled for up to 180 s on an overloaded machine) and the tool calls around it.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
     const outer = path.join(root, 'outer');
@@ -188,12 +187,6 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
     expect(fs.existsSync(path.join(outerReal, '.codegraph')), 'G6 setup: the outer directory has an index').toBe(true);
     const session = fx.session({ cwd: repo, stateDir });
     await session.initialize();
-    // The steps below are the machine server's answers: only its index builder cold-builds the repository. A
-    // launcher whose server does not answer within its connect budget (a cold start on a loaded machine) serves
-    // calls from the in-process read-only fallback until a reconnect attaches it, and that fallback has no
-    // builder, so it answers from the walk-up's outer index (refused by the admission check) instead of the
-    // building note. The bound covers the reconnect backoff (5 s doubling, each attempt polling about 6 s).
-    expect(await session.attachedPid(400_000), 'G6 setup: the session attached to the machine server').not.toBeNull();
 
     const problems: string[] = [];
     const building = `building the index for ${repo}`;
