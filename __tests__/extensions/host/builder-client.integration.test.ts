@@ -5,8 +5,10 @@
  *
  * What is pinned here is what only a separate process shows: every lock holder is the builder's pid and never
  * this (the server's) process; a cold build runs under the builder's `rebuild.pid`; a sync, a hold and a
- * release do what the client's contract says; a builder killed with SIGKILL is replaced, its dead locks are
- * reclaimed, and the roots it held and the build it was running are taken up again by the new one.
+ * release do what the client's contract says; a plain directory is built at the session anchor, never at the
+ * call's path, including when the replacement builder after a SIGKILL queues the killed build again; a builder
+ * started on a closed channel exits 0; stop() ends the builder. The SIGKILL case for held roots and dead locks
+ * is in builder-client-sigkill.validation.test.ts.
  *
  * Over 5 s per case by design: each starts a builder process (it loads the whole engine) and a repository,
  * and some wait for an index build on an overloaded machine.
@@ -243,43 +245,6 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
     expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 180_000)).toBe(true);
     expect(isInitialized(sub)).toBe(false);
     expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
-  });
-
-  // About 10 s on an overloaded machine, by design: two builder processes (the killed one and its replacement)
-  // each load the whole engine, and the replacement runs a 4 s held cold build (the delay knob) to its end.
-  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
-  it('after SIGKILL the client starts a new builder, whose own pid reclaims the dead one\'s locks and takes the roots up again', async () => {
-    const held = path.join(workspace, 'held');
-    makeRepo(held);
-    await indexDir(held);
-    const main = path.join(workspace, 'main');
-    makeRepo(main);
-    const wt = path.join(workspace, 'wt');
-    git(main, 'worktree', 'add', '-q', '-b', 'feature', wt);
-    vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '4000');
-    client = BuilderClient.start();
-    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
-
-    expect(await client.ensure(held)).toMatchObject({ kind: 'ready' });
-    expect((await client.ensure(wt)).kind).toBe('building');
-    const killed = client.pid()!;
-    expect(await waitUntil(() => readWriterLock(wt, 'rebuild.pid')?.pid === killed, 120_000)).toBe(true);
-    expect(readWriterLock(held)?.pid).toBe(killed);
-
-    process.kill(killed, 'SIGKILL');
-    expect(await waitUntil(() => !alive(killed), 120_000)).toBe(true);
-    // The builder is replaced, and says so in builder.pid.
-    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 120_000)).toBe(true);
-    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
-    const replacement = client.pid()!;
-    expect(await waitUntil(() => pidFilePid(stateDir) === replacement, 120_000)).toBe(true);
-
-    // The held root is held again, by the new pid (the dead pid's writer.pid was reclaimed).
-    expect(await waitUntil(() => readWriterLock(held)?.pid === replacement, 120_000)).toBe(true);
-    // The killed cold build is built again, with no further call: the client queued it for the new builder.
-    expect(await waitUntil(() => isInitialized(wt) && readWriterLock(wt, 'rebuild.pid') === null, 180_000)).toBe(true);
-    expect(builderLog(stateDir).some((l) => / job end cold-build \S+ ok$/.test(l))).toBe(true);
-    expect(client.pid()).toBe(replacement);
   });
 
   // The channel is closed before the builder has started, so its `ready` message is written to a pipe nobody
