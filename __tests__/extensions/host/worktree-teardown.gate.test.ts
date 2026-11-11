@@ -24,7 +24,7 @@
  * G13: QueryPool.releaseProject(root) posts `{ type: 'release', id, root }`
  * to every worker; a worker closes that project through its handler and acks
  * `{ type: 'released', id, ok }`.
- * Runs the BUILT pool and worker (dist/mcp/), as query-pool-idle.test.ts does,
+ * Runs the BUILT pool and worker (dist/mcp/), as query-pool-idle.integration.test.ts does,
  * so dist/ must be rebuilt (`npm run build`) after the pool and worker change.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

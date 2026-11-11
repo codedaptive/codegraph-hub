@@ -21,7 +21,7 @@
  *   widening cannot ship alongside a coercion that drops the list. They are not
  *   a runtime red, and nothing here is changed to make them one.
  *
- * Modelled on extension-hooks.test.ts: the registry is reset per test, and the
+ * Modelled on extension-hooks.integration.test.ts: the registry is reset per test, and the
  * allowlist names the tool so it is listed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
