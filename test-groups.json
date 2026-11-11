@@ -745,7 +745,6 @@
     "__tests__/mcp-daemon.test.ts",
     "__tests__/oversize-file-not-read.test.ts",
     "__tests__/ui-server-api.test.ts",
-    "__tests__/extensions/host/query-pool-idle.test.ts",
     "__tests__/cli-sync.test.ts",
     "__tests__/mcp-status-freshness.test.ts"
   ],
