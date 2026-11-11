@@ -141,7 +141,7 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-11-08)
+## 8. Status (2026-11-09)
 
 Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.13** (ours
 be5ab360, 2026-11-06, S-57); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
@@ -162,9 +162,10 @@ f72c9d2e is already in ours.
 
 | Left | State |
 |---|---|
-| A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen in the sm.12 install and three times on 2026-11-06 at load ~90; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md, release-gate-sm13.md | host, split-server-fix, ships as sm.14 (R-37, S-58) |
+| A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen in the sm.12 install and three times on 2026-11-06 at load ~90; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md, release-gate-sm13.md | host, split-server-fix (R-37, S-58), on integration; ships in sm.14 with everything else landed there (R-41, S-64) |
 | `grep` and `orphans` tool descriptions (Kong K-F4, K-F6) | queries, tool-desc-fixes (R-38) |
 | The bug list (R-38): swift-member-decl-copy, swift-nested-supertypes; install-runbook-sigkill; seed-locked-retry, upgrade-version-validate, hub-release-comments, host-test-flakes | resolution; fleet; host (R-38) |
+| Upstream PRs #3249 (impact reads a node's edges in one unlimited query) and #3215 (resolution lookups no longer answer by who asked first), taken before upstream merges them (R-40) | on integration since 2026-11-09 (c5ddc1b7; fca3b349 and 802cfea9); ships in sm.14 (R-41, S-64) |
 | fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
 | The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
 
