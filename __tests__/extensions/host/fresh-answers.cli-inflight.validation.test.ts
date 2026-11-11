@@ -1,7 +1,9 @@
 /**
- * Fresh answers, CLI surface, validation group: G1 and G2, the `query --fresh` cases whose cut
- * search (cutRun) depends on how long a sync takes under machine load, so they run here.
- * G3 and the same fixture are in fresh-answers.cli-inflight.integration.test.ts.
+ * Fresh answers, CLI surface, validation group: G1 and G2, the `query --fresh` cases, and G3,
+ * `checkpoint --fresh --json`. Each one's cut search (cutRun) depends on how long a sync takes
+ * under machine load, so they run here. G3: a standalone `--fresh` past its bound with a sync in
+ * flight prints its answer and a `Note:` line at once, then waits (capped by
+ * CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS) for that sync to settle before closing the index and exiting 3.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn } from 'child_process';
@@ -396,4 +398,24 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect(after.status).toBe(0);
     expect(integrityCheck(dir)).toBe('ok');
   }, 600_000 + CHILD_TIMEOUT_MS);
+
+  // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, the accepted one waiting out
+  // the sync, then a second CLI run, on a loaded machine.
+  it('G3 checkpoint --fresh --json that times out prints its JSON and a Note first, then lets its sync finish: a plain checkpoint after it is fresh and the index is intact', async () => {
+    const cut = await cutRun(['checkpoint', dir, '--fresh', '--json'], {}, stdoutCheckpoint);
+    const r = cut.run;
+    expect(r.signal).toBeNull();
+    expect(cut.cp.fresh).toBe(false);
+    // The checkpoint IS the stdout answer here, so its arrival is stdoutAt.
+    expectPrintedBeforeSettle(r, r.stdoutAt, cut);
+    expect(r.status).toBe(3);
+    // Soft, so a run that fails here still reports the post-run state below.
+    expect.soft(r.stderr.map(l => l.text).filter(l => !l.startsWith('Note:'))).toEqual([]);
+
+    const after = await runCli(['checkpoint', dir, '--json']);
+    const cp2 = stdoutCheckpoint(after);
+    expect(cp2?.pending, `plain checkpoint after; attempts used ${cut.attempts.length}`).toBe(0);
+    expect(after.status).toBe(0);
+    expect(integrityCheck(dir)).toBe('ok');
+  }, 600_000);
 });
