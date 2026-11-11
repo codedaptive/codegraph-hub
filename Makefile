@@ -58,9 +58,11 @@ need_node_modules = @test -d node_modules || { echo "$@: no node_modules in this
 
 # A folder can hold no tests of a group (S-65 moved real-SQLite tests to integration; a zone may have no
 # integration tests yet), and the landing check runs each zone folder in the unit and integration groups;
-# --passWithNoTests so an empty selection passes in every group.
+# --passWithNoTests so an empty selection passes in every group. A DIR that does not exist (a mistyped path, a
+# folder renamed away from its OWNS entry) is refused first, so it never passes as an empty selection.
 test-one:
 	@test -n "$$DIR" || { echo "test-one: set DIR (a test file or folder, e.g. __tests__/extensions/host)" >&2; exit 2; }
+	@test -e "$$DIR" || { echo "test-one: DIR $$DIR does not exist" >&2; exit 2; }
 	$(need_node_modules)
 	$(NPX) vitest run "$$DIR" $(if $(TEST),-t "$$TEST") --passWithNoTests
 
