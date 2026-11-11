@@ -22,7 +22,7 @@ const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 
 interface ListedProject { root: string; commonDir: string | null; flags: number; registeredAt: string }
 
-/** One CLI run: no daemon, no wasm-flag re-exec (see extension-hooks-cli.test.ts). */
+/** One CLI run: no daemon, no wasm-flag re-exec (see extension-hooks-cli.integration.test.ts). */
 function runCli(args: string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
   const res = spawnSync(process.execPath, [BIN, ...args], {
     cwd,

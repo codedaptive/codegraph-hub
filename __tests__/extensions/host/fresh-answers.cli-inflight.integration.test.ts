@@ -19,7 +19,7 @@
  * (FILE_COUNT * CUT_MIN_LEFT <= pending < FILE_COUNT), so a run without a cut
  * fails as a fixture problem, never as the behaviour under test.
  *
- * Driven through the built binary as __tests__/extensions/host/fresh-answers.cli.test.ts is.
+ * Driven through the built binary as __tests__/extensions/host/fresh-answers.cli.integration.test.ts is.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn } from 'child_process';
