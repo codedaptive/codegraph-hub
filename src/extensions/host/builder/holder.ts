@@ -91,9 +91,9 @@ interface Hold {
   openJobPending: boolean;
   opening: Promise<HoldResult>;
   /**
-   * Waits for watcher delivery readiness, then settles (never rejects) when the first catch-up job has run,
-   * or when released before it queues; at once when nothing was opened (another process owns `writer.pid`
-   * or a rebuild holds the root). A catch-up that found the lock held
+   * Waits for watcher readiness or the holder's bound, then settles (never rejects) when the first catch-up
+   * job has run, or when released before it queues; at once when nothing was opened (another process owns
+   * `writer.pid` or a rebuild holds the root). A catch-up that found the lock held
    * settles at that failure, before the retry it schedules (see queueCatchUp).
    */
   caughtUp: Promise<void>;
@@ -255,9 +255,9 @@ export class HolderSet {
   }
 
   /**
-   * Resolves when the root's first catch-up has run (ok or failed); at once when it is not held, or when no
-   * catch-up was queued (another process owns `writer.pid`, or a rebuild holds the root). A catch-up that found
-   * the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
+   * Waits for watcher readiness or the holder's bound, then resolves when the first catch-up has run (ok or
+   * failed). Resolves without a catch-up when released before queuing, not held, or nothing was opened. A
+   * catch-up that found the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
    * When that catch-up's readiness publication threw (logged) or returned without the record reading ready (not
    * logged), this call tries the publication again, so a later call can still make the root ready.
    */
@@ -484,8 +484,8 @@ export class HolderSet {
   }
 
   /**
-   * The catch-up sync after watcher readiness (or immediately without a watcher): one job that reconciles
-   * changes since the last sync, including during stream startup. Readiness may leave delivery unproven.
+   * The catch-up sync after watcher readiness or the holder's bound (or immediately without a watcher): one
+   * job that reconciles changes since the last sync, including during stream startup. Delivery may be unproven.
    * A hold released before queuing does not queue it. Lock contention (a CLI index run holds `codegraph.lock`)
    * is retried with a growing wait; any other failure is logged and left to the watcher's and callers' syncs.
    * A readiness publication afterwards that throws (logged) or leaves the record not ready (not logged) is
