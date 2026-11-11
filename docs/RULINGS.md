@@ -485,6 +485,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: the bug struck three times on 2026-11-06 at load ~90, each time leaving a second server and builder.
 - Not chosen: waiting for the restart.
 - Supersedes: R-36's halt (R-36's hub updates by Bob stand).
+- Done: 2026-11-10 22:34 CST, Orc-Codegraph (#2913; design/Orc-Codegraph/ledger/reports/release-gate-sm14.md,
+  Shipped): 1.6.2-sm.14 (ours 6a2b6eff, on origin) installed with the split-server fix; 16 sessions reconnected, all 8 teams answer, one
+  server and one builder on ~/.codegraph.
 - Corrected 2026-11-06 (Orc #2416): "the team restarts for new features" was Orc's misreading of Bob, who was shutting
   herdr down; no new features are asked for (Q-22 withdrawn). The split-server fix stands (S-58, Bob's own words).
 
@@ -515,6 +518,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word. The orphans serve no session and hold ~2.9 GB on a machine at load ~94; a SIGKILL runs no
   shutdown code, so it cannot remove the live socket.
 - Not chosen: keeping the orphans until the sm.14 install (Orc-Codegraph's one-step recommendation).
+- Done: 2026-11-10 22:34 CST, Orc-Codegraph (#2913; design/Orc-Codegraph/ledger/reports/release-gate-sm14.md,
+  Shipped): 1.6.2-sm.14 (ours 6a2b6eff, on origin) installed; 16 sessions reconnected, all 8 teams answer, one
+  server and one builder on ~/.codegraph.
 
 ## R-40. Take upstream PRs #3249 and #3215 into the fork before upstream merges them
 - Date: 2026-11-09 ~10:37 CST / Bob, direct ("yes pull those two that you are recommending"), on
@@ -535,10 +541,10 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word. #3249 fixes a slowdown our build has today; #3215 fixes wrong answers in resolution; both are
   small and apply cleanly.
 - Not chosen: the other clean-applying fixes (#3261, #3256, #3226, #3196); waiting for upstream to merge.
-- Done (landed, not yet shipped): 2026-11-09, on integration (land/landed.log). #3215: its six src/resolution files
+- Done (landed): 2026-11-09, on integration (land/landed.log). #3215: its six src/resolution files
   as resolution's agent-a1aad0430fa44e9f5 (fca3b349) and its two tests as orc's upstream-pr-3215-tests (802cfea9,
   17:54 CST); #3249 whole as orc's upstream-pr-3249-impact (c5ddc1b7, 18:05 CST). Each passed the landing gate (type
-  check; host, queries and resolution tests). They ship in the release after sm.14.
+  check; host, queries and resolution tests). Shipped in 1.6.2-sm.14, installed 2026-11-10 (R-41).
 
 ## R-41. Land and install everything that is not waiting on upstream
 - Date: 2026-11-09 ~18:20 CST / Bob, direct ("Ok on the 3 items that are not the tied to upstream pleae drive the
@@ -555,6 +561,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: halting the team with the work merged but not installed.
 - Supersedes: "split-server-fix still ships alone as sm.14" (R-38) and "the release after sm.14" (R-40), so far as
   one release may now carry all of it (S-64). The 14 upstream PRs stay as they are (SPEC-upstream §7.7).
+- Done: 2026-11-10 22:34 CST, Orc-Codegraph (#2913; design/Orc-Codegraph/ledger/reports/release-gate-sm14.md,
+  Shipped): 1.6.2-sm.14 (ours 6a2b6eff, on origin) installed; 16 sessions reconnected, all 8 teams answer, one
+  server and one builder on ~/.codegraph.
 
 ## R-42. A test that fails for machine load is not a failed test
 - Date: 2026-11-09 ~18:35 CST / Bob, direct ("REPEAT AFTER ME TEST FAILING FOR MACHINE LOAD ARE NOT FAILED
@@ -570,3 +579,17 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: holding the release for lower load.
 - Corrects: Designer-Codegraph's report to Bob of 18:25 and
   design/Designer-Codegraph/ledger/reports/release-all-2026-11-09.md, which named load as a blocker.
+- Extended: 2026-11-09 / Bob, to every team, relayed by codeteam (#2848): "There is no such thing as a test that
+  fails for load." "I never asked or implied that a test that failed because of load would bounce back to the
+  coding for a fix." A test that fails, times out or runs slowly because the machine is busy is not a defect in a
+  work order: it waits on a clock, a real process or a real file event, so it is an integration or validation test
+  in the wrong group. Do: move it out of the unit run into the integration or validation group, as a small patch,
+  when it is seen. Stop: bouncing or holding work orders for it, opening fix work for a coder, re-running to see
+  whether it passes, and reporting it to Bob as a failure. Named for codegraph (31 landings bounced on them on
+  2026-11-09, 20 on one), all three already out of the unit run: __tests__/extensions/host/pinned-open.gate.test.ts
+  (PO1) and worktree-lifecycle-races.gate.test.ts by their .gate suffix (fleet/test-groups.mts), and
+  query-pool-idle.test.ts by test-groups.json (test-groups-moves-3, d913ec5f).
+- Overrules: any ruling or settled entry of this team that has a test slow or failing under load fixed before the
+  work is done. In this register that is the host-test-flakes item of R-38's bug list (done 2026-11-08, on
+  integration b608a04a1d): no item of that kind is opened again. team/settled.md holds no such entry (searched
+  2026-11-09).

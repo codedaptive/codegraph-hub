@@ -243,7 +243,14 @@ describe('vitest.config.mts engine selection', () => {
   it('selects exactly the validation files', async () => {
     const selected = await engineFiles('validation');
     expect(selected).toEqual(engineSelection('validation', files, manifest).include);
-    expect(selected).toEqual(['__tests__/ui-highlight.test.ts']);
+    for (const file of files.filter((file) => file.endsWith('.validation.test.ts'))) {
+      expect(selected, file).toContain(file);
+    }
+    for (const entry of manifest.validation) {
+      // Wrapped: Array.some's index argument would reach picomatch's returnObject parameter.
+      const matches = picomatch(entry);
+      expect(selected.some((file) => matches(file)), `manifest entry ${entry}`).toBe(true);
+    }
   });
 
   it.each([['unit', 'unit'], ['unset', undefined]] as const)(
