@@ -2,8 +2,7 @@
  * The uninit and unlock gates: `codegraph uninit` releases the project's index in the machine server before it
  * deletes the index, and `codegraph unlock` takes a lock out only when its holder is not running.
  *
- *   UG1   uninit --force under a running server and builder: the index is deleted, and neither process holds a file
- *         under the project's `.codegraph` afterwards (lsof).
+ *   UG1   is in uninit-unlock-ug1.validation.test.ts, in the validation group.
  *   UG1b  ordering: the server is asked to release the index while `.codegraph` still exists, and the lease ends after
  *         it is gone. A stand-in server speaks the wire the CLI uses and records each request.
  *   UG2   uninit --force with no server: the index is deleted, exit 0, the success line, and no server.pid or builder.pid.
@@ -24,174 +23,48 @@
  * Each gate drives the built CLI (dist/bin/codegraph.js, built by the suite's global setup) as a child process,
  * non-TTY, with CODEGRAPH_STATE_DIR set. The projects are plain directories: a git worktree is re-seeded from another
  * worktree of its repository. The gates that read a process's open files with lsof are skipped where lsof is absent.
- * The helpers that start a server and read pid files are in machine-server.harness.ts.
+ * The helpers that run the CLI and check its output are in uninit-unlock.harness.ts; the ones that start a server and
+ * read pid files are in machine-server.harness.ts.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawn, spawnSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import { getCodeGraphDir } from '../../../src/directory';
-import { WASM_RUNTIME_FLAGS } from '../../../src/extraction/wasm-runtime-flags';
 import { INDEX_WRITE_END_METHOD, INDEX_WRITE_METHOD } from '../../../src/extensions/host/builder/cli-wire';
 import { getStateDir, getStateDirIdentity } from '../../../src/extensions/host/server/state-dir';
 import { processStartTime } from '../../../src/mcp/process-identity';
 import { isForeignLockRecord, lockStamp } from '../../../src/mcp/writer-lock';
 import {
-  BIN,
   Fixtures,
   LSOF_AVAILABLE,
   McpSession,
   builderPidOf,
-  gateEnv,
   isAlive,
   serverPidOf,
   stopIfCodegraph,
   waitUntil,
 } from './machine-server.harness';
+import {
+  BUILDER_APPEAR_MS,
+  escapeRegExp,
+  exitProblems,
+  normalise,
+  openUnder,
+  plain,
+  plainProject,
+  runCli,
+  successLine,
+  tail,
+} from './uninit-unlock.harness';
 
-/** How long a server may take to write builder.pid after its start. A cold start at load 45 is slow. */
-const BUILDER_APPEAR_MS = 60_000;
-/** The bound on one CLI run: a run that never ends fails here instead of hanging the file. */
-const CLI_RUN_MS = 240_000;
-/** The period of the lsof poll. lsof is a subprocess, so the poll does not run at the 25 ms default. */
-const LSOF_POLL_MS = 500;
-/** The explore tool's name, as the server lists it. Its answer is not judged here: the call opens the index in the server. */
-const EXPLORE = 'codegraph_explore';
 /**
  * The version the stand-in server reports in its hello and in server.pid. Any string serves: the CLI compares the
  * hello's version only with the one in server.pid.
  */
 const STAND_IN_VERSION = 'uninit-unlock-gate-stand-in';
-
-/** Strips ANSI escapes and carriage returns, so a line is compared as the terminal shows it. */
-const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g;
-function plain(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(ANSI_ESCAPE, '');
-}
-
-/** The output with the project's path replaced by <ROOT>, so two runs on two projects compare equal. */
-function normalise(text: string, root: string): string {
-  return plain(text).split(root).join('<ROOT>');
-}
-
-/** The last 400 characters of a text, for a failure message. */
-function tail(text: string): string {
-  const t = text.trim();
-  return t.length > 400 ? `...${t.slice(-400)}` : t;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Matches a success() line: the success glyph and one space, then the message, and nothing else. success() prints the
- * Unicode glyph where the terminal supports it and the ASCII one elsewhere, so both are accepted.
- */
-function successLine(message: string): RegExp {
-  return new RegExp(`^(?:✓|\\[OK\\]) ${escapeRegExp(message)}$`);
-}
-
-/** A one-function TypeScript file in `dir/src`, committed to nothing: a plain directory, indexed by the caller. */
-function plainProject(dir: string, symbol: string): string {
-  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'src', 'index.ts'), `export function ${symbol}(): number {\n  return 1;\n}\n`);
-  return fs.realpathSync(dir);
-}
-
-/** One CLI run: its exit status, its whole stdout and stderr, and the pid of the process. */
-interface CliRun {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  pid: number | undefined;
-}
-
-/** Runs `dist/bin/codegraph.js` with `args` as a child of this process: non-TTY, the gate environment, `stateDir` set. */
-function runCli(args: string[], stateDir: string, cwd: string): Promise<CliRun> {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [...WASM_RUNTIME_FLAGS, BIN, ...args], {
-      cwd,
-      env: gateEnv(stateDir),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let done = false;
-    const pid = child.pid;
-    const finish = (status: number | null): void => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve({ status, stdout, stderr, pid });
-    };
-    const timer = setTimeout(() => {
-      stderr += `\n[gate] no exit within ${CLI_RUN_MS / 1000} s; killed`;
-      child.kill('SIGKILL');
-      finish(null);
-    }, CLI_RUN_MS);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on('error', (err) => {
-      stderr += `\n${String(err)}`;
-      finish(null);
-    });
-    child.on('close', (status) => finish(status));
-  });
-}
-
-/** Problems with a CLI run's exit status: exit 0 unless the gate says otherwise. */
-function exitProblems(label: string, run: CliRun): string[] {
-  return run.status === 0
-    ? []
-    : [`${label} exited ${String(run.status)} (expected 0): stderr ${JSON.stringify(tail(run.stderr))}`];
-}
-
-/**
- * The open files of `pid` under `dir`, as lsof names them with -Fn. A file the process holds after it was deleted
- * keeps its path here with no mark, so a handle to a deleted index is listed.
- *
- * lsof's exit status says whether an empty list is an answer or a failed inspection. Exit 0: the names are the answer,
- * whatever lsof wrote to stderr (it warns about entries it cannot read and still lists the rest). Exit 1 with empty
- * stdout and empty stderr for a pid that is running: lsof matched no file for the selection, and that is the answer,
- * an empty list (macOS exits 1 this way when nothing matches). Every other outcome throws, so a failed inspection
- * fails the test rather than reading as "no holder": lsof did not run, was killed by the timeout, exited non-zero
- * in any other way (any other status, or status 1 with stdout or stderr output), or was asked about a pid that is not
- * running (lsof names nothing for one, and the caller asked about a process that is there to hold files).
- */
-function openUnder(pid: number, dir: string): string[] {
-  const res = spawnSync('lsof', ['-p', String(pid), '-Fn'], { encoding: 'utf8', timeout: 60_000 });
-  if (res.error) throw new Error(`lsof -p ${pid} did not run: ${res.error.message}`);
-  if (res.signal !== null) throw new Error(`lsof -p ${pid} was ended by ${res.signal} before it answered`);
-  const stdout = res.stdout ?? '';
-  const stderr = (res.stderr ?? '').trim();
-  if (res.status !== 0) {
-    const running = isAlive(pid);
-    const noMatch = res.status === 1 && stdout.trim() === '' && stderr === '' && running;
-    if (!noMatch) {
-      const why = stderr === '' ? '(no stderr)' : JSON.stringify(tail(stderr));
-      throw new Error(`lsof -p ${pid} exited ${String(res.status)} ${why}; the pid is ${running ? 'running' : 'not running'}`);
-    }
-    return [];
-  }
-  const names = stdout.split('\n').filter((line) => line.startsWith('n')).map((line) => line.slice(1));
-  return names.filter((name) => name === dir || name.startsWith(dir + path.sep));
-}
-
-/** The pids of `pids` (nulls skipped) that hold a codegraph.db under `dir` open. */
-function dbHolders(pids: Array<number | null>, dir: string): number[] {
-  return pids.filter(
-    (pid): pid is number => pid !== null && openUnder(pid, dir).some((name) => path.basename(name) === 'codegraph.db'),
-  );
-}
 
 /** Whether `candidate` names the directory `dir`, by its path or by its real path. */
 function sameDir(candidate: string | null, dir: string): boolean {
@@ -520,7 +393,7 @@ function readOrNull(file: string): string | null {
   }
 }
 
-describe('uninit with a machine server running (UG1, UG3, RF1-RF4)', () => {
+describe('uninit with a machine server running (UG3, RF1-RF4)', () => {
   const fx = new Fixtures();
   /** The directory every CLI run is started in. */
   let launchDir = '';
@@ -528,8 +401,6 @@ describe('uninit with a machine server running (UG1, UG3, RF1-RF4)', () => {
   let stateDir = '';
   /** The state dir of the in-process twin (UG3): no server runs in it. */
   let stateB = '';
-  /** The project UG1 deletes under the running server. */
-  let U1 = '';
   /** The project UG3 deletes under the running server. */
   let U3r = '';
   /** The project UG3 deletes with no server: the in-process twin of U3r. */
@@ -597,8 +468,8 @@ describe('uninit with a machine server running (UG1, UG3, RF1-RF4)', () => {
     return problems;
   }
 
-  // Setup for UG1 and UG3, not a gate: three small indexes built in-process before any server exists, then a serve --mcp
-  // session whose builder and server are waited on.
+  // Setup for UG3 and the release refusals, not a gate: three small indexes built in-process before any server exists,
+  // then a serve --mcp session whose builder and server are waited on.
   beforeAll(async () => {
     const dir = fx.tempRoot();
     // A session launched outside git answers only for its launch directory and what is below it, so the session starts
@@ -606,10 +477,8 @@ describe('uninit with a machine server running (UG1, UG3, RF1-RF4)', () => {
     launchDir = dir;
     stateDir = path.join(dir, 'state');
     stateB = path.join(dir, 'state-b');
-    U1 = plainProject(path.join(dir, 'u1'), 'ug1Base');
     U3r = plainProject(path.join(dir, 'u3-routed'), 'ug3Routed');
     U3p = plainProject(path.join(dir, 'u3-plain'), 'ug3Routed');
-    fx.index(U1, stateDir);
     fx.index(U3r, stateDir);
     fx.index(U3p, stateB);
     U4 = plainProject(path.join(dir, 'u4-refused'), 'rf4Base');
@@ -633,68 +502,6 @@ describe('uninit with a machine server running (UG1, UG3, RF1-RF4)', () => {
     // A builder whose server is gone exits with its IPC channel; this stops one that did not.
     if (builder !== null) await stopIfCodegraph(builder);
   }, 120_000);
-
-  // UG1: the deletion releases the index in the server and the builder, so neither holds a file under it afterwards.
-  it.runIf(LSOF_AVAILABLE)(
-    'UG1 routed: uninit --force under a running server and builder deletes the index, and neither process holds a file under it',
-    async () => {
-      // Over 5 s at load 45-100: an explore call that opens the index in the server, a poll of lsof until a holder shows,
-      // a CLI uninit, and lsof on the server and the builder.
-      const problems = [...builderProblems, ...serverProblems];
-      const codegraphDir = getCodeGraphDir(U1);
-      const server = serverPidOf(stateDir);
-      const builder = builderPidOf(stateDir);
-      if (session === undefined) {
-        problems.push('no serve --mcp session was started in beforeAll');
-      } else {
-        const answer = await session.tool(EXPLORE, { query: 'ug1Base', projectPath: U1 }, 120_000);
-        if (answer.rpcError !== null) {
-          problems.push(`the explore call on ${U1} answered a JSON-RPC error: ${tail(answer.rpcError)}`);
-        }
-      }
-      // Precondition: the server or the builder holds the index open before the uninit, so the uninit has a held index to release.
-      const held = await waitUntil(() => dbHolders([server, builder], codegraphDir).length > 0, 15_000, LSOF_POLL_MS);
-      if (!held) {
-        problems.push(
-          `precondition: after the explore call, neither the server (pid ${String(server)}) nor the builder ` +
-            `(pid ${String(builder)}) holds ${path.join(codegraphDir, 'codegraph.db')} open`,
-        );
-      }
-
-      const run = await runCli(['uninit', '--force', U1], stateDir, launchDir);
-      problems.push(...exitProblems('codegraph uninit --force', run));
-      const out = normalise(run.stdout, U1).trim();
-      if (!successLine('Removed CodeGraph from <ROOT>').test(out)) {
-        problems.push(`stdout is not the success line for the uninit: ${JSON.stringify(tail(out))}`);
-      }
-      if (fs.existsSync(codegraphDir)) problems.push(`${codegraphDir} still exists after the uninit`);
-
-      for (const [label, pid] of [
-        ['server', server],
-        ['builder', builder],
-      ] as const) {
-        if (pid === null) {
-          problems.push(`no ${label} pid on record in ${stateDir}, so its open files cannot be read`);
-          continue;
-        }
-        if (!isAlive(pid)) {
-          problems.push(`the ${label} (pid ${pid}) is not running after the uninit, so its open files cannot be read`);
-          continue;
-        }
-        const open = openUnder(pid, codegraphDir);
-        if (open.length > 0) {
-          problems.push(
-            `the ${label} (pid ${pid}) still holds ${open.length} file(s) under ${codegraphDir} after the uninit: ${open.join(', ')}`,
-          );
-        }
-      }
-      expect(
-        problems,
-        'UG1 problems (empty when uninit --force exits 0 with the success line, removes .codegraph, and neither the server nor the builder holds a file under it)',
-      ).toEqual([]);
-    },
-    300_000,
-  );
 
   // UG3: the same index deleted under the server and with no server prints the same output and exits the same way.
   it('UG3 output: an uninit under the running server prints what the in-process uninit prints, with the same exit status', async () => {
