@@ -1,6 +1,7 @@
 /**
- * Fresh answers, CLI surface: standalone waits settle before closing their writer;
- * a routed sync with a zero settle cap can finish on the builder after the CLI exits.
+ * Fresh answers, CLI surface: a standalone `checkpoint --fresh --json` waits for its sync to
+ * settle before closing its writer (G3). G1 (`query --fresh`) and G2 (routed, settle cap 0) are in
+ * fresh-answers.cli-inflight.validation.test.ts.
  *
  * When standalone `--fresh` passes its bound with a sync in flight, the CLI prints the
  * answer, the not-fresh checkpoint and a `Note:` line at once, then waits
@@ -36,7 +37,6 @@ import { Fixtures, builderLogLines, waitUntil } from './machine-server.harness';
 const { DatabaseSync } = createRequire(__filename)('node:sqlite') as typeof import('node:sqlite');
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
-const CHECKPOINT_PREFIX = 'codegraph-checkpoint ';
 /** Enough changed files that one sync takes seconds, so a bound can land well inside it. */
 const FILE_COUNT = 400;
 /** Three lines per function: about 60 lines per file. */
@@ -53,7 +53,7 @@ const CUT_ATTEMPTS = 5;
 const ORDER_GAP_MS = 100;
 /** A child still running after this is killed; the run then fails on its signal. */
 const CHILD_TIMEOUT_MS = 180_000;
-/** A hang bound for the builder to finish G2's FILE_COUNT-file sync after the first CLI has exited. */
+/** A hang bound for the builder to finish a CLI's FILE_COUNT-file sync after that CLI has exited. */
 const SYNC_END_WAIT_MS = 600_000;
 
 function git(cwd: string, args: string[]): string {
@@ -130,22 +130,6 @@ function runCli(args: string[], extra: Record<string, string> = {}): Promise<Cli
       resolve({ status, signal, stdout, stdoutAt, stderr, exitAt });
     });
   });
-}
-
-/** The `codegraph-checkpoint {...}` stderr lines. */
-function checkpointLines(run: CliRun): TimedLine[] {
-  return run.stderr.filter(l => l.text.startsWith(CHECKPOINT_PREFIX));
-}
-
-/** The query surface's checkpoint: its single stderr line, parsed; undefined unless there is exactly one. */
-function stderrCheckpoint(run: CliRun): Record<string, unknown> | undefined {
-  const lines = checkpointLines(run);
-  if (lines.length !== 1) return undefined;
-  try {
-    return JSON.parse(lines[0].text.slice(CHECKPOINT_PREFIX.length));
-  } catch {
-    return undefined;
-  }
 }
 
 /** The checkpoint command's checkpoint: its stdout JSON; undefined when stdout is not JSON. */
@@ -321,7 +305,7 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
       } else {
         return { run, cp, attempts, calibration: calibration!, syncLogBaseline };
       }
-      // A routed zero-settle calibration miss can leave its job alive. Finish it before the next calibration edit.
+      // A missed try whose CLI exited with "still running" (a routed run with no settle wait) can leave its job alive. Finish it before the next calibration edit.
       if (run.stderr.some((line) => /still running/i.test(line.text))) await waitForSyncEnd(stateDir, dir, syncLogBaseline);
     }
     throw new Error(`no attempt cut a running sync with at least ${FILE_COUNT * CUT_MIN_LEFT} files left. ` +
@@ -349,72 +333,6 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect(notes[0]?.at ?? Infinity, `Note at least ${ORDER_GAP_MS} ms before exit; ${times}`)
       .toBeLessThanOrEqual(run.exitAt - ORDER_GAP_MS);
   }
-
-  // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, the accepted one waiting out
-  // the sync, then a second CLI run, on a loaded machine.
-  it('G1 query --fresh that times out prints first, then lets its sync finish: a plain checkpoint after it is fresh and the index is intact', async () => {
-    const cut = await cutRun(['query', 'freshlyAdded0', '-p', dir, '--fresh', '--json'], {}, stderrCheckpoint);
-    const r = cut.run;
-    const cpLine = checkpointLines(r)[0];
-    expect(r.signal).toBeNull();
-    expect(cut.cp.fresh).toBe(false);
-    expectPrintedBeforeSettle(r, cpLine.at, cut);
-    expect(r.status).toBe(3);
-    expect(Array.isArray(JSON.parse(r.stdout))).toBe(true);
-    // Soft, so a run that fails here still reports the post-run state below.
-    expect.soft(r.stderr.map(l => l.text).filter(l => !l.startsWith(CHECKPOINT_PREFIX) && !l.startsWith('Note:')))
-      .toEqual([]);
-
-    const after = await runCli(['checkpoint', dir, '--json']);
-    const cp2 = stdoutCheckpoint(after);
-    expect(cp2?.pending, `plain checkpoint after; attempts used ${cut.attempts.length}`).toBe(0);
-    expect(after.status).toBe(0);
-    expect(integrityCheck(dir)).toBe('ok');
-  }, 600_000);
-
-  // Over 5 s: a server and builder start, up to CUT_ATTEMPTS CLI runs over FILE_COUNT-file edits,
-  // and a bounded condition wait for the accepted run's builder sync to finish before the next checkpoint.
-  //
-  // No ordering-against-exit assertion here: with a settle cap of 0 the CLI does not wait for the
-  // sync to settle after output, and whether the parent sees that output or the exit first is a race.
-  it('G2 query --fresh with a settle cap of 0 says the sync is still running; the next --fresh checkpoint catches up and the index is intact', async () => {
-    // Only a routed sync outlives its CLI and logs job end. The other gates exercise the standalone writer.
-    // Prove readiness on a different indexed root: holding dir would start a watcher that could sync calibration edits.
-    const probe = fx.makeRepo(path.join(stateDir, 'ready-probe'), { 'probe.ts': 'export function readyProbe() {}\n' });
-    fx.index(probe, stateDir);
-    const session = fx.session({ cwd: probe, stateDir, env: {
-      CODEGRAPH_PROJECT_IDLE_TIMEOUT_MS: '0',
-      CODEGRAPH_QUERY_WORKER_IDLE_TIMEOUT_MS: '0',
-      CODEGRAPH_BUILDER_ENSURE_WAIT_MS: '90000',
-    } });
-    await session.initialize();
-    await session.tool('codegraph_search', { query: 'readyProbe', projectPath: probe }, 180_000);
-    expect(await waitUntil(() => builderLogLines(stateDir).some((line) => line.endsWith(` job end catch-up ${probe} ok`)),
-      180_000, 100), 'G2 setup: the isolated builder finished the readiness probe catch-up').toBe(true);
-
-    const cut = await cutRun(['query', 'freshlyAdded0', '-p', dir, '--fresh', '--json'],
-      { CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0' }, stderrCheckpoint);
-    const r = cut.run;
-    expect(r.signal).toBeNull();
-    expect(cut.cp.fresh).toBe(false);
-    expect(r.status).toBe(3);
-    expect(Array.isArray(JSON.parse(r.stdout))).toBe(true);
-    // Soft, so a run that fails here still reports the post-run state below.
-    const lines = r.stderr.map(l => l.text);
-    expect.soft(lines.filter(l => /still running/i.test(l)), `attempts used ${cut.attempts.length}`).toHaveLength(1);
-    expect.soft(lines.filter(l => !l.startsWith(CHECKPOINT_PREFIX) && !l.startsWith('Note:') && !/still running/i.test(l)))
-      .toEqual([]);
-
-    await waitForSyncEnd(stateDir, dir, cut.syncLogBaseline);
-    const after = await runCli(['checkpoint', dir, '--fresh', '--json'], {
-      CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS: '0',
-    });
-    const cp2 = stdoutCheckpoint(after);
-    expect(cp2?.pending, `--fresh checkpoint after the first CLI's sync finished; timedOut ${String(cp2?.timedOut)}; ` +
-      `attempts used ${cut.attempts.length}`).toBe(0);
-    expect(after.status).toBe(0);
-    expect(integrityCheck(dir)).toBe('ok');
-  }, 600_000 + CHILD_TIMEOUT_MS);
 
   // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, the accepted one waiting out
   // the sync, then a second CLI run, on a loaded machine.
