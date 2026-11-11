@@ -20,8 +20,10 @@
  * One fixture project is indexed once in beforeAll and shared, read-only.
  * This file holds the spawned-process half of grep-extension.test.ts.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -154,7 +156,7 @@ describe('queries extension, built binary (dist discovery)', () => {
 /** The child's stderr, collected so a failed request can say which stage the child stopped at. */
 const childStderr = new WeakMap<ChildProcessWithoutNullStreams, { text: string }>();
 
-/** Start collecting `child`'s stderr; `request` quotes its tail on a timeout or an early exit. */
+/** Start collecting `child`'s stderr; `request` quotes its tail when the child exits without answering. */
 function captureStderr(child: ChildProcessWithoutNullStreams): void {
   const box = { text: '' };
   childStderr.set(child, box);
@@ -165,25 +167,20 @@ const stderrTail = (child: ChildProcessWithoutNullStreams) => (childStderr.get(c
 
 /**
  * Send a JSON-RPC request and resolve with the response matching its id.
- * Rejects on timeout, or as soon as the child exits without answering, with
- * the exit code/signal and the tail of its stderr.
+ * It has no clock of its own: it waits for the answer, and rejects as soon as
+ * the child exits without answering, with the exit code/signal and the tail of
+ * its stderr. The calling test's vitest timeout is the only bound.
  */
 function request(
   child: ChildProcessWithoutNullStreams,
   msg: { id: number; method: string; params?: unknown },
-  timeoutMs = 15000,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let buf = '';
     const cleanup = () => {
-      clearTimeout(timer);
       child.stdout.off('data', onData);
       child.off('exit', onExit);
     };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`timeout waiting for response id=${msg.id} (${msg.method}); stderr tail:\n${stderrTail(child)}`));
-    }, timeoutMs);
     const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
       cleanup();
       reject(new Error(`child exited (code ${code}, signal ${signal}) before answering id=${msg.id} (${msg.method}); stderr tail:\n${stderrTail(child)}`));
@@ -207,7 +204,7 @@ function request(
         }
       }
     };
-    // Every listener and the timer are declared above, so cleanup() is safe to call from here on.
+    // Every listener is declared above, so cleanup() is safe to call from here on.
     if (child.exitCode !== null || child.signalCode !== null) {
       onExit(child.exitCode, child.signalCode);
       return;
@@ -239,6 +236,35 @@ describe('request() against a child that has already exited', () => {
   });
 });
 
+describe('request() against a slow child', () => {
+  it('waits past a fixed clock and resolves with the matching response', async () => {
+    vi.useFakeTimers();
+    try {
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null,
+        signalCode: null,
+      }) as ChildProcessWithoutNullStreams;
+      let state = 'pending';
+      const response = request(child, { id: 7, method: 'tools/call' });
+      response.then(
+        () => { state = 'resolved'; },
+        () => { state = 'rejected'; },
+      );
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(state).toBe('pending');
+
+      child.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 7, result: { ok: true } }) + '\n');
+      await expect(response).resolves.toMatchObject({ id: 7, result: { ok: true } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('queries extension, built binary MCP session', () => {
   let child: ChildProcessWithoutNullStreams | null = null;
 
@@ -255,9 +281,11 @@ describe('queries extension, built binary MCP session', () => {
     }
   });
 
-  // Over 5 s by design: this spawns the built binary, whose cold start alone
-  // measured 7.78 s wall (0.45 s CPU) at load 60-100. Three requests at
-  // request()'s 15 s each, plus slack, is 60 s.
+  // The bound is generous on purpose: this spawns the built binary, whose cold
+  // start alone measured 7.78 s wall (0.45 s CPU) at load 60-100. Each request()
+  // waits for the answer or the child's exit, so this 600 s is the only time
+  // limit on the test's outcome (afterEach's 3 s kill wait is cleanup), set so
+  // a slow but working child under heavy load does not lose a race.
   it('allowlisted as grep, codegraph_grep is listed and a tools/call answers', async () => {
     child = spawn(process.execPath, [BIN, 'serve', '--mcp'], {
       cwd: root,
@@ -290,5 +318,5 @@ describe('queries extension, built binary MCP session', () => {
     const result = res.result as { content: Array<{ text: string }>; isError?: boolean };
     expect(result.isError).toBeFalsy();
     expect(result.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN')));
-  }, 60_000);
+  }, 600_000);
 });
