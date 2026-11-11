@@ -36,6 +36,7 @@ import CodeGraph from '../../../index';
 import { canonicalProjectRoot, isInitialized } from '../../../directory';
 import { FileWatcher, LockUnavailableError, type WatchOptions } from '../../../sync/watcher';
 import { watchDisabledReason } from '../../../sync/watch-policy';
+import { DEFAULT_DELIVERY_PROBE_MAX_MS, deliveryProbeGate } from '../sync/delivery-probe';
 import { markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import type { BuilderFreshness } from './client';
 import type { RebuildFences } from './fences';
@@ -354,10 +355,10 @@ export class HolderSet {
     }
     const readiness = this.startWatcher(hold);
     if (!readiness) {
-      if (!hold.closed) hold.caughtUp = this.queueCatchUp(hold, 0);
+      hold.caughtUp = this.queueCatchUp(hold, 0);
       return;
     }
-    hold.caughtUp = Promise.race([readiness, hold.released]).then(() => {
+    hold.caughtUp = readiness.then(() => {
       if (hold.closed) return undefined;
       return this.queueCatchUp(hold, 0);
     });
@@ -451,7 +452,7 @@ export class HolderSet {
       },
       {
         ...options,
-        deliveryProbe: true,
+        readinessGate: deliveryProbeGate(),
         onDegraded: (reason) => {
           options.onDegraded?.(reason);
           this.pushIfChanged(hold);
@@ -471,7 +472,7 @@ export class HolderSet {
     // the probe never settles its waiter. This hold's own bound, a margin above the probe's, queues the
     // catch-up anyway; it is cleared when readiness or release comes first, so no timer outlives the hold.
     const watcher = hold.watcher;
-    const boundMs = Math.max(10_000, (options.deliveryProbeMaxMs ?? 5000) + 1000);
+    const boundMs = Math.max(10_000, DEFAULT_DELIVERY_PROBE_MAX_MS + 1000);
     return new Promise<void>((resolve) => {
       const done = (): void => {
         clearTimeout(bound);
