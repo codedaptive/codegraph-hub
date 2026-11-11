@@ -92,8 +92,8 @@ describe('macOS watcher delivery readiness', () => {
   it.runIf(process.platform === 'darwin')('indexes an unreported edit made before stream delivery during the first catch-up', async () => {
     const { held, queue } = await setupHolder();
     expect(await held.hold(root)).toEqual({ kind: 'held', root });
-    // At base, queue idle means catch-up has scanned before the unreported write. With delivery-gated
-    // catch-up, only open has run; the probe event queues the scan after the write.
+    // Wait for queued work to finish while the probe holds catch-up back. The probe event then
+    // queues the scan after the unreported write.
     await queue.whenIdle();
     fs.writeFileSync(path.join(root, 'src/gap.ts'), 'export const gap = 1;\n');
     const dataDir = codeGraphDirNameFor(root);

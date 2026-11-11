@@ -1,3 +1,7 @@
+/**
+ * macOS watcher delivery probe for the host's catch-up readiness gate.
+ * It lives in the host extension so the upstream watcher remains policy-neutral.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
@@ -29,8 +33,8 @@ class DeliveryProbe implements ReadinessGate {
    * FSEvents starts with since-now semantics on a separate thread. Repeated
    * descriptor-only touches every 50ms give the stream opportunities to show
    * delivery without following a replaced probe path. Creation failure or the
-   * timeout narrows the startup gap but does not prove delivery; touch failures
-   * retry until the timeout.
+   * timeout confirms the gate without proving delivery; touch failures retry
+   * until the timeout.
    */
   start(confirm: () => void): void {
     this.onConfirm = confirm;

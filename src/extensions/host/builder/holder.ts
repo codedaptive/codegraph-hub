@@ -190,7 +190,7 @@ export class HolderSet {
    * Hold `root`, which has a complete index: queue an `open` job that takes `writer.pid` and opens the
    * database writable (the open can run migrations, heal an interrupted bulk load and do WAL maintenance, so
    * it is a job like every write), then recover what an interrupted bulk load dropped (a `recover` job, waited
-   * for at most `recoverWaitMs`), start the watcher and arrange the catch-up after delivery readiness. Answers:
+   * for at most `recoverWaitMs`), start the watcher and arrange catch-up after readiness or the holder's bound. Answers:
    *   - `held` when the catch-up has been arranged, and also for a root another live process owns
    *     (nothing was opened here; the retry takes over when that process exits). Only a `held` whose open job
    *     ran means the migrations ran;
@@ -327,7 +327,7 @@ export class HolderSet {
     return hold.cg;
   }
 
-  /** Open (a job), recover, watch, arrange the catch-up after delivery readiness. Throws when opening fails. */
+  /** Open (a job), recover, watch, arrange catch-up after readiness or the holder's bound. Throws when opening fails. */
   private async open(hold: Hold): Promise<void> {
     if (!isInitialized(hold.root)) throw new Error(`${hold.root} has no index`);
     await this.activate(hold);
