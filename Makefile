@@ -22,9 +22,9 @@ GROUP ?= unit
 override CODEGRAPH_TEST_GROUP = $(GROUP)
 export CODEGRAPH_TEST_GROUP
 
-# zone.mk's zone-test-one key includes DIR, SWIFT_TEST_ARGS and CARGO_TEST_ARGS, not TEST or GROUP.
-# A TEST filter or non-unit GROUP could be recorded under the unfiltered unit key and replayed later.
-# Both are also refused for zone-test, whose record likewise does not distinguish TEST or GROUP.
+# zone.mk's zone-test-one key includes DIR, SWIFT_TEST_ARGS, CARGO_TEST_ARGS and a non-unit GROUP
+# (ZONE_TEST_GROUP_KEY), not TEST: a TEST filter could be recorded under the unfiltered key and replayed
+# later, so it is refused. zone-test's record distinguishes neither, so it refuses both TEST and a non-unit GROUP.
 # The same holds for the extraction-path switches: CODEGRAPH_KERNEL=0 sends every file to the TypeScript (wasm)
 # extractors instead of the Rust kernel, and CODEGRAPH_KERNEL_<PASS>=0 turns one kernel pass off. A record taken
 # on one path would replay as if it covered the other, so any non-empty CODEGRAPH_KERNEL* (command line or
@@ -33,8 +33,10 @@ ifneq ($(filter zone-test-one zone-test,$(MAKECMDGOALS)),)
 ifneq ($(TEST),)
 $(error TEST is not part of zone-test-one's record key; run `make test-one DIR=... TEST=...` for a filtered, unrecorded run)
 endif
+ifneq ($(filter zone-test,$(MAKECMDGOALS)),)
 ifneq ($(GROUP),unit)
-$(error GROUP is not part of zone-test-one's record key; run `make test-one DIR=... GROUP=...` for an unrecorded run of another group)
+$(error GROUP is not part of zone-test's record key; run `make zone-test-one DIR=... GROUP=...` for a recorded run of another group)
+endif
 endif
 KERNEL_SET := $(strip $(foreach v,$(filter CODEGRAPH_KERNEL%,$(.VARIABLES)),$(if $(strip $($(v))),$(v))))
 ifneq ($(KERNEL_SET),)
@@ -54,10 +56,15 @@ endif
 
 need_node_modules = @test -d node_modules || { echo "$@: no node_modules in this worktree; run npm ci once" >&2; exit 2; }
 
+# A folder can hold no tests of a group (S-65 moved real-SQLite tests to integration; a zone may have no
+# integration tests yet), and the landing check runs each zone folder in the unit and integration groups;
+# --passWithNoTests so an empty selection passes in every group. A DIR that does not exist (a mistyped path, a
+# folder renamed away from its OWNS entry) is refused first, so it never passes as an empty selection.
 test-one:
 	@test -n "$$DIR" || { echo "test-one: set DIR (a test file or folder, e.g. __tests__/extensions/host)" >&2; exit 2; }
+	@test -e "$$DIR" || { echo "test-one: DIR $$DIR does not exist" >&2; exit 2; }
 	$(need_node_modules)
-	$(NPX) vitest run "$$DIR" $(if $(TEST),-t "$$TEST")
+	$(NPX) vitest run "$$DIR" $(if $(TEST),-t "$$TEST") --passWithNoTests
 
 typecheck:
 	$(need_node_modules)
