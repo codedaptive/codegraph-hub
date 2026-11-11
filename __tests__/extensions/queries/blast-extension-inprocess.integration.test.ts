@@ -10,7 +10,7 @@
  * The fixture's git commands build repositories for the in-process tests.
  * No codegraph process is spawned by these tests.
  *
- * The main fixture is a cut-down blast.test.ts repo A (util.ts and a.ts only):
+ * The main fixture is a cut-down blast.integration.test.ts repo A (util.ts and a.ts only):
  * C1 (tagged), then C2 edits the body of `helper`, which `useA` calls. A second
  * fixture is a parent repo whose `.gitignore` leaves out `vendor/`, holding
  * `vendor/child`, an independent git repository with its own commit and no

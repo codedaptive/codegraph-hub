@@ -13,7 +13,7 @@
  *   finds the new name.
  *   A failed patch pass is a vi.mock of the zone's git runner that wraps the real
  *   one and fails only the `--unified=0` call while `gitFault.failPatch` is on, as
- *   blast-review-fixes-diff.test.ts does.
+ *   blast-review-fixes-diff.integration.test.ts does.
  *
  * R1-21 consumption: `changedFiles` now diffs the merge base against the working
  *   tree, so an uncommitted edit under a synced index is part of the diff and its

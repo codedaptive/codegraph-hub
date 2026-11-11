@@ -3,7 +3,7 @@
  * `src/extensions/queries/extension.ts` contributes the `orphans` CLI command
  * and the `codegraph_orphans` MCP tool (./orphans/extension).
  *
- * In-process (src), as blast-extension.test.ts: the zone's default export
+ * In-process (src), as blast-extension-inprocess.integration.test.ts: the zone's default export
  * registered with `registerExtension`, then listed and executed through
  * `ToolHandler`.
  * Spawned-process tests are in orphans-extension.integration.test.ts.
