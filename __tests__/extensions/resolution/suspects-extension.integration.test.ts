@@ -10,7 +10,7 @@
  *     hook's discovery under dist/extensions/, with CODEGRAPH_EXTENSION_MODULES
  *     removed from the child's env so nothing else can supply it.
  *
- * The fixture is suspects.test.ts's Rust std-collision project: `run` calls
+ * The fixture is suspects.integration.test.ts's Rust std-collision project: `run` calls
  * `push` and `clear` on a value the resolver binds to the project's `Stack`, so
  * the index yields two suspect targets with one call edge each. It is indexed
  * once in beforeAll; a second temp dir with no index serves the not-indexed cases.
