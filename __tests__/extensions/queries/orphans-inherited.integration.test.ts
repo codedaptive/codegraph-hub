@@ -860,7 +860,7 @@ describe('O-06 probe: is an interface or abstract member an indexed node held by
 
 // =====================================================================================
 // Review round 1: the change reviewer's FAIL on the orphans-core diff, one describe per
-// finding (R1-1 to R1-7 here; R1-8 is in orphans-inherited-run.integration.test.ts). Each describe builds
+// finding (R1-1 to R1-7 here). Each describe builds
 // its own fixture in beforeAll. A case named "control" or "pin" passes both before and after the
 // round-1 rework (9cecf610; its parent a6c997c0 is the code before it) and must keep passing.
 // Every other case was red before the rework, at an assertion, and passes now. R1-3 is a pin
