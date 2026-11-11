@@ -17,10 +17,15 @@
  * dist/index.js, anything under dist/db/, dist/resolution/ or
  * dist/extraction/, or any tree-sitter module.
  *
+ * Built-binary CLI tests run `--help` and `grep` (grouped, --json, an invalid
+ * regex) against the fixture. One test checks that request() rejects at once
+ * against a child that has already exited. The built-binary `serve --mcp`
+ * session test is in grep-extension.validation.test.ts.
+ *
  * One fixture project is indexed once in beforeAll and shared, read-only.
  * This file holds the spawned-process half of grep-extension.test.ts.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -237,58 +242,4 @@ describe('request() against a child that has already exited', () => {
     expect(err.message).toContain('initialize');
     expect(err.message).toContain('boom');
   });
-});
-
-describe('queries extension, built binary MCP session', () => {
-  let child: ChildProcessWithoutNullStreams | null = null;
-
-  beforeAll(() => {
-    if (!fs.existsSync(DIST_EXTENSION)) throw new Error(`${DIST_EXTENSION} is missing: build dist with \`npx tsc -p .\` first`);
-  });
-
-  afterEach(async () => {
-    if (child) {
-      const exited = new Promise<void>((resolve) => child!.once('exit', () => resolve()));
-      child.kill('SIGKILL');
-      await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))]);
-      child = null;
-    }
-  });
-
-  // Over 5 s by design: this spawns the built binary, whose cold start alone
-  // measured 7.78 s wall (0.45 s CPU) at load 60-100. Three requests at
-  // request()'s 15 s each, plus slack, is 60 s.
-  it('allowlisted as grep, codegraph_grep is listed and a tools/call answers', async () => {
-    child = spawn(process.execPath, [BIN, 'serve', '--mcp'], {
-      cwd: root,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: childEnv({ CODEGRAPH_MCP_TOOLS: 'explore,grep' }),
-    }) as ChildProcessWithoutNullStreams;
-    captureStderr(child);
-
-    await request(child, {
-      id: 0,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-11-25',
-        capabilities: {},
-        clientInfo: { name: 'test', version: '0.0.0' },
-        rootUri: `file://${root}`,
-      },
-    });
-
-    const listed = await request(child, { id: 1, method: 'tools/list' });
-    const toolNames = (listed.result as { tools: Array<{ name: string }> }).tools.map(t => t.name);
-    expect(toolNames).toContain('codegraph_grep');
-
-    const res = await request(child, {
-      id: 2,
-      method: 'tools/call',
-      params: { name: 'codegraph_grep', arguments: { pattern: 'TOKEN', projectPath: root } },
-    });
-    expect(res.error).toBeUndefined();
-    const result = res.result as { content: Array<{ text: string }>; isError?: boolean };
-    expect(result.isError).toBeFalsy();
-    expect(result.content[0]!.text).toBe(formatGrepResult(await grepIndex(root, 'TOKEN')));
-  }, 60_000);
 });
