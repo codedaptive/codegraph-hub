@@ -145,7 +145,7 @@ const failedNamed = (ix: IndexRows, tail: string): UnresolvedRow[] =>
 /**
  * The text-mention search these cases use: grep-by-symbol's grepIndex over the indexed files, its
  * kept hits flattened. runOrphans wires searchIndexText instead, which keeps the same hits (the
- * O-11 cases in orphans-inherited-run.test.ts pin that).
+ * O-11 cases in orphans-inherited-run.integration.test.ts pin that).
  */
 function ioFor(root: string): OrphansIO {
   return {
@@ -860,7 +860,7 @@ describe('O-06 probe: is an interface or abstract member an indexed node held by
 
 // =====================================================================================
 // Review round 1: the change reviewer's FAIL on the orphans-core diff, one describe per
-// finding (R1-1 to R1-7 here; R1-8 is in orphans-inherited-run.test.ts). Each describe builds
+// finding (R1-1 to R1-7 here; R1-8 is in orphans-inherited-run.integration.test.ts). Each describe builds
 // its own fixture in beforeAll. A case named "control" or "pin" passes both before and after the
 // round-1 rework (9cecf610; its parent a6c997c0 is the code before it) and must keep passing.
 // Every other case was red before the rework, at an assertion, and passes now. R1-3 is a pin
