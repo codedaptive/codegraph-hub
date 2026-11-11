@@ -23,7 +23,8 @@
  * session test is in grep-extension.validation.test.ts.
  *
  * One fixture project is indexed once in beforeAll and shared, read-only.
- * This file holds the spawned-process half of grep-extension.test.ts.
+ * This file holds the spawned-process half; the in-process half is
+ * grep-extension-inprocess.integration.test.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
