@@ -215,9 +215,15 @@ export interface WatchOptions {
   debounceMs?: number;
 
   /**
-   * Maximum wait for a macOS recursive watch delivery probe. Default: 5000ms,
-   * below waitUntilReady's 10000ms default. At the bound readiness is best
-   * effort: delivery remains unproven, so startup can continue.
+   * Opt in to a macOS recursive watch delivery probe before readiness.
+   * Default: false (ready once the watch set is installed).
+   */
+  deliveryProbe?: boolean;
+
+  /**
+   * Maximum wait for the opt-in macOS recursive watch delivery probe.
+   * Default: 5000ms, below waitUntilReady's 10000ms default. At the bound
+   * readiness is best effort: delivery remains unproven, so startup can continue.
    */
   deliveryProbeMaxMs?: number;
 
@@ -357,11 +363,11 @@ export class FileWatcher {
   private syncing = false;
   private stopped = false;
   /**
-   * True once start() installs the watch set. This does not imply delivery:
-   * macOS starts its FSEvents stream asynchronously after fs.watch returns.
+   * True once start() installs the watch set. Readiness waits beyond installation
+   * only with the opt-in probe: macOS starts FSEvents asynchronously after fs.watch.
    */
   private ready = false;
-  /** Callbacks waiting for installation and probe confirmation or best-effort fallback; each has its own timeout. */
+  /** Callbacks waiting for installation and, if opted in, probe delivery or best-effort fallback. */
   private readyWaiters: Array<() => void> = [];
   private deliveryConfirmed = false;
   private deliveryProbe: { path: string; relativePath: string; fd: number } | null = null;
@@ -380,6 +386,7 @@ export class FileWatcher {
 
   private readonly projectRoot: string;
   private readonly debounceMs: number;
+  private readonly deliveryProbeEnabled: boolean;
   private readonly deliveryProbeMaxMs: number;
   private readonly syncFn: (paths?: string[]) => Promise<{ filesChanged: number; durationMs: number }>;
   private readonly onSyncComplete?: WatchOptions['onSyncComplete'];
@@ -403,6 +410,7 @@ export class FileWatcher {
     this.projectRoot = projectRoot;
     this.syncFn = syncFn;
     this.debounceMs = options.debounceMs ?? 2000;
+    this.deliveryProbeEnabled = options.deliveryProbe ?? false;
     this.deliveryProbeMaxMs = options.deliveryProbeMaxMs ?? 5000;
     this.onSyncComplete = options.onSyncComplete;
     this.onSyncError = options.onSyncError;
@@ -515,14 +523,14 @@ export class FileWatcher {
   }
 
   /**
-   * FSEvents starts with since-now semantics on a separate thread. Repeated
-   * descriptor-only touches every 50ms give the stream opportunities to show
-   * delivery without following a replaced probe path. Creation failure or the
-   * timeout lets startup proceed with delivery unproven; touch failures retry
-   * until the timeout.
+   * The opt-in probe accounts for FSEvents starting with since-now semantics on
+   * a separate thread. Repeated descriptor-only touches every 50ms give the stream
+   * opportunities to show delivery without following a replaced probe path.
+   * Creation failure or the timeout lets startup proceed with delivery unproven;
+   * touch failures retry until the timeout.
    */
   private startDeliveryProbe(): void {
-    if (process.platform !== 'darwin' || !supportsRecursiveWatch() || this.inertForTests) {
+    if (!this.deliveryProbeEnabled || process.platform !== 'darwin' || !supportsRecursiveWatch() || this.inertForTests) {
       this.confirmDelivery();
       return;
     }
@@ -1117,16 +1125,17 @@ export class FileWatcher {
   }
 
   /**
-   * Resolves after installation and a probe event or best-effort fallback.
-   * On macOS, waiting before a catch-up scan narrows the scan-to-stream gap,
-   * but the fallback does not prove delivery. Source events received during
-   * the wait can still be queued for sync. Stop does not settle a waiter; a
-   * later start can resolve it, or its own timeout rejects (default 10000ms).
+   * Resolves after installation and, if opted in, a probe event or best-effort
+   * fallback. On macOS, waiting before a catch-up scan narrows the scan-to-stream
+   * gap, but the fallback does not prove delivery. Source events received during
+   * the wait can still be queued for sync. Stop does not settle a waiter; a later
+   * start can resolve it, or its own timeout rejects (default 10000ms). Pass null
+   * to omit the timeout when the caller owns the wait's lifetime.
    */
-  waitUntilReady(timeoutMs = 10000): Promise<void> {
+  waitUntilReady(timeoutMs: number | null = 10000): Promise<void> {
     if (this.ready && this.deliveryConfirmed) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => {
+      const t = timeoutMs === null ? undefined : setTimeout(() => {
         const idx = this.readyWaiters.indexOf(handler);
         if (idx >= 0) this.readyWaiters.splice(idx, 1);
         reject(new Error(`FileWatcher.waitUntilReady timed out after ${timeoutMs}ms`));

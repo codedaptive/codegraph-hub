@@ -451,6 +451,7 @@ export class HolderSet {
       },
       {
         ...options,
+        deliveryProbe: true,
         onDegraded: (reason) => {
           options.onDegraded?.(reason);
           this.pushIfChanged(hold);
@@ -466,10 +467,20 @@ export class HolderSet {
       return null;
     }
     this.deps.log(`File watcher active for ${hold.root} — graph will auto-sync on changes`);
-    // Leave a margin above the probe bound, including a configured one, so the
-    // watcher's best-effort fallback normally wins before this outer timeout.
-    return hold.watcher.waitUntilReady(Math.max(10_000, (options.deliveryProbeMaxMs ?? 5000) + 1000))
-      .catch(() => undefined);
+    // The probe bounds readiness only while the watcher runs: a watcher that degrades (and so stops) during
+    // the probe never settles its waiter. This hold's own bound, a margin above the probe's, queues the
+    // catch-up anyway; it is cleared when readiness or release comes first, so no timer outlives the hold.
+    const watcher = hold.watcher;
+    const boundMs = Math.max(10_000, (options.deliveryProbeMaxMs ?? 5000) + 1000);
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(bound);
+        resolve();
+      };
+      const bound = setTimeout(done, boundMs);
+      watcher.waitUntilReady(null).then(done, done);
+      void hold.released.then(done);
+    });
   }
 
   /**
