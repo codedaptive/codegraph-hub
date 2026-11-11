@@ -32,6 +32,8 @@ const SPAWN_RECORDER = path.join(REPO, '__tests__/fixtures/record-detached-spawn
  */
 export const MISSING_PROJECT_PATH_TEXT = 'missing argument: root path to the code you wish to query';
 
+export const EXPLORE = 'codegraph_explore';
+
 /**
  * `lsof` counts a server's open databases on POSIX only. Where it is missing
  * the database-count gate is skipped rather than failed.
