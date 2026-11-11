@@ -15,6 +15,7 @@ describe('macOS watcher delivery readiness', () => {
   let base: string;
   let root: string;
   let listener: Listener;
+  let rootStream: fs.FSWatcher;
   let watcher: FileWatcher | undefined;
 
   beforeEach(() => {
@@ -25,8 +26,11 @@ describe('macOS watcher delivery readiness', () => {
     vi.stubEnv('CODEGRAPH_DIR', '.codegraph');
     vi.stubEnv('CODEGRAPH_NO_WATCH', '');
     __setFsWatchForTests(((dir: fs.PathLike, _options: unknown, callback: Listener) => {
-      if (String(dir) === root) listener = callback;
       const stream = new EventEmitter() as fs.FSWatcher;
+      if (String(dir) === root) {
+        listener = callback;
+        rootStream = stream;
+      }
       stream.close = () => undefined;
       return stream;
     }) as unknown as typeof fs.watch);
@@ -102,6 +106,24 @@ describe('macOS watcher delivery readiness', () => {
     expect(w.start()).toBe(true);
     listener('change', probe(path.join(root, codeGraphDirNameFor(root))));
     await waiting;
+  });
+
+  it.runIf(process.platform === 'darwin')('stops the probe gate without settling its waiter when the watcher degrades during the probe', async () => {
+    fs.mkdirSync(path.join(root, codeGraphDirNameFor(root)));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    const timersBeforeStart = vi.getTimerCount();
+    const w = newWatcher({ readinessGate: deliveryProbeGate() });
+    expect(w.start()).toBe(true);
+    const rel = probe(path.join(root, codeGraphDirNameFor(root)));
+    let ready = false;
+    void w.waitUntilReady(null).then(() => { ready = true; });
+
+    rootStream.emit('error', Object.assign(new Error('too many open files'), { code: 'EMFILE' }));
+
+    expect(fs.existsSync(path.join(root, rel))).toBe(false);
+    await tick();
+    expect(ready).toBe(false);
+    expect(vi.getTimerCount()).toBe(timersBeforeStart);
   });
 
   it.runIf(process.platform === 'darwin')('preserves source events pending from installation through probe delivery', async () => {

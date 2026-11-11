@@ -256,7 +256,8 @@ export class HolderSet {
   }
 
   /**
-   * Waits for watcher readiness or the holder's bound, then resolves when the first catch-up has run (ok or
+   * Waits for watcher readiness or the holder's bound (not at all without a watcher: the catch-up is queued at
+   * once), then resolves when the first catch-up has run (ok or
    * failed). Resolves without a catch-up when released before queuing, not held, or nothing was opened. A
    * catch-up that found the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
    * When that catch-up's readiness publication threw (logged) or returned without the record reading ready (not
