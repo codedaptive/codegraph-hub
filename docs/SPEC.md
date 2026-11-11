@@ -141,12 +141,11 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-11-09)
+## 8. Status (2026-11-10)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.13** (ours
-be5ab360, 2026-11-06, S-57); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
-`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38), beside the split-server fix (R-37, S-58); upstream main
-f72c9d2e is already in ours.
+Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.14** (ours
+6a2b6eff, 2026-11-10, R-41); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
+`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38); upstream main f72c9d2e is already in ours.
 
 | Release | What it shipped |
 |---|---|
@@ -159,13 +158,10 @@ f72c9d2e is already in ours.
 | sm.11 (ours ff092584, 2026-11-04) | upstream f72c9d2e merged in; the review fixes from our upstream pull requests carried back (S-52, R-29): locks, sync and readiness (host); `grep` (stale files unattributed), `blast` (per-line seeds, S-51) and `orphans` (queries); `suspects`, Swift and Rust resolution (resolution) |
 | sm.12 (ours 4fdda779, 2026-11-04) | `codegraph upgrade` and the update notice use the hub's releases, never upstream's package; `-sm.N` versions compared by number (R-32); comments and test names without internal citations (S-55); the hub's first release |
 | sm.13 (ours be5ab360, 2026-11-06) | a pinned project with no index is seeded from its nearest sibling; `codegraph project seed <path>` (S-57) |
+| sm.14 (ours 6a2b6eff, 2026-11-10) | a launcher no longer takes over a busy server, and a stopping server removes only its own socket (split-server fix, F-1/F-2, S-58); the R-38 bug list (Swift member and nested-supertype resolution, `grep`/`orphans` tool descriptions, install runbook, seed and upgrade-version fixes); upstream PRs #3249 (impact speed) and #3215 (order-independent resolution) taken early (R-40). Repo work landed with this commit, not in the package: the first test-group moves (D281); the S-65 moves follow |
 
 | Left | State |
 |---|---|
-| A busy server taken over by a newer launcher when its 1 s hello times out (F-1), and an orphan's graceful stop deleting the live server's socket (F-2), seen in the sm.12 install and three times on 2026-11-06 at load ~90; design/Orc-Codegraph/ledger/reports/release-gate-sm12.md, release-gate-sm13.md | host, split-server-fix (R-37, S-58), on integration; ships in sm.14 with everything else landed there (R-41, S-64) |
-| `grep` and `orphans` tool descriptions (Kong K-F4, K-F6) | queries, tool-desc-fixes (R-38) |
-| The bug list (R-38): swift-member-decl-copy, swift-nested-supertypes; install-runbook-sigkill; seed-locked-retry, upgrade-version-validate, hub-release-comments, host-test-flakes | resolution; fleet; host (R-38) |
-| Upstream PRs #3249 (impact reads a node's edges in one unlimited query) and #3215 (resolution lookups no longer answer by who asked first), taken before upstream merges them (R-40) | on integration since 2026-11-09 (c5ddc1b7; fca3b349 and 802cfea9); ships in sm.14 (R-41, S-64) |
 | fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
 | The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
 
