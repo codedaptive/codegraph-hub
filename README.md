@@ -1,4 +1,28 @@
-CodeGraph Hub is a Fork of [CodeGraph](https://github.com/colbymchenry/codegraph) built for running many AI coding agents at once. Every session on your machine shares one server, agents can each query their own checkout, and the index keeps up as parallel work moves.
+<div align="center">
+
+# CodeGraph Hub — Codedaptive
+
+A fork of [colbymchenry/codegraph](https://github.com/colbymchenry/codegraph), optimized for use with
+**[CodeTeam - CE](https://github.com/codedaptive/codeteam-ce)**.
+
+### One code graph server for every agent on your machine.
+
+**One server. Every worktree. The right checkout on every call.**
+
+[![Upstream baseline](https://img.shields.io/badge/upstream-v1.6.2-blue)](https://github.com/colbymchenry/codegraph/tree/v1.6.2)
+[![Platforms](https://img.shields.io/badge/platforms-macOS-blue)](#platforms)
+[![License: MIT](https://img.shields.io/badge/license-MIT-success)](LICENSE)
+
+[Install](#install-and-set-up-an-agent) · [Works with](#works-with) · [How to use it](#how-to-use-it) · [Issues](https://github.com/codedaptive/codegraph-hub/issues)
+
+</div>
+
+CodeTeam - CE is optional: this fork also works with other compatible clients and
+agent workflows.
+
+CodeGraph Hub is a fork of [CodeGraph](https://github.com/colbymchenry/codegraph) built for running many AI coding agents at once. Every session on your machine shares one server, agents can each query their own checkout, and the index keeps up as parallel work moves.
+
+## What it does
 
 - **One shared server.** A single machine-wide server replaces the daemon per project, and idle project indexes close on their own.
 - **The right code on every call.** Each MCP call names its repository or worktree, so parallel agents can stay on their own checkouts.
@@ -14,6 +38,29 @@ CodeGraph Hub is a Fork of [CodeGraph](https://github.com/colbymchenry/codegraph
 For everything else CodeGraph does, see [upstream's README](UPSTREAM-README.md).
 
 The hub tracks colbymchenry/codegraph and keeps its own feature set. It is brought up to date on the 4th of each month, or the next working day when the 4th falls on a weekend. It takes issues through GitHub Issues in this repository; an issue that needs a fix sooner gets one out of cycle.
+
+## Works with
+
+These Codedaptive projects complement the hub on the agent side:
+
+- **[CodeTeam - CE](https://github.com/codedaptive/codeteam-ce)** runs a coordinated
+  team of coding agents. Its agents can share the hub's one server across all of the
+  team's worktrees, with a focus per part of the code and the worktree hook so each
+  agent queries its own checkout.
+- **[MOOTx01 CE](https://github.com/codedaptive/mootx01-ce)** gives agents persistent
+  memory across sessions, models, and machines.
+
+For model access, the three CLIProxy repositories form one stack. Each has a separate
+job and can be updated independently:
+
+| Project | What it does |
+| --- | --- |
+| **[CLIProxyAPI](https://github.com/codedaptive/CLIProxyAPI)** | Serves model APIs, connects provider accounts, and loads native plugins. |
+| **[CLIProxyAPI-QuotaRouter](https://github.com/codedaptive/CLIProxyAPI-QuotaRouter)** | Selects accounts by quota/reset policy, keeps desktop sessions attached, and routes model/effort roles. |
+| **[CLIProxyAPI-MgmtCenterWithForecasting](https://github.com/codedaptive/CLIProxyAPI-MgmtCenterWithForecasting)** | Manages the proxy and adds usage history, spend analysis, quota forecasts, and subscription planning. |
+
+MOOTx01 and the CLIProxy stack connect to the agents through their own integrations;
+they are optional and are not installed by the hub.
 
 ## How to use it
 
