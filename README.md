@@ -1,3 +1,5 @@
+<img src="docs/assets/codegraph-hub-hero.jpg" alt="CodeGraph-Hub: a centralized knowledge graph and repository analysis platform. Intelligence and analysis." width="100%">
+
 <div align="center">
 
 # CodeGraph Hub — Codedaptive
