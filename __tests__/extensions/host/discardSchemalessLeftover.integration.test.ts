@@ -31,24 +31,31 @@ function createSchemaOnlyDb(): void {
 }
 
 describe('discardSchemalessLeftover', () => {
+  it('keeps a schema-only database when no dead holder was observed', () => {
+    createSchemaOnlyDb();
+    const inode = fs.statSync(dbPath).ino;
+    expect(discardSchemalessLeftover(root, false)).toBe(false);
+    expect(fs.statSync(dbPath).ino).toBe(inode);
+  });
+
   it('removes a schema-only database and its SQLite siblings', () => {
     createSchemaOnlyDb();
     const files = ['', '-wal', '-shm', '-journal'].map((suffix) => dbPath + suffix);
     for (const file of files.slice(1)) fs.writeFileSync(file, '');
-    expect(discardSchemalessLeftover(root)).toBe(true);
+    expect(discardSchemalessLeftover(root, true)).toBe(true);
     for (const file of files) expect(fs.existsSync(file)).toBe(false);
   });
 
   it('removes an empty database file', () => {
     fs.writeFileSync(dbPath, '');
-    expect(discardSchemalessLeftover(root)).toBe(true);
+    expect(discardSchemalessLeftover(root, true)).toBe(true);
     expect(fs.existsSync(dbPath)).toBe(false);
   });
 
   it('keeps a database with the full schema', () => {
     CodeGraph.initSync(root).close();
     const inode = fs.statSync(dbPath).ino;
-    expect(discardSchemalessLeftover(root)).toBe(false);
+    expect(discardSchemalessLeftover(root, true)).toBe(false);
     expect(fs.statSync(dbPath).ino).toBe(inode);
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -59,13 +66,13 @@ describe('discardSchemalessLeftover', () => {
   });
 
   it('returns false when there is no database', () => {
-    expect(discardSchemalessLeftover(root)).toBe(false);
+    expect(discardSchemalessLeftover(root, true)).toBe(false);
     expect(fs.existsSync(dbPath)).toBe(false);
   });
 
   it('keeps a non-SQLite file unchanged', () => {
     fs.writeFileSync(dbPath, 'this is not a SQLite database');
-    expect(discardSchemalessLeftover(root)).toBe(false);
+    expect(discardSchemalessLeftover(root, true)).toBe(false);
     expect(fs.readFileSync(dbPath, 'utf8')).toBe('this is not a SQLite database');
   });
 
@@ -76,7 +83,7 @@ describe('discardSchemalessLeftover', () => {
     fs.writeFileSync(path.join(root, '.codegraph', 'writer.pid'), JSON.stringify({ pid: process.ppid, mode: 'builder', startedAt: Date.now(), root }) + '\n');
     expect(readWriterLock(root)?.pid).toBe(process.ppid);
     const inode = fs.statSync(dbPath).ino;
-    expect(discardSchemalessLeftover(root)).toBe(false);
+    expect(discardSchemalessLeftover(root, true)).toBe(false);
     expect(fs.statSync(dbPath).ino).toBe(inode);
   });
 });

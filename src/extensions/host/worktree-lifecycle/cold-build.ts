@@ -49,11 +49,10 @@ import CodeGraph from '../../../index';
 import { getCodeGraphDir, isInitialized, statInode } from '../../../directory';
 import { gitCommonDirAsync } from './git';
 import { registerProject, stampSeedNonce } from './project-registry';
-import { readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
-import { isProcessAlive } from '../../../mcp/server-control';
+import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import { endedJobs } from '../builder/ended-jobs';
 import { coldBuildDatabases } from './cold-build-database';
-import { isDeadHolderRecord } from './isDeadHolderRecord';
+import { deadRebuildHolder } from './deadRebuildHolder';
 import { discardSchemalessLeftover } from './discardSchemalessLeftover';
 
 export const COLD_BUILD_EXIT_BUILT = 0;
@@ -97,7 +96,8 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
 
 /**
  * Build `root`'s index under its `rebuild.pid`. On failure only a database
- * this call created is removed: the one `CodeGraph.init` returned a handle on,
+ * this call created is removed, besides a schema-less leftover discarded
+ * before init (below): the one `CodeGraph.init` returned a handle on,
  * and only while that same file is still the one at the path
  * (`coldBuildDatabases.isOurs`, ./cold-build-database.ts, where this call
  * registers it from init's return until it ends). `rebuild.pid` fences readers, seeders and a
@@ -116,7 +116,7 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
  * best-effort, not returned as LOCKED. A held rebuild.pid returns BUSY.
  *
  * One database this call did not create is removed: when the `rebuild.pid`
- * it took over named a dead holder (./isDeadHolderRecord.ts), a database
+ * it took over named a dead holder (./deadRebuildHolder.ts), a database
  * without the schema is that killed build's leftover and is discarded before
  * init (./discardSchemalessLeftover.ts), unless another live process holds
  * `writer.pid` or the file is not SQLite. With no `rebuild.pid` in place (a
@@ -131,8 +131,7 @@ export async function runColdBuild(root: string): Promise<number> {
     process.stderr.write(`[CodeGraph] Cold build of ${root} refused: it was ended over a job limit (CODEGRAPH_BUILDER_JOB_MAX_MS or CODEGRAPH_BUILDER_JOB_MAX_RSS_MB) and is not retried automatically; run \`codegraph index\` to try again\n`);
     return COLD_BUILD_EXIT_FAILED;
   }
-  const leftover = fs.existsSync(path.join(getCodeGraphDir(root), 'rebuild.pid'))
-    && isDeadHolderRecord(readWriterLock(root, 'rebuild.pid'), process.pid, isProcessAlive);
+  const afterDeadHolder = deadRebuildHolder(root);
   const lock = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
   if (lock.kind === 'taken') return COLD_BUILD_EXIT_BUSY;
   let cg: CodeGraph | null = null;
@@ -147,7 +146,7 @@ export async function runColdBuild(root: string): Promise<number> {
       ok = true;
       return COLD_BUILD_EXIT_BUILT;
     }
-    if (leftover) discardSchemalessLeftover(root);
+    discardSchemalessLeftover(root, afterDeadHolder);
     step = 'init';
     cg = await CodeGraph.init(root, { index: false });
     step = null;

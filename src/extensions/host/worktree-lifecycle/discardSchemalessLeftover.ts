@@ -7,11 +7,12 @@ import { readWriterLock } from '../../../mcp/writer-lock';
 /**
  * Remove the database a killed cold build of `root` left without the schema,
  * so the build that follows can create it again (`CodeGraph.init` cannot run
- * its schema over a half-applied one). The caller holds `root`'s `rebuild.pid`;
- * `runColdBuild` (./cold-build.ts) calls this only after taking that lock over
- * from a dead holder (./isDeadHolderRecord.ts).
+ * its schema over a half-applied one). The caller holds `root`'s `rebuild.pid`
+ * and passes `afterDeadHolder`, its answer from before it took that lock
+ * (./deadRebuildHolder.ts): false returns false at once, reading and removing
+ * nothing, since only a lock taken over from a dead holder implies a killed build.
  *
- * Nothing is removed while `writer.pid` names a live process other than this
+ * With `afterDeadHolder` true, nothing is removed while `writer.pid` names a live process other than this
  * one, or when the database is absent, carries the schema, is not SQLite or
  * cannot be probed. Otherwise `codegraph.db` and its `-wal`, `-shm` and
  * `-journal` files are removed (best-effort, each on its own), one stderr line
@@ -21,7 +22,8 @@ import { readWriterLock } from '../../../mcp/writer-lock';
  * database while a dead holder's `rebuild.pid` is still in place looks the
  * same as the killed build's leftover and is not told apart.
  */
-export function discardSchemalessLeftover(root: string): boolean {
+export function discardSchemalessLeftover(root: string, afterDeadHolder: boolean): boolean {
+  if (!afterDeadHolder) return false;
   const writer = readWriterLock(root);
   if (writer && writer.pid !== process.pid && isProcessAlive(writer.pid)) return false;
   if (!hasSchemalessDb(root)) return false;
