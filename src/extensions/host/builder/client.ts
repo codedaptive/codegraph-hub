@@ -220,7 +220,7 @@ export class BuilderClient {
     }
   }
 
-  /** Resolves when the root's queued catch-up has run (ok or failed); at once when the root is not held. Never rejects. */
+  /** Waits for watcher readiness or its bound (not at all without a watcher), then the first catch-up (ok or failed); resolves without one if released before queuing or not held. Never rejects. */
   async caughtUp(root: string): Promise<void> {
     if (!this.held.has(canonicalProjectRoot(root))) return;
     try {

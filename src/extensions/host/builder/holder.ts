@@ -36,6 +36,7 @@ import CodeGraph from '../../../index';
 import { canonicalProjectRoot, isInitialized } from '../../../directory';
 import { FileWatcher, LockUnavailableError, type WatchOptions } from '../../../sync/watcher';
 import { watchDisabledReason } from '../../../sync/watch-policy';
+import { DEFAULT_DELIVERY_PROBE_MAX_MS, deliveryProbeGate } from '../sync/delivery-probe';
 import { markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import type { BuilderFreshness } from './client';
 import type { RebuildFences } from './fences';
@@ -83,12 +84,17 @@ interface Hold {
   /** This process owns `writer.pid`, so it writes this root. False while another live process does. */
   owner: boolean;
   closed: boolean;
+  /** Settles at the start of teardown so delivery readiness cannot hold up release or queue a late catch-up. */
+  released: Promise<void>;
+  /** Resolve released when the hold closes, before waiting on its open. */
+  release: () => void;
   /** The `open` job is queued and has not started: a release need not wait for it, since it finds the hold closed and opens nothing. */
   openJobPending: boolean;
   opening: Promise<HoldResult>;
   /**
-   * Settles (never rejects) when the first catch-up job has run; at once when none was queued (another process
-   * owns `writer.pid` or a rebuild holds the root, so nothing was opened). A catch-up that found the lock held
+   * Waits for watcher readiness or the holder's bound, then settles (never rejects) when the first catch-up
+   * job has run, or when released before it queues; at once when nothing was opened (another process owns
+   * `writer.pid` or a rebuild holds the root). A catch-up that found the lock held
    * settles at that failure, before the retry it schedules (see queueCatchUp).
    */
   caughtUp: Promise<void>;
@@ -184,8 +190,8 @@ export class HolderSet {
    * Hold `root`, which has a complete index: queue an `open` job that takes `writer.pid` and opens the
    * database writable (the open can run migrations, heal an interrupted bulk load and do WAL maintenance, so
    * it is a job like every write), then recover what an interrupted bulk load dropped (a `recover` job, waited
-   * for at most `recoverWaitMs`), start the watcher and queue the catch-up. Answers:
-   *   - `held` when that is done up to the catch-up's queuing, and also for a root another live process owns
+   * for at most `recoverWaitMs`), start the watcher and arrange catch-up after readiness or the holder's bound. Answers:
+   *   - `held` when the catch-up has been arranged, and also for a root another live process owns
    *     (nothing was opened here; the retry takes over when that process exits). Only a `held` whose open job
    *     ran means the migrations ran;
    *   - `opening` when `openWaitMs` passed first: a running job (a cold build, for minutes) is never
@@ -221,8 +227,11 @@ export class HolderSet {
     if (existing?.closing) return existing.closing.then(() => this.holdNow(rootIn));
     if (existing) return existing.opening;
     if (this.deps.fences.rebuildHeld(root)) return Promise.resolve({ kind: 'rebuilding', root });
+    let release: () => void = () => {};
+    const released = new Promise<void>((resolve) => { release = resolve; });
     const hold: Hold = {
       key, root, cg: null, watcher: null, owner: false, closed: false, openJobPending: false,
+      released, release,
       opening: Promise.resolve({ kind: 'held', root }), caughtUp: Promise.resolve(),
       publishFailed: false, ownTimer: null, closing: null, lastPushed: '',
     };
@@ -247,9 +256,10 @@ export class HolderSet {
   }
 
   /**
-   * Resolves when the root's first catch-up has run (ok or failed); at once when it is not held, or when no
-   * catch-up was queued (another process owns `writer.pid`, or a rebuild holds the root). A catch-up that found
-   * the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
+   * Waits for watcher readiness or the holder's bound (not at all without a watcher: the catch-up is queued at
+   * once), then resolves when the first catch-up has run (ok or
+   * failed). Resolves without a catch-up when released before queuing, not held, or nothing was opened. A
+   * catch-up that found the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
    * When that catch-up's readiness publication threw (logged) or returned without the record reading ready (not
    * logged), this call tries the publication again, so a later call can still make the root ready.
    */
@@ -318,7 +328,7 @@ export class HolderSet {
     return hold.cg;
   }
 
-  /** Open (a job), recover, watch, queue the catch-up. Throws when the index cannot be opened. */
+  /** Open (a job), recover, watch, arrange catch-up after readiness or the holder's bound. Throws when opening fails. */
   private async open(hold: Hold): Promise<void> {
     if (!isInitialized(hold.root)) throw new Error(`${hold.root} has no index`);
     await this.activate(hold);
@@ -327,8 +337,9 @@ export class HolderSet {
   private async activate(hold: Hold): Promise<void> {
     // Taking the slot and opening writable is one job: the open can migrate, heal bulk-load state and start WAL
     // maintenance (not awaited by the job, see openWritable), so it waits for the running job like every write
-    // does. The recovery and the catch-up are jobs of their own (a job cannot wait for another on a queue that
-    // runs one at a time), queued after it.
+    // does. Recovery and catch-up are separate jobs: the queue cannot wait on itself. Catch-up waits outside
+    // the queue for watcher readiness, unless released first, to narrow the scan-to-stream gap. A fallback
+    // can still leave delivery unproven.
     hold.openJobPending = true;
     const opened = await this.deps.queue.enqueue('open', hold.root, async () => {
       hold.openJobPending = false;
@@ -343,8 +354,15 @@ export class HolderSet {
       await boundedWait(recovery, this.deps.recoverWaitMs);
       if (hold.closed) return;
     }
-    this.startWatcher(hold);
-    hold.caughtUp = this.queueCatchUp(hold, 0);
+    const readiness = this.startWatcher(hold);
+    if (!readiness) {
+      hold.caughtUp = this.queueCatchUp(hold, 0);
+      return;
+    }
+    hold.caughtUp = readiness.then(() => {
+      if (hold.closed) return undefined;
+      return this.queueCatchUp(hold, 0);
+    });
   }
 
   /**
@@ -420,11 +438,11 @@ export class HolderSet {
     hold.ownTimer.unref();
   }
 
-  private startWatcher(hold: Hold): void {
+  private startWatcher(hold: Hold): Promise<void> | null {
     const disabled = watchDisabledReason(hold.root);
     if (disabled) {
       this.deps.log(`File watcher disabled for ${hold.root} — ${disabled}.`);
-      return;
+      return null;
     }
     const options = this.deps.watchOptions();
     hold.watcher = new FileWatcher(
@@ -435,6 +453,7 @@ export class HolderSet {
       },
       {
         ...options,
+        readinessGate: deliveryProbeGate(),
         onDegraded: (reason) => {
           options.onDegraded?.(reason);
           this.pushIfChanged(hold);
@@ -445,16 +464,35 @@ export class HolderSet {
         ? (relPath) => isIndexedFileStateCurrent(hold.cg, hold.root, relPath)
         : undefined,
     );
-    if (hold.watcher.start()) this.deps.log(`File watcher active for ${hold.root} — graph will auto-sync on changes`);
-    else this.deps.log(`File watcher could not start for ${hold.root}`);
+    if (!hold.watcher.start()) {
+      this.deps.log(`File watcher could not start for ${hold.root}`);
+      return null;
+    }
+    this.deps.log(`File watcher active for ${hold.root} — graph will auto-sync on changes`);
+    // The probe bounds readiness only while the watcher runs: a watcher that degrades (and so stops) during
+    // the probe never settles its waiter. This hold's own bound, a margin above the probe's, queues the
+    // catch-up anyway; it is cleared when readiness or release comes first, so no timer outlives the hold.
+    const watcher = hold.watcher;
+    const boundMs = Math.max(10_000, DEFAULT_DELIVERY_PROBE_MAX_MS + 1000);
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(bound);
+        resolve();
+      };
+      const bound = setTimeout(done, boundMs);
+      watcher.waitUntilReady(null).then(done, done);
+      void hold.released.then(done);
+    });
   }
 
   /**
-   * The catch-up sync after a hold: one job that reconciles what changed while nobody held the root. Lock
-   * contention (a CLI index run holds `codegraph.lock`) is retried with a growing wait; any other failure is
-   * logged and left to the watcher's and the callers' syncs. A readiness publication afterwards that throws
-   * (logged) or leaves the record not ready (not logged) is retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock
-   * contention that is at the failure, before the retry, which is not waited for.
+   * The catch-up sync after watcher readiness or the holder's bound (or immediately without a watcher): one
+   * job that reconciles changes since the last sync, including during stream startup. Delivery may be unproven.
+   * A hold released before queuing does not queue it. Lock contention (a CLI index run holds `codegraph.lock`)
+   * is retried with a growing wait; any other failure is logged and left to the watcher's and callers' syncs.
+   * A readiness publication afterwards that throws (logged) or leaves the record not ready (not logged) is
+   * retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock contention that
+   * is at the failure, before the retry, which is not waited for.
    */
   private queueCatchUp(hold: Hold, attempt: number): Promise<void> {
     return this.deps.queue.enqueue('catch-up', hold.root, () => this.openGraph(hold).sync()).then(
@@ -500,6 +538,7 @@ export class HolderSet {
 
   private async teardown(hold: Hold): Promise<void> {
     hold.closed = true;
+    hold.release();
     if (hold.ownTimer) clearTimeout(hold.ownTimer);
     hold.ownTimer = null;
     // An open that has started finishes first, so what it acquired is what is released. One still waiting in
