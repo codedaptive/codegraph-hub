@@ -79,6 +79,7 @@ import type { Node, Edge, Language } from '../types';
 import { isTestPath } from '../search/query-utils';
 import { registerExtensionCommands } from '../extensions/host/registry';
 import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
+import { gitRootByStat } from '../extensions/host/server/index-root';
 // Static: .option() needs the --fresh / --checkpoint help text when the program is built.
 import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
 import type { FreshAnswer } from '../extensions/host/fresh/cli';
@@ -1026,8 +1027,9 @@ program
 
       if (!isInitialized(projectPath)) {
         error(`CodeGraph not initialized in ${projectPath}`);
+        // An initialized ancestor in no git worktree is one this command refuses, so it is never offered.
         const ancestor = pathArg ? resolveProjectPath(pathArg) : projectPath;
-        if (ancestor !== projectPath) {
+        if (ancestor !== projectPath && gitRootByStat(ancestor) !== null) {
           info(`The nearest initialized project is ${ancestor} — pass that path to rebuild it, or run "codegraph init" in ${projectPath} to index it on its own.`);
         } else {
           info('Run "codegraph init" first');

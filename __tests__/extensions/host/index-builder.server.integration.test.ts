@@ -132,20 +132,17 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
     expect(textOf(res)).not.toContain(DONT_CALL_AGAIN);
   });
 
-  it('N4: a directory outside git gets success-shaped not-a-repository guidance with or without a session anchor', async () => {
+  it('N4: a subdirectory of a folder outside git gets success-shaped not-a-repository guidance', async () => {
     const plain = path.join(workspace, 'plain');
     const sub = path.join(plain, 'src');
     fs.mkdirSync(sub, { recursive: true });
     const { builder } = stubBuilder(() => ({ kind: 'none' }));
     engine = new MCPEngine({ builder });
-    const handler = engine.getToolHandler();
 
-    for (const context of [{ ...ADMIT_ALL, anchorRoot: plain }, ADMIT_ALL]) {
-      const result = await handler.execute('codegraph_explore', { query: 'x', projectPath: sub }, undefined, context);
-      expect(result.isError).toBeFalsy();
-      expect(textOf(result)).toMatch(/not (?:in )?a (?:git )?repositor/i);
-      expect(textOf(result)).not.toContain('is building the index');
-    }
+    const result = await engine.getToolHandler().execute('codegraph_explore', { query: 'x', projectPath: sub }, undefined, ADMIT_ALL);
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatch(/not (?:in )?a (?:git )?repositor/i);
+    expect(textOf(result)).not.toContain('is building the index');
     expect(fs.existsSync(path.join(plain, '.codegraph'))).toBe(false);
   });
 
@@ -318,8 +315,8 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
 
   // ---- a symlink into a nested repository ----
 
-  // The builder decides on the real path: for projectPath=/work/link (-> /work/nested-repo/src, under a
-  // session anchored at the non-git /work) it builds /work/nested-repo. The answer path must select by the
+  // The builder decides on the real path: for projectPath=/work/link (-> /work/nested-repo/src, inside the
+  // non-git /work) it builds /work/nested-repo. The answer path must select by the
   // same real path, or the alias gets the not-indexed text while the real spelling answers. Real
   // BuilderService, real cold build, real handler; only the IPC between them is a function call.
   it.runIf(process.platform !== 'win32')('a symlink into a nested repository is answered from the index the builder built for it, as the real spelling is', async () => {
@@ -352,7 +349,7 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
       } as unknown as BuilderClient;
       engine = new MCPEngine({ builder });
       const handler = engine.getToolHandler();
-      const session = { ...ADMIT_ALL, anchorRoot: work };
+      const session = ADMIT_ALL;
 
       // First call through the alias: the builder queues the build at the nested repository, never at /work.
       const first = await handler.execute('codegraph_explore', { query: 'alphaSymbol', projectPath: link }, undefined, session);

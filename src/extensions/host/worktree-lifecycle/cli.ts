@@ -13,8 +13,9 @@ import * as path from 'path';
 import { isInitialized } from '../../../directory';
 import { getGlyphs } from '../../../ui/glyphs';
 import { ansiColorsEnabled } from '../../../ui/color';
-import { gitCommonDirAsync, gitWorktreeRootAsync } from './git';
+import { gitCommonDirAsync } from './git';
 import { gitRootByStat } from '../server/index-root';
+import { choosePinRoot } from './choosePinRoot';
 import type { BuilderRoute } from '../builder/cli-route';
 import type { WorktreeSeedOutcome } from './seed';
 import {
@@ -159,12 +160,9 @@ export async function runProjectSeed(pathArg: string): Promise<void> {
  * `codegraph project pin <path>`: exit 1 for a missing directory or a path in no git worktree
  * (gitRootByStat is null), which is refused before anything is registered or pinned.
  *
- * The path then resolves as a tool call would resolve it (resolveProjectPath). An index root in no git
- * worktree (the index of a non-git folder above the worktree) is not this project's, so the path's
- * worktree root stands in for it. When that root has an index (the path's own, a sub-index or an indexed
- * ancestor in git), it is pinned, with no seed. Otherwise, unless CODEGRAPH_NO_AUTO_SEED is 1, the
- * worktree root is seeded, with the outcome printed: on `seeded`, `indexed` or `queued` the worktree root
- * is pinned; on any other outcome the resolved root is, as it is with the kill switch on.
+ * The path then resolves as a tool call would resolve it (resolveProjectPath), and choosePinRoot picks the
+ * root pinned: an index root in no git worktree gives way to the path's worktree root, and a root with no
+ * index is seeded first (unless CODEGRAPH_NO_AUTO_SEED is 1), with the seed's outcome printed.
  */
 export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Promise<void> {
   const absolute = path.resolve(pathArg);
@@ -177,17 +175,11 @@ export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Pr
     error(`${absolute} is not in a git repository ${getGlyphs().dash} only git worktrees can be pinned`);
     process.exit(1);
   }
-  const indexRoot = resolveProjectPath(absolute);
-  const resolved = gitRootByStat(indexRoot) ? indexRoot : gitRoot;
-  let root = resolved;
-  if (!isInitialized(resolved) && process.env.CODEGRAPH_NO_AUTO_SEED !== '1') {
-    const worktree = await gitWorktreeRootAsync(absolute);
-    if (worktree) {
-      const outcome = await seedProjectNow(worktree, deps);
-      printSeedOutcome(outcome);
-      if (outcome.kind === 'seeded' || outcome.kind === 'indexed' || outcome.kind === 'queued') root = worktree;
-    }
-  }
+  const root = await choosePinRoot(absolute, gitRoot, resolveProjectPath(absolute), async (worktree) => {
+    const outcome = await seedProjectNow(worktree, deps);
+    printSeedOutcome(outcome);
+    return outcome;
+  });
   // Recorded on pin so the housekeeping sweep can tell when a pinned
   // worktree is removed; null when git cannot name the repository.
   const commonDir = getRegisteredProject(root)?.commonDir ?? await gitCommonDirAsync(root);
