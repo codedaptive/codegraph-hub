@@ -2,7 +2,7 @@
  * The `<state dir>/builder.log` line for a job ended over one of its limits, beside the start and end lines of
  * ./queue.ts. It names the variable that sets the limit, so whoever reads the log knows what to raise.
  */
-import type { LimitBreach } from './job-limit-breach';
+import type { LimitBreach } from './limit-breach';
 import type { JobKind } from './queue';
 
 /**

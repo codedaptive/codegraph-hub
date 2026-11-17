@@ -47,16 +47,20 @@ describe('JobWatchdog', () => {
 
   it('starts an unrefed interval and stops it', () => {
     vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     try {
       const onBreach = vi.fn();
       const watchdog = new JobWatchdog({ runningJob: () => ({ id: 1, kind: 'sync', root: '/r' }) },
         { maxMs: 1000, maxRssMb: 8 }, { clock: () => 0, readRssBytes: () => 9 * 1024 * 1024, intervalMs: 5000, onBreach });
       watchdog.start();
+      expect(setIntervalSpy).toHaveBeenCalledOnce();
+      expect(setIntervalSpy.mock.results[0]?.value.hasRef()).toBe(false);
       vi.advanceTimersByTime(5000);
       expect(onBreach).toHaveBeenCalledOnce();
       watchdog.stop();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
+      setIntervalSpy.mockRestore();
       vi.useRealTimers();
     }
   });

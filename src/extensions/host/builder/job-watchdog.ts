@@ -5,8 +5,9 @@
  * interval late (and later while a job blocks the event loop, since the sample runs on the main thread); the resident size
  * is the whole builder process's, which is the job's while it is the one running.
  */
-import { checkJobLimits, type LimitBreach } from './job-limit-breach';
-import type { JobLimits } from './job-limits';
+import { checkJobLimits } from './job-limit-breach';
+import type { JobLimits } from './job-limits-type';
+import type { LimitBreach } from './limit-breach';
 import type { JobKind, JobQueue } from './queue';
 
 /** Five seconds: a job over its limit is caught within one interval once the event loop turns, and a sample costs next to nothing. */

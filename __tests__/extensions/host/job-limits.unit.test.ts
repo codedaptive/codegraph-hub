@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_JOB_MAX_MS, DEFAULT_JOB_MAX_RSS_MB, resolveJobLimits } from '../../../src/extensions/host/builder/job-limits';
+import { resolveJobLimits } from '../../../src/extensions/host/builder/job-limits';
 
 describe('resolveJobLimits', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it('uses the documented defaults for unset and blank variables', () => {
-    expect(DEFAULT_JOB_MAX_MS).toBe(3_600_000);
-    expect(DEFAULT_JOB_MAX_RSS_MB).toBe(8192);
     expect(resolveJobLimits({})).toEqual({ limits: { maxMs: 3_600_000, maxRssMb: 8192 }, warnings: [] });
     expect(resolveJobLimits({ CODEGRAPH_BUILDER_JOB_MAX_MS: '  ', CODEGRAPH_BUILDER_JOB_MAX_RSS_MB: '' }))
       .toEqual({ limits: { maxMs: 3_600_000, maxRssMb: 8192 }, warnings: [] });
@@ -38,6 +36,22 @@ describe('resolveJobLimits', () => {
   it.each(['abc', '0', '-5', '1.5', '1e3', '  abc  '])('warns with the raw invalid RSS value %j without discarding the valid time override', (raw) => {
     const result = resolveJobLimits({ CODEGRAPH_BUILDER_JOB_MAX_MS: '42', CODEGRAPH_BUILDER_JOB_MAX_RSS_MB: raw });
     expect(result.limits).toEqual({ maxMs: 42, maxRssMb: 8192 });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('CODEGRAPH_BUILDER_JOB_MAX_RSS_MB');
+    expect(result.warnings[0]).toContain(raw);
+  });
+
+  it.each(['99999999999999999999', '9007199254740993'])('refuses the time value %j past Number.MAX_SAFE_INTEGER with one warning', (raw) => {
+    const result = resolveJobLimits({ CODEGRAPH_BUILDER_JOB_MAX_MS: raw });
+    expect(result.limits).toEqual({ maxMs: 3_600_000, maxRssMb: 8192 });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    expect(result.warnings[0]).toContain(raw);
+  });
+
+  it.each(['99999999999999999999', '9007199254740993'])('refuses the RSS value %j past Number.MAX_SAFE_INTEGER with one warning', (raw) => {
+    const result = resolveJobLimits({ CODEGRAPH_BUILDER_JOB_MAX_RSS_MB: raw });
+    expect(result.limits).toEqual({ maxMs: 3_600_000, maxRssMb: 8192 });
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain('CODEGRAPH_BUILDER_JOB_MAX_RSS_MB');
     expect(result.warnings[0]).toContain(raw);

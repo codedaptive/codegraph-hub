@@ -7,7 +7,7 @@
  * the builder.
  */
 import { appendFileSync, readFileSync, unlinkSync } from 'node:fs';
-import type { EndedJob } from './ended-jobs';
+import type { EndedJob } from './ended-job';
 import type { JobKind } from './queue';
 
 /** Every job kind, so a line naming any other kind is rejected. The Record makes the compiler keep it whole. */

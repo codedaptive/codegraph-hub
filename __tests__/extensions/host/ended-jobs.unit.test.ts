@@ -27,16 +27,17 @@ describe('endedJobs', () => {
     endedJobs.clearRoot('/a/b/');
     expect(endedJobs.has('/a/b', 'cold-build')).toBe(false);
     expect(endedJobs.has('/a/b', 'sync')).toBe(false);
-    expect(endedJobs.list()).toEqual([other]);
+    expect(endedJobs.find('/other', 'cold-build')).toEqual(other);
   });
 
-  it('replaces the entire set and lists the replacements', () => {
+  it('replaces the entire set', () => {
     endedJobs.add(cold);
     endedJobs.replaceAll([sync, other]);
     expect(endedJobs.has('/a/b', 'cold-build')).toBe(false);
-    expect(endedJobs.list()).toEqual(expect.arrayContaining([sync, other]));
-    expect(endedJobs.list()).toHaveLength(2);
+    expect(endedJobs.find('/a/b', 'sync')).toEqual(sync);
+    expect(endedJobs.find('/other', 'cold-build')).toEqual(other);
     endedJobs.replaceAll([]);
-    expect(endedJobs.list()).toEqual([]);
+    expect(endedJobs.has('/a/b', 'sync')).toBe(false);
+    expect(endedJobs.has('/other', 'cold-build')).toBe(false);
   });
 });

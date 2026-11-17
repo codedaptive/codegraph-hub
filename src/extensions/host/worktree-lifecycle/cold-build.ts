@@ -28,8 +28,8 @@
  * SQLite lock thrown by indexAll or reported in its errors, or thrown by init
  * with no database file at dbFile. On 1 or 4, removal of this build's database
  * is best-effort and only if its identity still matches; see runColdBuild.
- * A builder that ends itself over a job limit removes its own partial database and `rebuild.pid` first
- * (builder/job-limit-guard.ts). A builder killed mid-build leaves its partial database and a `rebuild.pid` naming a
+ * A builder that ends itself over a job limit removes its `rebuild.pid`, and the partial database only
+ * when it is this build's by the same identity check (builder/job-limit-guard.ts). A builder killed mid-build leaves its partial database and a `rebuild.pid` naming a
  * dead pid, and what the next builder does depends on the root:
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
@@ -50,6 +50,7 @@ import { gitCommonDirAsync } from './git';
 import { registerProject, stampSeedNonce } from './project-registry';
 import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import { endedJobs } from '../builder/ended-jobs';
+import { coldBuildDatabases } from './cold-build-database';
 
 export const COLD_BUILD_EXIT_BUILT = 0;
 export const COLD_BUILD_EXIT_FAILED = 1;
@@ -91,25 +92,11 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
 }
 
 /**
- * Whether the database at `dbFile` is still the one `CodeGraph.init`
- * returned a handle on, identified then as `created` ({@link statInode}'s
- * exact `dev:ino`). POSIX compares the two. Windows reports no usable inode
- * (`created` is null there); the handle kept the file open until the close
- * just before this check, and Windows refuses to delete or replace a file
- * SQLite holds open, so no other initializer can have put its own database at
- * the path meanwhile: the file there, if any, is still this call's. A null
- * `created` on POSIX (the stat failed) proves nothing, so it never matches.
- */
-function isCreatedDatabase(dbFile: string, created: string | null): boolean {
-  if (created !== null) return statInode(dbFile) === created;
-  return process.platform === 'win32' && fs.existsSync(dbFile);
-}
-
-/**
  * Build `root`'s index under its `rebuild.pid`. On failure only a database
  * this call created is removed: the one `CodeGraph.init` returned a handle on,
  * and only while that same file is still the one at the path
- * ({@link isCreatedDatabase}). `rebuild.pid` fences readers, seeders and a
+ * (`coldBuildDatabases.isOurs`, ./cold-build-database.ts, where this call
+ * registers it from init's return until it ends). `rebuild.pid` fences readers, seeders and a
  * user's `codegraph index` (which takes it too, and so refuses to run while
  * this build holds it), but not a user's `codegraph init`, which takes no
  * `rebuild.pid`: one may create the index after the check below and before
@@ -138,10 +125,6 @@ export async function runColdBuild(root: string): Promise<number> {
   let cg: CodeGraph | null = null;
   let ok = false;
   const dbFile = path.join(getCodeGraphDir(root), 'codegraph.db');
-  // Set once init has returned: it created the database at dbFile, whose
-  // identity (null where the platform has no inode) is `created`.
-  let initReturned = false;
-  let created: string | null = null;
   // Only these engine steps can make a failure retryable, not registration or bookkeeping.
   let step: 'init' | 'indexAll' | null = null;
   try {
@@ -154,8 +137,9 @@ export async function runColdBuild(root: string): Promise<number> {
     step = 'init';
     cg = await CodeGraph.init(root, { index: false });
     step = null;
-    initReturned = true;
-    created = statInode(dbFile);
+    // Init returned: it created the database at dbFile, registered by its
+    // identity (null where the platform has no inode).
+    coldBuildDatabases.set(root, statInode(dbFile));
     step = 'indexAll';
     const result = await cg.indexAll();
     step = null;
@@ -173,12 +157,13 @@ export async function runColdBuild(root: string): Promise<number> {
     return COLD_BUILD_EXIT_FAILED;
   } finally {
     try { cg?.close(); } catch { /* already closed */ }
-    if (!ok && initReturned && isCreatedDatabase(dbFile, created)) {
+    if (!ok && coldBuildDatabases.isOurs(root, dbFile)) {
       // Ours, and still under rebuild.pid: no reader or seeder has opened it.
       for (const suffix of ['', '-wal', '-shm', '-journal']) {
         try { fs.rmSync(`${dbFile}${suffix}`, { force: true }); } catch { /* best-effort */ }
       }
     }
+    coldBuildDatabases.clear(root);
     releaseWriterLock(root, 'rebuild.pid');
   }
 }

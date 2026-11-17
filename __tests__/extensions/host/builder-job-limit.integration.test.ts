@@ -9,6 +9,8 @@ import { EndedJobsFile } from '../../../src/extensions/host/builder/ended-jobs-f
 import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
 import { JobEndedError } from '../../../src/extensions/host/builder/job-ended-error';
 import { runColdBuild } from '../../../src/extensions/host/worktree-lifecycle/cold-build';
+import { coldBuildDatabases } from '../../../src/extensions/host/worktree-lifecycle/cold-build-database';
+import { statInode } from '../../../src/directory';
 
 let base: string;
 beforeEach(() => {
@@ -17,6 +19,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   endedJobs.replaceAll([]);
+  coldBuildDatabases.clear(path.join(base, 'project'));
   fs.rmSync(base, { recursive: true, force: true });
 });
 
@@ -26,6 +29,8 @@ describe('builder job limit restart', () => {
     const dir = path.join(root, '.codegraph');
     fs.mkdirSync(dir, { recursive: true });
     for (const suffix of ['', '-wal', '-shm', '-journal']) fs.writeFileSync(path.join(dir, `codegraph.db${suffix}`), 'partial');
+    // The partial database is the running cold build's own, as runColdBuild registers it once init returns.
+    coldBuildDatabases.set(root, statInode(path.join(dir, 'codegraph.db')));
     for (const name of ['rebuild.pid', 'writer.pid']) {
       fs.writeFileSync(path.join(dir, name), JSON.stringify({ pid: process.pid, mode: 'cold-build', startedAt: 0 }));
     }

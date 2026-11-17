@@ -5,18 +5,13 @@
  * with a warning rather than stopping the builder, because a typo in a limit must not leave a machine with no
  * index builder at all.
  */
-
-/** The two limits every builder job runs under. */
-export interface JobLimits {
-  maxMs: number;
-  maxRssMb: number;
-}
+import type { JobLimits } from './job-limits-type';
 
 /** 60 minutes: well past the longest cold build of a large repository, short of a job left running all day. */
-export const DEFAULT_JOB_MAX_MS = 3_600_000;
+const DEFAULT_JOB_MAX_MS = 3_600_000;
 
 /** 8 GB: far above a healthy index run, low enough to end a runaway before it pushes the machine into swap. */
-export const DEFAULT_JOB_MAX_RSS_MB = 8192;
+const DEFAULT_JOB_MAX_RSS_MB = 8192;
 
 /**
  * One variable's value: a positive whole number after trimming, else the default. Unset or blank is the

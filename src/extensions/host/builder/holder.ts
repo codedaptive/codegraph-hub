@@ -341,11 +341,14 @@ export class HolderSet {
     // does. Recovery and catch-up are separate jobs: the queue cannot wait on itself. Catch-up waits outside
     // the queue for watcher readiness, unless released first, to narrow the scan-to-stream gap. A fallback
     // can still leave delivery unproven. The queue refuses the open of a root whose open was ended over a job
-    // limit (a JobEndedError, ./queue.ts): that rejects from here, and openWritable never runs.
+    // limit (a JobEndedError, ./queue.ts): that rejects from here, no job is pending, and openWritable never runs.
     hold.openJobPending = true;
     const opened = await this.deps.queue.enqueue('open', hold.root, async () => {
       hold.openJobPending = false;
       return this.openWritable(hold);
+    }).catch((err: unknown) => {
+      if (err instanceof JobEndedError) hold.openJobPending = false;
+      throw err;
     });
     if (opened === null || hold.closed) return;
     if (opened.recoveryPending) {

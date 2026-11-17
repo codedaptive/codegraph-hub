@@ -1,19 +1,12 @@
 /**
  * The builder process's ended jobs: each (root, kind) whose job was ended over a limit (./job-limits.ts) and
  * so must not run again on its own. This is module state of the builder process, loaded once at start from
- * ./ended-jobs-file.ts and added to as jobs are ended; an explicit `codegraph index` of a root clears it.
- * Roots compare by their canonical spelling, so two spellings of one root are one entry.
+ * ./ended-jobs-file.ts and added to as jobs are ended; only a successful `codegraph index` or `codegraph init`
+ * of a root clears it. Roots compare by their canonical spelling, so two spellings of one root are one entry.
  */
 import { canonicalProjectRoot } from '../../../directory';
+import type { EndedJob } from './ended-job';
 import type { JobKind } from './queue';
-
-/** One ended job: its root as given, its kind, the limit it went over and when (ISO 8601). */
-export interface EndedJob {
-  root: string;
-  kind: JobKind;
-  limit: 'time' | 'rss';
-  at: string;
-}
 
 /** Entries keyed by canonical root, then kind. */
 const byRoot = new Map<string, Map<JobKind, EndedJob>>();
@@ -38,8 +31,5 @@ export const endedJobs = {
   replaceAll(jobs: readonly EndedJob[]): void {
     byRoot.clear();
     for (const job of jobs) endedJobs.add(job);
-  },
-  list(): EndedJob[] {
-    return [...byRoot.values()].flatMap((kinds) => [...kinds.values()]);
   },
 };
