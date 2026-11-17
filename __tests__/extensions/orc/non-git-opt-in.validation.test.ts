@@ -115,7 +115,7 @@ describe.sequential('R-50 non-git opt-in', { timeout: 600_000 }, () => {
     expect(after.stdout).toContain('src/a.ts');
   });
 
-  // Measures SPEC §3 (uninit ends an opt-in: .codegraph and the registry record go) and R-50 items 1 and 3 (the MCP call then gets success-shaped not-a-repository guidance and builds nothing). Passes when none is left and the answer names --no-git.
+  // Measures SPEC §3 (uninit ends the opt-in; here .codegraph goes and, with nothing else recorded for the root, its registry record too) and R-50 items 1 and 3 (the MCP call then gets success-shaped not-a-repository guidance and builds nothing). Passes when none is left and the answer names --no-git.
   it('uninit clears the index and opt-in and MCP gives success-shaped opt-in guidance', async () => {
     const uninit = cli('uninit', '--force', root);
     expect(uninit.status, output(uninit)).toBe(0);
