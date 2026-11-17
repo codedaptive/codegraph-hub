@@ -4,7 +4,7 @@
  * every other kind is short and goes to the `sync` lane, which runs beside it.
  */
 import type { JobKind } from './queue';
-import type { JobLane } from './running-job';
+import type { JobLane } from './job-lane-type';
 
 export function jobLane(kind: JobKind): JobLane {
   return kind === 'cold-build' || kind === 'init' || kind === 'index' ? 'cold' : 'sync';

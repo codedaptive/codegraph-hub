@@ -48,6 +48,70 @@ describe('JobQueue', () => {
     await Promise.all([a, b]);
   });
 
+  it('keeps lane and root exclusion when a job synchronously enqueues more work', async () => {
+    const { queue, events } = recordingQueue();
+    const snapshots: Array<ReturnType<JobQueue['runningJobs']>> = [];
+    const record = () => { snapshots.push(queue.runningJobs()); };
+    const coldBlocker = held();
+    const syncBlocker = held();
+    const syncA = held();
+    const syncC = held();
+    const coldC = held();
+    const coldD = held();
+    const nested: Array<Promise<void>> = [];
+    const first = queue.enqueue('cold-build', '/block-cold', () => { record(); return coldBlocker.run(); });
+    const second = queue.enqueue('sync', '/block-sync', () => { record(); return syncBlocker.run(); });
+    const third = queue.enqueue('cold-build', '/c', () => { record(); return coldC.run(); });
+    const fourth = queue.enqueue('sync', '/a', () => {
+      record();
+      nested.push(queue.enqueue('sync', '/c', () => { record(); return syncC.run(); }));
+      nested.push(queue.enqueue('cold-build', '/d', () => { record(); return coldD.run(); }));
+      return syncA.run();
+    });
+    try {
+      syncBlocker.finish();
+      await second;
+      expect(events).toEqual([
+        'start cold-build /block-cold', 'start sync /block-sync', 'end sync /block-sync', 'start sync /a',
+      ]);
+      coldBlocker.finish();
+      await first;
+      expect(events).not.toContain('start cold-build /c');
+      syncA.finish();
+      await fourth;
+      expect(events).toContain('start sync /c');
+      expect(events).not.toContain('start cold-build /c');
+      syncC.finish();
+      await nested[0];
+      expect(events).toContain('start cold-build /c');
+      coldC.finish();
+      await third;
+      coldD.finish();
+      await Promise.all(nested);
+      expect(events).toEqual([
+        'start cold-build /block-cold', 'start sync /block-sync', 'end sync /block-sync', 'start sync /a',
+        'end cold-build /block-cold', 'end sync /a', 'start sync /c', 'end sync /c',
+        'start cold-build /c', 'end cold-build /c', 'start cold-build /d', 'end cold-build /d',
+      ]);
+      expect(snapshots).toEqual([
+        [{ id: 1, kind: 'cold-build', root: '/block-cold', lane: 'cold' }],
+        [{ id: 1, kind: 'cold-build', root: '/block-cold', lane: 'cold' }, { id: 2, kind: 'sync', root: '/block-sync', lane: 'sync' }],
+        [{ id: 1, kind: 'cold-build', root: '/block-cold', lane: 'cold' }, { id: 3, kind: 'sync', root: '/a', lane: 'sync' }],
+        [{ id: 4, kind: 'sync', root: '/c', lane: 'sync' }],
+        [{ id: 5, kind: 'cold-build', root: '/c', lane: 'cold' }],
+        [{ id: 6, kind: 'cold-build', root: '/d', lane: 'cold' }],
+      ]);
+    } finally {
+      coldBlocker.finish();
+      syncBlocker.finish();
+      syncA.finish();
+      syncC.finish();
+      coldC.finish();
+      coldD.finish();
+      await queue.whenIdle();
+    }
+  });
+
   it('starts cold jobs in FIFO order and never overlaps them', async () => {
     const { queue, events } = recordingQueue();
     const first = held();
