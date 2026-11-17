@@ -1056,9 +1056,9 @@ program
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
   .action(async (pathArg: string | undefined, options: { force?: boolean; quiet?: boolean; verbose?: boolean }) => {
-    // The project rebuilt is the git worktree root of <path> (or of the cwd), never the nearest initialized
-    // ancestor (#1524): codegraph indexes only git worktrees (SPEC §3), and a path in none is refused here,
-    // before --force or anything else is looked at.
+    // The project rebuilt is the git worktree root or opted-in folder of <path> (or of the cwd), never the
+    // nearest initialized ancestor (#1524): requireGitWorktreeRoot accepts only those two and refuses any
+    // other path here, before --force or anything else is looked at.
     const required = requireGitWorktreeRoot(pathArg ? path.resolve(pathArg) : process.cwd());
     if ('refusal' in required) {
       error(required.refusal);
@@ -1077,7 +1077,8 @@ program
 
       if (!isInitialized(projectPath)) {
         error(`CodeGraph not initialized in ${projectPath}`);
-        // An initialized ancestor in no git worktree is one this command refuses, so it is never offered.
+        // An initialized ancestor in no git worktree and no opted-in folder is one this command refuses, so
+        // it is never offered.
         const ancestor = pathArg ? resolveProjectPath(pathArg) : projectPath;
         if (ancestor !== projectPath && gitRootByStat(ancestor) !== null) {
           info(`The nearest initialized project is ${ancestor} — pass that path to rebuild it, or run "codegraph init" in ${projectPath} to index it on its own.`);
@@ -1164,8 +1165,8 @@ program
   .description('Sync changes since last index')
   .option('-q, --quiet', 'Suppress output (for git hooks)')
   .action(async (pathArg: string | undefined, options: { quiet?: boolean }) => {
-    // The project synced is the git worktree root of <path> (or of the cwd); a path in no git worktree is
-    // refused (SPEC §3: codegraph indexes only git worktrees).
+    // The project synced is the git worktree root or opted-in folder of <path> (or of the cwd);
+    // requireGitWorktreeRoot refuses any other path.
     const required = requireGitWorktreeRoot(path.resolve(pathArg || process.cwd()));
     if ('refusal' in required) {
       error(required.refusal);
