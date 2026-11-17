@@ -45,7 +45,7 @@ describe('builder non-git opt-in', () => {
     await service.handle({ id: 11, op: 'cliIndex', root: sibling, mode: 'init' });
     expect(messages).toContainEqual(expect.objectContaining({ id: 11, ok: false, error: expect.stringContaining('is not in a git repository') }));
     await service.handle({ id: 12, op: 'cliIndex', root, mode: 'init' });
-    expect(messages).toContainEqual(expect.objectContaining({ id: 12 }));
+    expect(messages).toContainEqual(expect.objectContaining({ id: 12, ok: true }));
     expect(messages).not.toContainEqual(expect.objectContaining({ id: 12, ok: false, error: expect.stringContaining('is not in a git repository') }));
   });
 });

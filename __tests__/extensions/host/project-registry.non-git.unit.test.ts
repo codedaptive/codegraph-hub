@@ -47,6 +47,13 @@ describe('non-git registry opt-in', () => {
     expect((registry.getRegisteredProject(root)?.flags ?? 0) & 4).toBe(0);
   });
 
+  it('removes the record for an opted-in root', () => {
+    registry.registerProject(root, { noGit: true });
+    expect(registry.getRegisteredProject(root)?.flags).toBe(4);
+    expect(registry.unregisterProject(root)).toBe(true);
+    expect(registry.getRegisteredProject(root)).toBeNull();
+  });
+
   it('returns null when clearing an unregistered root', () => {
     expect(api.clearNonGitOptIn(root)).toBeNull();
   });
