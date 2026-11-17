@@ -44,8 +44,7 @@ class FakeChild extends EventEmitter {
 const root = path.resolve('/cg-late-ready/repo');
 const sub = path.join(root, 'src');
 const other = path.resolve('/cg-late-ready/repository-other');
-const ask = (projectPath: string, anchorRoot?: string) =>
-  anchorRoot === undefined ? { op: 'ensure', projectPath } : { op: 'ensure', projectPath, anchorRoot };
+const ask = (projectPath: string) => ({ op: 'ensure', projectPath });
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 describe('BuilderClient late ready', () => {
@@ -72,7 +71,7 @@ describe('BuilderClient late ready', () => {
   });
 
   it.each([root, path.resolve('/cg-no-own-index/repo')])('release cancels an ensure parked before ready for %s', async (buildRoot) => {
-    const pending = client.ensure(path.join(buildRoot, 'nested', '..', 'src'), buildRoot);
+    const pending = client.ensure(path.join(buildRoot, 'nested', '..', 'src'));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(children[0].ensures()).toEqual([]);
     await client.release(buildRoot);
@@ -88,7 +87,7 @@ describe('BuilderClient late ready', () => {
   });
 
   it('release cancels a deferred ensure re-sent on ready before it reaches the child', async () => {
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(await pending).toEqual({ kind: 'none', pending: true });
     children[0].ready();
@@ -139,30 +138,30 @@ describe('BuilderClient late ready', () => {
     expect(await pending).toEqual({ kind: 'none', pending: true });
   });
 
-  it('re-sends the original anchored ask after the startup wait expires', async () => {
-    const pending = client.ensure(sub, root);
+  it('re-sends the original ask without an anchor after the startup wait expires', async () => {
+    const pending = client.ensure(sub);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(await pending).toEqual({ kind: 'none', pending: true });
     children[0].ready();
     await flush();
-    expect(children[0].ensures()).toEqual([expect.objectContaining(ask(sub, root))]);
+    expect(children[0].ensures()).toEqual([{ id: expect.any(Number), ...ask(sub) }]);
   });
 
   it('re-sends an in-flight ask after its builder exits', async () => {
     children[0].ready();
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await flush();
-    expect(children[0].ensures()).toEqual([expect.objectContaining(ask(sub, root))]);
+    expect(children[0].ensures()).toEqual([expect.objectContaining(ask(sub))]);
     children[0].exit();
     expect(await pending).toEqual({ kind: 'none', pending: true });
     await vi.advanceTimersByTimeAsync(200);
     children[1].ready();
     await flush();
-    expect(children[1].ensures()).toEqual([expect.objectContaining(ask(sub, root))]);
+    expect(children[1].ensures()).toEqual([expect.objectContaining(ask(sub))]);
   });
 
   it.each(['down', 'up'] as const)('release while %s drops canonical descendant asks but keeps unrelated asks', async (state) => {
-    const pending = [client.ensure(root), client.ensure(path.join(root, 'nested', '..', 'src'), root), client.ensure(other)];
+    const pending = [client.ensure(root), client.ensure(path.join(root, 'nested', '..', 'src')), client.ensure(other)];
     await vi.advanceTimersByTimeAsync(8_000);
     expect(await Promise.all(pending)).toEqual([{ kind: 'none', pending: true }, { kind: 'none', pending: true }, { kind: 'none', pending: true }]);
     if (state === 'up') {
@@ -194,7 +193,7 @@ describe('BuilderClient late ready', () => {
     expect(await unrelated).toEqual({ kind: 'none', pending: true });
     children[0].ready();
     await flush();
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await flush();
     const released = client.release(root);
     await flush();
@@ -212,7 +211,7 @@ describe('BuilderClient late ready', () => {
 
   it.each(['error reply', 'reply timeout'] as const)('does not remember a live builder failure from %s', async (failure) => {
     children[0].ready();
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await flush();
     const request = children[0].ensures()[0];
     expect(request).toBeDefined();
@@ -227,12 +226,12 @@ describe('BuilderClient late ready', () => {
   });
 
   it('forgets a deferred ask when a later ensure receives an answer', async () => {
-    const first = client.ensure(sub, root);
+    const first = client.ensure(sub);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(await first).toEqual({ kind: 'none', pending: true });
     children[0].ready();
     await flush();
-    const later = client.ensure(sub, root);
+    const later = client.ensure(sub);
     await flush();
     const request = children[0].ensures().at(-1);
     expect(request).toBeDefined();
@@ -255,7 +254,7 @@ describe('BuilderClient late ready', () => {
     ['seeded', { kind: 'seeded', root, source: other, method: 'copy' }],
   ] as const)('an ensure already sent when release runs answers %s as the builder gave it and is held again on restart', async (_kind, answer) => {
     children[0].ready();
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await flush();
     const request = children[0].ensures()[0];
     const released = client.release(root);
@@ -276,7 +275,7 @@ describe('BuilderClient late ready', () => {
 
   it('an ensure already sent when release runs answers building and its build is re-asked on restart', async () => {
     children[0].ready();
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await flush();
     const request = children[0].ensures()[0];
     const released = client.release(root);
@@ -290,12 +289,12 @@ describe('BuilderClient late ready', () => {
     await vi.advanceTimersByTimeAsync(200);
     children[1].ready();
     await flush();
-    expect(children[1].ensures()).toEqual([expect.objectContaining(ask(sub, root))]);
+    expect(children[1].ensures()).toEqual([expect.objectContaining(ask(sub))]);
   });
 
   it('sends nothing on a late ready after stop starts', async () => {
     children[0].ready();
-    const pending = client.ensure(sub, root);
+    const pending = client.ensure(sub);
     await flush();
     const request = children[0].ensures()[0];
     children[0].reply({ id: request.id, ok: true, result: { kind: 'building', root } });

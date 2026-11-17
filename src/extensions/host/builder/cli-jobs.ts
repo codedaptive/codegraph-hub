@@ -17,7 +17,9 @@
  *   reindex         `indexAll` on an existing index with no lease (the re-run of `init`): the writable open the
  *                   CLI would do. An `index` job.
  * The locks of a lease stay until it ends (`unfence`), through every job the CLI sends under it.
- * Every mode refuses at job start while the root is fenced for its removal (a `release` fence, `codegraph uninit`:
+ * Every mode, and `cliSync`, refuses a root in no git worktree before anything is queued (codegraph indexes only
+ * git worktrees: `requireGitWorktreeRoot`'s refusal is the error). Every mode refuses at job start while the root
+ * is fenced for its removal (a `release` fence, `codegraph uninit`:
  * ./fences.ts `refuseIfRemoving`), so no job of these opens a database that is being deleted.
  *
  * `cliSync` is one `sync` job (SYNC class): through the hold's own graph when the builder holds the root and
@@ -39,6 +41,7 @@ import type { IndexWriteEvent } from './cli-wire';
 import type { RebuildFences, RebuildLease } from './fences';
 import type { HolderSet } from './holder';
 import type { BuilderToServer, CliIndexMode } from './protocol';
+import { requireGitWorktreeRoot } from '../worktree-lifecycle/requireGitWorktreeRoot';
 import type { JobQueue } from './queue';
 
 export interface CliJobDeps {
@@ -56,12 +59,14 @@ export class CliJobs {
    * Run one `cliIndex` of `mode` on `root`. Resolves with the IndexResult once the job ended; rejects with its
    * error. `requestId` names the request the events are pushed for. A mode that needs the lease and finds none
    * (never taken, or ended) rejects before anything is queued; a lease job that waits in the queue past the end
-   * of its lease refuses to run. A root fenced for its removal rejects every mode, when asked and again when the
+   * of its lease refuses to run. A root in no git worktree rejects every mode before anything is queued. A root fenced for its removal rejects every mode, when asked and again when the
    * job starts ("the index of <root> is being removed").
    */
   cliIndex(requestId: number, root: string, mode: CliIndexMode, verbose = false): Promise<IndexResult> {
     try {
       requireAbsoluteRoot(root);
+      const required = requireGitWorktreeRoot(root);
+      if ('refusal' in required) throw new Error(required.refusal);
       this.deps.fences.refuseIfRemoving(root);
       const emit = (event: IndexWriteEvent): void => this.deps.send({ op: 'requestEvent', requestId, event });
       const onProgress = (progress: IndexProgress): void => emit({ kind: 'progress', progress });
@@ -96,11 +101,14 @@ export class CliJobs {
   /**
    * One sync of `root` as a `sync` job; the whole SyncResult. The sync's progress goes out as `requestEvent`
    * pushes for `requestId`, as an index's does, so the CLI renders the same phase lines as an in-process sync.
-   * Rejects, when asked and again when the job starts, for a root fenced for its removal.
+   * Rejects, when asked and again when the job starts, for a root fenced for its removal, and before anything is
+   * queued for a root in no git worktree.
    */
   cliSync(requestId: number, root: string): Promise<SyncResult> {
     try {
       requireAbsoluteRoot(root);
+      const required = requireGitWorktreeRoot(root);
+      if ('refusal' in required) throw new Error(required.refusal);
       this.deps.fences.refuseIfRemoving(root);
     } catch (err) {
       return Promise.reject(err);

@@ -84,6 +84,7 @@ describe('pending index preparation', () => {
 
   it('serves an existing index when the builder says pending', async () => {
     indexedWorkspace = fs.realpathSync(fs.mkdtempSync('/tmp/cg-pending-indexed-'));
+    execFileSync('git', ['init', '-q'], { cwd: indexedWorkspace, stdio: 'ignore' });
     fs.writeFileSync(path.join(indexedWorkspace, 'fixture.ts'), 'export function pendingIndexSymbol() { return 42; }\n');
     const index = await CodeGraph.init(indexedWorkspace);
     try {

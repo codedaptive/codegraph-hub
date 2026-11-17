@@ -5,8 +5,7 @@
  *
  * What is pinned here is what only a separate process shows: every lock holder is the builder's pid and never
  * this (the server's) process; a cold build runs under the builder's `rebuild.pid`; a sync, a hold and a
- * release do what the client's contract says; a plain directory is built at the session anchor, never at the
- * call's path, including when the replacement builder after a SIGKILL queues the killed build again; a builder
+ * release do what the client's contract says; a plain directory is not built; a builder
  * started on a closed channel exits 0; stop() ends the builder. The SIGKILL case for held roots and dead locks
  * is in builder-client-sigkill.validation.test.ts.
  *
@@ -192,59 +191,30 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
     await expect(client.ensure(path.join(workspace, 'missing'))).resolves.toEqual({ kind: 'none' });
   });
 
-  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
-  it('cold-builds a directory that is not in git and has no index at the path itself when the call carries no anchor', async () => {
+  it('does not build a directory outside git', async () => {
     const plain = path.join(workspace, 'plain');
     fs.mkdirSync(path.join(plain, 'src'), { recursive: true });
     fs.writeFileSync(path.join(plain, 'src', 'a.ts'), 'export function plainSymbol() { return 1; }\n');
     client = BuilderClient.start();
     expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
-    expect(await client.ensure(plain)).toEqual({ kind: 'building', root: real(plain) });
-    expect(await waitUntil(() => isInitialized(plain) && readWriterLock(plain, 'rebuild.pid') === null, 180_000)).toBe(true);
-    expect(await client.ensure(plain)).toEqual({ kind: 'ready', root: real(plain) });
+    expect(await client.ensure(plain)).toEqual({ kind: 'none' });
+    expect(fs.existsSync(path.join(plain, '.codegraph'))).toBe(false);
+    expect(builderLog(stateDir).filter((l) => / job start cold-build /.test(l))).toEqual([]);
   });
 
-  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
-  it('carries the session anchor over IPC: a call on a subdirectory builds the anchor, never an index in the subdirectory', async () => {
-    const anchor = path.join(workspace, 'plain');
-    const sub = path.join(anchor, 'src');
+  it('does not build a subdirectory outside git', async () => {
+    const plain = path.join(workspace, 'plain');
+    const sub = path.join(plain, 'src');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, 'a.ts'), 'export function plainSymbol() { return 1; }\n');
     client = BuilderClient.start();
     expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
 
-    expect(await client.ensure(sub, anchor)).toEqual({ kind: 'building', root: real(anchor) });
-    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 180_000)).toBe(true);
-    expect(isInitialized(sub), 'the build root is the anchor, not the call\'s path').toBe(false);
+    expect(await client.ensure(sub)).toEqual({ kind: 'none' });
+    expect(fs.existsSync(path.join(plain, '.codegraph'))).toBe(false);
     expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
-  });
-
-  // The replacement builder is sent the anchor with the path: it rebuilds the anchor. Told only the path (an
-  // `ensure` that lost its anchor) it would build the subdirectory, which the last two assertions catch.
-  // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
-  it('after SIGKILL the anchored plain-directory build is queued again at the anchor, not at the call\'s path', async () => {
-    const anchor = path.join(workspace, 'plain');
-    const sub = path.join(anchor, 'src');
-    fs.mkdirSync(sub, { recursive: true });
-    fs.writeFileSync(path.join(sub, 'a.ts'), 'export function plainSymbol() { return 1; }\n');
-    vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '4000');
-    client = BuilderClient.start();
-    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
-
-    expect(await client.ensure(sub, anchor)).toEqual({ kind: 'building', root: real(anchor) });
-    const killed = client.pid()!;
-    expect(await waitUntil(() => readWriterLock(anchor, 'rebuild.pid')?.pid === killed, 120_000)).toBe(true);
-
-    process.kill(killed, 'SIGKILL');
-    expect(await waitUntil(() => !alive(killed), 120_000)).toBe(true);
-    expect(await waitUntil(() => client!.pid() !== null && client!.pid() !== killed, 120_000)).toBe(true);
-    expect(await waitUntil(() => client?.isUp() === true, 120_000)).toBe(true);
-
-    // The killed build is built again with no further call, at the anchor.
-    expect(await waitUntil(() => isInitialized(anchor) && readWriterLock(anchor, 'rebuild.pid') === null, 180_000)).toBe(true);
-    expect(isInitialized(sub)).toBe(false);
-    expect(fs.existsSync(path.join(sub, '.codegraph'))).toBe(false);
+    expect(builderLog(stateDir).filter((l) => / job start cold-build /.test(l))).toEqual([]);
   });
 
   // The channel is closed before the builder has started, so its `ready` message is written to a pipe nobody

@@ -14,7 +14,8 @@ import { canonicalProjectRoot } from '../../../directory';
 import type { WatchOptions } from '../../../sync/watcher';
 import { EngineHousekeeping } from '../worktree-lifecycle/housekeeping';
 import { ensureWorktreeIndex, isAbandonedIndex, seedWorktreeNow } from '../worktree-lifecycle/seed';
-import { selectOwnIndexRoot } from '../server/index-root';
+import { gitRootByStat, selectOwnIndexRoot } from '../server/index-root';
+import { requireGitWorktreeRoot } from '../worktree-lifecycle/requireGitWorktreeRoot';
 import { CliJobs, requireAbsoluteRoot } from './cli-jobs';
 import type { BuilderFreshness, EnsureOutcome } from './client';
 import { RebuildFences, parseFenceKind } from './fences';
@@ -113,8 +114,8 @@ export class BuilderService {
 
   private dispatch(request: BuilderRequest): Promise<unknown> {
     switch (request.op) {
-      // The anchor is IPC data: anything but a string is no anchor.
-      case 'ensure': return this.ensure(request.projectPath, typeof request.anchorRoot === 'string' ? request.anchorRoot : undefined);
+      // Only the path is read: any other field on the request (an `anchorRoot`, say) is IPC data and is ignored.
+      case 'ensure': return this.ensure(request.projectPath);
       case 'seedWorktree': return seedWorktreeNow(requireAbsoluteRoot(request.root), {
         host: this.seedHost, wait: request.wait === true, automatic: request.automatic === true,
       });
@@ -122,8 +123,16 @@ export class BuilderService {
       case 'sync': return this.holders.sync(request.root);
       case 'release': return this.holders.release(request.root);
       // The CLI's requests. Their roots are IPC data: CliJobs refuses one that is not an absolute path, and the
-      // fence calls are given the same check here.
-      case 'fence': return runNow(() => this.fences.fence(requireAbsoluteRoot(request.root), parseFenceKind(request.kind)));
+      // fence calls are given the same check here. An `index` fence (the default kind) is refused for a root in
+      // no git worktree before any lease or `rebuild.pid` is written; a `release` fence (`codegraph uninit`) is
+      // taken anywhere, so an index outside git can still be removed.
+      case 'fence': return runNow(() => {
+        const root = requireAbsoluteRoot(request.root);
+        const kind = parseFenceKind(request.kind);
+        const required = kind === 'index' ? requireGitWorktreeRoot(root) : null;
+        if (required && 'refusal' in required) throw new Error(required.refusal);
+        return this.fences.fence(root, kind);
+      });
       case 'unfence': return runNow(() => this.fences.unfence(requireAbsoluteRoot(request.root)));
       // Waits for the root's own jobs only; the promise is the queue's, so a job's reply goes out before the drain's.
       case 'drain': return runNow(() => this.queue.whenRootIdle(requireAbsoluteRoot(request.root)));
@@ -143,13 +152,12 @@ export class BuilderService {
    * the hold could not open it (another live writer, an open failure). The server then opens read-only
    * whatever is on disk: the migrations are guaranteed only in the first case.
    *
-   * A `projectPath` outside git with no index is cold-built at `anchorRoot` (the session's launch directory)
-   * when there is one, else at the path itself (seed.ts).
+   * A `projectPath` in no git worktree answers `none`: nothing is seeded, built or held for it.
    */
-  async ensure(projectPath: string, anchorRoot?: string): Promise<EnsureOutcome> {
-    const decision = await ensureWorktreeIndex(projectPath, this.seedHost, anchorRoot);
+  async ensure(projectPath: string): Promise<EnsureOutcome> {
+    const decision = await ensureWorktreeIndex(projectPath, this.seedHost);
     if (decision.kind === 'building') return decision;
-    if (decision.kind === 'none' && (decision.pending || decision.worktree !== undefined || decision.unbuilt !== undefined)) return decision;
+    if (decision.kind === 'none' && (decision.pending || decision.worktree !== undefined)) return decision;
     if (decision.kind === 'seeded') {
       const held = await this.holdRoot(decision.root);
       return held.kind === 'building' ? held : { ...decision, root: held.root };
@@ -157,12 +165,12 @@ export class BuilderService {
     // Nothing to seed or build: the call is answered from the index selectOwnIndexRoot names, if there is one.
     // That is never an index above a git repository nested around the path (another repository's), nor one
     // git could not vouch for (ownIndexRootFor fails closed): with seeding off, such a path holds nothing.
-    // A git worktree's index a killed build left half-made is no index
-    // (isAbandonedIndex, seed.ts). A plain directory's is never judged abandoned (it needs a `.git`): it is
-    // held below and recovered; a full catch-up is arranged after watcher readiness or its bound. The call
-    // may be answered before the catch-up is queued or finishes.
+    // Nor is an index outside git (SPEC §3): a sub-project's index inside a worktree is held, a non-git
+    // ancestor's never. A git worktree's index a killed build left half-made is no index
+    // (isAbandonedIndex, seed.ts). The call may be answered before the catch-up is queued or finishes.
     const root = selectOwnIndexRoot(projectPath);
-    if (root === null || isAbandonedIndex(root, (r) => this.fences.rebuildHeld(r))) return { kind: 'none' };
+    if (root === null || gitRootByStat(root) === null) return { kind: 'none' };
+    if (isAbandonedIndex(root, (r) => this.fences.rebuildHeld(r))) return { kind: 'none' };
     return this.holdRoot(root);
   }
 
