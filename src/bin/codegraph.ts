@@ -87,7 +87,8 @@ import type { IndexWriter, SyncWriter } from '../extensions/host/builder/cli-rou
 import { clearEndedRoot } from '../extensions/host/builder/clear-ended-root';
 
 // Decided once and recorded by cliColorsEnabled(), before `--color`/`--no-color`
-// are stripped from argv below (#1281); every later caller reads this answer.
+// are stripped from argv below (#1281); every later cliColorsEnabled() caller
+// reads this answer (shimmer-progress and upgrade call ansiColorsEnabled() and do not).
 // Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
 const COLORS_ENABLED = cliColorsEnabled();
 
