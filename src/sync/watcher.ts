@@ -202,6 +202,13 @@ function maxDirWatches(): number {
 const liveWatchersForTests = new Map<string, FileWatcher>();
 const IS_TEST_RUNTIME = !!(process.env.VITEST || process.env.NODE_ENV === 'test');
 
+export interface ReadinessGate {
+  start(confirm: () => void): void;
+  claims(relativePath: string): boolean;
+  stop(): void;
+}
+export type ReadinessGateFactory = (projectRoot: string) => ReadinessGate | null;
+
 /**
  * Options for the file watcher
  */
@@ -212,6 +219,9 @@ export interface WatchOptions {
    * Default: 2000ms
    */
   debounceMs?: number;
+
+  /** Optional recursive-watch readiness gate; without it, ready at installation. */
+  readinessGate?: ReadinessGateFactory;
 
   /**
    * Callback when a sync completes (for logging/diagnostics).
@@ -358,11 +368,13 @@ export class FileWatcher {
    */
   private ready = false;
   /**
-   * Callbacks that resolve when the watch set is established. Used by tests
-   * (and any production caller that cares about a clean baseline) to
-   * deterministically gate on watcher readiness.
+   * Callbacks that resolve when the watch set is established and the optional
+   * readiness gate confirms. Used by tests (and any production caller that
+   * cares about a clean baseline) to deterministically gate on watcher readiness.
    */
   private readyWaiters: Array<() => void> = [];
+  private confirmed = false;
+  private gate: ReadinessGate | null = null;
   // The shared scope matcher from `buildScopeIgnore` (built-in defaults +
   // root `.gitignore` + `.git/info/exclude` + `core.excludesFile` + dirs
   // `git ls-files --exclude-standard` reports ignored + `codegraph.json`
@@ -376,6 +388,7 @@ export class FileWatcher {
 
   private readonly projectRoot: string;
   private readonly debounceMs: number;
+  private readonly readinessGate?: ReadinessGateFactory;
   private readonly syncFn: (paths?: string[]) => Promise<{ filesChanged: number; durationMs: number }>;
   private readonly onSyncComplete?: WatchOptions['onSyncComplete'];
   private readonly onSyncError?: WatchOptions['onSyncError'];
@@ -398,6 +411,7 @@ export class FileWatcher {
     this.projectRoot = projectRoot;
     this.syncFn = syncFn;
     this.debounceMs = options.debounceMs ?? 2000;
+    this.readinessGate = options.readinessGate;
     this.onSyncComplete = options.onSyncComplete;
     this.onSyncError = options.onSyncError;
     this.onDegraded = options.onDegraded;
@@ -448,13 +462,13 @@ export class FileWatcher {
       // strategies report exhaustion identically (start() === false).
       if (this.degradedReason) return false;
 
-      // No async crawl to wait on: as soon as the watch set is installed we
-      // have a clean baseline (pendingFiles is only populated by post-start
-      // events). Clear defensively and flip ready.
+      // No async crawl to wait on: pendingFiles is only populated by post-start
+      // events. Clear before the optional readiness gate so its wait loses none.
       this.pendingFiles.clear();
       this.ready = true;
-      for (const cb of this.readyWaiters) cb();
-      this.readyWaiters.length = 0;
+      this.gate = !this.inertForTests && supportsRecursiveWatch() ? this.readinessGate?.(this.projectRoot) ?? null : null;
+      if (this.gate) this.gate.start(() => this.confirmReady());
+      else this.confirmReady();
       if (IS_TEST_RUNTIME) liveWatchersForTests.set(this.projectRoot, this);
 
       logDebug('File watcher started', {
@@ -488,7 +502,14 @@ export class FileWatcher {
     this.recursiveWatcher = watchImpl(
       this.projectRoot,
       { recursive: true, persistent: true },
-      (_event, filename) => this.handleDirEvent(this.projectRoot, filename)
+      (_event, filename) => {
+        if (filename != null) {
+          const name = String(filename);
+          if (!path.isAbsolute(name) && this.gate?.claims(
+            normalizePath(path.relative(this.projectRoot, path.join(this.projectRoot, name))))) return;
+        }
+        this.handleDirEvent(this.projectRoot, filename);
+      }
     );
     this.recursiveWatcher.on('error', (err: unknown) => {
       if (isWatchResourceExhaustion(err)) {
@@ -498,6 +519,13 @@ export class FileWatcher {
       logWarn('File watcher error', { error: String(err) });
     });
     this.refreshWatchTree();
+  }
+
+  private confirmReady(): void {
+    if (!this.ready || this.stopped) return;
+    this.confirmed = true;
+    for (const cb of this.readyWaiters) cb();
+    this.readyWaiters.length = 0;
   }
 
   /** Reconcile logical directory paths with real targets, including retargeted links. */
@@ -942,6 +970,9 @@ export class FileWatcher {
    */
   stop(): void {
     this.stopped = true;
+    this.gate?.stop();
+    this.gate = null;
+    this.confirmed = false;
     if (this.treeRefreshTimer) clearTimeout(this.treeRefreshTimer);
     this.treeRefreshTimer = null;
     for (const check of this.goneChecks.values()) clearTimeout(check);
@@ -1006,18 +1037,16 @@ export class FileWatcher {
   }
 
   /**
-   * Resolves once the watch set has been installed (or immediately if it
-   * already has). Useful for tests that need a deterministic boundary before
-   * asserting on `pendingFiles`.
-   *
-   * Production callers don't need this: `pendingFiles` is read continuously,
-   * the staleness banner is always correct (empty or populated), and there is
-   * no asynchronous initial-scan window with `fs.watch`.
+   * Resolves once the watch set has been installed and the optional readiness
+   * gate confirms (or immediately if it already has). Useful for tests that need
+   * a deterministic boundary before asserting on `pendingFiles`.
+   * Stop does not settle a waiter; a later start can resolve it, or its timeout
+   * rejects. Pass null to omit the timeout when the caller owns the wait's lifetime.
    */
-  waitUntilReady(timeoutMs = 10000): Promise<void> {
-    if (this.ready) return Promise.resolve();
+  waitUntilReady(timeoutMs: number | null = 10000): Promise<void> {
+    if (this.ready && this.confirmed) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => {
+      const t = timeoutMs === null ? undefined : setTimeout(() => {
         const idx = this.readyWaiters.indexOf(handler);
         if (idx >= 0) this.readyWaiters.splice(idx, 1);
         reject(new Error(`FileWatcher.waitUntilReady timed out after ${timeoutMs}ms`));

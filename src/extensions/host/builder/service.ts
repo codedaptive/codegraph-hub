@@ -159,8 +159,8 @@ export class BuilderService {
     // git could not vouch for (ownIndexRootFor fails closed): with seeding off, such a path holds nothing.
     // A git worktree's index a killed build left half-made is no index
     // (isAbandonedIndex, seed.ts). A plain directory's is never judged abandoned (it needs a `.git`): it is
-    // held below, recovered, and a full catch-up queued, and the call may be answered from it before the
-    // catch-up ends.
+    // held below and recovered; a full catch-up is arranged after watcher readiness or its bound. The call
+    // may be answered before the catch-up is queued or finishes.
     const root = selectOwnIndexRoot(projectPath);
     if (root === null || isAbandonedIndex(root, (r) => this.fences.rebuildHeld(r))) return { kind: 'none' };
     return this.holdRoot(root);
