@@ -6,7 +6,7 @@ import { readWriterLock } from '../../../mcp/writer-lock';
 
 /**
  * Remove the database a killed cold build of `root` left without the schema,
- * so the build that follows can create it again (`CodeGraph.init` cannot run
+ * so the build or seed that follows can create it again (`CodeGraph.init` cannot run
  * its schema over a half-applied one). The caller holds `root`'s `rebuild.pid`
  * and passes `afterDeadHolder`, its answer from before it took that lock
  * (./deadRebuildHolder.ts): false returns false at once, reading and removing

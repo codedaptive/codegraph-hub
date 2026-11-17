@@ -3,12 +3,13 @@
  * user built by hand", under `<state dir>/projects/` (`CODEGRAPH_STATE_DIR`,
  * else `~/.codegraph`; see server/state-dir.ts).
  *
- * A root lands here in two ways: an index CodeGraph gave a git worktree on its
- * own (seeded from a sibling worktree or cold-built), or a directory outside
- * git on its own (cold-built). Each is registered SEEDED, with the repository's
- * git common dir (null outside git) and the seed nonce written into that index.
- * The other way is `codegraph project pin <path>` (registered PINNED). The
- * registry is what lets the housekeeping sweep (`teardown.ts`) find
+ * A root lands here in three ways. An index CodeGraph gave a git worktree on
+ * its own (seeded from a sibling worktree or cold-built) is registered SEEDED,
+ * with the repository's git common dir and the seed nonce written into that
+ * index. `codegraph project pin <path>` registers it PINNED. `codegraph init
+ * <dir> --no-git` registers a folder outside git NO_GIT: the opt-in that lets
+ * codegraph index and answer for it (R-50; see server/optedInRootByStat.ts).
+ * The registry is what lets the housekeeping sweep (`teardown.ts`) find
  * a seeded worktree after it is removed and reclaim its index. The MCP server
  * reads it for pins: its idle release never closes a pinned root, and the
  * machine server opens pinned roots at start and after each housekeeping pass,
@@ -31,8 +32,8 @@
  * seeded, and which, decides whether teardown may delete it), so writes throw
  * rather than swallow errors; reads skip a record that does not parse.
  *
- * Every change to a record (register, pin, unpin, unregister, the sweep's
- * settle) is one read-modify-write under that record's lock,
+ * Every change to a record (register, pin, unpin, clearing the opt-in,
+ * unregister, the sweep's settle) is one read-modify-write under that record's lock,
  * `<record>.json.lock`, so two processes changing one root (a pin from the CLI
  * while a server seeds it, a sweep tearing it down) never lose each other's
  * bit or nonce; see {@link withRecordLock}. Reads take no lock: the rename
@@ -58,9 +59,14 @@ import { createLockFile,removeLockIfUnchanged, snapshotLock, type LockSnapshot }
  *                  from a sibling worktree, or cold-built by the index builder.
  *                  Teardown may delete the index once the worktree is gone,
  *                  and only the one whose seed nonce the record holds.
+ *   bit 2  NO_GIT  a folder outside git a person opted in to indexing with
+ *                  `codegraph init <dir> --no-git` (R-50); cleared by
+ *                  `codegraph uninit` ({@link clearNonGitOptIn}) and by
+ *                  removing the record.
  */
 export const PROJECT_FLAG_PINNED = 1 << 0;
 export const PROJECT_FLAG_SEEDED = 1 << 1;
+export const PROJECT_FLAG_NO_GIT = 1 << 2;
 
 export interface RegisteredProject {
   /** {@link canonicalProjectRoot} of the project. */
@@ -251,7 +257,8 @@ function newRecord(canonicalRoot: string): RegisteredProject {
 
 /**
  * Register `root`, or update its record. Idempotent, and never clears a set
- * bit: `seeded: false` on a seeded root leaves it seeded. A non-null
+ * bit: `seeded: false` on a seeded root leaves it seeded, and `noGit: false`
+ * leaves an opted-in root opted in. A non-null
  * `commonDir` replaces a recorded one; omitted or null, the recorded one stays.
  * A non-empty `seedNonce` replaces a recorded one (each new seed or cold build
  * of the root brings its own); omitted, the recorded one stays, so pinning a
@@ -259,7 +266,7 @@ function newRecord(canonicalRoot: string): RegisteredProject {
  */
 export function registerProject(
   root: string,
-  opts: { seeded?: boolean; commonDir?: string | null; seedNonce?: string } = {},
+  opts: { seeded?: boolean; noGit?: boolean; commonDir?: string | null; seedNonce?: string } = {},
 ): RegisteredProject {
   const canonical = canonicalProjectRoot(root);
   return withRecordLock(canonical, () => {
@@ -267,6 +274,7 @@ export function registerProject(
     const rec: RegisteredProject = existing ? { ...existing, root: canonical } : newRecord(canonical);
     if (opts.commonDir !== undefined && opts.commonDir !== null) rec.commonDir = opts.commonDir;
     if (opts.seeded) rec.flags |= PROJECT_FLAG_SEEDED;
+    if (opts.noGit) rec.flags |= PROJECT_FLAG_NO_GIT;
     if (opts.seedNonce) rec.seedNonce = opts.seedNonce;
     writeRecord(rec);
     return rec;
@@ -326,6 +334,27 @@ export function unpinProject(root: string): RegisteredProject | null {
       rec.flags &= ~PROJECT_FLAG_PINNED;
       writeRecord(rec);
     }
+    return rec;
+  });
+}
+
+/**
+ * Clear the opt-in bit (`codegraph uninit`). Other bits and the seed nonce stay; a record left with no
+ * flags and no seed nonce records nothing, so it is removed and the answer is null. Null too when `root` is
+ * not registered. One read-modify-write under the record lock.
+ */
+export function clearNonGitOptIn(root: string): RegisteredProject | null {
+  const canonical = canonicalProjectRoot(root);
+  return withRecordLock(canonical, () => {
+    const file = recordPath(canonical);
+    const rec = readRecordFile(file);
+    if (!rec || rec.root !== canonical) return null;
+    rec.flags &= ~PROJECT_FLAG_NO_GIT;
+    if (rec.flags === 0 && rec.seedNonce === undefined) {
+      removeRecordFile(file);
+      return null;
+    }
+    writeRecord(rec);
     return rec;
   });
 }

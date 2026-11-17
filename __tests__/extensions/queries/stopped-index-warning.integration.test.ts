@@ -27,7 +27,9 @@ afterEach(() => {
 });
 
 describe('stoppedIndexWarning', () => {
-  it('returns the uncolored warning line for a marked root', () => {
+  it('returns the uncolored warning line for a marked root', async () => {
+    vi.resetModules();
+    const { stoppedIndexWarning } = await import('../../../src/extensions/queries/shared/stopped-index-warning');
     const mark = { root, kind: 'open', limit: 'time', at: '2026-11-17T10:00:00Z' } as const;
     new EndedJobsFile(path.join(dir, 'builder-ended-jobs.jsonl')).append(mark);
     const warning = stoppedIndexWarning(root);
@@ -35,9 +37,11 @@ describe('stoppedIndexWarning', () => {
     expect(warning).toContain(`The index builder stopped the last open job of ${root} at its time limit`);
   });
 
-  it('colors only the glyph yellow when colors are enabled', () => {
+  it('colors only the glyph yellow when colors are enabled', async () => {
+    vi.resetModules();
     vi.stubEnv('NO_COLOR', '');
     vi.stubEnv('FORCE_COLOR', '1');
+    const { stoppedIndexWarning } = await import('../../../src/extensions/queries/shared/stopped-index-warning');
     const mark = { root, kind: 'open', limit: 'time', at: '2026-11-17T10:00:00Z' } as const;
     new EndedJobsFile(path.join(dir, 'builder-ended-jobs.jsonl')).append(mark);
     expect(stoppedIndexWarning(root)).toBe(`\u001b[33m${getGlyphs().warn}\u001b[0m ${stoppedIndexNote(mark)}\n`);

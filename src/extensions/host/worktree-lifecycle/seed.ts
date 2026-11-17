@@ -30,11 +30,14 @@
  * from the outer one.
  *
  * Outside git: `projectPath` has no `.git` entry at or above it. Nothing is
- * seeded, built or held for it, whatever index sits at or above it
- * ({@link ensureWorktreeIndex} answers `none`). Every decision is made on
+ * seeded or built for it, whatever index sits at or above it
+ * ({@link ensureWorktreeIndex} answers `none`), and nothing is held for it
+ * unless its folder was opted in (`codegraph init <dir> --no-git`, R-50): an
+ * opted-in folder is never seeded or cold-built automatically either, but the
+ * builder holds its index when it has one. Every decision is made on
  * `projectPath`'s realpath, and a queued cold build is admitted again when its
  * job starts ({@link admitColdBuild}): it builds only while its root still
- * names the directory it was approved on and is still a git worktree root.
+ * names the directory it was approved on and is still a root of its own.
  *
  * What it does:
  *   - seed: the sibling worktree with a complete index whose HEAD
@@ -110,6 +113,7 @@ import {
 import { isProcessAlive } from '../../../mcp/server-control';
 import { registerProject, stampSeedNonce } from './project-registry';
 import { seedStagingPid } from './seed-staging-pid';
+import { discardSeedTargetLeftover } from './discardSeedTargetLeftover';
 
 export type SeedMethod = 'clone' | 'copy' | 'backup';
 
@@ -533,7 +537,7 @@ async function backupSnapshot(srcDb: string, tmp: string): Promise<void> {
   }
 }
 
-/** Thrown when the target gained an index while the seed was being taken. */
+/** Thrown when the target has an index or a `codegraph.db` file when the seed is taken or installed. */
 class SeedTargetTakenError extends Error {
   constructor(root: string) {
     super(`${root} already has an index`);
@@ -623,7 +627,7 @@ function standardGitignore(): Buffer {
  * carries it from its first moment; the caller records it in the registry. A
  * staging copy a killed seeder left in the target (its pid dead) is removed
  * first. Throws when the source has no index, when the target already has an
- * index, when the target's `codegraph.lock` stays held by another process past
+ * index or a `codegraph.db` file, when the target's `codegraph.lock` stays held by another process past
  * the retries, or when the copy or the nonce write fails.
  *
  * A seed that fails removes what it made and nothing else, since other
@@ -760,7 +764,8 @@ export interface ColdBuildApproval {
 
 export type ColdBuildAdmission =
   | { ok: true; approval: ColdBuildApproval }
-  // `not-root`: the root is not a git worktree root (no `.git` entry there; gitRootByStat names another root or none).
+  // `not-root`: the root is not a root of its own (gitRootByStat names another root or none: no `.git` entry there
+  // and no opt-in of it).
   // `folder`: the root is a folder codegraph never builds (`reason` says which: unsafe index root, sensitive
   // folder, not an existing directory). `moved`: the root resolves to another directory than the approved one.
   | { ok: false; why: 'not-root' | 'folder' | 'moved'; reason: string };
@@ -771,7 +776,8 @@ export type ColdBuildAdmission =
  * path names at that moment, so the job must not trust what was true when it was queued: a path swapped for
  * a link to another directory, or a worktree whose `.git` went away, while the job waited would otherwise be
  * built. The same checks both times, in this order: the root still resolves to the approved realpath; it is a
- * git worktree root ({@link gitRootByStat} of it is itself); not an unsafe
+ * root of its own ({@link gitRootByStat} of it is itself: a git worktree root, or a folder opted in with
+ * `codegraph init <dir> --no-git`, which only a git worktree's seedOrBuild queues here); not an unsafe
  * index root (`unsafeIndexRootReason`: home, a filesystem root, a parent of home); not a sensitive folder,
  * and an existing directory (`validateProjectPath`). The last two read the root as spelled and as it resolves.
  *
@@ -935,6 +941,7 @@ async function seedWorktreeOnly(worktree: string, opts: WorktreeSeedOptions): Pr
   const source = await pickSeedSource(worktree, rebuildHeld);
   if (source === null) return { kind: 'no-source', root: worktree };
   if (abandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return { kind: 'queued', root: worktree };
+  if (!abandoned) discardSeedTargetLeftover(worktree, rebuildHeld);
   const commonDir = await gitCommonDirAsync(worktree);
   const copy = async (): Promise<SeedMethod> => {
     const { method, nonce } = await seedFromSibling(worktree, source);
@@ -965,12 +972,16 @@ const inflight = new Map<string, Promise<SeedOutcome>>();
  * to stderr and answers `none`.
  *
  * A `projectPath` with no `.git` entry at or above it answers `none` and
- * nothing is seeded or queued for it, whatever index sits at or above it.
+ * nothing is seeded or queued for it, whatever index sits at or above it. In
+ * an opted-in folder (`codegraph init <dir> --no-git`) the checks below answer
+ * it (no `.git` entry below the folder's index, or the git toplevel lookup
+ * finding no worktree); the builder then holds the folder's index if it has one.
  */
 export async function ensureWorktreeIndex(projectPath: string, host: SeedHost): Promise<SeedOutcome> {
   if (seedingDisabled()) return NONE;
-  // Outside git nothing is seeded or built (SPEC §3: only a git worktree root is indexed). Stats only, on the
-  // path's real location.
+  // Outside git and every opted-in folder nothing is seeded or built (SPEC §3: only a git worktree root, or a
+  // folder opted in, is indexed). Stats only, on the path's real location; an opted-in folder goes on to the
+  // checks below, which find no git worktree to seed or build.
   if (gitRootByStat(projectPath) === null) return NONE;
   const building = host.buildingRootFor(projectPath);
   if (building) return { kind: 'building', root: building };
@@ -1027,7 +1038,10 @@ export async function ensureWorktreeIndex(projectPath: string, host: SeedHost): 
  * Seed W, or queue its cold build, or neither. `replaceAbandoned`: W holds an
  * index a killed build left behind ({@link isAbandonedIndex}); it is
  * discarded only right before a seed or a build replaces it, so a worktree
- * that gets neither keeps what it had.
+ * that gets neither keeps what it had. Without it, a schema-less database a
+ * killed cold build left under a dead holder's `rebuild.pid` is discarded
+ * right before a seed (./discardSeedTargetLeftover.ts); one that stays makes
+ * the seed refuse W, and the call answers nothing.
  */
 async function seedOrBuild(
   worktree: string,
@@ -1053,6 +1067,7 @@ async function seedOrBuild(
   if (source) {
     // A live process took W's locks meanwhile, or a rebuild holds W: its index is not abandoned.
     if (replaceAbandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return NONE;
+    if (!replaceAbandoned) discardSeedTargetLeftover(worktree, rebuildHeld);
     try {
       // The copy is a job on the builder's queue; one that waits behind a long
       // job past the host's bound keeps its place, and the call answers 'building'.
@@ -1080,8 +1095,8 @@ async function seedOrBuild(
     }
   }
 
-  // No sibling to copy: build W's index. There is no opt-in and no earlier
-  // registration to ask for; a build returning FAILED is not retried until this builder restarts.
+  // No sibling to copy: build W's index. A git worktree needs no opt-in and no
+  // earlier registration; a build returning FAILED is not retried until this builder restarts.
   if (host.hasFailedBuild(worktree)) return considered;
   // The same refusal `codegraph init` applies (home directory, filesystem root), and the admission the
   // build's job runs again when it starts.
