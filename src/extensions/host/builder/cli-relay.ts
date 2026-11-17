@@ -66,7 +66,7 @@ export interface CliBuilder {
   unfence(root: string): Promise<void>;
   /** Run one `init`, `rebuild` (the CLI's `index`), `reindex` or `reindex-leased` job, reporting its events in order; rejects with the job's error (name preserved). */
   cliIndex(root: string, mode: CliIndexMode, onEvent: (event: IndexWriteEvent) => void, verbose: boolean): Promise<IndexResult>;
-  /** One sync job of the root at sync priority; `onEvent` receives the sync's progress events. */
+  /** One sync job of the root in the sync lane; `onEvent` receives the sync's progress events. */
   cliSync(root: string, onEvent: (event: IndexWriteEvent) => void): Promise<SyncResult>;
   /** Copy a sibling's index through the seed queue and wait for its outcome; never cold-build. */
   seedWorktree(root: string, opts: { wait: true }): Promise<WorktreeSeedOutcome>;
