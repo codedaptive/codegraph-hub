@@ -6,10 +6,12 @@
  *
  * The hook loads this module on the main thread of every CLI invocation and in
  * every query-pool worker, so its top level imports only `path`, types and the
- * tool definition (plain data). The engine (`CodeGraph`, which pulls in the
- * database layer), project-root lookup, git helpers and blast itself are loaded
- * with `await import()` inside the command's action and the tool's handler, as
- * grep's are in `../extension.ts`; `await import()` of a `.ts` module works
+ * tool definition (plain data). Everything else is loaded with `await import()`, as
+ * grep's is in `../extension.ts`. The command's action loads the project-root
+ * lookup (`../../../directory`), `../shared/nested-repo` (which loads the CodeGraph
+ * class when it runs), `./index` (blast, git helpers and the database layer) and
+ * `../shared/stopped-index-warning`; the tool's handler loads only `./index`, taking
+ * the root from `ctx.getCodeGraph`. `await import()` of a `.ts` module works
  * under vitest, where a lazy `require` would not.
  *
  * The CLI command has no session, so it never sees a focus; the tool's handler
@@ -37,7 +39,9 @@ interface BlastCommandOptions {
  * message and exits 1. Depth and format defaults are `runBlast`'s (depth 2,
  * text). The action is async (its modules load on first use); commander's
  * `parse()` does not await it, but the process stays up until it settles, and
- * it sets `process.exitCode` rather than exiting.
+ * it sets `process.exitCode` rather than exiting. An exit-0 answer prints the
+ * stopped-index line first on stderr when the builder marked the root
+ * (`../shared/stopped-index-warning.ts`); an error answer does not.
  */
 export function registerBlastCommand(program: Command): void {
   program
@@ -53,10 +57,14 @@ export function registerBlastCommand(program: Command): void {
       const { findNearestCodeGraphRoot } = await import('../../../directory');
       const { runBlast } = await import('./index');
       const { isUncoveredNestedRepo } = await import('../shared/nested-repo');
+      const { stoppedIndexWarning } = await import('../shared/stopped-index-warning');
       const found = findNearestCodeGraphRoot(start);
       const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
       const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format, strict: opts.strict });
       if (r.output) process.stdout.write(r.output);
+      // Only a non-error answer carries the note, as host's answers do.
+      const warning = r.exitCode === 0 ? stoppedIndexWarning(root) : null;
+      if (warning) process.stderr.write(warning);
       if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
       // Not process.exit(): exiting here can cut off stdout that is still
       // draining into a pipe.
