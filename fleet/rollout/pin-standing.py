@@ -119,7 +119,7 @@ def main():
             failed += 1
             print(f"{path}\tFAILED ({team} {kind}): {out}")
             continue
-        # The CLI pins the index root a tool call resolves to and prints it: `Pinned <root>`.
+        # `codegraph project pin` always pins the path's git worktree root (R-46) and prints it: `Pinned <root>`.
         root = out.split("Pinned ", 1)[1].strip() if "Pinned " in out else str(path)
         if root not in logged:
             # PROJECT_FLAG_PINNED is bit 0 of the record's flags (project-registry.ts).
