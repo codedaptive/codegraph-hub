@@ -121,8 +121,8 @@ A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
 applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root, the job kind, the limit and the measured
 value. Jobs run inside the builder process, so ending one ends the process: a job running beside it in the other
-lane ends with it, rolled back, logged as failed and not marked, and memory is one figure for the process, charged
-to the cold build when one runs (S-79). The ended job is not re-queued by itself, and the root's stopped mark
+lane ends with it, rolled back, logged as failed and not marked (S-79). Memory is one figure for the process; host
+charges a breach to the cold build when one runs (`rssOwner`, a heuristic). The ended job is not re-queued by itself, and the root's stopped mark
 survives every builder restart. A call for a
 stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
 limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
