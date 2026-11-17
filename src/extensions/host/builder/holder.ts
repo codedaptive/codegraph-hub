@@ -40,6 +40,7 @@ import { DEFAULT_DELIVERY_PROBE_MAX_MS, deliveryProbeGate } from '../sync/delive
 import { markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import type { BuilderFreshness } from './client';
 import type { RebuildFences } from './fences';
+import { JobEndedError } from './job-ended-error';
 import type { JobQueue } from './queue';
 
 export type HoldResult =
@@ -339,7 +340,8 @@ export class HolderSet {
     // maintenance (not awaited by the job, see openWritable), so it waits for the running job like every write
     // does. Recovery and catch-up are separate jobs: the queue cannot wait on itself. Catch-up waits outside
     // the queue for watcher readiness, unless released first, to narrow the scan-to-stream gap. A fallback
-    // can still leave delivery unproven.
+    // can still leave delivery unproven. The queue refuses the open of a root whose open was ended over a job
+    // limit (a JobEndedError, ./queue.ts): that rejects from here, and openWritable never runs.
     hold.openJobPending = true;
     const opened = await this.deps.queue.enqueue('open', hold.root, async () => {
       hold.openJobPending = false;
@@ -369,7 +371,8 @@ export class HolderSet {
    * The body of the `open` job: take `writer.pid` and open the database writable. Null when nothing was
    * opened: the hold was released while the job waited, a rebuild holds the root now (one that started while
    * the job waited: the retry opens it once the rebuild is over), or another live process owns the slot (this
-   * serves nothing for the root, and the retry takes over when that process exits). Throws when the index
+   * serves nothing for the root, and the retry takes over when that process exits; a retry whose open the
+   * queue refuses as ended over a job limit stops there, see scheduleOwnRetry). Throws when the index
    * cannot be opened.
    *
    * Not awaited by the job: the open starts CodeGraph's oversized-WAL heal fire-and-forget (db/index.ts `open`,
@@ -413,7 +416,9 @@ export class HolderSet {
    * The retry for a root whose `writer.pid` another live process owns, or that a rebuild holds. While that
    * process lives, or the rebuild runs, the retry does nothing, not even a job (a job per
    * {@link HolderDeps.ownRetryMs} would fill builder.log); once its pid is gone, or the rebuild is over, the
-   * open runs as a job again.
+   * open runs as a job again. A failed open is logged and retried, except one the queue refuses because this
+   * root's open was ended over a job limit ({@link JobEndedError}): that is logged once and not re-armed, since
+   * the builder never retries an ended job on its own.
    */
   private scheduleOwnRetry(hold: Hold): void {
     if (hold.ownTimer || hold.closed) return;
@@ -432,6 +437,7 @@ export class HolderSet {
       }
       this.activate(hold).catch((err: unknown) => {
         this.deps.log(`could not take over ${hold.root}: ${messageOf(err)}`);
+        if (err instanceof JobEndedError) return;
         this.scheduleOwnRetry(hold);
       });
     }, this.deps.ownRetryMs);

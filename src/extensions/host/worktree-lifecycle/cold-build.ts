@@ -23,7 +23,8 @@
  * someone else indexed meanwhile is not registered (that index is theirs).
  *
  * Return codes of {@link runColdBuild}: 0 built (or already indexed by someone
- * else), 1 failed, 3 another live process holds `rebuild.pid`, 4 a retryable
+ * else), 1 failed (or refused: this root's cold build was ended over a job
+ * limit, see runColdBuild), 3 another live process holds `rebuild.pid`, 4 a retryable
  * SQLite lock thrown by indexAll or reported in its errors, or thrown by init
  * with no database file at dbFile. On 1 or 4, removal of this build's database
  * is best-effort and only if its identity still matches; see runColdBuild.
@@ -47,6 +48,7 @@ import { getCodeGraphDir, isInitialized, statInode } from '../../../directory';
 import { gitCommonDirAsync } from './git';
 import { registerProject, stampSeedNonce } from './project-registry';
 import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
+import { endedJobs } from '../builder/ended-jobs';
 
 export const COLD_BUILD_EXIT_BUILT = 0;
 export const COLD_BUILD_EXIT_FAILED = 1;
@@ -120,8 +122,16 @@ function isCreatedDatabase(dbFile: string, created: string | null): boolean {
  * created database is best-effort and subject to the identity check above.
  * An init lock leaving a file returns FAILED; registration errors are handled
  * best-effort, not returned as LOCKED. A held rebuild.pid returns BUSY.
+ *
+ * A root whose cold build the builder ended over a job limit (builder/ended-jobs.ts) is refused first: one
+ * stderr line, FAILED, no lock taken and nothing created. It is not retried on its own; an explicit
+ * `codegraph index` of the root, or the builder's next restart, lets it run again.
  */
 export async function runColdBuild(root: string): Promise<number> {
+  if (endedJobs.has(root, 'cold-build')) {
+    process.stderr.write(`[CodeGraph] Cold build of ${root} refused: it was ended over a job limit (CODEGRAPH_BUILDER_JOB_MAX_MS or CODEGRAPH_BUILDER_JOB_MAX_RSS_MB) and is not retried automatically; run \`codegraph index\` to try again\n`);
+    return COLD_BUILD_EXIT_FAILED;
+  }
   const lock = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
   if (lock.kind === 'taken') return COLD_BUILD_EXIT_BUSY;
   let cg: CodeGraph | null = null;

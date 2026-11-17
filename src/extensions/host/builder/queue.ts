@@ -15,8 +15,15 @@
  *
  * Every job is logged as it starts and ends, through `onEvent`; the builder writes those as the lines of
  * `<state dir>/builder.log`.
+ *
+ * A job ended over a limit (./job-limit-guard.ts) is refused here afterwards: a later enqueue of the same root
+ * and kind rejects with {@link JobEndedError} (./ended-jobs.ts holds the marks). Cold builds are refused by
+ * their own body instead (cold-build.ts), and `init` and `index` never are: they are the explicit way to try
+ * again, and one that ends ok clears its root's marks.
  */
 import { canonicalProjectRoot } from '../../../directory';
+import { endedJobs } from './ended-jobs';
+import { JobEndedError } from './job-ended-error';
 
 /**
  * What a job does, and so which class it is in. `sync` is a caller's sync (the server's, or the CLI's
@@ -26,6 +33,9 @@ export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build'
 
 /** The kinds that wait behind every queued SYNC job. */
 const COLD_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['cold-build', 'init', 'index']);
+
+/** The kinds an ended mark never refuses at enqueue: `init` and `index` are the explicit retry; a cold build refuses in its body (cold-build.ts). */
+const NEVER_REFUSED: ReadonlySet<JobKind> = new Set<JobKind>(['cold-build', 'init', 'index']);
 
 /** One job's start or end, for the log. `error` is set on a failed end, one line. */
 export type JobEvent =
@@ -85,6 +95,8 @@ export class JobQueue {
   /** Queued, not started, entries by coalesce key. */
   private readonly byKey = new Map<string, Entry>();
   private running: Entry | null = null;
+  /** The id of the job started last: 1 for the first, one more for each next. */
+  private runningId = 0;
   private closed = false;
   private idleWaiters: Array<() => void> = [];
   /** Callers of {@link whenRootIdle}, by the canonical root they wait on. */
@@ -94,10 +106,14 @@ export class JobQueue {
 
   /**
    * Queue a job. Resolves with `run`'s value, rejects with its error (the failure is logged as well). A
-   * closed queue rejects at once.
+   * closed queue rejects at once, and so does a root and kind ended over a limit (a {@link JobEndedError},
+   * with no run and no log line), except the {@link NEVER_REFUSED} kinds. An `init` or `index` that ends ok
+   * clears its root's ended marks.
    */
   enqueue<T>(kind: JobKind, root: string, run: () => Promise<T>, opts: EnqueueOptions = {}): Promise<T> {
     if (this.closed) return Promise.reject(new Error('the index builder is stopping'));
+    const ended = NEVER_REFUSED.has(kind) ? undefined : endedJobs.find(root, kind);
+    if (ended) return Promise.reject(new JobEndedError(root, kind, ended.limit));
     const key = opts.coalesceKey;
     if (key !== undefined) {
       const shared = this.byKey.get(key);
@@ -113,9 +129,9 @@ export class JobQueue {
     return promise as Promise<T>;
   }
 
-  /** The job running now, or null. */
-  runningJob(): { kind: JobKind; root: string } | null {
-    return this.running ? { kind: this.running.kind, root: this.running.root } : null;
+  /** The job running now, or null. `id` tells one run from the next (./job-watchdog.ts times each from its first sight). */
+  runningJob(): { id: number; kind: JobKind; root: string } | null {
+    return this.running ? { id: this.runningId, kind: this.running.kind, root: this.running.root } : null;
   }
 
   /** How many jobs wait, by class (the running one is not counted). */
@@ -166,10 +182,12 @@ export class JobQueue {
     }
     if (next.coalesceKey !== undefined && this.byKey.get(next.coalesceKey) === next) this.byKey.delete(next.coalesceKey);
     this.running = next;
+    this.runningId += 1;
     this.emit({ edge: 'start', kind: next.kind, root: next.root });
     // `run` may throw before its first await; the async wrapper turns that into a rejection too.
     void (async () => next.run())().then(
       (value) => {
+        if (next.kind === 'init' || next.kind === 'index') endedJobs.clearRoot(next.root);
         this.emit({ edge: 'end', kind: next.kind, root: next.root, ok: true });
         this.running = null;
         next.resolve(value);

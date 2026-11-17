@@ -4,7 +4,9 @@
  *
  * The jobs are hand-held promises, so each case controls exactly when a job ends; nothing here touches disk.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
+import { JobEndedError } from '../../../src/extensions/host/builder/job-ended-error';
 import { JobQueue, formatJobLine, type JobEvent, type JobKind } from '../../../src/extensions/host/builder/queue';
 
 /** A job body the test finishes by hand. */
@@ -194,6 +196,62 @@ describe('JobQueue', () => {
     await done;
     await tick();
     expect(source, 'the source is idle once the seed ended').toBe(true);
+  });
+});
+
+describe('JobQueue job limits', () => {
+  const mark = { root: '/ended', kind: 'sync' as const, limit: 'time' as const, at: '2026-11-16T10:00:00.000Z' };
+  beforeEach(() => endedJobs.replaceAll([]));
+  afterEach(() => endedJobs.replaceAll([]));
+
+  it('reports successive running job ids and null while idle', async () => {
+    const queue = new JobQueue();
+    expect(queue.runningJob()).toBeNull();
+    const first = held();
+    const a = queue.enqueue('sync', '/first', first.run);
+    await first.started;
+    expect(queue.runningJob()).toEqual({ id: 1, kind: 'sync', root: '/first' });
+    const second = held();
+    const b = queue.enqueue('open', '/second', second.run);
+    first.finish();
+    await a;
+    await second.started;
+    expect(queue.runningJob()).toEqual({ id: 2, kind: 'open', root: '/second' });
+    second.finish();
+    await b;
+    expect(queue.runningJob()).toBeNull();
+  });
+
+  it('rejects an ended job without running it or emitting events', async () => {
+    endedJobs.add(mark);
+    const { queue, events } = recordingQueue();
+    const run = vi.fn(async () => 42);
+    const result = queue.enqueue('sync', '/ended', run);
+    await expect(result).rejects.toBeInstanceOf(JobEndedError);
+    await expect(result).rejects.toMatchObject({ root: '/ended', kind: 'sync', limit: 'time' });
+    expect(run).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it.each(['cold-build', 'init', 'index'] as const)('does not refuse an ended %s job', async (kind) => {
+    endedJobs.add({ ...mark, kind });
+    const run = vi.fn(async () => 42);
+    await expect(new JobQueue().enqueue(kind, '/ended', run)).resolves.toBe(42);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it.each(['init', 'index'] as const)('clears only its root after successful %s', async (kind) => {
+    endedJobs.add(mark);
+    endedJobs.add({ ...mark, root: '/other' });
+    await new JobQueue().enqueue(kind, '/ended', async () => undefined);
+    expect(endedJobs.has('/ended', 'sync')).toBe(false);
+    expect(endedJobs.has('/other', 'sync')).toBe(true);
+  });
+
+  it.each(['init', 'index'] as const)('keeps marks after failed %s', async (kind) => {
+    endedJobs.add(mark);
+    await expect(new JobQueue().enqueue(kind, '/ended', async () => { throw new Error('failed'); })).rejects.toThrow('failed');
+    expect(endedJobs.has('/ended', 'sync')).toBe(true);
   });
 });
 
