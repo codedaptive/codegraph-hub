@@ -742,3 +742,13 @@ General as a RULING line. Decisions already settled by a document live in `team/
   release. If upstream merges one of them first, it comes in with the main merge instead.
 - Work implied: Orc-Codegraph orders them in that place in the queue.
 
+
+## R-52. Q-42: sm.16 is approved for the machine when it lands
+- Date: 2026-11-17 / Bob, direct ("sm.16 is approved for install when it lands"), on Q-42 (option a).
+- Question: R-18 holds every new sm.N for Bob's go. sm.16 carries the rest of the 11-16 incident set and was
+  expected to be ready while Bob is away. Give the go in advance, or hold it until he is back?
+- Ruling: go, in advance. Once the incident set is promoted to ours, Orc-Codegraph releases 1.6.2-sm.16 from that
+  commit by the sm.15 path (gate, pack, tarball check, global install, verify-teams) without asking again. The
+  install follows only a release gate that passes.
+- Work implied: Orc-Codegraph releases and installs sm.16 when the incident set is on ours, and reports the release
+  record; the queue then goes on to the docs/SPEC-upstream.md §7 merge, R-51 and R-49.
