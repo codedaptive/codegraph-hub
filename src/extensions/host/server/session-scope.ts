@@ -141,7 +141,8 @@ export function sessionFocusEntries(dirs: readonly string[] | undefined): string
 /**
  * The canonical root of the git worktree that contains `dir`: the realpath of the nearest directory at or
  * above it with a `.git` entry (a directory for a main checkout, a file for a linked worktree), found by stats
- * alone ({@link gitRootByStat}); `dir`'s own canonical path when it is not inside a git working tree. `dir` is
+ * alone ({@link gitRootByStat}), or else the nearest opted-in folder (as its registry record spells it); `dir`'s
+ * own canonical path when it is in neither. `dir` is
  * canonicalised first (a missing tail kept), so a symlinked spelling finds the same root as the real one. It is
  * the directory a repo-relative focus entry is relative to for a call answered from an index at `dir`: each
  * linked worktree of a repository is its own root, and an index nested below the root (`repo/sub/.codegraph`)

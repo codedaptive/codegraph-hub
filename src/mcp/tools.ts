@@ -2802,8 +2802,8 @@ export class ToolHandler {
    * repository nested in an indexed checkout is its own worktree root, so the checkout's index does not answer
    * for it, covered or not: the builder seeds or builds one for the nested repository unless
    * CODEGRAPH_NO_AUTO_SEED=1 turns automatic indexing off, the call answers the building note while that runs,
-   * and the not-indexed guidance when the copy or build fails; a path in no git worktree selects none, so a
-   * builder engine never opens an index outside git), {@link selectIndexRoot} on one without (the CLI,
+   * and the not-indexed guidance when the copy or build fails; a path in no git worktree and no opted-in folder selects none, so a
+   * builder engine never opens an index outside both), {@link selectIndexRoot} on one without (the CLI,
    * the read-only fallback, query workers: nothing builds there, and {@link uncoveredNestedRepo} guards the nested
    * case instead). The one place the choice is made, for the selection, the builder question, the sensitive-path
    * refusal and the focus root.
@@ -2911,9 +2911,9 @@ export class ToolHandler {
    * a `rebuild.pid` beside it (a worktree that may need a seed or a cold
    * build). The index is the call's own ({@link selectIndexRootForCall}): a
    * path in a git repository nested below an indexed checkout has none, so the
-   * builder is asked. Yes for a path in a git working tree with no index. Never
-   * for a path in no git worktree: nothing is built there, and the call is
-   * answered that it is not in a git repository. No otherwise: a
+   * builder is asked. Yes for a path in a git working tree or an opted-in folder
+   * with no index. Never for a path in neither: nothing is built there, and the
+   * call is answered that it is not in a git repository. No otherwise: a
    * call against an index already open and held costs a few stats, no IPC, so
    * a builder busy with a long job never delays a read of another project.
    */

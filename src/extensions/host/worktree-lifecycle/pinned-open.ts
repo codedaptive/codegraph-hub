@@ -22,8 +22,8 @@
  * (its watcher, its writer slot, a catch-up sync), then the server opens it
  * read-only. The server writes nothing here.
  *
- * A pinned root with no git worktree at or above it (gitRootByStat in
- * ../server/index-root.ts is null) is skipped, with a line saying so, before any
+ * A pinned root with no git worktree and no opted-in folder at or above it
+ * (gitRootByStat in ../server/index-root.ts is null) is skipped, with a line saying so, before any
  * seed: it is neither seeded nor opened, whether or not it has an index. Its
  * registry record and its index stay; the opener deletes nothing.
  *

@@ -2,7 +2,7 @@
  * Which index answers a call: the helpers the server and the index builder share, so both name the same
  * root for the same `projectPath`.
  *
- * {@link gitRootByStat} and {@link selectIndexRoot} are stat-only (no git is spawned): they run on every tool
+ * {@link gitRootByStat} and {@link selectIndexRoot} spawn no git (the opt-in lookup of the first also reads registry records): they run on every tool
  * call, and the builder runs them again before it holds a root. {@link ownIndexRootFor} and
  * {@link selectOwnIndexRoot} add one check that can spawn git, but only for a path that a stat walk shows to
  * have a `.git` entry below the candidate index root; a "nested" answer is memoized, any other is recomputed.
@@ -60,7 +60,7 @@ function gitRootOfReal(real: string): string | null {
 
 /**
  * The root a call on `projectPath` belongs to: the nearest directory at or above it that has a `.git` entry
- * (a directory for a main checkout, a file for a linked worktree or a submodule), found by stats alone; or,
+ * (a directory for a main checkout, a file for a linked worktree or a submodule), found by stats alone, no git spawned; or,
  * only when there is none, the nearest folder opted in with `codegraph init <dir> --no-git`
  * ({@link optedInRootByStat}: one registry read per level), so git always wins. Null for a path in no git
  * worktree and no opted-in folder. The walk starts from the path's real location ({@link realLocation}), so
