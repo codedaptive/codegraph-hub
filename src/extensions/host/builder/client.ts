@@ -29,6 +29,7 @@ import { LockUnavailableError } from '../../../errors';
 import type { IndexResult, SyncResult } from '../../../extraction';
 import type { IndexWriteEvent } from './cli-wire';
 import type { FenceKind } from './fences';
+import type { JobKind } from './queue';
 import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 import { isReply, type BuilderReply, type BuilderRequest, type BuilderToServer, type CliIndexMode } from './protocol';
 
@@ -49,6 +50,7 @@ export type EnsureOutcome =
       pending?: true;                                                 // builder unavailable or preparation not settled; no failed-build guidance
       worktree?: string;                                              //   set when the path is in a git worktree a later call may still give an index
       unbuilt?: { root: string; unsafe?: string };                    //   set when the path is a plain directory (no git) whose build root cannot be built: `unsafe` is what the root looks like ("your home directory"), absent when its build failed
+      ended?: { root: string; kind: JobKind; limit: 'time' | 'rss' }; //   set when the job of `root` at or above the path was ended over a limit; only `codegraph index` or `init` of it clears that
     };
 
 /** First wait before a restart, doubled per quick failure up to {@link RESTART_MAX_MS}. */
