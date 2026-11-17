@@ -1,8 +1,10 @@
 /**
  * The index builder's service (src/extensions/host/builder/service.ts, holder.ts) run in this process with a
  * recording `send`, so the cases can read what it pushes and hold its queue still. The forked process and the
- * client are covered in builder-client.test.ts; here the logic is under test: holds, the watcher's pending set
- * as pushed freshness, a root another process writes, a rebuild in progress, and the housekeeping release.
+ * client are covered in builder-client.integration.test.ts
+ * (the SIGKILL replacement in builder-client-sigkill.validation.test.ts); here the logic is under test:
+ * holds, the watcher's pending set as pushed freshness, a root another process writes, a rebuild in progress,
+ * and the housekeeping release.
  *
  * Real SQLite and real files in mkdtemp dirs; the watcher is the real FileWatcher on a short debounce.
  */

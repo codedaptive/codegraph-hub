@@ -1,25 +1,9 @@
 /**
- * Fresh answers, CLI surface: standalone waits settle before closing their writer;
- * a routed sync with a zero settle cap can finish on the builder after the CLI exits.
- *
- * When standalone `--fresh` passes its bound with a sync in flight, the CLI prints the
- * answer, the not-fresh checkpoint and a `Note:` line at once, then waits
- * (capped by CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS) for that sync to settle before
- * closing the index and exiting 3. Closing the writer mid-sync cuts the sync
- * and leaves files pending for the next caller.
- *
- * The cut is forced with FILE_COUNT changed files and a CODEGRAPH_FRESH_TIMEOUT_MS
- * found by search on this machine (see cutRun). No single bound is a gate: how
- * long a sync takes varies too much with machine load, from one run to the next,
- * to place a bound inside it in one shot. The bound must outlast the wait's
- * first pending count, or the wait times out before it starts a sync at all; and
- * the sync must outlast the bound. The checkpoint is taken at the bound, before
- * the settle wait, so its pending is the cut count. cutRun accepts a run only
- * when that count shows a sync ran and plenty was left in flight
- * (FILE_COUNT * CUT_MIN_LEFT <= pending < FILE_COUNT), so a run without a cut
- * fails as a fixture problem, never as the behaviour under test.
- *
- * Driven through the built binary as __tests__/extensions/host/fresh-answers.cli.test.ts is.
+ * Fresh answers, CLI surface, validation group: G1 and G2, the `query --fresh` cases, and G3,
+ * `checkpoint --fresh --json`. Each one's cut search (cutRun) depends on how long a sync takes
+ * under machine load, so they run here. G3: a standalone `--fresh` past its bound with a sync in
+ * flight prints its answer and a `Note:` line at once, then waits (capped by
+ * CODEGRAPH_FRESH_SETTLE_TIMEOUT_MS) for that sync to settle before closing the index and exiting 3.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn } from 'child_process';
@@ -349,7 +333,6 @@ describe('fresh answers: CLI with a sync still in flight at the bound', () => {
     expect(notes[0]?.at ?? Infinity, `Note at least ${ORDER_GAP_MS} ms before exit; ${times}`)
       .toBeLessThanOrEqual(run.exitAt - ORDER_GAP_MS);
   }
-
   // Over 5 s: up to CUT_ATTEMPTS CLI runs each over a FILE_COUNT-file edit, the accepted one waiting out
   // the sync, then a second CLI run, on a loaded machine.
   it('G1 query --fresh that times out prints first, then lets its sync finish: a plain checkpoint after it is fresh and the index is intact', async () => {

@@ -4,7 +4,7 @@
  * and says to unset it to turn automatic indexing back on. Pure function: no index, no environment.
  * - U1: the note names CODEGRAPH_NO_AUTO_SEED, the variable that switches automatic indexing off.
  * - U2: the sentence that names the switch, or the sentence before or after it, tells the reader to unset it.
- * The guarantees builder-service.test.ts already pins on this note ("isn't indexed with codegraph", no
+ * The guarantees builder-service.integration.test.ts already pins on this note ("isn't indexed with codegraph", no
  * "user's decision") are not repeated here.
  */
 import { describe, expect, it } from 'vitest';

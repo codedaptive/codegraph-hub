@@ -9,7 +9,7 @@
  * (MCP) leaves those edges out of the walk, so the dependent is absent and the
  * JSON report carries top-level `strict: true`.
  *
- * Entry points are the ones blast-extension.test.ts uses in-process: the
+ * Entry points are the ones blast-extension-inprocess.integration.test.ts uses in-process: the
  * zone's default export registered with `registerExtension` and driven
  * through `ToolHandler` for MCP, and the same export's `registerCommands` on a
  * fresh commander program for the CLI (in-process rather than the built

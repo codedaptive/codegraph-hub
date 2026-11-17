@@ -10,7 +10,7 @@
  *     their start (a request that arrives after the fence is refused when it is made, one queued before it when it starts),
  *     and `drain` answers once no job of its root runs or waits, a seed that reads the root included (U9).
  *
- * Run in-process, as builder-service.test.ts drives BuilderService: a recording `send`, the job log through the
+ * Run in-process, as builder-service.integration.test.ts drives BuilderService: a recording `send`, the job log through the
  * `jobLog` seam, housekeeping off, real SQLite and real files in mkdtemp dirs. The requests are the IPC shapes
  * the server sends (`{id, op, ...}` through BuilderService.handle). What is checked is what the builder sends
  * back (`{id, ok, result | error}` replies, `{op: 'requestEvent', requestId, event}` pushes) and the job log.

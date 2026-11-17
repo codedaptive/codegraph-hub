@@ -2,7 +2,7 @@
  * End-to-end blast tests cover both git diff handling (diff.ts, which marks a pure-deletion range
  * `deletion: true`) and seeding (blast.ts). Each runs
  * `codegraph blast` through `runBlast` on a committed C1 -> C2 diff, so the range a deletion produces comes
- * from git and not from a hand-built object (the hand-built cases are in blast-review-fixes-seeds.test.ts).
+ * from git and not from a hand-built object (the hand-built cases are in blast-review-fixes-seeds.integration.test.ts).
  *
  * Every test indexes a fixture repository, which can take more than 5 s on the loaded machine, so each one
  * carries a comment and runs under the 30 s testTimeout of vitest.config.mts.
@@ -162,7 +162,7 @@ describe('a blank separator the diff text caps drop is not seeded as code (C1 ->
 
   it('a 30-line function inserted above an exported function does not reach the importer of the file', async () => {
     // Indexes a fixture repo: can pass 5 s under load.
-    // Same C1 and C2 as the test above. A file seed walks the imports edge from user.ts to lib.ts (blast.test.ts
+    // Same C1 and C2 as the test above. A file seed walks the imports edge from user.ts to lib.ts (blast.integration.test.ts
     // pins that reach), so a file seed here would list user.ts among the impacted.
     const root = repoAtC1({ 'src/lib.ts': LIB_C1, 'src/user.ts': USER_C1 });
     commitC2(root, { 'src/lib.ts': INSERT_ABOVE_C2 });
