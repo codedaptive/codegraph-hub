@@ -9,7 +9,7 @@ import { discardSchemalessLeftover } from './discardSchemalessLeftover';
  *
  * A schema-less database is not initialized (`isInitialized` is false), so the
  * abandoned-index path never sees it, and the seed refuses a target whose
- * `codegraph.db` exists. This answers false, reading and removing nothing,
+ * `codegraph.db` exists. This answers false, touching no database,
  * while a rebuild holds `root` (`rebuildHeld`) or when `root` has no
  * `rebuild.pid` whose holder is dead (./deadRebuildHolder.ts): with no
  * `rebuild.pid`, as for a user's own `codegraph init`, nothing is removed.

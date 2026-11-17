@@ -534,7 +534,7 @@ async function backupSnapshot(srcDb: string, tmp: string): Promise<void> {
   }
 }
 
-/** Thrown when the target gained an index while the seed was being taken. */
+/** Thrown when the target has an index or a `codegraph.db` file when the seed is taken or installed. */
 class SeedTargetTakenError extends Error {
   constructor(root: string) {
     super(`${root} already has an index`);
@@ -624,7 +624,7 @@ function standardGitignore(): Buffer {
  * carries it from its first moment; the caller records it in the registry. A
  * staging copy a killed seeder left in the target (its pid dead) is removed
  * first. Throws when the source has no index, when the target already has an
- * index, when the target's `codegraph.lock` stays held by another process past
+ * index or a `codegraph.db` file, when the target's `codegraph.lock` stays held by another process past
  * the retries, or when the copy or the nonce write fails.
  *
  * A seed that fails removes what it made and nothing else, since other
