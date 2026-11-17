@@ -2959,7 +2959,7 @@ export class ToolHandler {
     if (outcome.kind === 'none' && outcome.ended) {
       this.unseededWorktrees.delete(projectPath);
       // A job stopped over a limit is not retried; an index already on disk is still served,
-      // and every answer from it carries the stopped note (withStoppedJobNotice).
+      // and each non-error answer from it carries the stopped note (withStoppedJobNotice).
       if (this.selectIndexRootForCall(projectPath) !== null) return;
       throw new NotIndexedError(endedJobNote(projectPath, outcome.ended));
     }
@@ -3660,7 +3660,7 @@ export class ToolHandler {
   }
 
   /**
-   * Prepend the stopped-index note to every answer served from a root whose
+   * Prepend the stopped-index note to each non-error answer served from a root whose
    * last builder job was ended at a limit (S-69): the index on disk is served,
    * but may be partial or behind until an explicit `codegraph index` or
    * `codegraph init`.

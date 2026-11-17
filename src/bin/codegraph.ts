@@ -398,8 +398,10 @@ function warn(message: string): void {
  * explicit `codegraph index` or `codegraph init`. explore, node and the prompt hook pass
  * `stoppedNote: false`: their answer is a tool answer, or for the prompt
  * hook's symbol list its own context block, and carries the note itself, so
- * every answer served from a stopped root's index without an error has
- * exactly one.
+ * each answer these commands serve from a stopped root's index without an
+ * error has exactly one. `grep`, `blast`, `orphans` and `suspects` open the
+ * index themselves and carry no note yet (S-71: the queries and resolution
+ * lanes add it).
  */
 async function openIndexToRead(
   projectPath: string,
