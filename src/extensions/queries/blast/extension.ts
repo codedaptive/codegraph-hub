@@ -6,11 +6,12 @@
  *
  * The hook loads this module on the main thread of every CLI invocation and in
  * every query-pool worker, so its top level imports only `path`, types and the
- * tool definition (plain data). The engine (`CodeGraph`, which pulls in the
- * database layer), project-root lookup, git helpers and blast itself are loaded
- * with `await import()` inside the command's action and the tool's handler, as
- * grep's are in `../extension.ts`; the stopped-index warning is loaded the same
- * way inside the command's action only. `await import()` of a `.ts` module works
+ * tool definition (plain data). Everything else is loaded with `await import()`, as
+ * grep's is in `../extension.ts`. The command's action loads the project-root
+ * lookup (`../../../directory`), `../shared/nested-repo` (which loads the CodeGraph
+ * class when it runs), `./index` (blast, git helpers and the database layer) and
+ * `../shared/stopped-index-warning`; the tool's handler loads only `./index`, taking
+ * the root from `ctx.getCodeGraph`. `await import()` of a `.ts` module works
  * under vitest, where a lazy `require` would not.
  *
  * The CLI command has no session, so it never sees a focus; the tool's handler
