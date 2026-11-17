@@ -14,5 +14,8 @@ describe('JobEndedError', () => {
     expect(error.message).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(error.message).toContain('CODEGRAPH_BUILDER_JOB_MAX_RSS_MB');
     expect(error.message).toContain('codegraph index');
+    expect(error.message).toContain('codegraph init');
+    expect(error.message).not.toContain('restart the builder');
+    expect(error.message).toMatch(/restart/i);
   });
 });

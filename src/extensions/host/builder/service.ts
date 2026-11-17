@@ -17,6 +17,7 @@ import { ensureWorktreeIndex, isAbandonedIndex, seedWorktreeNow } from '../workt
 import { selectOwnIndexRoot } from '../server/index-root';
 import { CliJobs, requireAbsoluteRoot } from './cli-jobs';
 import type { BuilderFreshness, EnsureOutcome } from './client';
+import { withEndedJob } from './ended-outcome';
 import { RebuildFences, parseFenceKind } from './fences';
 import { HolderSet } from './holder';
 import type { BuilderRequest, BuilderToServer } from './protocol';
@@ -114,7 +115,7 @@ export class BuilderService {
   private dispatch(request: BuilderRequest): Promise<unknown> {
     switch (request.op) {
       // The anchor is IPC data: anything but a string is no anchor.
-      case 'ensure': return this.ensure(request.projectPath, typeof request.anchorRoot === 'string' ? request.anchorRoot : undefined);
+      case 'ensure': return this.ensure(request.projectPath, typeof request.anchorRoot === 'string' ? request.anchorRoot : undefined).then((outcome) => withEndedJob(outcome, request.projectPath));
       case 'seedWorktree': return seedWorktreeNow(requireAbsoluteRoot(request.root), {
         host: this.seedHost, wait: request.wait === true, automatic: request.automatic === true,
       });
