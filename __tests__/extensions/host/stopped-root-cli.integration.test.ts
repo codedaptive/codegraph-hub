@@ -79,6 +79,59 @@ describe('stopped root note: CLI', { timeout: 600_000 }, () => {
     expect(lines[0]).toContain('codegraph index');
   });
 
+  it('status reports a marked index with one note on stderr', () => {
+    mark(root);
+    const result = spawnSync(process.execPath, [BIN, 'status', root], {
+      encoding: 'utf8', timeout: 240_000,
+      env: { ...process.env, CODEGRAPH_STATE_DIR: stateDir, CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1',
+        CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1', NODE_NO_WARNINGS: '1', NO_COLOR: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('CodeGraph Status');
+    expect(result.stderr.split(NOTE)).toHaveLength(2);
+    const note = result.stderr.split(/\r?\n/).find(line => line.includes(NOTE));
+    expect(note).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    expect(note).toContain(`codegraph index ${root}`);
+  });
+
+  it('status of an unmarked index has no stopped note', () => {
+    const other = path.join(workspace, 'other');
+    fs.mkdirSync(other);
+    mark(other);
+    const result = spawnSync(process.execPath, [BIN, 'status', root], {
+      encoding: 'utf8', timeout: 240_000,
+      env: { ...process.env, CODEGRAPH_STATE_DIR: stateDir, CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1',
+        CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1', NODE_NO_WARNINGS: '1', NO_COLOR: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('CodeGraph Status');
+    expect(result.stderr).not.toContain(NOTE);
+    expect(result.stdout).not.toContain(NOTE);
+  });
+
+  it('includes the stopped note in the medium prompt-hook context', () => {
+    mark(root);
+    const result = spawnSync(process.execPath, [BIN, 'prompt-hook'], {
+      cwd: root, input: JSON.stringify({ prompt: 'alpha symbol', cwd: root }),
+      encoding: 'utf8', timeout: 240_000,
+      env: { ...process.env, CODEGRAPH_STATE_DIR: stateDir, CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1',
+        CODEGRAPH_NO_PROMPT_HOOK: undefined, CODEGRAPH_PROMPT_HOOK: '1', CODEGRAPH_NO_DAEMON: '1',
+        CODEGRAPH_WASM_RELAUNCHED: '1', NODE_NO_WARNINGS: '1', NO_COLOR: '1' },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('<codegraph_context');
+    expect(result.stdout).toContain('symbols matching this request');
+    expect(result.stdout).toContain('alphaSymbol');
+    const block = result.stdout.match(/<codegraph_context\b[\s\S]*?<\/codegraph_context>/)?.[0] ?? '';
+    expect(block.split(NOTE)).toHaveLength(2);
+    const note = block.split(/\r?\n/).find(line => line.includes(NOTE));
+    expect(note).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    expect(note).toContain(`codegraph index ${root}`);
+  });
+
   it('query serves an unmarked index without another root’s note', () => {
     const other = path.join(workspace, 'other');
     fs.mkdirSync(other);

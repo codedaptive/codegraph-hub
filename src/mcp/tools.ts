@@ -3856,11 +3856,14 @@ export class ToolHandler {
               ...validation.unchecked.slice(0, 20).map(file => `- ${file}`));
             if (validation.unchecked.length > 20) lines.push(`- … ${validation.unchecked.length - 20} more (narrow the query)`);
           }
-          lines.push('Retry after a successful codegraph sync, or narrow the query.');
+          // A sync is refused for a stopped root and never clears its mark; only `codegraph index` does.
+          lines.push(stoppedRootMark(project.getProjectRoot())
+            ? `Retry after \`codegraph index ${project.getProjectRoot()}\`, or narrow the query.`
+            : 'Retry after a successful codegraph sync, or narrow the query.');
           // Text only: Claude Code shows the model a result's structuredContent
           // in place of its text (#2088). The text names every stale file and
           // the first unchecked ones; the rest only need a narrower query.
-          return this.textResult(lines.join('\n'));
+          return this.withStoppedJobNotice(this.textResult(lines.join('\n')), project);
         }
       }
       // Record + STRIP before anything else touches the result: the emission is
