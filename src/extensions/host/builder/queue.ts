@@ -6,8 +6,9 @@
  * `index`) index a whole repository and run for minutes: a cold build of a root nobody asked for, and the
  * codegraph CLI's `init` and `index` (./cli-jobs.ts). A SYNC job always starts before any queued COLD job, so
  * an agent's edit becomes visible without waiting behind the cold builds queued ahead of it.
- * Within a class the order is first in, first out. A running job is never preempted: nothing here can
- * interrupt an index run halfway, so a SYNC job that arrives while a cold build runs waits for that one build
+ * Within a class the order is first in, first out. A running job is never preempted: the queue cannot
+ * interrupt an index run halfway (a job over its limit ends the whole builder process instead,
+ * ./job-limit-guard.ts), so a SYNC job that arrives while a cold build runs waits for that one build
  * to end, and then goes before the next.
  *
  * {@link JobQueue.whenRootIdle} tells when no job of one root runs or waits (the release of an index being

@@ -11,7 +11,7 @@
  * IPC channel closes (the server is gone) or it is signalled.
  *
  * Files in the state dir (CODEGRAPH_STATE_DIR, inherited from the server, else ~/.codegraph):
- *   builder.pid   JSON `{"pid":n,"serverPid":n,"startedAt":"ISO8601"}`, written on start, removed on a clean exit.
+ *   builder.pid   JSON `{"pid":n,"serverPid":n,"startedAt":"ISO8601"}`, written on start, removed on a clean exit and on a job-limit exit.
  *   builder.log   one line per job edge, appended:
  *                   <ISO8601> job start <kind> <root>
  *                   <ISO8601> job end <kind> <root> ok|failed[: msg]
@@ -33,8 +33,11 @@
  *
  * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) cannot be
  * interrupted inside this process, so the builder ends itself: it writes the `job limit` line and the job's mark,
- * rolls back a partial cold build, removes builder.pid and exits with code 75 (./job-limit-guard.ts), with no
- * grace for the other jobs. The server's client restarts it.
+ * rolls back a partial cold build, releases this pid's rebuild.pid and writer.pid at that job's root, removes
+ * builder.pid and exits with code 75 (./job-limit-guard.ts), with no grace for the other jobs. The server's
+ * client restarts it. Other held roots' writer.pid still name the dead pid, for the next builder to reclaim. The
+ * watchdog (./job-watchdog.ts) samples every 5 s on the main thread, so a job that blocks the event loop is
+ * caught only when the loop turns.
  *
  * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
  * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.

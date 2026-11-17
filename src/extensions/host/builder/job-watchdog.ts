@@ -2,13 +2,14 @@
  * Samples the builder's running job against its limits (./job-limits.ts). Jobs run in the builder's own process,
  * so the only way to end one over a limit is to end the process (./job-limit-guard.ts, through `onBreach`); this
  * only decides when. A job's time is measured from the first check that saw it running, so it can be up to one
- * interval late; the resident size is the whole builder process's, which is the job's while it is the one running.
+ * interval late (and later while a job blocks the event loop, since the sample runs on the main thread); the resident size
+ * is the whole builder process's, which is the job's while it is the one running.
  */
 import { checkJobLimits, type LimitBreach } from './job-limit-breach';
 import type { JobLimits } from './job-limits';
 import type { JobKind, JobQueue } from './queue';
 
-/** Five seconds: a job hours over its limit is caught within seconds, and a sample costs next to nothing. */
+/** Five seconds: a job over its limit is caught within one interval once the event loop turns, and a sample costs next to nothing. */
 const DEFAULT_INTERVAL_MS = 5000;
 
 export interface JobWatchdogOptions {

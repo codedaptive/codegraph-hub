@@ -28,7 +28,8 @@
  * SQLite lock thrown by indexAll or reported in its errors, or thrown by init
  * with no database file at dbFile. On 1 or 4, removal of this build's database
  * is best-effort and only if its identity still matches; see runColdBuild.
- * A builder killed mid-build leaves its partial database and a `rebuild.pid` naming a
+ * A builder that ends itself over a job limit removes its own partial database and `rebuild.pid` first
+ * (builder/job-limit-guard.ts). A builder killed mid-build leaves its partial database and a `rebuild.pid` naming a
  * dead pid, and what the next builder does depends on the root:
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
