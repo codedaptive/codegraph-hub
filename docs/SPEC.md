@@ -101,12 +101,18 @@ The builder still refuses what upstream's `unsafeIndexRootReason` (`src/director
 home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
 the queued job starts.
 
-### What a build reads (R-44)
+### What a build and the watcher read (R-44, S-72, S-75)
 
 The scan does not follow a symlinked folder whose real path is outside the root; it follows one whose real path is
 inside it. No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
-matcher as the root `.gitignore`; a `!` line naming a link's path inside the project re-includes a symlinked folder
-that leaves the root.
+matcher as the root `.gitignore` (`buildDefaultIgnore`), so it applies wherever that matcher does: the walk, the
+git path, sync and the watcher, and an embedded repository's own `.codegraphignore` applies inside it (S-72). A `!`
+line naming a link's path inside the project re-includes a symlinked folder that leaves the root.
+
+The file watcher follows directory links by the same rule (S-75): a link whose real path is inside the root is
+watched, one leaving it only when re-included. An edit to the root `.codegraphignore` rebuilds the watcher's scope
+at once, as an edit to the root `.gitignore` or `codegraph.json` does: the watched folders are refreshed and the next
+sync is a full reconcile.
 
 ### Job limits and space (R-47, S-69, R-45)
 
