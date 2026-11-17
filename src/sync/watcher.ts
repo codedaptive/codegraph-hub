@@ -831,8 +831,8 @@ export class FileWatcher {
    * when the link no longer leads to the folder it watched (deleted, or
    * pointed elsewhere) and re-reads the tree: its full sync drops what the
    * folder held, and a link that leads somewhere live and is still followed
-   * (R-44) is watched anew. A
-   * project folder that is gone degrades the watcher, closing every stream.
+   * (R-44) is watched anew. A project folder that is gone degrades the
+   * watcher, closing every stream.
    */
   private armGoneCheck(dir: string): void {
     if (this.stopped || this.goneChecks.has(dir)) return;
