@@ -1,6 +1,6 @@
 /**
  * The line an answer served from a root's index carries (where it is attached: ToolHandler.withStoppedJobNotice
- * and the CLI read commands in src/bin/codegraph.ts; grep, blast, orphans and suspects follow under S-71) while
+ * and the CLI read commands in src/bin/codegraph.ts; grep, blast and orphans follow under S-71; suspects writes its own) while
  * the index builder's last job of that root ended over a limit (./job-limits.ts) and an index is on disk: the
  * index is served as it is, but it may be partial or behind. Like ./ended-job-note.ts, it names the one variable
  * for the limit that was hit and the explicit `codegraph index` to run (an explicit `codegraph init` clears the
