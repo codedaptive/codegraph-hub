@@ -7,12 +7,13 @@ the governing spec replaces MISSION.md, and nothing only in MISSION.md applies.
 
 Standing rulings: R-10 (private, never distributed; one server per computer; no ceremony), R-8's "no security
 machinery" as narrowed by [B8]; R-12 (Bob's answers to draft 2). Superseded by R-11: R-9's five-minute close and no-pin rule, R-8's "any repository
-may be queried", MISSION.md WP1's project cap and in-server worker processes.
+may be queried", MISSION.md WP1's project cap and in-server worker processes. Superseded by R-46: [B1]'s "or
+directory" for a folder outside git.
 
 ## 1. What it is
 
 A private improvement of CodeGraph (upstream `colbymchenry/codegraph`, TypeScript on Node) for Bob's machine. It
-gives coding agents a code graph of any repository or directory on the computer through one MCP server and the
+gives coding agents a code graph of any git repository on the computer (R-46) through one MCP server and the
 `codegraph` CLI. Nothing in it is codeteam-specific [B14].
 
 ## 2. Processes
@@ -20,7 +21,7 @@ gives coding agents a code graph of any repository or directory on the computer 
 | Process | Count | Does |
 |---|---|---|
 | Server | one per computer [B1] | Answers every query, for every repository. Reads databases; never writes an index. |
-| Builder | one, long-lived, separate from the server [B9] | Every index write: cold builds, catch-up after a copy, syncs. Runs a queue; small syncs go ahead of cold builds [B10]. |
+| Builder | one, long-lived, separate from the server [B9] | Every index write: cold builds, catch-up after a copy, syncs, VACUUM. Runs a queue; small syncs go ahead of cold builds [B10]; syncs and catch-ups of roots that already have an index run in their own lane, alongside a running cold build, while cold builds stay serial (R-43). Every job has a time and a memory limit (R-47, S-69). |
 | `serve --mcp` session | one per agent session | Carries the session's launch settings (§4) and forwards calls to the server. |
 
 The first client starts the server; the server starts the builder; neither exits when idle (R-12). That keeps
@@ -66,8 +67,8 @@ The lifecycle already on `ours` (`src/extensions/host/worktree-lifecycle/`), unc
 3. Queue the catch-up on the builder; only files whose content changed are re-indexed.
 4. Housekeeping deletes the index of a worktree that is gone, and reclaims a writer lock whose PID is dead.
 
-With no indexed sibling (or a directory that is not a git worktree), the builder cold-builds it from the queue, and
-calls meanwhile get success-shaped "building" guidance. No opt-in: the registration/`CODEGRAPH_AUTO_INDEX=1` gate
+With no indexed sibling, the builder cold-builds it from the queue, and calls meanwhile get success-shaped
+"building" guidance. No opt-in: the registration/`CODEGRAPH_AUTO_INDEX=1` gate
 on `ours` (S-33) goes (R-12). `CODEGRAPH_NO_AUTO_SEED=1` turns automatic seeding and cold builds off for the process
 that sets it.
 
@@ -75,11 +76,37 @@ A call for a root whose copy is queued behind a running job waits up to 10 s
 (`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`) for it, then answers with the building guidance; it never waits for a cold
 build to finish.
 
-A directory outside git with no index is cold-built at the session's launch directory, and calls meanwhile get the
-building guidance. The builder refuses what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860)
-refuses (the home directory, a filesystem root, any parent of home) and sensitive paths, and checks
-the real path again when the queued job starts. Known cost: the build and its watch cover the whole launch
-directory, and the build waits its turn on the builder's serial queue. (index-builder, c8a25bb5.)
+### Only a git worktree root is indexed (R-46)
+
+Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root: not the server, not
+the builder, not a CLI command. `init`, `index` and `sync` refuse a path in no git worktree whether they hand the
+work to the builder or write in their own process (§2, R-14), before anything is written: an error and exit 1, as
+for an unsafe root, with no `--force` override; `uninit` and `project remove` still work on such a root (S-70). A
+call whose path lies inside a git worktree resolves to that worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
+never `isError`, and nothing is built. A session launched outside git keeps its launch directory as its anchor
+(§4); a call there resolves to the worktree enclosing its path, or gets that guidance. The builder still refuses
+what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the home directory, a
+filesystem root, any parent of home) and sensitive paths, and checks the real path again when the queued job
+starts.
+
+### What a build reads (R-44)
+
+The scan does not follow a symlinked folder whose real path is outside the root; it follows one whose real path is
+inside it. No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
+matcher as the root `.gitignore`; a `!` line naming a link's path inside the project re-includes a symlinked folder
+that leaves the root.
+
+### Job limits and space (R-47, S-69, R-45)
+
+A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8 GB resident
+(`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is, its writer
+lock released, and one log line names the root, the job kind, the limit and the measured value. It is not
+re-queued by itself; calls for that root get guidance naming the variable to raise, and an explicit
+`codegraph index` (or a builder restart) tries again under the same limits.
+
+After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
+queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
+database size.
 
 ## 4. Session launch settings (`serve --mcp …`)
 
