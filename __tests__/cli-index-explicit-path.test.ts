@@ -48,10 +48,19 @@ describe('codegraph index <path> (#1524)', () => {
   });
 
   it('an explicit path below the worktree root rebuilds that root and creates no index of its own', () => {
+    // A file the beforeAll index never saw: it is in the parent's index afterwards
+    // only if `index child` rebuilt the parent root.
+    fs.writeFileSync(path.join(parent, 'fresh.py'), 'def fresh_symbol():\n    return 3\n');
+
     const r = run(root, ['index', child, '--quiet']);
-    // `child` has no index of its own, so exit 0 means the parent root was rebuilt.
+
     expect(r.status, r.out).toBe(0);
-    expect(fs.existsSync(path.join(parent, '.codegraph', 'codegraph.db'))).toBe(true);
+    const cg = CodeGraph.openSync(parent);
+    try {
+      expect(cg.searchNodes('fresh_symbol').map((m) => m.node.name)).toContain('fresh_symbol');
+    } finally {
+      cg.close();
+    }
     expect(fs.existsSync(path.join(child, '.codegraph'))).toBe(false);
   });
 
