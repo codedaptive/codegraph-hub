@@ -14,6 +14,7 @@ import { cppIncludeTargets } from '../src/resolution/cpp-includers';
 import { cppNameMacros, cppNamespaceAliases } from '../src/resolution/cpp-namespaces';
 import { MAX_FILES_SCANNED_ON_MAIN, readProjectScans } from '../src/resolution/project-scans';
 import { ResolverPool } from '../src/resolution/resolver-pool';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 type Queries = ConstructorParameters<typeof ReferenceResolver>[1];
 
@@ -96,7 +97,8 @@ describe('project scans', () => {
   });
 
   it('makes the same graph past the bound, each worker reading for itself', () => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-project-scans-'));
+    // `init` refuses a folder in no git worktree, so the project is a git repository.
+    root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-project-scans-')));
     const repo = path.resolve(__dirname, '..');
     fs.writeFileSync(path.join(root, 'names.h'), 'namespace acme { void shared(); }\nnamespace py = acme;\n');
     const files = MAX_FILES_SCANNED_ON_MAIN + 1;

@@ -186,6 +186,7 @@ describe('local-only .codegraph/.gitignore', () => {
     });
 
     it('still builds the index', () => {
+      initRepo();
       codegraph('init', '-y', '--local-only');
 
       expect(fs.existsSync(path.join(dir, '.codegraph', 'codegraph.db'))).toBe(true);
@@ -219,12 +220,14 @@ describe('local-only .codegraph/.gitignore', () => {
     });
 
     it('says so when there is nothing to convert', () => {
+      initRepo();
       codegraph('init', '-y', '--local-only');
 
       expect(codegraph('init', '-y', '--local-only').output).toContain('.codegraph/.gitignore already ignores itself');
     });
 
     it('survives everything that opens the index afterwards', () => {
+      initRepo();
       codegraph('init', '-y', '--local-only');
 
       expect(codegraph('sync').code).toBe(0);
@@ -236,6 +239,7 @@ describe('local-only .codegraph/.gitignore', () => {
 
     it('says why it left a file with the user\'s own rules', () => {
       seedGitignore('codegraph.db\n');
+      initRepo();
 
       const { code, output } = codegraph('init', '-y', '--local-only');
 
