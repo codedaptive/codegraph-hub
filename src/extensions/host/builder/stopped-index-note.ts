@@ -3,7 +3,8 @@
  * and the CLI read commands in src/bin/codegraph.ts; grep, blast and orphans print it from the queries extensions
  * (src/extensions/queries/shared/stopped-index-warning.ts); suspects writes its own) while
  * the index builder's last job of that root ended over a limit (./job-limits.ts) and an index is on disk: the
- * index is served as it is, but it may be partial or behind. Like ./ended-job-note.ts, it names the one variable
+ * index is served as it is, but it may be partial or behind. A stopped `vacuum` job never reaches it (it leaves
+ * the index whole, ./stopped-root-mark.ts). Like ./ended-job-note.ts, it names the one variable
  * for the limit that was hit and the explicit `codegraph index` to run (an explicit `codegraph init` clears the
  * mark too), since the builder never retries an ended job on its own.
  * The line has no warning sign of its own: a tool answer puts `⚠️` before it, the CLI its warn glyph.

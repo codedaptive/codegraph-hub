@@ -182,7 +182,8 @@ export class BuilderService {
     // Nothing to seed or build: the call is answered from the index selectOwnIndexRoot names, if there is one.
     // That is never an index above a git repository nested around the path (another repository's), nor one
     // git could not vouch for (ownIndexRootFor fails closed): with seeding off, such a path holds nothing.
-    // Nor is an index outside git (SPEC §3): a sub-project's index inside a worktree is held, a non-git
+    // Nor is an index in no git worktree, whatever `.codegraph/` it holds (SPEC §3; R-50's opt-in for such a
+    // folder is not built, so none is held): a sub-project's index inside a worktree is held, a non-git
     // ancestor's never. A git worktree's index a killed build left half-made is no index
     // (isAbandonedIndex, seed.ts). The call may be answered before the catch-up is queued or finishes.
     const root = selectOwnIndexRoot(projectPath);
