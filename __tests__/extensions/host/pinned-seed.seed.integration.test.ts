@@ -203,7 +203,7 @@ describe('pinned seed core and builder', { timeout: 60_000 }, () => {
     const svc = startService(30);
     const gate = deferred();
     const started = deferred();
-    const blocker = svc.queue.enqueue('cold-build', path.join(workspace, 'blocker'), async () => { started.resolve(); await gate.promise; });
+    const blocker = svc.queue.enqueue('cold-build', target, async () => { started.resolve(); await gate.promise; });
     await started.promise;
     try {
       await svc.handle({ id: 43, op: 'seedWorktree', root: target, wait: false } as unknown as BuilderRequest);
@@ -239,7 +239,7 @@ describe('pinned seed core and builder', { timeout: 60_000 }, () => {
     const host = new BuilderSeedHost(queue, { seedWaitMs: 25 });
     const gate = deferred();
     const started = deferred();
-    const blocker = queue.enqueue('cold-build', path.join(workspace, 'blocker'), async () => { started.resolve(); await gate.promise; });
+    const blocker = queue.enqueue('cold-build', workspace, async () => { started.resolve(); await gate.promise; });
     await started.promise;
     let copied = false;
     try {

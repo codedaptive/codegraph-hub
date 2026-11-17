@@ -131,7 +131,7 @@ export class MCPEngine {
         // `open` is the handler's one open path: read-only (setReadOnly above).
         // With a builder, `ensure` has answered before this point: it
         // resolves once the builder opened (and migrated) the index, or after
-        // a bounded wait when that open is queued behind a running job, or when
+        // a bounded wait when that open is queued behind a running job of its root, or when
         // the hold could not open it (another live writer, an open failure).
         // This open is read-only whatever is on disk then; without a builder
         // the index is opened as it is.
