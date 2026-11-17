@@ -206,10 +206,10 @@ export async function sessionCallGuard(
  * same inside rule as {@link sessionCallGuard} (one `isInsideAnchor`, so the path
  * and its index can never be judged by two rules). Outside: success-shaped
  * guidance naming the anchor and the outside index, never `isError`. Inside the
- * anchor but in no git worktree (a non-git launch directory's own index, or a
- * non-git ancestor's index a handler with no builder would fall back to): a
- * refusal naming the index root, since codegraph answers only for git worktrees
- * (R-46).
+ * anchor but in no git worktree and no opted-in folder (a non-git launch
+ * directory's own index, or a non-git ancestor's index a handler with no builder
+ * would fall back to): a refusal naming the index root, since codegraph answers
+ * only for git worktrees and opted-in folders (R-46, R-50).
  */
 export function indexRootAdmission(anchor: RepoAnchor): IndexRootAdmission {
   return async (indexRoot) => {
@@ -222,12 +222,13 @@ export function indexRootAdmission(anchor: RepoAnchor): IndexRootAdmission {
   };
 }
 
-/** The admission of an index root inside the anchor: refused when it is in no git worktree. */
+/** The admission of an index root inside the anchor: refused when it is in no git worktree and no opted-in folder. */
 function admitGitRootOnly(indexRoot: string): string | null {
   if (gitRootByStat(indexRoot) !== null) return null;
   return (
     `The index that covers the path you gave is at ${indexRoot}, and ${indexRoot} is not in a git repository. ` +
-    'codegraph indexes and answers only for git worktrees, so it does not answer from it. ' +
-    'Use your built-in tools (Read/Grep/Glob) for this code.'
+    'codegraph indexes and answers only for git worktrees and the folders opted in to indexing, so it does not ' +
+    'answer from it. Use your built-in tools (Read/Grep/Glob) for this code. The user can opt a folder outside ' +
+    'git in once with `codegraph init <dir> --no-git`.'
   );
 }

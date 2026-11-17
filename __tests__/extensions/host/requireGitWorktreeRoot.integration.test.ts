@@ -1,5 +1,8 @@
 // Integration, not a ZUT: these tests run real git subprocesses on a throwaway repository (Orc #3349).
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerProject } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
+import { gitRootByStat } from '../../../src/extensions/host/server/index-root';
+import { notARepositoryAnswer } from '../../../src/extensions/host/server/notARepository';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -11,12 +14,14 @@ describe('requireGitWorktreeRoot', () => {
 
   beforeEach(() => {
     workspace = fs.realpathSync(fs.mkdtempSync('/tmp/cg-required-git-root-'));
+    vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     repo = path.join(workspace, 'repo');
     fs.mkdirSync(repo);
     execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore' });
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
@@ -57,5 +62,24 @@ describe('requireGitWorktreeRoot', () => {
     const result = requireGitWorktreeRoot(plain);
     expect(result).toEqual({ refusal: expect.stringContaining(plain) });
     expect(result).toEqual({ refusal: expect.stringContaining('is not in a git repository') });
+    expect(result).toEqual({ refusal: expect.stringContaining('codegraph init') });
+    expect(result).toEqual({ refusal: expect.stringContaining('--no-git') });
+  });
+
+  it('accepts an opted-in ancestor using its canonical spelling', () => {
+    const root = path.join(workspace, 'plain');
+    const child = path.join(root, 'sub');
+    const alias = path.join(workspace, 'alias');
+    fs.mkdirSync(child, { recursive: true });
+    fs.symlinkSync(root, alias);
+    const optIn = { noGit: true, seeded: false };
+    registerProject(root, optIn);
+    expect(requireGitWorktreeRoot(path.join(alias, 'sub'))).toEqual({ root });
+    expect(notARepositoryAnswer(child)).toBeNull();
+    const nestedRepo = path.join(root, 'nested-repo');
+    fs.mkdirSync(nestedRepo);
+    execFileSync('git', ['init', '-q'], { cwd: nestedRepo, stdio: 'ignore' });
+    expect(gitRootByStat(nestedRepo)).toBe(nestedRepo);
+    expect(requireGitWorktreeRoot(nestedRepo)).toEqual({ root: nestedRepo });
   });
 });

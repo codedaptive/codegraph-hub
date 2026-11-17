@@ -76,7 +76,7 @@ describe('uninit with a machine server running (UG1)', () => {
     // in the directory that holds the project, and the project is in its scope.
     launchDir = dir;
     stateDir = path.join(dir, 'state');
-    // A one-file git repository: codegraph indexes only git worktrees (R-46), and `init` refuses a folder in none (S-70).
+    // A one-file git repository: codegraph indexes only git worktrees (R-46), and `init` refuses a folder outside git unless it is opted in with `codegraph init <dir> --no-git` (R-50, which supersedes S-70 in part).
     U1 = fx.makeRepo(plainProject(path.join(dir, 'u1'), 'ug1Base'), {});
     fx.index(U1, stateDir);
 

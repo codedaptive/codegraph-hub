@@ -30,11 +30,14 @@
  * from the outer one.
  *
  * Outside git: `projectPath` has no `.git` entry at or above it. Nothing is
- * seeded, built or held for it, whatever index sits at or above it
- * ({@link ensureWorktreeIndex} answers `none`). Every decision is made on
+ * seeded or built for it, whatever index sits at or above it
+ * ({@link ensureWorktreeIndex} answers `none`), and nothing is held for it
+ * unless its folder was opted in (`codegraph init <dir> --no-git`, R-50): an
+ * opted-in folder is never seeded or cold-built automatically either, but the
+ * builder holds its index when it has one. Every decision is made on
  * `projectPath`'s realpath, and a queued cold build is admitted again when its
  * job starts ({@link admitColdBuild}): it builds only while its root still
- * names the directory it was approved on and is still a git worktree root.
+ * names the directory it was approved on and is still a root of its own.
  *
  * What it does:
  *   - seed: the sibling worktree with a complete index whose HEAD
@@ -761,7 +764,8 @@ export interface ColdBuildApproval {
 
 export type ColdBuildAdmission =
   | { ok: true; approval: ColdBuildApproval }
-  // `not-root`: the root is not a git worktree root (no `.git` entry there; gitRootByStat names another root or none).
+  // `not-root`: the root is not a root of its own (gitRootByStat names another root or none: no `.git` entry there
+  // and no opt-in of it).
   // `folder`: the root is a folder codegraph never builds (`reason` says which: unsafe index root, sensitive
   // folder, not an existing directory). `moved`: the root resolves to another directory than the approved one.
   | { ok: false; why: 'not-root' | 'folder' | 'moved'; reason: string };
@@ -772,7 +776,8 @@ export type ColdBuildAdmission =
  * path names at that moment, so the job must not trust what was true when it was queued: a path swapped for
  * a link to another directory, or a worktree whose `.git` went away, while the job waited would otherwise be
  * built. The same checks both times, in this order: the root still resolves to the approved realpath; it is a
- * git worktree root ({@link gitRootByStat} of it is itself); not an unsafe
+ * root of its own ({@link gitRootByStat} of it is itself: a git worktree root, or a folder opted in with
+ * `codegraph init <dir> --no-git`, which only a git worktree's seedOrBuild queues here); not an unsafe
  * index root (`unsafeIndexRootReason`: home, a filesystem root, a parent of home); not a sensitive folder,
  * and an existing directory (`validateProjectPath`). The last two read the root as spelled and as it resolves.
  *
@@ -967,12 +972,16 @@ const inflight = new Map<string, Promise<SeedOutcome>>();
  * to stderr and answers `none`.
  *
  * A `projectPath` with no `.git` entry at or above it answers `none` and
- * nothing is seeded or queued for it, whatever index sits at or above it.
+ * nothing is seeded or queued for it, whatever index sits at or above it. In
+ * an opted-in folder (`codegraph init <dir> --no-git`) the checks below answer
+ * it (no `.git` entry below the folder's index, or the git toplevel lookup
+ * finding no worktree); the builder then holds the folder's index if it has one.
  */
 export async function ensureWorktreeIndex(projectPath: string, host: SeedHost): Promise<SeedOutcome> {
   if (seedingDisabled()) return NONE;
-  // Outside git nothing is seeded or built (SPEC §3: only a git worktree root is indexed). Stats only, on the
-  // path's real location.
+  // Outside git and every opted-in folder nothing is seeded or built (SPEC §3: only a git worktree root, or a
+  // folder opted in, is indexed). Stats only, on the path's real location; an opted-in folder goes on to the
+  // checks below, which find no git worktree to seed or build.
   if (gitRootByStat(projectPath) === null) return NONE;
   const building = host.buildingRootFor(projectPath);
   if (building) return { kind: 'building', root: building };
@@ -1086,8 +1095,8 @@ async function seedOrBuild(
     }
   }
 
-  // No sibling to copy: build W's index. There is no opt-in and no earlier
-  // registration to ask for; a build returning FAILED is not retried until this builder restarts.
+  // No sibling to copy: build W's index. A git worktree needs no opt-in and no
+  // earlier registration; a build returning FAILED is not retried until this builder restarts.
   if (host.hasFailedBuild(worktree)) return considered;
   // The same refusal `codegraph init` applies (home directory, filesystem root), and the admission the
   // build's job runs again when it starts.
