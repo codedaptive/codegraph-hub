@@ -8,7 +8,7 @@
  * lists the real files there, so walking it would index them twice.
  *
  * Only listed paths a negation rule matches reach the file system, so a large
- * git list costs one ignore test per path. The walk skips `.git` and CodeGraph
+ * git list costs at most two ignore tests per path (file form, then folder form). The walk skips `.git` and CodeGraph
  * data folders, prunes with `keep`, follows nested outside links by the same
  * rule, guards cycles by real folder path, and skips any entry it cannot read.
  */
