@@ -593,3 +593,45 @@ General as a RULING line. Decisions already settled by a document live in `team/
   work is done. In this register that is the host-test-flakes item of R-38's bug list (done 2026-11-08, on
   integration b608a04a1d): no item of that kind is opened again. team/settled.md holds no such entry (searched
   2026-11-09).
+
+## R-43. Syncs of indexed roots run alongside a cold build
+- Date: 2026-11-16 / Bob, direct ("Q37 - agree"), on Q-37 (Orc-Codegraph #3239,
+  design/Orc-Codegraph/ledger/reports/builder-stall-questions-20261116.md Q1; Orc-Codeteam D347).
+- Question: a cold build already running holds the builder's one serial lane for hours (team-aimodel/workcrews/data,
+  2026-11-12: 11 of 26 work order trees stale); docs/SPEC.md:23 and :140 settle queue order, not a running build.
+  Should other roots' syncs wait behind it?
+- Ruling: no. Syncs and catch-ups of roots that already have an index get their own lane in the builder and run
+  alongside a cold build. Cold builds stay serial among themselves (S-6, S-33). One writer per root still holds:
+  each root has its own database.
+- Reason: Bob's word; a stale index answers queries wrongly for every team while the build runs.
+- Not chosen: one lane with the cold build yielding between batches (it only shortens the wait).
+- Owner: host (src/extensions/host/builder).
+
+## R-44. The scan does not follow a symlinked folder out of the root, unless .codegraphignore says so
+- Date: 2026-11-16 / Bob, direct ("Q38 - agree (Do we have a .codegraphignore feature) that could be used to do
+  this with the ability to overide auto add ssymlink that leave the project"), on Q-38 (builder-stall-questions
+  Q2 and Q4).
+- Question: the scan (src/extraction/index.ts:1999-2021, upstream's) follows a symlinked folder wherever it points;
+  one tree's links reached 489 GB of run outputs. Should it follow a link whose real path leaves the project root?
+- Ruling: by default, no. The scan skips a symlinked folder whose real path is outside the root and keeps following
+  one whose real path is inside it. No size cap. A new `.codegraphignore` file at the root (none exists today: no
+  hit in the index, 2026-11-16) carries ignore rules, and its rules can override that default to re-include a
+  symlinked folder that leaves the project.
+- Reason: Bob's word; a link out of the root pulls in data that is not the project's, and a size cap would leave a
+  large real project partly indexed, which is worse than none (AGENTS.md).
+- Not chosen: upstream's follow-everything; a size cap; no ignore file (S-68's first answer).
+- Supersedes: S-68's "no new ignore file".
+- Owner: host, as an orc-approved work order for the hook-in in upstream-owned src/extraction/ (rules/product.md),
+  with upstream-prs stacking the PR. Open for design: the file's syntax and how a re-include rule names a link.
+
+## R-45. The builder vacuums a root whose freelist passes a quarter of the file
+- Date: 2026-11-16 / Bob, direct ("Q39 - Over a quater of the files and at least 256MB"), on Q-39
+  (builder-stall-questions Q3; Orc-Codeteam BUG #3227).
+- Question: nothing reclaims space after an index shrinks (team-aimodel/workcrews/testing: 6.08 GB, 5.69 GB
+  freelist, auto_vacuum 0, 730 files). Should the builder VACUUM?
+- Ruling: yes. After a builder job that leaves a root's freelist over a quarter of the database file and at least
+  256 MB, the builder queues a VACUUM of that root as its own job, behind small syncs. It runs only when free disk
+  exceeds twice the database size, because VACUUM writes a full copy.
+- Reason: Bob's word, and his threshold.
+- Not chosen: Orc's half-the-file threshold; leaving reclaiming to the user.
+- Owner: host (src/extensions/host/builder).
