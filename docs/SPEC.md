@@ -106,7 +106,7 @@ value. It is not re-queued by itself, and the root's stopped mark survives every
 stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
 limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
 it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print the same
-line on stderr and answer as before (S-71). Only an explicit `codegraph index` or `codegraph init` of that
+line on stderr and answer as before (S-71, team/settled.md; not yet in the code: queries and resolution add it after builder-stopped-note). Only an explicit `codegraph index` or `codegraph init` of that
 root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
