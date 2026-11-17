@@ -7,8 +7,8 @@ the governing spec replaces MISSION.md, and nothing only in MISSION.md applies.
 
 Standing rulings: R-10 (private, never distributed; one server per computer; no ceremony), R-8's "no security
 machinery" as narrowed by [B8]; R-12 (Bob's answers to draft 2). Superseded by R-11: R-9's five-minute close and no-pin rule, R-8's "any repository
-may be queried", MISSION.md WP1's project cap and in-server worker processes. Narrowed by R-46 and R-50: [B1]'s "or
-directory" holds for a folder outside git only once it is opted in.
+may be queried", MISSION.md WP1's project cap and in-server worker processes. Superseded by R-46: [B1]'s "or
+directory" for a folder outside git; R-50 restores it for a folder a person opts in.
 
 ## 1. What it is
 
@@ -118,7 +118,7 @@ value. It is not re-queued by itself, and the root's stopped mark survives every
 stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
 limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
 it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print the same
-line on stderr and answer as before (S-71, team/settled.md; not yet in the code: queries and resolution add it after builder-stopped-note). Only an explicit `codegraph index` or `codegraph init` of that
+line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or `codegraph init` of that
 root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
@@ -189,7 +189,8 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-11-17)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.15** (ours
+Every item of the governing spec [B1]-[B14] is built and shipped, except [B1]'s "or directory" as R-50 restores it
+(the opt-in for a folder outside git), which comes in sm.16. Installed globally: **1.6.2-sm.15** (ours
 d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
 `codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38); upstream main f72c9d2e is already in ours.
 
