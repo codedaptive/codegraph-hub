@@ -398,7 +398,8 @@ function warn(message: string): void {
  * explicit `codegraph index`. explore, node and the prompt hook pass
  * `stoppedNote: false`: their answer is a tool answer, or for the prompt
  * hook's symbol list its own context block, and carries the note itself, so
- * every answer for a stopped root has exactly one.
+ * every answer served from a stopped root's index without an error has
+ * exactly one.
  */
 async function openIndexToRead(
   projectPath: string,

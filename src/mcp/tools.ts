@@ -3856,7 +3856,7 @@ export class ToolHandler {
               ...validation.unchecked.slice(0, 20).map(file => `- ${file}`));
             if (validation.unchecked.length > 20) lines.push(`- … ${validation.unchecked.length - 20} more (narrow the query)`);
           }
-          // A sync is refused for a stopped root and never clears its mark; only `codegraph index` does.
+          // A sync never clears the mark (and is refused under a sync-kind one); only `codegraph index` does.
           lines.push(stoppedRootMark(project.getProjectRoot())
             ? `Retry after \`codegraph index ${project.getProjectRoot()}\`, or narrow the query.`
             : 'Retry after a successful codegraph sync, or narrow the query.');
