@@ -55,6 +55,8 @@ describe('ended builder guidance at the tool handler', () => {
     const root = path.join(workspace, 'indexed');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
+    // A git repository: a builder engine serves only an index inside a git worktree (R-46).
+    execFileSync('git', ['init', '-q', root]);
     const cg = await CodeGraph.init(root);
     try { await cg.indexAll(); } finally { cg.close(); }
     expect(selectOwnIndexRoot(root)).toBe(root);
