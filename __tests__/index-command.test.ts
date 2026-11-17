@@ -21,6 +21,7 @@ import * as os from 'os';
 import { CodeGraph } from '../src';
 import { DatabaseConnection } from '../src/db';
 import { startFakeServer } from './fake-release-server';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -100,7 +101,7 @@ describe('codegraph index — full re-index keeps the graph populated (#874)', {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-cmd-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-cmd-')));
     // A couple of files with a call edge so there is a non-trivial graph to
     // (fail to) reproduce.
     fs.writeFileSync(
@@ -216,7 +217,7 @@ describe('codegraph index — recovers a stale/oversized prior index (#1067)', {
   const dbPath = (dir: string) => path.join(dir, '.codegraph', 'codegraph.db');
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-recover-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-recover-')));
     fs.writeFileSync(
       path.join(tempDir, 'a.ts'),
       `export function greet(name: string) { return hello(name); }\n` +
@@ -251,7 +252,7 @@ describe('codegraph index — recovers a stale/oversized prior index (#1067)', {
     expect(recovered.nodes).toBeLessThan(withJunk.nodes);
 
     // …and the result is identical to a fresh init of the same (now-smaller) tree.
-    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-fresh-'));
+    const fresh = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-fresh-')));
     try {
       fs.copyFileSync(path.join(tempDir, 'a.ts'), path.join(fresh, 'a.ts'));
       runCodegraph(['init'], fresh);

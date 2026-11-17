@@ -15,6 +15,7 @@ import { QueryBuilder } from '../src/db/queries';
 import { createResolver } from '../src/resolution';
 import { POOL_START_WAIT_MS, ResolverPool } from '../src/resolution/resolver-pool';
 import type { UnresolvedReference } from '../src/types';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 // Any run that reaches the check engages: a test can't rely on a measured rate.
 vi.mock('../src/resolution/resolver-pool', async (original) => ({
@@ -67,7 +68,8 @@ describe('the resolver pool', () => {
   let root: string;
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pool-pipeline-'));
+    // `init` refuses a folder in no git worktree, so the project is a git repository.
+    root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pool-pipeline-')));
     writeProject(root);
   });
 

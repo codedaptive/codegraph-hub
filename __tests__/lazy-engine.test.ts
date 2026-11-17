@@ -15,6 +15,7 @@ import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { CodeGraph } from '../src';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const DIST = path.resolve(__dirname, '../dist');
 const BIN = path.join(DIST, 'bin', 'codegraph.js');
@@ -49,8 +50,9 @@ describe('the engine stays unloaded until something needs it', () => {
 
   beforeAll(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-lazy-engine-'));
-    dir = path.join(root, 'project');
-    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'project', 'src'), { recursive: true });
+    // `sync` refuses a folder in no git worktree, so the project is a git repository.
+    dir = gitInitTempRoot(path.join(root, 'project'));
     fs.writeFileSync(path.join(dir, 'src/auth.ts'), 'export function parseToken(t: string) { return t.trim(); }\n');
     fs.writeFileSync(
       path.join(dir, 'src/login.ts'),
