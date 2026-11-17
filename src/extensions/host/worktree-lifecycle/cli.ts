@@ -12,7 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { isInitialized } from '../../../directory';
 import { getGlyphs } from '../../../ui/glyphs';
-import { ansiColorsEnabled } from '../../../ui/color';
+import { cliColorsEnabled } from '../color/cliColorsEnabled';
 import { gitCommonDirAsync } from './git';
 import { gitRootByStat } from '../server/index-root';
 import { choosePinRoot } from './choosePinRoot';
@@ -30,9 +30,9 @@ import {
   unregisterProject,
 } from './project-registry';
 
-/** `text` in ANSI colour `code` when the CLI prints colour (src/ui/color.ts decides). */
+/** `text` in ANSI colour `code` when the CLI prints colour (the run's one decision, ../color/cliColorsEnabled.ts). */
 function paint(code: string, text: string): string {
-  return ansiColorsEnabled() ? `\x1b[${code}m${text}\x1b[0m` : text;
+  return cliColorsEnabled() ? `\x1b[${code}m${text}\x1b[0m` : text;
 }
 
 function success(message: string): void {
