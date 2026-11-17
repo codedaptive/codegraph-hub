@@ -86,9 +86,9 @@ export class BuilderSeedHost implements SeedHost {
         const attempts = this.opts.coldBuildRetry?.attempts ?? DEFAULT_COLD_BUILD_ATTEMPTS;
         for (let attempt = 1; attempt <= attempts; attempt++) {
           // Repeat admission before each attempt: the root can change while queued or during a retry delay.
-          // A removed worktree must not be re-created by the lock's mkdir, nor a root swapped for a link (or
-          // into git, for a plain build) built. Refusal is not a failed build, so a later call asks again.
-          const admission = admitColdBuild(root, approval.plain, approval);
+          // A removed worktree must not be re-created by the lock's mkdir, nor a root swapped for a link, or
+          // no longer a git worktree root, built. Refusal is not a failed build, so a later call asks again.
+          const admission = admitColdBuild(root, approval);
           if (!admission.ok) throw new Error(`the cold build was not started: ${admission.reason}`);
           // A `codegraph index` fenced the root while this job waited. runColdBuild would take the fence's own
           // `rebuild.pid` (same pid: re-acquired), and its release at the end would end the lease under it.

@@ -46,6 +46,7 @@ import {
   startVictim,
   waitFor,
 } from './fixtures/dead-lock-helpers';
+import { Fixtures } from './machine-server.harness';
 
 const REPO = path.resolve(__dirname, '../../..');
 const BIN = path.join(REPO, 'dist/bin/codegraph.js');
@@ -215,8 +216,8 @@ beforeEach(async () => {
   stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-dlr-state-')));
   // getServerPidPath() below reads the state dir from this process's env.
   process.env.CODEGRAPH_STATE_DIR = stateDir;
-  fs.mkdirSync(path.join(root, 'src'));
-  fs.writeFileSync(path.join(root, 'src/a.ts'), 'export function alpha() { return 1; }\n');
+  // The servers and their builder serve only git worktrees, so the project is a repository.
+  new Fixtures().makeRepo(root, { 'src/a.ts': 'export function alpha() { return 1; }\n' });
   const cg = await CodeGraph.init(root);
   await cg.indexAll();
   cg.close();

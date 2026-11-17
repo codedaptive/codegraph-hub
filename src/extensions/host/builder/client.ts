@@ -45,11 +45,10 @@ export type EnsureOutcome =
   | { kind: 'ready'; root: string }                                   // own complete index, the root to read; the hold's writable open (migrations) was waited for at most a bounded time, so it may still be queued, or the hold could not open it (another live writer, an open failure); the catch-up is queued once it opened
   | { kind: 'seeded'; root: string; source: string; method: 'clone' | 'copy' | 'backup' } // copied from nearest sibling; held as `ready` is (the writable open was waited for at most a bounded time, so it may still be queued); the catch-up is queued once it opened
   | { kind: 'building'; root: string }                                // cold build queued or running (here or by another process)
-  | {                                                                 // no builder-provided index: pending / nothing to build / kill switch / unsafe root / failed build / seed failed
+  | {                                                                 // no builder-provided index: pending / nothing to build / not in git / kill switch / unsafe root / failed build / seed failed
       kind: 'none';
       pending?: true;                                                 // builder unavailable or preparation not settled; no failed-build guidance
       worktree?: string;                                              //   set when the path is in a git worktree a later call may still give an index
-      unbuilt?: { root: string; unsafe?: string };                    //   set when the path is a plain directory (no git) whose build root cannot be built: `unsafe` is what the root looks like ("your home directory"), absent when its build failed
       ended?: { root: string; kind: JobKind; limit: 'time' | 'rss' }; //   set when the job of `root` at or above the path was ended over a limit; only `codegraph index` or `init` of it clears that
     };
 
@@ -91,11 +90,6 @@ class BuilderDownError extends Error {}
 
 /** A release invalidated an ensure before it reached the builder. */
 class EnsureCancelledError extends Error {}
-
-interface EnsureAsk {
-  projectPath: string;
-  anchorRoot?: string;
-}
 
 /** Path-bound invalidation needs no release history once the call settles. */
 interface EnsureAttempt {
@@ -145,14 +139,10 @@ export class BuilderClient {
   private exitWaiters: Array<() => void> = [];
   /** Roots the builder holds for us, by canonical key, with the path to ask for again after a restart. */
   private readonly held = new Map<string, string>();
-  /**
-   * Roots the builder answered `building` for, by canonical key, with the ask to send again: the call's path
-   * and the session anchor it carried (a plain directory is rebuilt at the anchor, not at the call's path).
-   * Oldest first.
-   */
-  private readonly building = new Map<string, EnsureAsk>();
-  /** Asks that failed because the builder was down, oldest first; distinct anchors remain distinct asks. */
-  private readonly deferred = new Map<string, EnsureAsk>();
+  /** Roots the builder answered `building` for, by canonical key, with the call's path to ask for again. Oldest first. */
+  private readonly building = new Map<string, string>();
+  /** Paths whose ask failed because the builder was down, by canonical path, oldest first. */
+  private readonly deferred = new Map<string, string>();
   private readonly ensuring = new Set<EnsureAttempt>();
   private readonly fresh = new Map<string, BuilderFreshness>();
 
@@ -169,30 +159,26 @@ export class BuilderClient {
    *  (and migrated) the index, or after a bounded wait (CODEGRAPH_BUILDER_ENSURE_WAIT_MS, default 10 s) when that open is queued behind
    *  a running job, or when the hold could not open it (another live writer, an open failure); the server then opens read-only whatever
    *  is on disk. Never rejects: a starting or exited builder answers { kind: 'none', pending: true }; a stopped or
-   *  unavailable builder and other failures answer { kind: 'none' }.
-   *
-   *  `anchorRoot` is the calling session's anchor root (src/extensions/host/server/repo-anchor.ts), passed only for
-   *  a call that has one. A projectPath outside git with no index is cold-built at that root rather than at the
-   *  path itself; with none (no session) the path is the build root. The builder checks the anchor against the
-   *  path before it builds anything. */
-  async ensure(projectPath: string, anchorRoot?: string): Promise<EnsureOutcome> {
+   *  unavailable builder and other failures answer { kind: 'none' }. A projectPath in no git worktree answers
+   *  { kind: 'none' } from the builder: nothing is seeded, built or held for it. */
+  async ensure(projectPath: string): Promise<EnsureOutcome> {
     const canonicalPath = canonicalProjectRoot(projectPath);
-    const attempt = { key: JSON.stringify([canonicalPath, anchorRoot]), projectPath: canonicalPath, retry: true, cancelled: false };
+    const attempt = { key: canonicalPath, projectPath: canonicalPath, retry: true, cancelled: false };
     this.ensuring.add(attempt);
     try {
       const outcome = await this.rpc(
-        anchorRoot === undefined ? { op: 'ensure', projectPath } : { op: 'ensure', projectPath, anchorRoot },
+        { op: 'ensure', projectPath },
         ENSURE_TIMEOUT_MS,
         undefined,
         selectOwnIndexRoot(projectPath) === null ? ENSURE_TIMEOUT_MS : UP_WAIT_MS,
         attempt,
       ) as EnsureOutcome;
-      this.record(outcome, projectPath, anchorRoot, attempt);
+      this.record(outcome, projectPath, attempt);
       return outcome;
     } catch (err) {
       if (err instanceof EnsureCancelledError) return { kind: 'none' };
       if (err instanceof BuilderDownError && attempt.retry && !this.stopping && !this.unavailable) {
-        this.rememberAsk(attempt.key, { projectPath, anchorRoot });
+        this.rememberAsk(attempt.key, projectPath);
       }
       this.log(`ensure of ${projectPath} failed: ${err instanceof Error ? err.message : String(err)}`);
       return err instanceof BuilderDownError ? { kind: 'none', pending: true } : { kind: 'none' };
@@ -201,9 +187,9 @@ export class BuilderClient {
     }
   }
 
-  private rememberAsk(key: string, ask: EnsureAsk): void {
+  private rememberAsk(key: string, projectPath: string): void {
     this.deferred.delete(key);
-    this.deferred.set(key, ask);
+    this.deferred.set(key, projectPath);
     if (this.deferred.size > MAX_BUILDING_ROOTS) {
       const oldest = this.deferred.keys().next().value;
       if (oldest !== undefined) this.deferred.delete(oldest);
@@ -311,8 +297,8 @@ export class BuilderClient {
     this.held.delete(key);
     this.building.delete(key);
     this.fresh.delete(key);
-    for (const [askKey, ask] of this.deferred) {
-      if (atOrBelow(canonicalProjectRoot(ask.projectPath), key)) this.deferred.delete(askKey);
+    for (const [askKey, projectPath] of this.deferred) {
+      if (atOrBelow(canonicalProjectRoot(projectPath), key)) this.deferred.delete(askKey);
     }
     for (const attempt of this.ensuring) {
       if (atOrBelow(attempt.projectPath, key)) {
@@ -479,15 +465,11 @@ export class BuilderClient {
   /** A ready builder gets held roots, builds and down-builder asks; clear retry lists before sending. */
   private resendRoots(): void {
     if (this.stopping) return;
-    const asks: EnsureAsk[] = [
-      ...[...this.held.values()].map((projectPath) => ({ projectPath })),
-      ...this.building.values(),
-      ...this.deferred.values(),
-    ];
+    const asks = [...this.held.values(), ...this.building.values(), ...this.deferred.values()];
     this.building.clear();
     this.deferred.clear();
-    for (const { projectPath, anchorRoot } of asks) {
-      void this.ensure(projectPath, anchorRoot);
+    for (const projectPath of asks) {
+      void this.ensure(projectPath);
     }
   }
 
@@ -555,7 +537,7 @@ export class BuilderClient {
   }
 
   /** An answer forgets its deferred ask and older pending retries; ready/seeded holds and bounded builds are re-sent. */
-  private record(outcome: EnsureOutcome, projectPath: string, anchorRoot: string | undefined, answered: EnsureAttempt): void {
+  private record(outcome: EnsureOutcome, projectPath: string, answered: EnsureAttempt): void {
     this.deferred.delete(answered.key);
     // Set insertion order keeps a successful earlier call from suppressing a later call's down-builder retry.
     for (const attempt of this.ensuring) {
@@ -574,7 +556,7 @@ export class BuilderClient {
     } else if (outcome.kind === 'building') {
       const key = canonicalProjectRoot(outcome.root);
       this.building.delete(key); // re-inserted last: the oldest is the one dropped past the bound
-      this.building.set(key, anchorRoot === undefined ? { projectPath } : { projectPath, anchorRoot });
+      this.building.set(key, projectPath);
       if (this.building.size > MAX_BUILDING_ROOTS) {
         const oldest = this.building.keys().next().value;
         if (oldest !== undefined) this.building.delete(oldest);

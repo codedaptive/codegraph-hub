@@ -13,8 +13,11 @@
  *    git common dir). A call outside it gets success-shaped guidance that names
  *    the anchor, never `isError`: an error teaches the agent to abandon
  *    codegraph for the rest of the session, guidance lets it correct the path.
+ *  - Git worktrees only (R-46): a path inside the anchor that is in no git
+ *    worktree gets {@link notARepositoryAnswer}'s guidance, so nothing is
+ *    opened, held, built or registered for it.
  *
- * {@link sessionCallGuard} is the single implementation of both, used by
+ * {@link sessionCallGuard} is the single implementation of all three, used by
  * `MCPSession.handleToolsCall` and by the proxy's in-process fallback, so a
  * session served by the machine server and one served in-process agree.
  *
@@ -29,6 +32,8 @@ import {
   gitWorktreeRootAsync,
   nearestExistingDirectory,
 } from '../worktree-lifecycle/git';
+import { gitRootByStat } from './index-root';
+import { notARepositoryAnswer } from './notARepository';
 
 /**
  * The exact required-projectPath answer. Agents and gates compare it byte for
@@ -150,10 +155,11 @@ async function isInsideAnchor(anchor: RepoAnchor, resolved: string): Promise<boo
  *  - `anchor` null (the client reported no launch directory): guidance to
  *    restart the session; without an anchor nothing can be proven inside.
  *  - `projectPath` outside the anchor: guidance naming `anchor.root`.
- *  - inside: the absolute resolved path, which the caller substitutes into the
+ *  - inside the anchor but in no git worktree: {@link notARepositoryAnswer}.
+ *  - inside a worktree: the absolute resolved path, which the caller substitutes into the
  *    call's arguments so every layer below sees the same spelling.
  *
- * Neither answer sets `isError`. A relative `projectPath` resolves against the
+ * No answer sets `isError`. A relative `projectPath` resolves against the
  * launch directory, never the server process's cwd (the server's cwd is its
  * state dir).
  */
@@ -185,6 +191,8 @@ export async function sessionCallGuard(
       ),
     };
   }
+  const notRepository = notARepositoryAnswer(resolved);
+  if (notRepository !== null) return { answer: notRepository };
   return { projectPath: resolved };
 }
 
@@ -197,15 +205,29 @@ export async function sessionCallGuard(
  * about the root its own resolver selected, before opening it, and it applies the
  * same inside rule as {@link sessionCallGuard} (one `isInsideAnchor`, so the path
  * and its index can never be judged by two rules). Outside: success-shaped
- * guidance naming the anchor and the outside index, never `isError`.
+ * guidance naming the anchor and the outside index, never `isError`. Inside the
+ * anchor but in no git worktree (a non-git launch directory's own index, or a
+ * non-git ancestor's index a handler with no builder would fall back to): a
+ * refusal naming the index root, since codegraph answers only for git worktrees
+ * (R-46).
  */
 export function indexRootAdmission(anchor: RepoAnchor): IndexRootAdmission {
   return async (indexRoot) => {
-    if (await isInsideAnchor(anchor, indexRoot)) return null;
+    if (await isInsideAnchor(anchor, indexRoot)) return admitGitRootOnly(indexRoot);
     return (
       `This codegraph session answers only for the repository it was launched in, ${anchor.root}, and its ` +
       `git worktrees, or, launched outside git, only the launch directory and what is below it. The index that covers the path you gave is at ${indexRoot}, outside that repository, so ` +
       'codegraph does not answer from it. Use your built-in tools (Read/Grep/Glob) for this code.'
     );
   };
+}
+
+/** The admission of an index root inside the anchor: refused when it is in no git worktree. */
+function admitGitRootOnly(indexRoot: string): string | null {
+  if (gitRootByStat(indexRoot) !== null) return null;
+  return (
+    `The index that covers the path you gave is at ${indexRoot}, and ${indexRoot} is not in a git repository. ` +
+    'codegraph indexes and answers only for git worktrees, so it does not answer from it. ' +
+    'Use your built-in tools (Read/Grep/Glob) for this code.'
+  );
 }

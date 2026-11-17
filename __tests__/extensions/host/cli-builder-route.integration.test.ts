@@ -79,6 +79,7 @@ function lockPid(root: string, name: 'rebuild.pid' | 'writer.pid'): number | nul
 /** A project of `files` small source files, indexed. */
 async function indexedProject(dir: string, files = 1): Promise<void> {
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  git(dir, 'init', '-q');
   for (let i = 0; i < files; i++) {
     fs.writeFileSync(path.join(dir, 'src', `f${i}.ts`), `export function f${i}() { return ${i}; }\n`);
   }
@@ -245,6 +246,7 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
   it('U3 cliIndex init on a directory with no index: initialized first, then progress, all as requestEvent pushes with no id; an IndexResult; no rebuild.pid; an init job', async () => {
     const root = path.join(workspace, 'fresh');
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    git(root, 'init', '-q');
     fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export function a() { return 1; }\n');
     const r = real(root);
     const svc = startService();
@@ -356,10 +358,11 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
     const plain = path.join(workspace, 'plain');
     fs.mkdirSync(path.join(plain, 'src'), { recursive: true });
     fs.writeFileSync(path.join(plain, 'src', 'a.ts'), 'export function a() { return 1; }\n');
+    git(plain, 'init', '-q');
     const r = real(plain);
     const svc = startService();
 
-    expect(await svc.ensure(r), 'premise: an unbuilt directory queues a cold build').toEqual({ kind: 'building', root: r });
+    expect(await svc.ensure(r), 'premise: an unindexed worktree queues a cold build').toEqual({ kind: 'building', root: r });
     expect(
       await waitUntil(() => lockPid(r, 'rebuild.pid') === process.pid, 10_000),
       'the cold build took rebuild.pid under this pid',

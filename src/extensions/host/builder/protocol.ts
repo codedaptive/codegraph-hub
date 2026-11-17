@@ -20,8 +20,7 @@ import type { FenceKind } from './fences';
 export type CliIndexMode = 'init' | 'rebuild' | 'reindex' | 'reindex-leased';
 
 export type BuilderRequest =
-  /** `anchorRoot`: the session anchor's root, present when the call came with one (see BuilderClient.ensure). IPC data, not trusted: the builder checks it. */
-  | { id: number; op: 'ensure'; projectPath: string; anchorRoot?: string }
+  | { id: number; op: 'ensure'; projectPath: string }
   | { id: number; op: 'seedWorktree'; root: string; wait?: boolean; automatic?: boolean }
   | { id: number; op: 'caughtUp'; root: string }
   | { id: number; op: 'sync'; root: string }

@@ -8,11 +8,10 @@
  *
  * Runs the BUILT binary, as __tests__/cli-unlock.test.ts does, so dist/ must be
  * rebuilt (`npm run build`) after the command changes. The child inherits the
- * home sandbox (__tests__/setup-home-sandbox.ts), so the registry it writes is
- * this file's throwaway ~/.codegraph/projects.
+ * per-test CODEGRAPH_STATE_DIR, so each test has a separate throwaway registry.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawnSync } from 'child_process';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -52,15 +51,17 @@ describe('codegraph project (G12)', () => {
   let root: string;
 
   beforeEach(() => {
-    tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-project-cli-')));
+    tempDir = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'codegraph-project-cli-')));
+    vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(tempDir, 'state'));
     root = path.join(tempDir, 'app');
     fs.mkdirSync(root);
+    execFileSync('git', ['init', '-q', root]);
     fs.writeFileSync(path.join(root, 'app.ts'), 'export function appSymbol() { return 1; }\n');
     CodeGraph.initSync(root).close();
   });
 
   afterEach(() => {
-    fs.rmSync(path.join(os.homedir(), '.codegraph', 'projects'), { recursive: true, force: true });
+    vi.unstubAllEnvs();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
