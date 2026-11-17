@@ -7,13 +7,14 @@ the governing spec replaces MISSION.md, and nothing only in MISSION.md applies.
 
 Standing rulings: R-10 (private, never distributed; one server per computer; no ceremony), R-8's "no security
 machinery" as narrowed by [B8]; R-12 (Bob's answers to draft 2). Superseded by R-11: R-9's five-minute close and no-pin rule, R-8's "any repository
-may be queried", MISSION.md WP1's project cap and in-server worker processes. Superseded by R-46: [B1]'s "or
-directory" for a folder outside git.
+may be queried", MISSION.md WP1's project cap and in-server worker processes. Narrowed by R-46 and R-50: [B1]'s "or
+directory" holds for a folder outside git only once it is opted in.
 
 ## 1. What it is
 
 A private improvement of CodeGraph (upstream `colbymchenry/codegraph`, TypeScript on Node) for Bob's machine. It
-gives coding agents a code graph of any git repository on the computer (R-46) through one MCP server and the
+gives coding agents a code graph of any git repository on the computer, and of a folder outside git once it is
+opted in (R-46, R-50), through one MCP server and the
 `codegraph` CLI. Nothing in it is codeteam-specific [B14].
 
 ## 2. Processes
@@ -76,18 +77,29 @@ A call for a root whose copy is queued behind a running job waits up to 10 s
 (`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`) for it, then answers with the building guidance; it never waits for a cold
 build to finish.
 
-### Only a git worktree root is indexed (R-46)
+### Only a git worktree root is indexed, unless a folder is opted in (R-46, R-50)
 
-Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root: not the server, not
-the builder, not a CLI command. `init`, `index` and `sync` refuse a path in no git worktree whether they hand the
-work to the builder or write in their own process (§2, R-14), before anything is written: an error and exit 1, as
-for an unsafe root, with no `--force` override; `uninit` and `project remove` still work on such a root (S-70). A
-call whose path lies inside a git worktree resolves to that worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
-never `isError`, and nothing is built. A session launched outside git keeps its launch directory as its anchor
-(§4); a call there resolves to the worktree enclosing its path, or gets that guidance. The builder still refuses
-what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the home directory, a
-filesystem root, any parent of home) and sensitive paths, and checks the real path again when the queued job
-starts.
+Git is the default. Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root
+and not opted in: not the server, not the builder, not a CLI command. A call whose path lies inside a git worktree
+resolves to that worktree's root. A call whose path is in no git worktree and no opted-in folder gets
+success-shaped guidance that it is not a repository and how to opt in, never `isError`, and nothing is built. A
+session launched outside git keeps its launch directory as its anchor (§4); a call there resolves to the worktree
+or opted-in folder enclosing its path, or gets that guidance.
+
+`init`, `index` and `sync` refuse such a path whether they hand the work to the builder or write in their own
+process (§2, R-14), before anything is written: an error and exit 1, as for an unsafe root; `--force` does not
+override it. `uninit` and `project remove` still work on such a root.
+
+**Opting in (R-50; comes in sm.16, not yet in the code).** `codegraph init <dir> --no-git`, run once by a person,
+opts a folder outside git in. The opt-in is recorded in the project registry, and from then on the folder is
+served, synced and caught up like a git worktree root. Nothing else opts in: no MCP call, catch-up, seed or
+housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. An opted-in folder keeps the
+guards below: symlinked folders leaving it are not followed and `.codegraphignore` decides what is read (R-44),
+and the job limits apply (R-47).
+
+The builder still refuses what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the
+home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
+the queued job starts.
 
 ### What a build reads (R-44)
 
