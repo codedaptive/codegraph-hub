@@ -1,0 +1,71 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolve } from 'node:path';
+
+vi.mock('../../../src/directory', () => ({ canonicalProjectRoot: (root: string) => resolve(root) }));
+
+import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
+
+const cold = { root: '/a/b/', kind: 'cold-build', limit: 'time', at: '2026-11-16T10:00:00.000Z' } as const;
+const sync = { root: '/a/b', kind: 'sync', limit: 'rss', at: '2026-11-16T10:01:00.000Z' } as const;
+const other = { root: '/other', kind: 'cold-build', limit: 'rss', at: '2026-11-16T10:02:00.000Z' } as const;
+
+describe('endedJobs', () => {
+  beforeEach(() => endedJobs.replaceAll([]));
+  afterEach(() => endedJobs.onClearRoot(() => {}));
+
+  it('finds a job by canonical root and kind', () => {
+    endedJobs.add(cold);
+    expect(endedJobs.has('/a/b', 'cold-build')).toBe(true);
+    expect(endedJobs.find('/a/b', 'cold-build')).toMatchObject({ kind: 'cold-build', limit: 'time', at: '2026-11-16T10:00:00.000Z' });
+    expect(endedJobs.has('/a/b', 'sync')).toBe(false);
+    expect(endedJobs.find('/other', 'cold-build')).toBeUndefined();
+  });
+
+  it('clears every kind for a canonical root without clearing other roots', () => {
+    endedJobs.add(cold);
+    endedJobs.add(sync);
+    endedJobs.add(other);
+    endedJobs.clearRoot('/a/b/');
+    expect(endedJobs.has('/a/b', 'cold-build')).toBe(false);
+    expect(endedJobs.has('/a/b', 'sync')).toBe(false);
+    expect(endedJobs.find('/other', 'cold-build')).toEqual(other);
+  });
+
+  it('notifies the listener with the root after removing its marks', () => {
+    endedJobs.add(cold);
+    let presentDuringCall = true;
+    const listener = vi.fn((root: string) => { presentDuringCall = endedJobs.has(root, 'cold-build'); });
+    endedJobs.onClearRoot(listener);
+    endedJobs.clearRoot('/a/b/');
+    expect(listener).toHaveBeenCalledExactlyOnceWith('/a/b/');
+    expect(presentDuringCall).toBe(false);
+  });
+
+  it('replaces the previously registered listener', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    endedJobs.onClearRoot(first);
+    endedJobs.onClearRoot(second);
+    endedJobs.clearRoot('/a');
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledExactlyOnceWith('/a');
+  });
+
+  it('does not propagate a listener exception', () => {
+    endedJobs.add(cold);
+    endedJobs.onClearRoot(() => { throw new Error('disk failure'); });
+    expect(() => endedJobs.clearRoot('/a/b')).not.toThrow();
+    expect(endedJobs.has('/a/b', 'cold-build')).toBe(false);
+  });
+
+  it('replaces the entire set', () => {
+    endedJobs.add(cold);
+    endedJobs.replaceAll([sync, other]);
+    expect(endedJobs.has('/a/b', 'cold-build')).toBe(false);
+    expect(endedJobs.find('/a/b', 'sync')).toEqual(sync);
+    expect(endedJobs.find('/other', 'cold-build')).toEqual(other);
+    endedJobs.replaceAll([]);
+    expect(endedJobs.has('/a/b', 'sync')).toBe(false);
+    expect(endedJobs.has('/other', 'cold-build')).toBe(false);
+  });
+});

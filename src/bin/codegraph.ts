@@ -82,6 +82,7 @@ import { registerExtensionCommands } from '../extensions/host/registry';
 import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
 import type { FreshAnswer } from '../extensions/host/fresh/cli';
 import type { IndexWriter, SyncWriter } from '../extensions/host/builder/cli-route';
+import { clearEndedRoot } from '../extensions/host/builder/clear-ended-root';
 
 // Decided once, before `--color`/`--no-color` are stripped from argv below
 // (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
@@ -812,6 +813,9 @@ async function runInit(
       }
     };
     const result = await runIndex();
+    // An in-process init that succeeded clears the root's stopped-over-limit marks (a routed one is cleared by
+    // the builder's queue). A builder started while this ran keeps its in-memory mark until it restarts.
+    if (cg instanceof CodeGraph && result.success) clearEndedRoot(projectPath);
     printIndexResult(clack, result, projectPath);
     await recordIndexTelemetry(cg, result);
 
@@ -1074,6 +1078,9 @@ program
 
           const dbPath = getDatabasePath(projectPath);
           if (!(await runIndexOn(cg, dbPath, projectPath, options))) process.exit(1);
+          // The rebuild succeeded, so the root's stopped-over-limit marks go. A builder started while this ran
+          // keeps its in-memory mark until it restarts.
+          clearEndedRoot(projectPath);
         } finally {
           releaseWriterLock(projectPath);
         }

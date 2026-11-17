@@ -11,13 +11,19 @@
  * IPC channel closes (the server is gone) or it is signalled.
  *
  * Files in the state dir (CODEGRAPH_STATE_DIR, inherited from the server, else ~/.codegraph):
- *   builder.pid   JSON `{"pid":n,"serverPid":n,"startedAt":"ISO8601"}`, written on start, removed on a clean exit.
+ *   builder.pid   JSON `{"pid":n,"serverPid":n,"startedAt":"ISO8601"}`, written on start, removed on a clean exit and on a job-limit exit.
  *   builder.log   one line per job edge, appended:
  *                   <ISO8601> job start <kind> <root>
  *                   <ISO8601> job end <kind> <root> ok|failed[: msg]
+ *                   <ISO8601> job limit <kind> <root> time|rss <measured> > <max> (<variable>); ended, not retried
  *                 kind is sync (a caller's sync, the server's or the CLI's), catch-up, watch-sync, seed, cold-build,
  *                 init or index (the CLI's, ./cli-jobs.ts), recover or open. Past 4 MiB the file is moved to
  *                 builder.log.1 (replacing an older one) and a new one starts.
+ *   builder-ended-jobs.jsonl  one JSON line `{"root","kind","limit","at"}` per job ended over a limit
+ *                 (./ended-jobs-file.ts); loaded at start and kept across every restart, so each builder
+ *                 refuses those jobs. Only a successful explicit `codegraph index` or `codegraph init` of a root
+ *                 removes its lines: one this builder runs (./queue.ts), or one the CLI runs in its own
+ *                 process (./clear-ended-root.ts).
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
  * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the one running gets
@@ -27,6 +33,14 @@
  * reclaims them (writer-lock.ts) and the server's client restarts it. A clean exit releases every rebuild
  * lease (./fences.ts) after the holds.
  *
+ * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) cannot be
+ * interrupted inside this process, so the builder ends itself: it writes the `job limit` line and the job's mark,
+ * rolls back a partial cold build, releases this pid's rebuild.pid and writer.pid at that job's root, removes
+ * builder.pid and exits with code 75 (./job-limit-guard.ts), with no grace for the other jobs. The server's
+ * client restarts it. Other held roots' writer.pid still name the dead pid, for the next builder to reclaim. The
+ * watchdog (./job-watchdog.ts) samples every 5 s on the main thread, so a job that blocks the event loop is
+ * caught only when the loop turns.
+ *
  * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
  * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.
  */
@@ -35,6 +49,11 @@ import * as path from 'path';
 import { parseDebounceEnv } from '../../../sync/watch-policy';
 import { collectBeforeExit } from '../../../worker-teardown';
 import { ensureStateDir } from '../server/state-dir';
+import { endedJobs } from './ended-jobs';
+import { EndedJobsFile } from './ended-jobs-file';
+import { endOverLimit } from './job-limit-guard';
+import { resolveJobLimits } from './job-limits';
+import { JobWatchdog } from './job-watchdog';
 import type { BuilderRequest, BuilderToServer } from './protocol';
 import { BuilderService } from './service';
 
@@ -172,6 +191,19 @@ export function runBuilder(): void {
   process.on('SIGINT', () => shutdown(0));
 
   writePidFile(pidFile, process.ppid);
+  const endedFile = new EndedJobsFile(path.join(stateDir, 'builder-ended-jobs.jsonl'));
+  const loaded = endedFile.load();
+  endedJobs.replaceAll(loaded);
+  endedJobs.onClearRoot((root) => endedFile.clearRoot(root));
+  for (const job of loaded) log(`refusing ${job.kind} of ${job.root} until \`codegraph index\`: ended over its ${job.limit} limit`);
+  const { limits, warnings } = resolveJobLimits();
+  for (const warning of warnings) log(warning);
+  new JobWatchdog(service.queue, limits, {
+    onBreach: (job, breach) => endOverLimit(job, breach, {
+      jobLog: (line) => logFile.append(line), endedFile, beforeExit: () => removePidFile(pidFile),
+      exit: (code) => { collectBeforeExit(); process.exit(code); },
+    }),
+  }).start();
   service.start();
   sendToServer({ op: 'ready', pid: process.pid } satisfies BuilderToServer);
 }
