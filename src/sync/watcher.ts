@@ -9,8 +9,7 @@
  * kernel-watch cost BOUNDED rather than growing with the number of files:
  *
  *   - macOS / Windows: a recursive `fs.watch(root, {recursive:true})`, plus
- *     bounded supplemental streams for directory symlinks (#770). A link whose
- *     real target is outside the root is followed only when re-included (R-44).
+ *     bounded supplemental streams for directory symlinks (#770).
  *     libuv maps this to one FSEvents stream (macOS) / one
  *     ReadDirectoryChangesW handle (Windows), so it costs O(1) descriptors no
  *     matter how large the tree. This is the fix for the macOS file-table
@@ -24,6 +23,9 @@
  *     inotify usage on pathological monorepos (#579). A single inotify watch on
  *     a directory already reports create/modify/delete for its children, so
  *     per-file watches are never needed.
+ *
+ * On every platform a directory symlink whose real target is outside the root
+ * is followed only when re-included (R-44).
  *
  * Excluded trees (node_modules/, dist/, .git/, …) are filtered via the
  * indexer's `buildScopeIgnore` (built-in defaults + root `.gitignore` +
@@ -391,8 +393,8 @@ export class FileWatcher {
   // The root rules from `buildDefaultIgnore` (defaults + root `.gitignore` +
   // `.git/info/exclude` + `.codegraphignore`), the same matcher the indexer's
   // walk asks whether a directory symlink leaving the root is re-included
-  // (R-44). Built and rebuilt with `ignoreMatcher`; null (stopped) follows no
-  // outside link.
+  // (R-44). Built and rebuilt with `ignoreMatcher`; null (not started or
+  // stopped) follows no link.
   private linkMatcher: Ignore | null = null;
 
   private readonly projectRoot: string;
@@ -828,7 +830,8 @@ export class FileWatcher {
    * of the burst finds it armed. The check closes a linked folder's stream
    * when the link no longer leads to the folder it watched (deleted, or
    * pointed elsewhere) and re-reads the tree: its full sync drops what the
-   * folder held, and a link that leads somewhere live is watched anew. A
+   * folder held, and a link that leads somewhere live and is still followed
+   * (R-44) is watched anew. A
    * project folder that is gone degrades the watcher, closing every stream.
    */
   private armGoneCheck(dir: string): void {
