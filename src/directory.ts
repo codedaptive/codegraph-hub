@@ -160,10 +160,13 @@ export function isInitialized(projectRoot: string): boolean {
 }
 
 /**
- * `codegraph.db` exists at `projectRoot` but does not carry the schema, and
- * `init` can add it in place: an empty file, or a SQLite database without the
- * codegraph tables (#1895). A file that is not SQLite at all is NOT this case —
- * see {@link hasForeignDbFile}.
+ * `codegraph.db` exists at `projectRoot` but does not carry the schema (no
+ * `nodes` table): an empty file, or a SQLite database without the codegraph
+ * tables (#1895). `init` adds the schema in place only when the file has no
+ * `schema_versions` row yet; a build killed after writing that row leaves a
+ * file init fails on (schema.sql's plain INSERT), which the cold build
+ * discards first when it takes over a dead holder's `rebuild.pid`. A file
+ * that is not SQLite at all is NOT this case — see {@link hasForeignDbFile}.
  */
 export function hasSchemalessDb(projectRoot: string): boolean {
   const dbPath = path.join(getCodeGraphDir(projectRoot), 'codegraph.db');
