@@ -8,12 +8,13 @@ the governing spec replaces MISSION.md, and nothing only in MISSION.md applies.
 Standing rulings: R-10 (private, never distributed; one server per computer; no ceremony), R-8's "no security
 machinery" as narrowed by [B8]; R-12 (Bob's answers to draft 2). Superseded by R-11: R-9's five-minute close and no-pin rule, R-8's "any repository
 may be queried", MISSION.md WP1's project cap and in-server worker processes. Superseded by R-46: [B1]'s "or
-directory" for a folder outside git.
+directory" for a folder outside git; R-50 restores it for a folder a person opts in.
 
 ## 1. What it is
 
 A private improvement of CodeGraph (upstream `colbymchenry/codegraph`, TypeScript on Node) for Bob's machine. It
-gives coding agents a code graph of any git repository on the computer (R-46) through one MCP server and the
+gives coding agents a code graph of any git repository on the computer, and of a folder outside git once it is
+opted in (R-46, R-50), through one MCP server and the
 `codegraph` CLI. Nothing in it is codeteam-specific [B14].
 
 ## 2. Processes
@@ -76,18 +77,29 @@ A call for a root whose copy is queued behind a running job waits up to 10 s
 (`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`) for it, then answers with the building guidance; it never waits for a cold
 build to finish.
 
-### Only a git worktree root is indexed (R-46)
+### Only a git worktree root is indexed, unless a folder is opted in (R-46, R-50)
 
-Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root: not the server, not
-the builder, not a CLI command. `init`, `index` and `sync` refuse a path in no git worktree whether they hand the
-work to the builder or write in their own process (§2, R-14), before anything is written: an error and exit 1, as
-for an unsafe root, with no `--force` override; `uninit` and `project remove` still work on such a root (S-70). A
-call whose path lies inside a git worktree resolves to that worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
-never `isError`, and nothing is built. A session launched outside git keeps its launch directory as its anchor
-(§4); a call there resolves to the worktree enclosing its path, or gets that guidance. The builder still refuses
-what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the home directory, a
-filesystem root, any parent of home) and sensitive paths, and checks the real path again when the queued job
-starts.
+Git is the default. Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root
+and not opted in: not the server, not the builder, not a CLI command. A call whose path lies inside a git worktree
+resolves to that worktree's root. A call whose path is in no git worktree and no opted-in folder gets
+success-shaped guidance that it is not a repository and how to opt in, never `isError`, and nothing is built. A
+session launched outside git keeps its launch directory as its anchor (§4); a call there resolves to the worktree
+or opted-in folder enclosing its path, or gets that guidance.
+
+`init`, `index` and `sync` refuse such a path whether they hand the work to the builder or write in their own
+process (§2, R-14), before anything is written: an error and exit 1, as for an unsafe root; `--force` does not
+override it. `uninit` and `project remove` still work on such a root.
+
+**Opting in (R-50; comes in sm.16, not yet in the code).** `codegraph init <dir> --no-git`, run once by a person,
+opts a folder outside git in. The opt-in is recorded in the project registry, and from then on the folder is
+served, synced and caught up like a git worktree root. Nothing else opts in: no MCP call, catch-up, seed or
+housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. An opted-in folder keeps the
+guards below: symlinked folders leaving it are not followed and `.codegraphignore` decides what is read (R-44),
+and the job limits apply (R-47).
+
+The builder still refuses what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the
+home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
+the queued job starts.
 
 ### What a build reads (R-44)
 
@@ -106,7 +118,7 @@ value. It is not re-queued by itself, and the root's stopped mark survives every
 stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
 limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
 it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print the same
-line on stderr and answer as before (S-71, team/settled.md; not yet in the code: queries and resolution add it after builder-stopped-note). Only an explicit `codegraph index` or `codegraph init` of that
+line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or `codegraph init` of that
 root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
@@ -175,10 +187,11 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-11-10)
+## 8. Status (2026-11-17)
 
-Every item of the governing spec [B1]-[B14] is built and shipped. Installed globally: **1.6.2-sm.14** (ours
-6a2b6eff, 2026-11-10, R-41); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
+Every item of the governing spec [B1]-[B14] is built and shipped, except [B1]'s "or directory" as R-50 restores it
+(the opt-in for a folder outside git), which comes in sm.16. Installed globally: **1.6.2-sm.15** (ours
+d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
 `codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38); upstream main f72c9d2e is already in ours.
 
 | Release | What it shipped |
@@ -193,6 +206,7 @@ Every item of the governing spec [B1]-[B14] is built and shipped. Installed glob
 | sm.12 (ours 4fdda779, 2026-11-04) | `codegraph upgrade` and the update notice use the hub's releases, never upstream's package; `-sm.N` versions compared by number (R-32); comments and test names without internal citations (S-55); the hub's first release |
 | sm.13 (ours be5ab360, 2026-11-06) | a pinned project with no index is seeded from its nearest sibling; `codegraph project seed <path>` (S-57) |
 | sm.14 (ours 6a2b6eff, 2026-11-10) | a launcher no longer takes over a busy server, and a stopping server removes only its own socket (split-server fix, F-1/F-2, S-58); the R-38 bug list (Swift member and nested-supertype resolution, `grep`/`orphans` tool descriptions, install runbook, seed and upgrade-version fixes); upstream PRs #3249 (impact speed) and #3215 (order-independent resolution) taken early (R-40). Repo work landed with this commit, not in the package: the first test-group moves (D281); the S-65 moves follow |
+| sm.15 (ours d1e4c984, 2026-11-17) | after the 11-16 incident: only a git worktree root is indexed, and the CLI's `init`, `index` and `sync` refuse any other path on both routes (R-46, S-70); every builder job is ended at 60 minutes or 8 GB resident and not retried until an explicit `index` or `init` (R-47, S-69); on macOS a watcher is ready once its delivery probe sees its own event or gives up (macos-watcher-gap). Review follow-ups, the stopped note and R-50's opt-in for code outside git follow in sm.16 |
 
 | Left | State |
 |---|---|

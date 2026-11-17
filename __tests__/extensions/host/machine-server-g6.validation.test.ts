@@ -15,26 +15,25 @@ describe('machine server gates (serve --mcp over stdio, throwaway repos)', () =>
   // G6: the index a call is answered from must itself be inside the anchor. A
   // projectPath inside the repository passes the path check, but index discovery
   // walks UP from it: with no index of its own, the repository would be answered
-  // from `outer/.codegraph`, a graph of the directory above it that also holds
-  // unrelated code. The repository is its own git root, so the outer index is
+  // from `outer/.codegraph`, a graph of a git repository holding the nested
+  // repository and unrelated code (init indexes only a git root). The nested
+  // repository is its own git root, so the outer index is
   // another project's and is never selected for it: the builder cold-builds the
   // repository's own index, the first call answers the building note naming the
   // repository, a later call answers from the repository's own index, and the
   // outside code never comes back in any answer.
   it('G6: a call inside the anchor is built for itself, never answered from an index outside it', async () => {
-    // Over 5 s by design: a CLI index run, a `serve --mcp` cold start, a cold build of the repository
-    // by the builder (polled for up to 180 s on an overloaded machine) and the tool calls around it.
+    // Waits for a CLI index run, a `serve --mcp` cold start, and a cold build of the repository
+    // by the builder (polled for up to 180 s), with tool calls around it.
     const root = fx.tempRoot();
     const stateDir = path.join(root, 'state');
     const outer = path.join(root, 'outer');
+    fx.makeRepo(outer, {
+      'src/outside.ts': 'export function g6OutsideSymbol(): string {\n  return "g6-outside-body-marker";\n}\n',
+    });
     const repo = fx.makeRepo(path.join(outer, 'repo'), {
       'src/inside.ts': 'export function g6InsideSymbol(): string {\n  return "g6-inside-body-marker";\n}\n',
     });
-    fs.mkdirSync(path.join(outer, 'src'), { recursive: true });
-    fs.writeFileSync(
-      path.join(outer, 'src', 'outside.ts'),
-      'export function g6OutsideSymbol(): string {\n  return "g6-outside-body-marker";\n}\n',
-    );
     // The index of the directory above the repository; the repository has none.
     fx.index(outer, stateDir);
     const outerReal = fs.realpathSync(outer);
