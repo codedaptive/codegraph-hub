@@ -13,6 +13,8 @@ import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/re
 import { gitRootByStat, selectIndexRoot, selectOwnIndexRoot } from '../extensions/host/server/index-root';
 import type { BuilderClient, BuilderFreshness } from '../extensions/host/builder/client';
 import { endedJobNote } from '../extensions/host/builder/ended-job-note';
+import { stoppedIndexNote } from '../extensions/host/builder/stopped-index-note';
+import { stoppedRootMark } from '../extensions/host/builder/stopped-root-mark';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
 import { DatabaseOpenError, isDatabaseOpenFailure } from '../db/open-error';
 import type { NodeSqliteUnavailableError } from '../db/node-sqlite';
@@ -2952,7 +2954,8 @@ export class ToolHandler {
     const outcome = await builder.ensure(projectPath);
     if (outcome.kind === 'none' && outcome.ended) {
       this.unseededWorktrees.delete(projectPath);
-      // A job stopped over a limit is not retried; an index already on disk is still served.
+      // A job stopped over a limit is not retried; an index already on disk is still served,
+      // and every answer from it carries the stopped note (withStoppedJobNotice).
       if (this.selectIndexRootForCall(projectPath) !== null) return;
       throw new NotIndexedError(endedJobNote(projectPath, outcome.ended));
     }
@@ -3653,6 +3656,28 @@ export class ToolHandler {
   }
 
   /**
+   * Prepend the stopped-index note to every answer served from a root whose
+   * last builder job was ended at a limit (S-69): the index on disk is served,
+   * but may be partial or behind until an explicit `codegraph index`.
+   */
+  private withStoppedJobNotice(result: ToolResult, project: CodeGraph): ToolResult {
+    if (result.isError) return result;
+    const [first, ...rest] = result.content;
+    if (!first || first.type !== 'text') return result;
+    let mark: ReturnType<typeof stoppedRootMark>;
+    try {
+      mark = stoppedRootMark(project.getProjectRoot());
+    } catch {
+      return result;
+    }
+    if (!mark) return result;
+    return {
+      ...result,
+      content: [{ type: 'text', text: `⚠️ ${stoppedIndexNote(mark)}\n\n${first.text}` }, ...rest],
+    };
+  }
+
+  /**
    * Execute a tool by name.
    *
    * `sessionState` is the CALLER's per-session explore history (CG-17). The
@@ -3783,7 +3808,7 @@ export class ToolHandler {
           args.projectPath as string | undefined,
           options?.indexVersionWarnings,
         );
-        return await appendCheckpointFooter(status, args, project, freshCp);
+        return await appendCheckpointFooter(this.withStoppedJobNotice(status, project), args, project, freshCp);
       }
 
       // Read tools: off-load the CPU-heavy dispatch to the worker pool when one
@@ -3850,7 +3875,7 @@ export class ToolHandler {
         args.projectPath as string | undefined,
         options?.indexVersionWarnings,
       );
-      return await appendCheckpointFooter(withVersion, args, project, freshCp);
+      return await appendCheckpointFooter(this.withStoppedJobNotice(withVersion, project), args, project, freshCp);
     } catch (err) {
       // Expected condition, not a malfunction: answer as a SUCCESS so the
       // agent keeps trusting the toolset for projects that ARE indexed.

@@ -391,7 +391,10 @@ function warn(message: string): void {
  * QueryBuilder.hasSchema).
  *
  * During a rebuild the answer comes from a graph still being built, so the
- * command says so, on stderr to keep a `--json` answer parseable.
+ * command says so, on stderr to keep a `--json` answer parseable. It does the
+ * same when the index builder's last job of the root was stopped at a limit
+ * (stopped-root-mark.ts): the index is read as it is, but may be partial or
+ * behind until an explicit `codegraph index`.
  */
 async function openIndexToRead(projectPath: string): Promise<import('../index').CodeGraph> {
   const { default: CodeGraph } = await loadCodeGraph();
@@ -399,6 +402,12 @@ async function openIndexToRead(projectPath: string): Promise<import('../index').
   const { isRebuildInProgress } = await import('../mcp/writer-lock');
   if (isRebuildInProgress(projectPath)) {
     console.error(`${chalk.yellow(getGlyphs().warn)} An index rebuild ("codegraph index") is running in another process — this answer comes from the part of the index it has rebuilt so far.`);
+  }
+  const { stoppedRootMark } = await import('../extensions/host/builder/stopped-root-mark');
+  const mark = stoppedRootMark(cg.getProjectRoot());
+  if (mark) {
+    const { stoppedIndexNote } = await import('../extensions/host/builder/stopped-index-note');
+    console.error(`${chalk.yellow(getGlyphs().warn)} ${stoppedIndexNote(mark)}`);
   }
   return cg;
 }

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import CodeGraph from '../../../src/index';
 import type { BuilderClient } from '../../../src/extensions/host/builder/client';
+import { EndedJobsFile } from '../../../src/extensions/host/builder/ended-jobs-file';
 import { selectOwnIndexRoot } from '../../../src/extensions/host/server/index-root';
 import { MCPEngine } from '../../../src/mcp/engine';
 import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
@@ -12,14 +13,19 @@ import { ADMIT_ALL } from '../../helpers/admit-all';
 
 let workspace: string;
 let engine: MCPEngine | undefined;
+let savedStateDir: string | undefined;
 beforeEach(() => {
   workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-ended-guidance-')));
+  savedStateDir = process.env.CODEGRAPH_STATE_DIR;
+  process.env.CODEGRAPH_STATE_DIR = workspace;
   __setLoadCodeGraphForTests(CodeGraph);
 });
 afterEach(async () => {
   await engine?.stop();
   engine = undefined;
   __setLoadCodeGraphForTests(null);
+  if (savedStateDir === undefined) delete process.env.CODEGRAPH_STATE_DIR;
+  else process.env.CODEGRAPH_STATE_DIR = savedStateDir;
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 
@@ -43,12 +49,17 @@ describe('ended builder guidance at the tool handler', () => {
     execFileSync('git', ['init', '-q', root]);
     // A nested repository prevents an indexed TMPDIR ancestor from answering this call.
     expect(selectOwnIndexRoot(root)).toBeNull();
+    new EndedJobsFile(path.join(workspace, 'builder-ended-jobs.jsonl')).append({
+      root, kind: 'cold-build', limit: 'time', at: '2026-11-17T10:00:00Z',
+    });
     engine = new MCPEngine({ builder: builderFor(root) });
     const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alphaSymbol', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(textOf(result)).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(textOf(result)).toContain('codegraph index');
     expect(textOf(result)).toContain(root);
+    expect(textOf(result)).toContain('Use your built-in tools');
+    expect(textOf(result)).not.toContain('partial or behind');
   });
 
   it('serves an existing index instead of reporting the ended job', async () => {
@@ -60,10 +71,15 @@ describe('ended builder guidance at the tool handler', () => {
     const cg = await CodeGraph.init(root);
     try { await cg.indexAll(); } finally { cg.close(); }
     expect(selectOwnIndexRoot(root)).toBe(root);
+    new EndedJobsFile(path.join(workspace, 'builder-ended-jobs.jsonl')).append({
+      root, kind: 'cold-build', limit: 'time', at: '2026-11-17T10:00:00Z',
+    });
     engine = new MCPEngine({ builder: builderFor(root) });
     const result = await engine.getToolHandler().execute('codegraph_search', { query: 'alphaSymbol', projectPath: root }, undefined, ADMIT_ALL);
     expect(result.isError).toBeFalsy();
     expect(textOf(result)).toContain('alphaSymbol');
-    expect(textOf(result)).not.toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    expect(textOf(result)).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    expect(textOf(result)).toContain('partial or behind');
+    expect(textOf(result)).toContain('codegraph index');
   });
 });
