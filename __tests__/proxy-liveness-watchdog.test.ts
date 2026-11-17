@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const MODULE = path.resolve(__dirname, '../dist/mcp/proxy.js');
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -22,11 +23,12 @@ function alive(pid: number): boolean {
 // Exercise the real local-handshake entry point and its real watchdog child,
 // with only the server/engine dependencies replaced to inject bounded faults.
 // The fallback modes' tools/call names a real built-in tool with a projectPath equal
-// to the child's launch directory, a fresh temp dir (the anchor is that directory, or
-// the repository containing it), so it passes dispatchToolCall's tool-name check and
-// the repo-anchor guard, and reaches the injected engine handler.
+// to the child's launch directory, a fresh temp dir made a git repository (a path in
+// no git worktree is answered 'not a repository' before any handler runs, S-70/R-46),
+// so it passes dispatchToolCall's tool-name check and the repo-anchor guard, and
+// reaches the injected engine handler.
 async function exercise(mode: 'connecting-wedge' | 'fallback-wedge' | 'slow-fallback'): Promise<void> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-proxy-watchdog-'));
+  const dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-proxy-watchdog-')));
   const child = spawn(process.execPath, ['-e', `
     const { runLocalHandshakeProxy } = require(${JSON.stringify(MODULE)});
     const mode = ${JSON.stringify(mode)};
