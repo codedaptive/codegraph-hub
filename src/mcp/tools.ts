@@ -12,6 +12,7 @@ import { worktreeSeedMayApply } from '../extensions/host/worktree-lifecycle/seed
 import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
 import { gitRootByStat, selectIndexRoot, selectOwnIndexRoot } from '../extensions/host/server/index-root';
 import type { BuilderClient, BuilderFreshness } from '../extensions/host/builder/client';
+import { endedJobNote } from '../extensions/host/builder/ended-job-note';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
 import { DatabaseOpenError, isDatabaseOpenFailure } from '../db/open-error';
 import type { NodeSqliteUnavailableError } from '../db/node-sqlite';
@@ -2949,6 +2950,12 @@ export class ToolHandler {
     this.refuseSensitivePath(projectPath, this.selectIndexRootForCall(projectPath));
     if (!this.needsBuilderEnsure(projectPath, builder)) return;
     const outcome = await builder.ensure(projectPath);
+    if (outcome.kind === 'none' && outcome.ended) {
+      this.unseededWorktrees.delete(projectPath);
+      // A job stopped over a limit is not retried; an index already on disk is still served.
+      if (this.selectIndexRootForCall(projectPath) !== null) return;
+      throw new NotIndexedError(endedJobNote(projectPath, outcome.ended));
+    }
     if (outcome.kind === 'none' && outcome.pending) {
       this.unseededWorktrees.delete(projectPath);
       // Building guidance is only for calls with no index to serve; an existing

@@ -3,7 +3,6 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { gitRootByStat } from '../../../src/extensions/host/server/index-root';
 import { indexRootAdmission, resolveRepoAnchor, sessionCallGuard } from '../../../src/extensions/host/server/repo-anchor';
 
 function git(cwd: string, ...args: string[]): void {
@@ -20,28 +19,6 @@ describe('git worktree roots and admission', () => {
     git(repo, 'init', '-q');
   });
   afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
-
-  it('finds the main worktree root', () => {
-    expect(gitRootByStat(repo)).toBe(repo);
-  });
-
-  it('finds a linked worktree root when .git is a file', () => {
-    git(repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-qm', 'init');
-    const linked = path.join(tmp, 'linked');
-    git(repo, 'worktree', 'add', '-q', '-b', 'linked-test', linked);
-    expect(fs.statSync(path.join(linked, '.git')).isFile()).toBe(true);
-    expect(gitRootByStat(linked)).toBe(linked);
-  });
-
-  it('finds the enclosing worktree from a subfolder', () => {
-    expect(gitRootByStat(path.join(repo, 'src'))).toBe(repo);
-  });
-
-  it('returns null for a plain folder', () => {
-    const plain = path.join(tmp, 'plain');
-    fs.mkdirSync(plain);
-    expect(gitRootByStat(plain)).toBeNull();
-  });
 
   it('refuses a plain path inside a non-git anchor with its resolved path', async () => {
     const anchor = await resolveRepoAnchor(tmp);

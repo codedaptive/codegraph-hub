@@ -18,6 +18,7 @@ import { gitRootByStat, selectOwnIndexRoot } from '../server/index-root';
 import { requireGitWorktreeRoot } from '../worktree-lifecycle/requireGitWorktreeRoot';
 import { CliJobs, requireAbsoluteRoot } from './cli-jobs';
 import type { BuilderFreshness, EnsureOutcome } from './client';
+import { withEndedJob } from './ended-outcome';
 import { RebuildFences, parseFenceKind } from './fences';
 import { HolderSet } from './holder';
 import type { BuilderRequest, BuilderToServer } from './protocol';
@@ -115,7 +116,7 @@ export class BuilderService {
   private dispatch(request: BuilderRequest): Promise<unknown> {
     switch (request.op) {
       // Only the path is read: any other field on the request (an `anchorRoot`, say) is IPC data and is ignored.
-      case 'ensure': return this.ensure(request.projectPath);
+      case 'ensure': return this.ensure(request.projectPath).then((outcome) => withEndedJob(outcome, request.projectPath));
       case 'seedWorktree': return seedWorktreeNow(requireAbsoluteRoot(request.root), {
         host: this.seedHost, wait: request.wait === true, automatic: request.automatic === true,
       });

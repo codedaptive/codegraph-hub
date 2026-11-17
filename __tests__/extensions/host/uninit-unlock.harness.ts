@@ -43,7 +43,11 @@ export function successLine(message: string): RegExp {
   return new RegExp(`^(?:✓|\\[OK\\]) ${escapeRegExp(message)}$`);
 }
 
-/** A one-function TypeScript file in `dir/src`, committed to nothing: a plain directory, indexed by the caller. */
+/**
+ * A one-function TypeScript file in `dir/src`, committed to nothing: a plain directory. A caller that indexes it with
+ * `codegraph init` makes it a git repository first (`Fixtures.makeRepo(dir, {})`), since init refuses a folder in no git
+ * worktree (S-70); kept plain, it stands for a stray non-git root.
+ */
 export function plainProject(dir: string, symbol: string): string {
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', 'index.ts'), `export function ${symbol}(): number {\n  return 1;\n}\n`);

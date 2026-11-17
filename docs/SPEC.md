@@ -79,8 +79,10 @@ build to finish.
 ### Only a git worktree root is indexed (R-46)
 
 Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root: not the server, not
-the builder, not a CLI command that hands it work. A call whose path lies inside a git worktree resolves to that
-worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
+the builder, not a CLI command. `init`, `index` and `sync` refuse a path in no git worktree whether they hand the
+work to the builder or write in their own process (§2, R-14), before anything is written: an error and exit 1, as
+for an unsafe root, with no `--force` override; `uninit` and `project remove` still work on such a root (S-70). A
+call whose path lies inside a git worktree resolves to that worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
 never `isError`, and nothing is built. A session launched outside git keeps its launch directory as its anchor
 (§4); a call there resolves to the worktree enclosing its path, or gets that guidance. The builder still refuses
 what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the home directory, a
@@ -97,10 +99,14 @@ that leaves the root.
 ### Job limits and space (R-47, S-69, R-45)
 
 A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8 GB resident
-(`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is, its writer
-lock released, and one log line names the root, the job kind, the limit and the measured value. It is not
-re-queued by itself; calls for that root get guidance naming the variable to raise, and an explicit
-`codegraph index` (or a builder restart) tries again under the same limits.
+(`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
+commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
+applied), its writer lock released, and one log line names the root, the job kind, the limit and the measured
+value. It is not re-queued by itself, and the root's stopped mark survives every builder restart. A call for a
+stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
+limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
+it gets that guidance alone. Only an explicit `codegraph index` or `codegraph init` of that
+root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
 queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
