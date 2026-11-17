@@ -606,6 +606,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word; a stale index answers queries wrongly for every team while the build runs.
 - Not chosen: one lane with the cold build yielding between batches (it only shortens the wait).
 - Owner: host (src/extensions/host/builder).
+- Superseded by R-53 (2026-11-17): one lane per git repository plus two bypass lanes, built after sm.16. Built as
+  above in sm.16 (host bb2b1a29).
 
 ## R-44. The scan does not follow a symlinked folder out of the root, unless .codegraphignore says so
 - Date: 2026-11-16 / Bob, direct ("Q38 - agree (Do we have a .codegraphignore feature) that could be used to do
@@ -752,3 +754,29 @@ General as a RULING line. Decisions already settled by a document live in `team/
   install follows only a release gate that passes.
 - Work implied: Orc-Codegraph releases and installs sm.16 when the incident set is on ours, and reports the release
   record; the queue then goes on to the docs/SPEC-upstream.md §7 merge, R-51 and R-49.
+
+## R-53. One builder lane per git repository, plus two bypass lanes below load 95
+- Date: 2026-11-17 / Bob, direct ("it should be 1 lane per repo; and the repo queues in it's lane; there should be
+  2 bypass lanes that any repo can use if system load is below 95"; then "Repo = git repository", "Load is what you
+  have it; system load", "agreed" on Designer-Codegraph's three readings).
+- Question: why does one builder run one lane of work? Bob: his B9 ("one long-lived builder process with a queue")
+  never limited it to one lane. The single lane, and R-43's "cold builds stay serial", came from the team's
+  implementation and readings, not from his spec.
+- Ruling:
+  1. Each git repository (all worktrees sharing one git common dir) has its own lane in the builder. Every job for
+     that repository (cold build, catch-up, sync, seed, VACUUM) queues in it and runs one at a time, small syncs
+     ahead of cold builds [B10]. Lanes of different repositories run at the same time.
+  2. Two bypass lanes are shared by all repositories. When a repository's lane is busy, its next queued job may
+     start in a free bypass lane if the machine's 1-minute load average is below 95. Load is checked when a job
+     starts; a running job is never stopped for load. At 95 or above, work waits in its own lane.
+  3. One writer per root still holds: two jobs never run on the same worktree at once.
+  4. Every job keeps its R-47 limits. So that a limit ends only the job that crossed it and memory is measured per
+     job, each job runs in its own child process of the builder (Designer-Codegraph's stated consequence, given
+     before the go).
+  5. After sm.16, which ships R-43 as built, and ahead of the docs/SPEC-upstream.md §7 merge.
+- Reason: Bob's word. Repositories do not share databases, so nothing makes one wait for another; the load gate
+  keeps the extra parallel work off a busy machine.
+- Not chosen: one lane per worktree (one repository's many worktrees could take every slot); a CPU-percent gate.
+- Supersedes: R-43's two-lane design (a sync lane beside one serial cold-build lane) and its "Cold builds stay
+  serial among themselves (S-6, S-33)"; S-79 once each job runs in its own process.
+- Owner: host (src/extensions/host/builder).
