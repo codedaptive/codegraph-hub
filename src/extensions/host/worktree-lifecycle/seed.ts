@@ -110,6 +110,7 @@ import {
 import { isProcessAlive } from '../../../mcp/server-control';
 import { registerProject, stampSeedNonce } from './project-registry';
 import { seedStagingPid } from './seed-staging-pid';
+import { discardSeedTargetLeftover } from './discardSeedTargetLeftover';
 
 export type SeedMethod = 'clone' | 'copy' | 'backup';
 
@@ -533,7 +534,7 @@ async function backupSnapshot(srcDb: string, tmp: string): Promise<void> {
   }
 }
 
-/** Thrown when the target gained an index while the seed was being taken. */
+/** Thrown when the target has an index or a `codegraph.db` file when the seed is taken or installed. */
 class SeedTargetTakenError extends Error {
   constructor(root: string) {
     super(`${root} already has an index`);
@@ -623,7 +624,7 @@ function standardGitignore(): Buffer {
  * carries it from its first moment; the caller records it in the registry. A
  * staging copy a killed seeder left in the target (its pid dead) is removed
  * first. Throws when the source has no index, when the target already has an
- * index, when the target's `codegraph.lock` stays held by another process past
+ * index or a `codegraph.db` file, when the target's `codegraph.lock` stays held by another process past
  * the retries, or when the copy or the nonce write fails.
  *
  * A seed that fails removes what it made and nothing else, since other
@@ -935,6 +936,7 @@ async function seedWorktreeOnly(worktree: string, opts: WorktreeSeedOptions): Pr
   const source = await pickSeedSource(worktree, rebuildHeld);
   if (source === null) return { kind: 'no-source', root: worktree };
   if (abandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return { kind: 'queued', root: worktree };
+  if (!abandoned) discardSeedTargetLeftover(worktree, rebuildHeld);
   const commonDir = await gitCommonDirAsync(worktree);
   const copy = async (): Promise<SeedMethod> => {
     const { method, nonce } = await seedFromSibling(worktree, source);
@@ -1027,7 +1029,10 @@ export async function ensureWorktreeIndex(projectPath: string, host: SeedHost): 
  * Seed W, or queue its cold build, or neither. `replaceAbandoned`: W holds an
  * index a killed build left behind ({@link isAbandonedIndex}); it is
  * discarded only right before a seed or a build replaces it, so a worktree
- * that gets neither keeps what it had.
+ * that gets neither keeps what it had. Without it, a schema-less database a
+ * killed cold build left under a dead holder's `rebuild.pid` is discarded
+ * right before a seed (./discardSeedTargetLeftover.ts); one that stays makes
+ * the seed refuse W, and the call answers nothing.
  */
 async function seedOrBuild(
   worktree: string,
@@ -1053,6 +1058,7 @@ async function seedOrBuild(
   if (source) {
     // A live process took W's locks meanwhile, or a rebuild holds W: its index is not abandoned.
     if (replaceAbandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return NONE;
+    if (!replaceAbandoned) discardSeedTargetLeftover(worktree, rebuildHeld);
     try {
       // The copy is a job on the builder's queue; one that waits behind a long
       // job past the host's bound keeps its place, and the call answers 'building'.
