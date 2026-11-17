@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolve } from 'node:path';
 
 vi.mock('../../../src/directory', () => ({ canonicalProjectRoot: (root: string) => resolve(root) }));
@@ -11,6 +11,7 @@ const other = { root: '/other', kind: 'cold-build', limit: 'rss', at: '2026-11-1
 
 describe('endedJobs', () => {
   beforeEach(() => endedJobs.replaceAll([]));
+  afterEach(() => endedJobs.onClearRoot(() => {}));
 
   it('finds a job by canonical root and kind', () => {
     endedJobs.add(cold);

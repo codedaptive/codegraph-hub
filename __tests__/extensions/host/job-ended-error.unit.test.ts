@@ -16,6 +16,6 @@ describe('JobEndedError', () => {
     expect(error.message).toContain('codegraph index');
     expect(error.message).toContain('codegraph init');
     expect(error.message).not.toContain('restart the builder');
-    expect(error.message).toMatch(/restart/i);
+    expect(error.message).toContain('a builder restart does not clear it');
   });
 });

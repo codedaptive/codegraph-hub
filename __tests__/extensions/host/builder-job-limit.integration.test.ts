@@ -19,6 +19,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   endedJobs.replaceAll([]);
+  endedJobs.onClearRoot(() => {});
   coldBuildDatabases.clear(path.join(base, 'project'));
   fs.rmSync(base, { recursive: true, force: true });
 });

@@ -27,10 +27,15 @@ describe('withEndedJob', () => {
     expect(withEndedJob({ kind: 'none' }, '/project-other')).toEqual({ kind: 'none' });
   });
 
-  it('turns a building answer into none when its ancestor cold build ended', () => {
-    expect(withEndedJob({ kind: 'building', root: '/project/sub/child' }, '/project/sub/child')).toEqual({
+  it('turns a building answer into none when its own root cold build ended', () => {
+    expect(withEndedJob({ kind: 'building', root: '/project/sub' }, '/project/sub/file')).toEqual({
       kind: 'none', ended: { root: '/project/sub/', kind: 'cold-build', limit: 'rss' },
     });
+  });
+
+  it('leaves building unchanged when only an ancestor cold build ended', () => {
+    expect(withEndedJob({ kind: 'building', root: '/project/sub/child' }, '/project/sub/child'))
+      .toEqual({ kind: 'building', root: '/project/sub/child' });
   });
 
   it('leaves building unchanged for a non-cold-build mark', () => {
