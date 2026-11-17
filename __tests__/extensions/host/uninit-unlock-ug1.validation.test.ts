@@ -4,7 +4,7 @@
  *   UG1   uninit --force under a running server and builder: the index is deleted, and neither process holds a file
  *         under the project's `.codegraph` afterwards (lsof).
  *
- * It runs in the validation group. The other uninit and unlock gates are in `uninit-unlock.gate.test.ts`, and the
+ * It runs in the validation group. The other uninit and unlock gates are in `uninit-unlock.validation.test.ts`, and the
  * helpers in `uninit-unlock.harness.ts` and `machine-server.harness.ts`.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

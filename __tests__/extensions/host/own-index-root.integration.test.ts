@@ -5,7 +5,7 @@
  * that root belongs to another repository, so it never answers a path inside the nested one. A linked
  * worktree of the same repository (same git common dir) and a sub-project's index are unchanged.
  *
- * Real `git` and real temp directories, as repo-anchor.unit.test.ts: "same repository" is git's own answer
+ * Real `git` and real temp directories, as repo-anchor.integration.test.ts: "same repository" is git's own answer
  * (the common dir), so it is driven against git, not against a faked `.git` entry.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

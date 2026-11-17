@@ -1,5 +1,5 @@
 /**
- * Helpers shared by the uninit and unlock gates (`uninit-unlock.gate.test.ts`) and the uninit UG1 validation test
+ * Helpers shared by the uninit and unlock gates (`uninit-unlock.validation.test.ts`) and the uninit UG1 validation test
  * (`uninit-unlock-ug1.validation.test.ts`): the CLI run, its output checks, a plain indexed project, and the
  * open-file inspection with lsof.
  */
