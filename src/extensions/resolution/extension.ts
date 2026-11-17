@@ -22,10 +22,11 @@
  * program.parse() and, in a query-pool worker, on its first call of a
  * non-built-in tool, so the top level defines values and does no work, and
  * imports only `path` and types. Project-root lookup (../../directory, which
- * imports ./db/node-sqlite) and the suspects library (./suspects, which pulls
- * in the db and resolution layers) are both lazy for that reason: they are
- * loaded with `await import()` inside the command's action and the tool's
- * handler; `await import()` of a `.ts` module works under vitest, where a lazy
+ * imports ./db/node-sqlite), the suspects library (./suspects, which pulls
+ * in the db and resolution layers) and the stopped-index warning
+ * (./warn-stopped-index) are all lazy for that reason: they are
+ * loaded with `await import()` inside the command's action, and the suspects
+ * library also inside the tool's handler; `await import()` of a `.ts` module works under vitest, where a lazy
  * `require` would not.
  */
 import * as path from 'path';
@@ -85,8 +86,10 @@ interface SuspectsCommandOptions {
  * Add `codegraph suspects` to `program`. The project is the nearest CodeGraph
  * root at or above `--path` (default: the working directory). A bad --limit or
  * --edges, or no index at or above the path, prints a ✗ line on stderr,
- * nothing on stdout, and exits 1. The action is async (its modules load on
- * first use); commander's `parse()` does not await it, but the process stays
+ * nothing on stdout, and exits 1. On a root whose index builder's last job was
+ * stopped at a limit, it writes the stopped-index note on stderr
+ * (./warn-stopped-index) before the answer. The action is async (its modules
+ * load on first use); commander's `parse()` does not await it, but the process stays
  * up until it settles, and it sets `process.exitCode` rather than exiting.
  */
 export function registerSuspectsCommand(program: Command): void {
@@ -125,6 +128,8 @@ export function registerSuspectsCommand(program: Command): void {
         }
         const { findSuspects, formatSuspects, suspectsToJson } = await import('./suspects');
         const list = findSuspects(root, { limit: limit.value, maxEdgesPerTarget: edges.value });
+        const { warnStoppedIndex } = await import('./warn-stopped-index');
+        await warnStoppedIndex(root);
         process.stdout.write(
           opts.json ? `${JSON.stringify(suspectsToJson(list), null, 2)}\n` : `${formatSuspects(list)}\n`,
         );
