@@ -13,7 +13,7 @@ import type { JobKind, JobQueue } from './queue';
 /** Five seconds: a job over its limit is caught within one interval once the event loop turns, and a sample costs next to nothing. */
 const DEFAULT_INTERVAL_MS = 5000;
 
-export interface JobWatchdogOptions {
+interface JobWatchdogOptions {
   clock?: () => number;
   readRssBytes?: () => number;
   intervalMs?: number;
