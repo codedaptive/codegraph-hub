@@ -1,14 +1,17 @@
 /**
- * Samples the builder's running job against its limits (./job-limits.ts). Jobs run in the builder's own process,
- * so the only way to end one over a limit is to end the process (./job-limit-guard.ts, through `onBreach`); this
- * only decides when. A job's time is measured from the first check that saw it running, so it can be up to one
- * interval late (and later while a job blocks the event loop, since the sample runs on the main thread); the resident size
- * is the whole builder process's, which is the job's while it is the one running.
+ * Samples the builder's running jobs, at most one per lane, against their limits (./job-limits.ts). Jobs run in
+ * the builder's own process, so the only way to end one over a limit is to end the process
+ * (./job-limit-guard.ts, through `onBreach`); this only decides when, and which job is over. Each job's time is
+ * measured from the first check that saw it running, so it can be up to one interval late (and later while a job
+ * blocks the event loop, since the sample runs on the main thread). The resident size is the whole builder
+ * process's, read once per check and charged to one job (./rss-owner.ts); the other job is judged on time alone.
  */
 import { checkJobLimits } from './job-limit-breach';
 import type { JobLimits } from './job-limits-type';
 import type { LimitBreach } from './limit-breach';
-import type { JobKind, JobQueue } from './queue';
+import type { JobQueue } from './queue';
+import { rssOwner } from './rss-owner';
+import type { RunningJob } from './running-job';
 
 /** Five seconds: a job over its limit is caught within one interval once the event loop turns, and a sample costs next to nothing. */
 const DEFAULT_INTERVAL_MS = 5000;
@@ -17,19 +20,19 @@ interface JobWatchdogOptions {
   clock?: () => number;
   readRssBytes?: () => number;
   intervalMs?: number;
-  onBreach: (job: { id: number; kind: JobKind; root: string }, breach: LimitBreach) => void;
+  onBreach: (job: RunningJob, breach: LimitBreach) => void;
 }
 
 export class JobWatchdog {
-  private seenId: number | null = null;
-  private startedAt = 0;
-  private breachedId: number | null = null;
+  /** The clock reading at the first check that saw each running job; ids no longer running are forgotten. */
+  private readonly startedAt = new Map<number, number>();
+  private readonly breached = new Set<number>();
   private timer: NodeJS.Timeout | null = null;
   private readonly clock: () => number;
   private readonly readRssBytes: () => number;
 
   constructor(
-    private readonly queue: Pick<JobQueue, 'runningJob'>,
+    private readonly queue: Pick<JobQueue, 'runningJobs'>,
     private readonly limits: JobLimits,
     private readonly opts: JobWatchdogOptions,
   ) {
@@ -37,19 +40,32 @@ export class JobWatchdog {
     this.readRssBytes = opts.readRssBytes ?? (() => process.memoryUsage.rss());
   }
 
-  /** One sample: a running job over a limit is reported through `onBreach`, once per job. */
+  /**
+   * One sample: the first job over a limit in ascending id (the older job first) is reported through `onBreach`,
+   * and the sample ends there; no job is reported twice.
+   */
   check(): void {
-    const job = this.queue.runningJob();
-    if (job === null) return;
-    if (job.id !== this.seenId) {
-      this.seenId = job.id;
-      this.startedAt = this.clock();
+    const jobs = [...this.queue.runningJobs()].sort((a, b) => a.id - b.id);
+    this.forgetEnded(jobs);
+    if (jobs.length === 0) return;
+    const now = this.clock();
+    for (const job of jobs) if (!this.startedAt.has(job.id)) this.startedAt.set(job.id, now);
+    const rss = this.readRssBytes();
+    const owner = rssOwner(jobs);
+    for (const job of jobs) {
+      if (this.breached.has(job.id)) continue;
+      const breach = checkJobLimits(now - (this.startedAt.get(job.id) ?? now), job === owner ? rss : 0, this.limits);
+      if (breach === null) continue;
+      this.breached.add(job.id);
+      this.opts.onBreach(job, breach);
+      return;
     }
-    if (job.id === this.breachedId) return;
-    const breach = checkJobLimits(this.clock() - this.startedAt, this.readRssBytes(), this.limits);
-    if (breach === null) return;
-    this.breachedId = job.id;
-    this.opts.onBreach(job, breach);
+  }
+
+  private forgetEnded(jobs: readonly RunningJob[]): void {
+    const running = new Set(jobs.map((job) => job.id));
+    for (const id of this.startedAt.keys()) if (!running.has(id)) this.startedAt.delete(id);
+    for (const id of this.breached) if (!running.has(id)) this.breached.delete(id);
   }
 
   /** Sample every `intervalMs` without keeping the process alive. */
