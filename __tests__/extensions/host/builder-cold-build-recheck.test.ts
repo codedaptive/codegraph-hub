@@ -4,7 +4,7 @@
  *
  * A queued cold build writes `.codegraph/` into whatever its root path names at the moment the job starts,
  * which can be minutes after the call that queued it (a running cold build is never preempted). The root of a
- * worktree's build can be swapped for a link to another
+ * worktree's build can change, so a path swapped for a link to another
  * directory while the job waits must not make the job build there: the job fails, builds nothing, and says why
  * in the job log. Each case holds the queue still with a blocker job, queues a build behind it, changes the
  * tree, releases the blocker and reads what the job did. The suite's throwaway HOME stands in for the home

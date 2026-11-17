@@ -325,9 +325,9 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     expect(queued, 'no build is queued').toEqual([]);
   });
 
-  // A symlink spelling must not pick a different build root than the directory it names: /work/link ->
-  // /work/nested-repo/src has no .git on its lexical path, so the plain-directory rule would build the
-  // anchor /work, while the realpath spelling is inside the nested repository (nothing may be built at /work).
+  // A symlink spelling must not pick a different answer than the directory it names: /work/link ->
+  // /work/nested-repo/src has no .git on its lexical path, but its realpath is inside the nested repository,
+  // so both spellings build that repository and nothing may be built at /work.
   it('a symlink into a nested repository gets the answer of the real spelling: nothing is queued at the anchor', async () => {
     const work = path.join(workspace, 'work');
     const nested = path.join(work, 'nested-repo');

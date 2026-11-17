@@ -19,8 +19,8 @@
  *     client's to fix, so it is never run: run, a string made the handler
  *     throw, which came back as an internal codegraph error to retry (#2981);
  *  3. a name that is neither a built-in nor a loaded extension's tool -> InvalidParams;
- *  4. {@link sessionCallGuard}: required `projectPath` inside the repo anchor,
- *     otherwise its success-shaped guidance;
+ *  4. {@link sessionCallGuard}: required `projectPath` inside the repo anchor
+ *     and in a git worktree, otherwise its success-shaped guidance;
  *  5. `execute` with the guard's absolute `projectPath` substituted, the
  *     session's {@link indexRootAdmission}, which `execute` insists on for an MCP
  *     engine's handler, and the session's own tool allowlist, which decides

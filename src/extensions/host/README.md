@@ -166,14 +166,10 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   A git worktree with no index gets one seeded
   from an indexed sibling
   or, when there is none, cold-built from the queue, and the calls meanwhile answer the building note.
-  A directory outside git with no index is cold-built from the queue too, at the session's anchor root
-  (the launch directory when the session is outside git, which the server sends with the call); an anchor
-  that does not contain the path is refused and nothing is built. A call on a subdirectory builds the
-  launch directory once, never an index of its own. The builder checks the anchor it is sent (it must
-  contain the path and be a safe existing directory) before it creates anything. A directory it will not
-  build (your home directory, a filesystem root, a parent of home) or whose build failed answers a
-  not-indexed note that names the reason and points at the built-in tools and at a project inside it; no
-  tool answer tells the agent to stop calling codegraph.
+  Nothing is seeded, built or held for a path in no git worktree (`ensure` answers `none`, and the MCP
+  call is answered that the path is not in a git repository, with no index opened): codegraph indexes only
+  git worktrees, whatever index sits at or above the path. The queued cold build is admitted again when its
+  job starts, and only while its root is still a git worktree root.
   It never exits on idle; it ends when its server does (its IPC channel closes), and the server restarts
   it when it dies (`<state dir>/builder.pid`, `builder.log`). Which index answers a path is
   `server/index-root.ts` `selectOwnIndexRoot`, for both the server (with a builder) and the builder: a
@@ -199,10 +195,10 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   cold-builds. `codegraph project seed <path>` seeds one now (exit 0 when it has or now has an index, 3 when
   no sibling has one or it is not in a git worktree, 1 on a failure); with a server whose builder is up it
   is the `seed` request above and runs on the builder's queue, otherwise in the CLI's process.
-  `codegraph project pin <path>` records the pin in the project registry and seeds a worktree with no index
+  `codegraph project pin <path>` refuses a path in no git worktree (exit 1); otherwise it records the pin in the project registry and seeds a worktree with no index
   first. The machine server opens every pinned project with no tool call, at its start and after each
   housekeeping pass: a pinned root with no index is seeded through the builder (`seedWorktree`), then held
-  and opened read-only like any other. A root with no indexed sibling, outside git, or with
+  and opened read-only like any other. A root in no git worktree, one with no indexed sibling, or one with
   `CODEGRAPH_NO_AUTO_SEED=1` is skipped with one `server.log` line saying why and is never cold-built; a
   seed still queued on the builder is retried on the next pass.
 

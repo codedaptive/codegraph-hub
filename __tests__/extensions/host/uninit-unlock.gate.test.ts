@@ -21,8 +21,8 @@
  *         control marker is refused with InvalidRequest (-32600) and the indexed root keeps its index.
  *
  * Each gate drives the built CLI (dist/bin/codegraph.js, built by the suite's global setup) as a child process,
- * non-TTY, with CODEGRAPH_STATE_DIR set. The projects are plain directories: a git worktree is re-seeded from another
- * worktree of its repository. The gates that read a process's open files with lsof are skipped where lsof is absent.
+ * non-TTY, with CODEGRAPH_STATE_DIR set. The projects are one-file git repositories with no other worktree: a git worktree
+ * with a sibling is re-seeded from it. The gates that read a process's open files with lsof are skipped where lsof is absent.
  * The helpers that run the CLI and check its output are in uninit-unlock.harness.ts; the ones that start a server and
  * read pid files are in machine-server.harness.ts.
  */
