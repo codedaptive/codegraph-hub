@@ -37,7 +37,9 @@ interface BlastCommandOptions {
  * message and exits 1. Depth and format defaults are `runBlast`'s (depth 2,
  * text). The action is async (its modules load on first use); commander's
  * `parse()` does not await it, but the process stays up until it settles, and
- * it sets `process.exitCode` rather than exiting.
+ * it sets `process.exitCode` rather than exiting. An exit-0 answer prints the
+ * stopped-index line first on stderr when the builder marked the root
+ * (`../shared/stopped-index-warning.ts`); an error answer does not.
  */
 export function registerBlastCommand(program: Command): void {
   program
@@ -53,10 +55,14 @@ export function registerBlastCommand(program: Command): void {
       const { findNearestCodeGraphRoot } = await import('../../../directory');
       const { runBlast } = await import('./index');
       const { isUncoveredNestedRepo } = await import('../shared/nested-repo');
+      const { stoppedIndexWarning } = await import('../shared/stopped-index-warning');
       const found = findNearestCodeGraphRoot(start);
       const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
       const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format, strict: opts.strict });
       if (r.output) process.stdout.write(r.output);
+      // Only a non-error answer carries the note, as host's answers do.
+      const warning = r.exitCode === 0 ? stoppedIndexWarning(root) : null;
+      if (warning) process.stderr.write(warning);
       if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
       // Not process.exit(): exiting here can cut off stdout that is still
       // draining into a pipe.

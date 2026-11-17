@@ -32,7 +32,9 @@ interface OrphansCommandOptions {
  * the working directory), or the resolved path itself when there is none or
  * its index leaves out the nested git repository `--path` is in, so
  * `runOrphans` prints its own no-index message and exits 1. A missing `--base`
- * is `runOrphans`'s message too (exit 1), rather than commander's.
+ * is `runOrphans`'s message too (exit 1), rather than commander's. An exit-0
+ * answer prints the stopped-index line first on stderr when the builder marked
+ * the root (`../shared/stopped-index-warning.ts`); an error answer does not.
  */
 export function registerOrphansCommand(program: Command): void {
   program
@@ -45,20 +47,26 @@ export function registerOrphansCommand(program: Command): void {
       // program.parse() does not await an action, so a throw here (a failed
       // import included) would be an unhandled rejection: report it as a failure instead.
       let r: OrphansResult;
+      let warning: string | null = null;
       try {
-        const [{ findNearestCodeGraphRoot }, { isUncoveredNestedRepo }, { runOrphans }] = await Promise.all([
-          import('../../../directory'),
-          import('../shared/nested-repo'),
-          import('./index'),
-        ]);
+        const [{ findNearestCodeGraphRoot }, { isUncoveredNestedRepo }, { runOrphans }, { stoppedIndexWarning }] =
+          await Promise.all([
+            import('../../../directory'),
+            import('../shared/nested-repo'),
+            import('./index'),
+            import('../shared/stopped-index-warning'),
+          ]);
         const start = path.resolve(opts.path ?? process.cwd());
         const found = findNearestCodeGraphRoot(start);
         const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
         r = await runOrphans(root, { base: opts.base, format: opts.json ? 'json' : 'text' });
+        // Only a non-error answer carries the note, as host's answers do.
+        if (r.exitCode === 0) warning = stoppedIndexWarning(root);
       } catch (err) {
         r = { output: '', exitCode: 1, stderr: `✗ ${err instanceof Error ? err.message : String(err)}` };
       }
       if (r.output) process.stdout.write(r.output);
+      if (warning) process.stderr.write(warning);
       if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
       // Not process.exit(): exiting here can cut off stdout that is still
       // draining into a pipe.
