@@ -69,7 +69,8 @@
  * W's `rebuild.pid` and `codegraph.lock`. One whose state cannot be read is
  * kept as it is.
  * A seeder killed mid-copy leaves `codegraph.db.seed-<pid>-<hex>.tmp`; the
- * next seed of W removes each one whose pid is dead.
+ * next seed of W removes each one whose pid is dead. A seed the builder ends
+ * at a job limit has its own removed on the way out (../builder/job-limit-guard.ts).
  *
  * `CODEGRAPH_NO_AUTO_SEED=1` turns all of it off, seed and cold build.
  */

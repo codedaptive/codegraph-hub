@@ -2936,6 +2936,10 @@ export class ToolHandler {
    * building note (success-shaped, through NotIndexedError), except when the
    * rebuild fence handles it. A pending outcome answers with that note only if
    * the call selects no index; otherwise the handler opens the index on disk.
+   * An ended outcome (the root's job was stopped at a limit) answers with the
+   * ended note, through NotIndexedError, only if the call selects no index;
+   * otherwise the index on disk is served and its answers carry the stopped
+   * note ({@link withStoppedJobNotice}).
    * Only on a handler that has a builder
    * (the engine's; CLI, worker and fallback handlers never seed or build). A
    * path in a git worktree the builder could not give an index (no sibling is
