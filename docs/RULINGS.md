@@ -680,9 +680,10 @@ General as a RULING line. Decisions already settled by a document live in `team/
   the measured value. The numbers and what follows an ended job are S-69.
 - Reason: the relayed order; a job left running took the machine down.
 - Owner: host (builder-job-limit, ahead of its queue, Orc #3299).
-- Confirmed 2026-11-17: Bob's go on Q-40 (R-48), whose question named R-47, shipped it in sm.15. The creator reads
-  that go as confirming R-47 and S-69's numbers (60 minutes, 8 GB, no automatic retry), "nothing is owed" (#3707);
-  #3709 says that reading is the creator's call under Bob's rules, not Bob's own words.
+- The creator's reading, 2026-11-17 (#3707, #3709): Bob's go on Q-40 (R-48), whose question named R-47, shipped it
+  in sm.15, and the creator reads that go as confirming R-47 and S-69's numbers (60 minutes, 8 GB, no automatic
+  retry). #3709 says that reading is the creator's call under Bob's rules, not Bob's own words, so Bob's own
+  confirmation, named in the Date line above, is still open.
 
 ## R-48. Q-40: release and install 1.6.2-sm.15 now
 - Date: 2026-11-17 / Bob, direct ("Q-40: a"); the creator relayed the same go (#3632).
