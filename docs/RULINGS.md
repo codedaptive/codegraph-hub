@@ -611,8 +611,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Date: 2026-11-16 / Bob, direct ("Q38 - agree (Do we have a .codegraphignore feature) that could be used to do
   this with the ability to overide auto add ssymlink that leave the project"), on Q-38 (builder-stall-questions
   Q2 and Q4).
-- Question: the scan (src/extraction/index.ts:1999-2021, upstream's) follows a symlinked folder wherever it points;
-  one tree's links reached 489 GB of run outputs. Should it follow a link whose real path leaves the project root?
+- Question: the scan (scanDirectoryWalk in src/extraction/index.ts, upstream's) follows a symlinked folder wherever
+  it points; one tree's links reached 489 GB of run outputs. Should it follow a link whose real path leaves the
+  project root?
 - Ruling: by default, no. The scan skips a symlinked folder whose real path is outside the root and keeps following
   one whose real path is inside it. No size cap. A new `.codegraphignore` file at the root (none exists today: no
   hit in the index, 2026-11-16) carries ignore rules, and its rules can override that default to re-include a
@@ -625,7 +626,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
   with upstream-prs stacking the PR.
 - Syntax: 2026-11-16 / Bob, direct ("my thought .codegraphignore behaves like .gitignore", then "go" on
   Designer-Codegraph's reading). `.codegraphignore` at the root has `.gitignore`'s syntax and meaning, and its rules
-  join the same matcher as the root `.gitignore` (buildDefaultIgnore, src/extraction/index.ts:642-656). A symlinked
+  join the same matcher as the root `.gitignore` (buildDefaultIgnore in src/extraction/index.ts). A symlinked
   folder that leaves the root is re-included by gitignore's own negation: a `!` line naming the link's path inside
   the project (for example `!data/runs`). No new syntax.
 
