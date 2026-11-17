@@ -123,7 +123,8 @@ The machine server closes an open project after 10 idle minutes (`CODEGRAPH_PROJ
 and has no cap on how many are open; a pinned project is exempt, so the builder's hold on it (its watcher and writer slot)
 stays too. At start and after each housekeeping pass (60 s by default, `CODEGRAPH_HOUSEKEEPING_INTERVAL_MS`;
 `src/extensions/host/worktree-lifecycle/pinned-open.ts`), the server seeds a pinned root with no index through the builder,
-then holds and opens it read-only. It skips a root with no indexed sibling, outside git, or with automatic seeding off,
+then holds and opens it read-only. It skips a root with no indexed sibling, in no git worktree (nothing seeds, catches up
+or cold-builds a folder outside git, S-70), or with automatic seeding off,
 logging the reason in `server.log` without repeating the same reason. Queued and failed seeds are retried on the next pass;
 a gone path or non-directory is skipped. With the interval set to 0, a later pin is picked up at the next start only.
 The pass never cold-builds. Teardown still treats a pinned worktree that has gone like any other.
@@ -158,8 +159,11 @@ Nothing reads `CODEGRAPH_AUTO_INDEX` any more (`grep -rn AUTO_INDEX src` finds n
 is not in the MCP entry (`mcp-json.md`). R-12 removed the gate: the first call that names an unindexed worktree starts a
 copy from an indexed sibling or a queued cold build, with no registration and no setting. `CODEGRAPH_NO_AUTO_SEED=1`
 turns seeding and cold builds off for the process that sets it (`seed.ts`). The builder refuses roots that
-`unsafeIndexRootReason` (`src/directory.ts`) refuses, and sensitive paths, and a plain directory it will not build gets
-guidance to use built-in tools (`src/mcp/server-instructions.ts`, Limitations). Indexing each repository once at go-live
+`unsafeIndexRootReason` (`src/directory.ts`) refuses, and sensitive paths. Only git worktrees are indexed (S-70): an MCP
+call on a path in no git worktree is answered that it is not in a git repository, with guidance to use built-in tools
+(`src/mcp/server-instructions.ts`, Limitations), and `codegraph init`, `index` and `sync` refuse such a path on both
+routes (through the builder and in the CLI's own process), exit 1, before anything is written; `--force` does not
+override it. A path below a worktree root acts on that root. Indexing each repository once at go-live
 (step 1) is therefore a scheduling choice, not a gate.
 
 ## Undo
