@@ -118,7 +118,8 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
  * One database this call did not create is removed: when the `rebuild.pid`
  * it took over named a dead holder (./isDeadHolderRecord.ts), a database
  * without the schema is that killed build's leftover and is discarded before
- * init (./discardSchemalessLeftover.ts). With no `rebuild.pid` in place (a
+ * init (./discardSchemalessLeftover.ts), unless another live process holds
+ * `writer.pid` or the file is not SQLite. With no `rebuild.pid` in place (a
  * user's own `codegraph init`, say) such a database stays, and init fails on it.
  *
  * A root whose cold build the builder ended over a job limit (builder/ended-jobs.ts) is refused first: one
