@@ -243,10 +243,11 @@ describe('sessionCallGuard', () => {
       expect(plainAnchor.commonDir).toBeNull();
     });
 
-    it('the directory, its subdirectories and not-yet-created paths are inside', async () => {
+    it('plain paths inside the anchor get not-a-repository guidance', async () => {
       for (const given of [launch, path.join(launch, 'svc-a'), path.join(launch, 'svc-b', 'not-yet')]) {
         const out = await sessionCallGuard({ projectPath: given }, plainAnchor);
-        expect(out, given).toEqual({ projectPath: given });
+        expect('answer' in out, given).toBe(true);
+        if ('answer' in out) expect(text(out.answer)).toContain(`${given} is not in a git repository`);
       }
     });
 
@@ -270,9 +271,10 @@ describe('sessionCallGuard', () => {
       expect('answer' in out).toBe(true);
     });
 
-    it('a relative projectPath resolves against the launch directory', async () => {
+    it('a relative plain projectPath is resolved against the launch directory in the guidance', async () => {
       const out = await sessionCallGuard({ projectPath: 'svc-a' }, plainAnchor);
-      expect(out).toEqual({ projectPath: path.join(launch, 'svc-a') });
+      expect('answer' in out).toBe(true);
+      if ('answer' in out) expect(text(out.answer)).toContain(`${path.join(launch, 'svc-a')} is not in a git repository`);
     });
 
     it.runIf(process.platform !== 'win32')('a link inside the directory that points outside it is outside', async () => {
@@ -314,12 +316,13 @@ describe('indexRootAdmission: the index a call is answered from', () => {
     }
   });
 
-  it('outside a repository the anchor directory and its subtree are admitted, the directory above is not', async () => {
+  it('outside a repository plain index roots inside the anchor are refused, as is the directory above', async () => {
     const launch = path.join(tmp, 'outer', 'workspace');
     fs.mkdirSync(path.join(launch, 'svc'), { recursive: true });
     const admit = indexRootAdmission(await resolveRepoAnchor(launch));
-    expect(await admit(launch)).toBeNull();
-    expect(await admit(path.join(launch, 'svc'))).toBeNull();
+    for (const root of [launch, path.join(launch, 'svc')]) {
+      expect(await admit(root)).toContain(`${root} is not in a git repository`);
+    }
     const refusal = await admit(path.join(tmp, 'outer'));
     expect(refusal).toContain(launch);
   });

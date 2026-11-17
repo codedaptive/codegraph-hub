@@ -13,6 +13,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import CodeGraph from '../../../src/index';
 import {
   Fixtures,
   McpSession,
@@ -517,7 +518,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
   // IB6: a nested sub-project index inside a worktree does not shadow the worktree's own index. A call with a projectPath
   // in W/sub is answered from W's index, so a symbol that only W/other has is found.
   it('IB6: a call in a nested sub-project of a worktree is answered from the index of the worktree that holds it', async () => {
-    // Over 5 s by design: two CLI index runs (the worktree and its nested sub-project), a serve --mcp cold start and two tool calls on cold indexes.
+    // Over 5 s by design: a CLI index run of the worktree, an in-process index of its nested sub-project, a serve --mcp cold start and two tool calls on cold indexes.
     const root = fx.tempRoot();
     const stateDir = stateDirUnder(root);
     const repo = fx.makeRepo(path.join(root, 'main'), { 'src/base.ts': 'export const ib6Base = 1;\n' });
@@ -532,7 +533,9 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     );
     fx.index(w, stateDir);
     const sub = path.join(w, 'sub');
-    fx.index(sub, stateDir);
+    // In this process, not through the CLI: `codegraph init <w>/sub` initializes the worktree root `w` (R-46).
+    const subGraph = await CodeGraph.init(sub);
+    try { await subGraph.indexAll(); } finally { subGraph.close(); }
     expect(fs.existsSync(path.join(sub, '.codegraph')), 'IB6 setup: the sub-project has its own index').toBe(true);
     const session = startSession({ cwd: w, stateDir });
     await session.initialize();
@@ -588,59 +591,41 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     expect(problems, 'IB7 problems (empty when the edit shows through the server within the bounded wait)').toEqual([]);
   }, 600_000);
 
-  // IB8: a directory that is not a git worktree and has no index is its own build root. The first call answers the
-  // building note (success-shaped, never the "don't call codegraph" guidance), a call in one of its subdirectories
-  // starts no build there, and a later call answers from the directory's own index.
-  it('IB8: a directory that is not a git worktree, with no index, is answered building and then from its own index', async () => {
-    // Over 5 s by design: a cold build of a small plain directory on an overloaded machine, a serve --mcp cold start, and polling calls until it finishes.
-    // The directory is a whole mkdtemp root (under os.tmpdir(), not os.tmpdir() itself); its state dir sits in a second root, so the
-    // directory holds only the fixture and the .codegraph the build makes.
+  // IB8 (R-46): a directory that is not in a git worktree is never built. Each call on it, or on one of its
+  // subdirectories, answers success-shaped that the path is not in a git repository; no build job starts and no
+  // `.codegraph/` is created anywhere in it.
+  it('IB8: a directory that is not a git worktree is not built, and the answer says it is not in a git repository', async () => {
+    // Over 5 s by design: a serve --mcp cold start and a builder readiness probe on an overloaded machine.
+    // The directory is a whole mkdtemp root (under os.tmpdir(), not os.tmpdir() itself); its state dir sits in a second root.
     const dir = fx.tempRoot();
     const stateDir = stateDirUnder(fx.tempRoot());
     const sub = path.join(dir, 'src');
     fs.mkdirSync(sub, { recursive: true });
     fs.writeFileSync(path.join(sub, 'a.ts'), 'export function ib8PlainSymbol(): string {\n  return "ib8-plain-body-marker";\n}\n');
-    // The cold build waits 30 s after it takes rebuild.pid, so the subdirectory call below lands while the build still runs.
-    const session = startSession({ cwd: dir, stateDir, env: { CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS: '30000' } });
+    const session = startSession({ cwd: dir, stateDir });
     await session.initialize();
 
     await waitForBuilderReady(stateDir);
     const problems: string[] = [];
-    const first = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir }, JOB_WAIT_MS);
-    if (first.rpcError !== null || first.isError) {
-      problems.push(`(1) the first call must be success-shaped, not an error: ${excerpt(first)}`);
-    }
-    if (first.text.includes("don't call codegraph")) {
-      problems.push(`(1) the first call must not tell the agent to stop calling codegraph: ${excerpt(first)}`);
-    }
-    if (!first.text.includes('is building the index')) {
-      problems.push(`(1) the first call should answer the building note ("is building the index"): ${excerpt(first)}`);
-    } else {
-      if (!first.text.includes(dir)) {
-        problems.push(`(1) the building note should name the session's directory ${dir} as the build root: ${excerpt(first)}`);
+    for (const projectPath of [dir, sub]) {
+      const answer = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath }, JOB_WAIT_MS);
+      if (answer.rpcError !== null || answer.isError) {
+        problems.push(`the call on ${projectPath} must be success-shaped, not an error: ${excerpt(answer)}`);
       }
-      // A call on the subdirectory while the build is held: it must not start a build of its own there.
-      await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: sub }, JOB_WAIT_MS);
-      const deadline = Date.now() + 180_000;
-      let last: ToolAnswer = first;
-      let answered = false;
-      while (!answered && Date.now() < deadline) {
-        await sleep(500);
-        last = await session.tool(EXPLORE, { query: 'ib8PlainSymbol', projectPath: dir }, JOB_WAIT_MS);
-        answered = answers(last, 'ib8PlainSymbol', 'ib8-plain-body-marker');
+      if (!answer.text.includes('is not in a git repository')) {
+        problems.push(`the call on ${projectPath} should say it is not in a git repository: ${excerpt(answer)}`);
       }
-      if (!answered) {
-        problems.push(`(2) no call on the directory answered from its index within 180 s (last answer ${excerpt(last)})`);
-      } else if (!fs.existsSync(path.join(dir, '.codegraph', 'codegraph.db'))) {
-        problems.push(`(2) the answer did not come from the directory's own index: ${path.join(dir, '.codegraph', 'codegraph.db')} is missing`);
-      }
-      // Checked after the build ends, so an index a subdirectory call started during it would be on disk by now.
-      if (fs.existsSync(path.join(sub, '.codegraph'))) {
-        problems.push(`(3) the subdirectory call created ${path.join(sub, '.codegraph')}: the build root is the session's directory, not the call's path`);
+      if (answer.text.includes('is building the index') || answer.text.includes('ib8-plain-body-marker')) {
+        problems.push(`the call on ${projectPath} must neither build nor answer from an index: ${excerpt(answer)}`);
       }
     }
+    for (const root of [dir, sub]) {
+      if (fs.existsSync(path.join(root, '.codegraph'))) problems.push(`${path.join(root, '.codegraph')} was created`);
+    }
+    const builds = jobsOf(stateDir).filter((job) => job.kind === 'cold-build' && (job.root === dir || job.root === sub));
+    if (builds.length > 0) problems.push(`a cold build was queued for the directory: ${JSON.stringify(builds)}`);
 
-    expect(problems, 'IB8 problems (empty when the first call is the building note and a later call answers from the directory index, with no subdirectory index)').toEqual([]);
+    expect(problems, 'IB8 problems (empty when no call builds and every answer says the path is not in a git repository)').toEqual([]);
   }, 600_000);
 
   // IB9: a git repository nested in an indexed checkout is its own build root. A session in it is answered building for
