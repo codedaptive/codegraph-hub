@@ -7,10 +7,10 @@
  */
 import type { JobLimits } from './job-limits-type';
 
-/** 60 minutes: well past the longest cold build of a large repository, short of a job left running all day. */
+/** 60 minutes: over five times the 688 s of the largest real build measured (S-69), short of a job left running all day. */
 const DEFAULT_JOB_MAX_MS = 3_600_000;
 
-/** 8 GB: far above a healthy index run, low enough to end a runaway before it pushes the machine into swap. */
+/** 8 GB: about half again the 5.4 GB peak of the largest real build measured (S-69, mootx01-ee); the incident job sat at 12 GB. */
 const DEFAULT_JOB_MAX_RSS_MB = 8192;
 
 /**

@@ -112,8 +112,8 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
  * best-effort, not returned as LOCKED. A held rebuild.pid returns BUSY.
  *
  * A root whose cold build the builder ended over a job limit (builder/ended-jobs.ts) is refused first: one
- * stderr line, FAILED, no lock taken and nothing created. It is not retried on its own; an explicit
- * `codegraph index` of the root, or the builder's next restart, lets it run again.
+ * stderr line, FAILED, no lock taken and nothing created. It is not retried on its own; only an explicit
+ * `codegraph index` or `codegraph init` clears it; a builder restart does not.
  */
 export async function runColdBuild(root: string): Promise<number> {
   if (endedJobs.has(root, 'cold-build')) {
