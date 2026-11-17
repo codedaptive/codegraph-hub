@@ -664,33 +664,34 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
       return { s: real(s), w: real(w) };
     }
 
-    it('U9g a seed of W queued behind another root\'s job: drain of S answers after the seed settles, and the seed fails "being removed" without opening S', async () => {
+    it('U9g a seed of W queued behind a same-root job: drain of S answers after the seed settles, and the seed fails "being removed" without opening S', async () => {
       const { s, w } = await repoWithWorktree();
-      // T's sync holds the queue (300 files added after its index), so W's seed waits in it.
-      const t = path.join(workspace, 'third');
-      await indexedProject(t);
-      addFiles(t, 300);
-      const rt = real(t);
       const svc = startService();
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const blocker = svc.queue.enqueue('cold-build', w, () => gate);
+      try {
+        await svc.ensure(w);
+        expect(svc.queue.waiting().sync, 'the seed of W waits behind the same-root job').toBe(1);
+        expect(jobStarted('seed', w), 'the seed has not started').toBe(false);
 
-      const syncing = ask(svc, { id: 1, op: 'cliSync', root: rt });
-      expect(await waitUntil(() => jobStarted('sync', rt), 20_000, 5), 'premise: the third root\'s sync started').toBe(true);
-      const ensuring = svc.ensure(w);
-      expect(await waitUntil(() => svc.queue.waiting().sync === 1, 20_000, 5), 'premise: the seed of W waits behind the sync').toBe(true);
-      expect(jobOk('sync', rt), 'premise: the sync is still running').toBe(false);
-      expect(jobStarted('seed', w), 'premise: the seed has not started').toBe(false);
+        await ask(svc, { id: 2, op: 'fence', root: s, kind: 'release' });
+        expect(replyTo(2), 'the release fence on S is taken').toMatchObject({ id: 2, ok: true });
+        const drain = ask(svc, { id: 3, op: 'drain', root: s });
+        release();
+        await blocker;
+        await drain;
+        const seedSettled = jobLines.some((l) => l.includes(` job end seed ${w} `));
+        const seedFailure = jobLines.find((l) => l.includes(` job end seed ${w} failed`)) ?? '';
 
-      await ask(svc, { id: 2, op: 'fence', root: s, kind: 'release' });
-      expect(replyTo(2), 'the release fence on S is taken').toMatchObject({ id: 2, ok: true });
-      await ask(svc, { id: 3, op: 'drain', root: s });
-      const seedSettled = jobLines.some((l) => l.includes(` job end seed ${w} `));
-      const seedFailure = jobLines.find((l) => l.includes(` job end seed ${w} failed`)) ?? '';
-      await Promise.all([syncing, ensuring]);
-
-      expect(replyTo(3), 'drain answered ok').toMatchObject({ id: 3, ok: true });
-      expect(seedSettled, 'the seed of W had ended when the drain of S answered').toBe(true);
-      expect(seedFailure, 'the seed failed because S is being removed').toMatch(/being removed/);
-      expect(fs.existsSync(path.join(w, '.codegraph', 'codegraph.db')), 'W got no index: the seed never opened S').toBe(false);
+        expect(replyTo(3), 'drain answered ok').toMatchObject({ id: 3, ok: true });
+        expect(seedSettled, 'the seed of W had ended when the drain of S answered').toBe(true);
+        expect(seedFailure, 'the seed failed because S is being removed').toMatch(/being removed/);
+        expect(fs.existsSync(path.join(w, '.codegraph', 'codegraph.db')), 'W got no index: the seed never opened S').toBe(false);
+      } finally {
+        release();
+        await blocker;
+      }
     }, 180_000);
 
     it('U9g a seed of W already running when S is fenced: drain of S answers after the seed ended', async () => {

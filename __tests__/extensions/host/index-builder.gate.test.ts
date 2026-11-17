@@ -298,8 +298,9 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     expect(problems, 'IB1 problems (empty when every lock holder is the builder, and the cold build sampled one)').toEqual([]);
   }, 600_000);
 
-  // IB2: queue order. A sync of Z sent while cold build X runs waits for X to end, and runs before cold build Y starts.
-  it('IB2: a sync sent while cold build X runs ends before cold build Y starts', async () => {
+  // IB2: builder lanes. A sync of indexed root Z sent while cold build X runs starts beside X, without waiting for
+  // it, and ends before cold build Y (queued behind X) starts.
+  it('IB2: a sync sent while cold build X runs starts beside X and ends before cold build Y starts', async () => {
     // Over 5 s by design: three repositories, a CLI index run, three serve --mcp spawns, and two cold builds held open for 60 s each so requests can queue under heavy load.
     const root = fx.tempRoot();
     const stateDir = stateDirUnder(root);
@@ -364,12 +365,13 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       if (zEnd !== undefined && yStart !== undefined && zEnd.index > yStart.index) {
         problems.push(`Z's sync ended at builder.log line ${zEnd.index}, after Y's cold build started at line ${yStart.index}`);
       }
-      if (zStart !== undefined && xEnd !== undefined && zStart.index < xEnd.index) {
-        problems.push(`Z's sync started at line ${zStart.index}, before X ended at line ${xEnd.index}: a running job was preempted`);
+      if (zStart === undefined) problems.push('no sync job of Z started after X started');
+      if (zStart !== undefined && xEnd !== undefined && zStart.index > xEnd.index) {
+        problems.push(`Z's sync started at line ${zStart.index}, after X ended at line ${xEnd.index}: it waited for another root's cold build`);
       }
     }
 
-    expect(problems, 'IB2 problems (empty when Z sync ends before Y cold build starts, and was sent while X ran)').toEqual([]);
+    expect(problems, 'IB2 problems (empty when Z sync, sent while X ran, starts before X ends and ends before Y cold build starts)').toEqual([]);
   }, 600_000);
 
   // IB3: the builder is a restartable child. SIGKILL during a cold build leaves the server running, the server starts

@@ -210,7 +210,6 @@ export class RebuildFences {
   }
 
   private coldBuildRunningOn(key: string): boolean {
-    const job = this.queue.runningJob();
-    return job !== null && job.kind === 'cold-build' && canonicalProjectRoot(job.root) === key;
+    return this.queue.runningJobs().some((job) => job.kind === 'cold-build' && canonicalProjectRoot(job.root) === key);
   }
 }

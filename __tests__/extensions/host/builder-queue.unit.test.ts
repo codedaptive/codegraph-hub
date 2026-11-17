@@ -1,6 +1,5 @@
 /**
- * The index builder's job queue (src/extensions/host/builder/queue.ts): one job at a time, a SYNC class that
- * always goes before the COLD class, FIFO inside each class, no preemption, and the job log's line format.
+ * The index builder's job queue: two lanes, root exclusion, FIFO cold jobs, and the job log's line format.
  *
  * The jobs are hand-held promises, so each case controls exactly when a job ends; nothing here touches disk.
  */
@@ -37,72 +36,159 @@ function recordingQueue(): { queue: JobQueue; events: string[]; raw: JobEvent[] 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
 describe('JobQueue', () => {
-  it('a SYNC job queued while a COLD job runs and another COLD waits ends before the second COLD starts', async () => {
+  it('starts a sync of another root synchronously alongside a cold build', async () => {
     const { queue, events } = recordingQueue();
-    const coldX = held();
-    const coldY = held();
-    const syncZ = held<{ filesChanged: number }>();
-
-    const x = queue.enqueue('cold-build', '/x', coldX.run);
-    await coldX.started;
-    const y = queue.enqueue('cold-build', '/y', coldY.run);
-    const z = queue.enqueue('sync', '/z', syncZ.run);
-
-    // The running job is never preempted: Z waits for X.
-    await tick();
-    expect(events).toEqual(['start cold-build /x']);
-
-    coldX.finish();
-    await x;
-    // Z goes ahead of Y although Y was queued first.
-    await syncZ.started;
-    expect(events).toEqual(['start cold-build /x', 'end cold-build /x', 'start sync /z']);
-    syncZ.finish({ filesChanged: 1 });
-    await expect(z).resolves.toEqual({ filesChanged: 1 });
-
-    await coldY.started;
-    coldY.finish();
-    await y;
-    expect(events).toEqual([
-      'start cold-build /x', 'end cold-build /x',
-      'start sync /z', 'end sync /z',
-      'start cold-build /y', 'end cold-build /y',
-    ]);
+    const cold = held();
+    const sync = held();
+    const a = queue.enqueue('cold-build', '/a', cold.run);
+    const b = queue.enqueue('sync', '/b', sync.run);
+    expect(events).toEqual(['start cold-build /a', 'start sync /b']);
+    cold.finish();
+    sync.finish();
+    await Promise.all([a, b]);
   });
 
-  it('keeps first in, first out inside each class, and every SYNC kind is in the SYNC class', async () => {
+  it('starts cold jobs in FIFO order and never overlaps them', async () => {
     const { queue, events } = recordingQueue();
     const first = held();
-    const running = queue.enqueue('cold-build', '/cold-1', first.run);
-    await first.started;
-    const kinds: JobKind[] = ['catch-up', 'watch-sync', 'seed', 'recover', 'sync', 'open'];
-    const order: Array<Promise<unknown>> = [];
-    order.push(queue.enqueue('cold-build', '/cold-2', async () => undefined));
-    kinds.forEach((kind, i) => order.push(queue.enqueue(kind, `/s${i}`, async () => undefined)));
+    const second = held();
+    const a = queue.enqueue('index', '/a', first.run);
+    const b = queue.enqueue('init', '/b', second.run);
+    const c = queue.enqueue('cold-build', '/c', async () => undefined);
+    expect(events).toEqual(['start index /a']);
     first.finish();
-    await running;
-    await Promise.all(order);
-    const starts = events.filter((e) => e.startsWith('start ')).map((e) => e.split(' ')[2]);
-    expect(starts).toEqual(['/cold-1', '/s0', '/s1', '/s2', '/s3', '/s4', '/s5', '/cold-2']);
+    await a;
+    expect(events).toEqual(['start index /a', 'end index /a', 'start init /b']);
+    second.finish();
+    await Promise.all([b, c]);
+    expect(events).toEqual(['start index /a', 'end index /a', 'start init /b', 'end init /b', 'start cold-build /c', 'end cold-build /c']);
   });
 
-  it('runs one job at a time', async () => {
+  it('blocks a sync of the same root as a running cold job', async () => {
+    const { queue, events } = recordingQueue();
+    const cold = held();
+    const a = queue.enqueue('cold-build', '/a', cold.run);
+    const b = queue.enqueue('sync', '/a', async () => undefined);
+    expect(events).toEqual(['start cold-build /a']);
+    cold.finish();
+    await Promise.all([a, b]);
+    expect(events).toEqual(['start cold-build /a', 'end cold-build /a', 'start sync /a', 'end sync /a']);
+  });
+
+  it('gives a waiting sync of the cold head root priority', async () => {
+    const { queue, events } = recordingQueue();
+    const cold = held();
+    const sync = held();
+    const blocker = held();
+    const first = queue.enqueue('index', '/a', cold.run);
+    const occupied = queue.enqueue('sync', '/c', blocker.run);
+    const next = queue.enqueue('index', '/b', async () => undefined);
+    const waiting = queue.enqueue('sync', '/b', sync.run);
+    expect(events).toEqual(['start index /a', 'start sync /c']);
+    cold.finish();
+    await first;
+    expect(events).not.toContain('start index /b');
+    blocker.finish();
+    await occupied;
+    expect(events).toContain('start sync /b');
+    expect(events).not.toContain('start index /b');
+    sync.finish();
+    await Promise.all([waiting, next]);
+    expect(events.indexOf('end sync /b')).toBeLessThan(events.indexOf('start index /b'));
+  });
+
+  it('skips busy sync roots while preserving same-root order', async () => {
+    const { queue, events } = recordingQueue();
+    const cold = held();
+    const other = held();
+    const first = queue.enqueue('index', '/a', cold.run);
+    const a1 = queue.enqueue('sync', '/a', async () => undefined);
+    const a2 = queue.enqueue('watch-sync', '/a', async () => undefined);
+    const b = queue.enqueue('sync', '/b', other.run);
+    expect(events).toEqual(['start index /a', 'start sync /b']);
+    cold.finish();
+    await first;
+    expect(events).not.toContain('start sync /a');
+    other.finish();
+    await Promise.all([a1, a2, b]);
+    expect(events.indexOf('start sync /a')).toBeLessThan(events.indexOf('start watch-sync /a'));
+  });
+
+  it('does not skip a blocked cold head for a later cold job', async () => {
+    const { queue, events } = recordingQueue();
+    const sync = held();
+    const first = queue.enqueue('sync', '/a', sync.run);
+    const head = queue.enqueue('index', '/a', async () => undefined);
+    const later = queue.enqueue('index', '/b', async () => undefined);
+    expect(events).toEqual(['start sync /a']);
+    sync.finish();
+    await Promise.all([first, head, later]);
+    expect(events.indexOf('start index /a')).toBeLessThan(events.indexOf('start index /b'));
+  });
+
+  it('blocks a cold job whose additional root is running in the sync lane', async () => {
+    const { queue, events } = recordingQueue();
+    const sync = held();
+    const a = queue.enqueue('seed', '/work', sync.run, { alsoRoots: ['/source'] });
+    const b = queue.enqueue('index', '/other', async () => undefined, { alsoRoots: ['/source'] });
+    expect(events).toEqual(['start seed /work']);
+    sync.finish();
+    await Promise.all([a, b]);
+    expect(events.indexOf('end seed /work')).toBeLessThan(events.indexOf('start index /other'));
+  });
+
+  it('whenIdle and close wait for both running lanes', async () => {
+    const queue = new JobQueue();
+    const cold = held();
+    const sync = held();
+    const a = queue.enqueue('index', '/a', cold.run);
+    const b = queue.enqueue('sync', '/b', sync.run);
+    const waiting = queue.enqueue('index', '/c', async () => undefined);
+    const rejected = expect(waiting).rejects.toThrow(/stopping/);
+    let idle = false;
+    let closed = false;
+    void queue.whenIdle().then(() => { idle = true; });
+    const closing = queue.close().then(() => { closed = true; });
+    await rejected;
+    cold.finish();
+    await a;
+    await tick();
+    expect(idle).toBe(false);
+    expect(closed).toBe(false);
+    sync.finish();
+    await b;
+    await closing;
+    await tick();
+    expect(idle).toBe(true);
+    expect(closed).toBe(true);
+  });
+
+  it('respects root and lane limits across a generated mix', async () => {
     const { queue } = recordingQueue();
-    let live = 0;
+    const live = new Map<string, number>();
+    let coldLive = 0;
+    let total = 0;
     let peak = 0;
-    const job = async () => {
-      live++;
-      peak = Math.max(peak, live);
-      await tick();
-      live--;
-    };
-    await Promise.all([
-      queue.enqueue('sync', '/a', job),
-      queue.enqueue('cold-build', '/b', job),
-      queue.enqueue('watch-sync', '/c', job),
-      queue.enqueue('catch-up', '/d', job),
-    ]);
-    expect(peak).toBe(1);
+    const jobs: Array<Promise<void>> = [];
+    for (let i = 0; i < 36; i++) {
+      const root = `/r${i % 3}`;
+      const kind: JobKind = i % 2 === 0 ? 'index' : 'sync';
+      jobs.push(queue.enqueue(kind, root, async () => {
+        live.set(root, (live.get(root) ?? 0) + 1);
+        if (kind === 'index') coldLive++;
+        total++;
+        peak = Math.max(peak, total);
+        expect(live.get(root)).toBe(1);
+        expect(coldLive).toBeLessThanOrEqual(1);
+        expect(total).toBeLessThanOrEqual(2);
+        await Promise.resolve();
+        live.set(root, (live.get(root) ?? 0) - 1);
+        if (kind === 'index') coldLive--;
+        total--;
+      }));
+    }
+    await Promise.all(jobs);
+    expect(peak).toBe(2);
   });
 
   it('a failed job rejects its caller, logs the failure on one line, and the next job still runs', async () => {
@@ -126,7 +212,7 @@ describe('JobQueue', () => {
     const { queue, events } = recordingQueue();
     const blocker = held();
     const first = held<number>();
-    queue.enqueue('cold-build', '/cold', blocker.run);
+    queue.enqueue('cold-build', '/z', blocker.run);
     await blocker.started;
 
     let runs = 0;
@@ -154,7 +240,7 @@ describe('JobQueue', () => {
     const running = held();
     const r = queue.enqueue('cold-build', '/running', running.run);
     await running.started;
-    const queued = queue.enqueue('sync', '/queued', async () => undefined);
+    const queued = queue.enqueue('sync', '/running', async () => undefined);
     const queuedOutcome = queued.then(() => 'ran', (e: Error) => e.message);
 
     const closed = queue.close();
@@ -206,22 +292,29 @@ describe('JobQueue job limits', () => {
   beforeEach(() => endedJobs.replaceAll([]));
   afterEach(() => endedJobs.replaceAll([]));
 
-  it('reports successive running job ids and null while idle', async () => {
+  it('reports both running jobs in ascending id order with lanes and one counter', async () => {
     const queue = new JobQueue();
-    expect(queue.runningJob()).toBeNull();
+    expect(queue.runningJobs()).toEqual([]);
     const first = held();
-    const a = queue.enqueue('sync', '/first', first.run);
-    await first.started;
-    expect(queue.runningJob()).toEqual({ id: 1, kind: 'sync', root: '/first' });
     const second = held();
+    const a = queue.enqueue('index', '/first', first.run);
     const b = queue.enqueue('open', '/second', second.run);
+    expect(queue.runningJobs()).toEqual([
+      { id: 1, kind: 'index', root: '/first', lane: 'cold' },
+      { id: 2, kind: 'open', root: '/second', lane: 'sync' },
+    ]);
     first.finish();
     await a;
-    await second.started;
-    expect(queue.runningJob()).toEqual({ id: 2, kind: 'open', root: '/second' });
+    const third = held();
+    const c = queue.enqueue('cold-build', '/third', third.run);
+    expect(queue.runningJobs()).toEqual([
+      { id: 2, kind: 'open', root: '/second', lane: 'sync' },
+      { id: 3, kind: 'cold-build', root: '/third', lane: 'cold' },
+    ]);
     second.finish();
-    await b;
-    expect(queue.runningJob()).toBeNull();
+    third.finish();
+    await Promise.all([b, c]);
+    expect(queue.runningJobs()).toEqual([]);
   });
 
   it('rejects an ended job without running it or emitting events', async () => {
