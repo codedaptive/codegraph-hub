@@ -1,8 +1,7 @@
 /**
- * The cold build of a root's index (a git worktree, or a directory outside git
- * with no index): a job of the index builder (src/extensions/host/builder/),
- * queued by `seed.ts` when a tool call names a root that has no index and, for
- * a worktree, no indexed sibling to copy one from.
+ * The cold build of a git worktree root's index: a job of the index builder
+ * (src/extensions/host/builder/), queued by `seed.ts` when a tool call names a
+ * worktree that has no index and no indexed sibling to copy one from.
  * {@link runColdBuild} holds the root's `rebuild.pid` from before the database
  * exists until the index is complete or removed, so no reader opens a
  * half-built index: every engine and daemon refuses to open a project while
@@ -17,8 +16,7 @@
  * and is registered in the project registry SEEDED, with that nonce and its
  * git common dir (as ./git.ts spells it), before `rebuild.pid` is released: an index
  * CodeGraph built on its own is reclaimed by the housekeeping teardown once
- * the worktree is removed (outside git, once its directory is gone), exactly
- * like a seeded one, and only while the
+ * the worktree is removed, exactly like a seeded one, and only while the
  * database at the path is still that one (project-registry.ts). A root
  * someone else indexed meanwhile is not registered (that index is theirs).
  *
@@ -32,10 +30,8 @@
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
  *     that seeds or rebuilds it discards both and builds again;
- *   - a plain directory's is never judged abandoned: the builder's service
- *     holds the partial database like any index, recovers it and reconciles it
- *     with a full catch-up, and reads may be answered from it before that
- *     catch-up ends.
+ *   - a root outside git is never cold-built (`admitColdBuild`, seed.ts), so it
+ *     has no killed build's partial database to judge.
  * The job itself ({@link BuilderSeedHost.queueColdBuild}) runs `admitColdBuild`
  * (seed.ts) before each attempt to reject a root that no longer passes admission
  * after queueing or a retry delay; this function takes the root as it is given.

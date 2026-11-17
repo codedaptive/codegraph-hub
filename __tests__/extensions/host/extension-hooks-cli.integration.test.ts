@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
+import { Fixtures } from './machine-server.harness';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 const FIXTURE = path.resolve(__dirname, 'fixtures/test-extension.cjs');
@@ -128,7 +129,8 @@ describe('extension hook: MCP session tools/call', () => {
   });
 
   it('a session tools/call for an extension tool reaches execute (no `Unknown tool`)', async () => {
-    fs.writeFileSync(path.join(tempDir, 'app.ts'), 'export function hello() { return 42; }\n');
+    // The session serves only git worktrees, so the project is a repository.
+    new Fixtures().makeRepo(tempDir, { 'app.ts': 'export function hello() { return 42; }\n' });
     const cg = await CodeGraph.init(tempDir, { index: true });
     const fileCount = cg.getStats().fileCount;
     cg.close();

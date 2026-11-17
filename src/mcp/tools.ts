@@ -9,6 +9,7 @@ import type { QueryPool } from './query-pool';
 import { canonicalProjectRoot, isSameIndexRoot } from '../directory';
 import { isPinned } from '../extensions/host/worktree-lifecycle/project-registry';
 import { worktreeSeedMayApply } from '../extensions/host/worktree-lifecycle/seed-check';
+import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
 import { gitRootByStat, selectIndexRoot, selectOwnIndexRoot } from '../extensions/host/server/index-root';
 import type { BuilderClient, BuilderFreshness } from '../extensions/host/builder/client';
 import { WslSharedIndexError } from '../db/wsl-shared-index';
@@ -1752,7 +1753,7 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a directory outside git with no index is built in the background at the directory the session was launched in.',
+  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a path in no git worktree is never indexed and is answered that it is not in a git repository.',
 };
 
 /**
@@ -1811,9 +1812,8 @@ function focusDirsText(args: Record<string, unknown>, prefixes: readonly string[
  * true` syncs an existing index before answering. And a query may CREATE an
  * index: a git worktree with no index of its own is seeded from an indexed
  * sibling worktree of the same repository or, when no sibling is indexed, built
- * from scratch in the background; a directory outside git with no index is built
- * from scratch in the background at the session's anchor root (queued on the
- * builder, with no opt-in). Either way only that root's `.codegraph/` is written,
+ * from scratch in the background (queued on the builder, with no opt-in); a
+ * directory outside git is never indexed. Either way only that root's `.codegraph/` is written,
  * and its record in the
  * project registry (`<state dir>/projects/`, `~/.codegraph` by default; see
  * src/extensions/host/worktree-lifecycle/seed.ts). That is an index a call
@@ -2295,12 +2295,11 @@ const DEFAULT_PROJECT_IDLE_TIMEOUT_MS = 600_000;
 let worktreeSeedModule: typeof import('../extensions/host/worktree-lifecycle/seed') | null = null;
 
 /**
- * Bound on each of {@link ToolHandler}'s unseeded-worktree and unbuilt-directory
- * memos; past it that memo starts over. The bound keeps a long-lived handler
- * asked about many paths from growing a memo without limit; 256 is ample because
- * each holds only paths with no index that the builder could not seed or build
- * (git worktrees and plain directories), and the next call on a path fills its
- * cleared entry again.
+ * Bound on {@link ToolHandler}'s unseeded-worktree memo; past it the memo
+ * starts over. The bound keeps a long-lived handler asked about many paths from
+ * growing it without limit; 256 is ample because it holds only paths in git
+ * worktrees with no index that the builder could not seed or build, and the
+ * next call on a path fills its cleared entry again.
  */
 const MAX_UNSEEDED_WORKTREES = 256;
 
@@ -2342,12 +2341,6 @@ export interface ExecuteOptions {
    * passes none.
    */
   admitIndexRoot?: IndexRootAdmission;
-  /**
-   * The calling session's anchor root (the directory it was launched in, or its git worktree root).
-   * The builder cold-builds a path outside git that has no index at this root instead of at the
-   * path itself; omitted by a caller that has no session (the builder then builds at the path).
-   */
-  anchorRoot?: string;
   /**
    * The calling session's tool allowlist ({@link SessionToolList}): an array of
    * short names, null for a session told it has none, undefined for a caller
@@ -2423,9 +2416,6 @@ export class ToolHandler {
   // about and could not give an index yet (seedWorktreeIndex); picks their
   // not-indexed text.
   private unseededWorktrees: Map<string, string> = new Map();
-  // projectPath → the build root and what it looks like, for plain directories (no
-  // git) the builder refused to build or failed to build (seedWorktreeIndex).
-  private unbuiltDirectories: Map<string, { root: string; unsafe?: string }> = new Map();
   // releaseProjectRoot calls waiting for every in-flight tool call to finish.
   private idleCallWaiters: Array<() => void> = [];
   private activeCalls = 0;
@@ -2742,14 +2732,14 @@ export class ToolHandler {
     if (!selected) {
       // A git working tree (a worktree, or a repository nested in an indexed checkout) the builder was asked
       // about and could not seed or build (yet) gets the seeder's guidance, not the plain text below: a later
-      // call may still find an index (a sibling finishes, a build retries). A plain
-      // directory it refused or failed to build gets its own text (it names the
-      // reason). seedWorktreeIndex memoizes both paths.
+      // call may still find an index (a sibling finishes, a build retries). seedWorktreeIndex memoizes it.
       const worktree = this.unseededWorktrees.get(projectPath);
       if (worktree && worktreeSeedModule) throw new NotIndexedError(worktreeSeedModule.unseededWorktreeNote(projectPath, worktree));
-      const unbuilt = this.unbuiltDirectories.get(projectPath);
-      if (unbuilt && worktreeSeedModule) {
-        throw new NotIndexedError(worktreeSeedModule.unbuiltDirectoryNote(projectPath, unbuilt.root, unbuilt.unsafe));
+      // With a builder, a path in no git worktree is answered that it is not in a git repository: codegraph
+      // indexes only git worktrees, so `codegraph init` there would be refused too.
+      if (this.builder) {
+        const required = requireGitWorktreeRoot(projectPath);
+        if ('refusal' in required) throw new NotIndexedError(required.refusal);
       }
       // This text also answers a handler with no builder (the CLI, the read-only fallback),
       // where nothing builds an index: it names the user's `codegraph init` as the way to get one, and it
@@ -2808,13 +2798,15 @@ export class ToolHandler {
    * repository nested in an indexed checkout is its own worktree root, so the checkout's index does not answer
    * for it, covered or not: the builder seeds or builds one for the nested repository unless
    * CODEGRAPH_NO_AUTO_SEED=1 turns automatic indexing off, the call answers the building note while that runs,
-   * and the not-indexed guidance when the copy or build fails), {@link selectIndexRoot} on one without (the CLI,
+   * and the not-indexed guidance when the copy or build fails; a path in no git worktree selects none, so a
+   * builder engine never opens an index outside git), {@link selectIndexRoot} on one without (the CLI,
    * the read-only fallback, query workers: nothing builds there, and {@link uncoveredNestedRepo} guards the nested
    * case instead). The one place the choice is made, for the selection, the builder question, the sensitive-path
    * refusal and the focus root.
    */
   private selectIndexRootForCall(projectPath: string): string | null {
-    return this.builder ? selectOwnIndexRoot(projectPath) : selectIndexRoot(projectPath);
+    if (!this.builder) return selectIndexRoot(projectPath);
+    return gitRootByStat(projectPath) === null ? null : selectOwnIndexRoot(projectPath);
   }
 
   /**
@@ -2915,15 +2907,15 @@ export class ToolHandler {
    * a `rebuild.pid` beside it (a worktree that may need a seed or a cold
    * build). The index is the call's own ({@link selectIndexRootForCall}): a
    * path in a git repository nested below an indexed checkout has none, so the
-   * builder is asked. Yes for a path with no index at all, in a git working tree or not:
-   * outside git the builder cold-builds it at the session's anchor root
-   * ({@link ExecuteOptions} `anchorRoot`). No otherwise: a
+   * builder is asked. Yes for a path in a git working tree with no index. Never
+   * for a path in no git worktree: nothing is built there, and the call is
+   * answered that it is not in a git repository. No otherwise: a
    * call against an index already open and held costs a few stats, no IPC, so
    * a builder busy with a long job never delays a read of another project.
    */
   private needsBuilderEnsure(projectPath: string, builder: HandlerBuilder): boolean {
     const root = this.selectIndexRootForCall(projectPath);
-    if (root === null) return worktreeSeedMayApply(projectPath);
+    if (root === null) return gitRootByStat(projectPath) !== null && worktreeSeedMayApply(projectPath);
     const canonical = canonicalPath(root);
     if (!this.projectCache.has(canonical)) return true;
     if (builder.freshness(canonicalProjectRoot(canonical)) === null) return true;
@@ -2936,10 +2928,8 @@ export class ToolHandler {
    * the call waits for the open a bounded time),
    * a git worktree with no index of its own is seeded from an indexed sibling
    * worktree or cold-built from the queue (a git repository nested in an indexed
-   * checkout is such a worktree: the checkout's index is another repository's),
-   * a directory outside git with no
-   * index is cold-built at `anchorRoot` (the session's anchor root; the path
-   * itself when the call has no session). A building outcome answers with the
+   * checkout is such a worktree: the checkout's index is another repository's);
+   * a path in no git worktree is not put to the builder. A building outcome answers with the
    * building note (success-shaped, through NotIndexedError), except when the
    * rebuild fence handles it. A pending outcome answers with that note only if
    * the call selects no index; otherwise the handler opens the index on disk.
@@ -2948,27 +2938,24 @@ export class ToolHandler {
    * path in a git worktree the builder could not give an index (no sibling is
    * complete yet, the copy failed, or the builder is not answering) is
    * remembered, so that {@link getCodeGraph} answers it with the seeder's
-   * guidance. A plain directory the builder refused to build (home, a
-   * filesystem root) or whose build failed is remembered the same way and
-   * answered with its own text, which names the reason. The wording
+   * guidance. The wording
    * module is loaded lazily, only for those answers: a call against an
    * index of the tree's own never loads it.
    */
-  private async seedWorktreeIndex(projectPath: string, anchorRoot?: string): Promise<void> {
+  private async seedWorktreeIndex(projectPath: string): Promise<void> {
     const builder = this.builder;
     if (!builder || !this.projectLifecycle) return;
     // A sensitive folder is refused before the builder is asked about it.
     this.refuseSensitivePath(projectPath, this.selectIndexRootForCall(projectPath));
     if (!this.needsBuilderEnsure(projectPath, builder)) return;
-    const outcome = await builder.ensure(projectPath, anchorRoot);
+    const outcome = await builder.ensure(projectPath);
     if (outcome.kind === 'none' && outcome.pending) {
       this.unseededWorktrees.delete(projectPath);
-      this.unbuiltDirectories.delete(projectPath);
       // Building guidance is only for calls with no index to serve; an existing
       // index stays readable from disk while the builder's preparation is pending.
       if (this.selectIndexRootForCall(projectPath) !== null) return;
       worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
-      throw new NotIndexedError(worktreeSeedModule.buildingNote(gitRootByStat(projectPath) ?? anchorRoot ?? projectPath));
+      throw new NotIndexedError(worktreeSeedModule.buildingNote(gitRootByStat(projectPath) ?? projectPath));
     }
     if (outcome.kind === 'building') {
       // A `codegraph index` rebuild of an index that exists is not a build the
@@ -2979,15 +2966,7 @@ export class ToolHandler {
       worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
       throw new NotIndexedError(worktreeSeedModule.buildingNote(outcome.root));
     }
-    const unbuilt = outcome.kind === 'none' ? outcome.unbuilt : undefined;
-    const worktree = outcome.kind === 'none' && !unbuilt ? (outcome.worktree ?? gitRootByStat(projectPath)) : null;
-    if (unbuilt) {
-      worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
-      if (this.unbuiltDirectories.size >= MAX_UNSEEDED_WORKTREES) this.unbuiltDirectories.clear();
-      this.unbuiltDirectories.set(projectPath, unbuilt);
-    } else {
-      this.unbuiltDirectories.delete(projectPath);
-    }
+    const worktree = outcome.kind === 'none' ? (outcome.worktree ?? gitRootByStat(projectPath)) : null;
     if (worktree) {
       worktreeSeedModule ??= await import('../extensions/host/worktree-lifecycle/seed');
       if (this.unseededWorktrees.size >= MAX_UNSEEDED_WORKTREES) this.unseededWorktrees.clear();
@@ -3003,7 +2982,7 @@ export class ToolHandler {
    * project and wait for its catch-up. Resolves to the refusal to answer with
    * when the session's admission check turns the call's index down.
    */
-  private async awaitProjectGate(projectPath: string, admit?: IndexRootAdmission, anchorRoot?: string): Promise<ToolResult | null> {
+  private async awaitProjectGate(projectPath: string, admit?: IndexRootAdmission): Promise<ToolResult | null> {
     // The session's check of the index this call would be answered from: the
     // one `getCodeGraph` is about to open. An index outside the session's
     // repository is never held, opened or queried for it, so the check runs
@@ -3021,7 +3000,7 @@ export class ToolHandler {
     };
     const first = await admitSelected();
     if (first) return first;
-    await this.seedWorktreeIndex(projectPath, anchorRoot);
+    await this.seedWorktreeIndex(projectPath);
     const second = await admitSelected();
     if (second) return second;
     const cg = this.getCodeGraph(projectPath);
@@ -3277,7 +3256,6 @@ export class ToolHandler {
     this.closing = true;
     this.worktreeMismatchCache.clear();
     this.unseededWorktrees.clear();
-    this.unbuiltDirectories.clear();
     if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer);
     this.idleReleaseTimer = null;
     this.nestedRepoCache.clear();
@@ -3751,7 +3729,7 @@ export class ToolHandler {
           if (statSync(pathCheck).isFile()) projectPath = dirname(pathCheck);
         } catch { /* a missing path walks up to its .codegraph/ as before */ }
         if (projectPath !== pathCheck) args = { ...args, projectPath };
-        const refused = await this.awaitProjectGate(projectPath, options?.admitIndexRoot, options?.anchorRoot);
+        const refused = await this.awaitProjectGate(projectPath, options?.admitIndexRoot);
         if (refused) return refused;
       }
       // The `path` and `pattern` properties used by codegraph_files are

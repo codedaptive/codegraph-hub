@@ -14,6 +14,7 @@
  * out of the handler's cache and the builder's hold dropped.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -110,6 +111,7 @@ describe('pinned-open seeding of pinned roots', () => {
 
   beforeEach(() => {
     root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pinned-seed-unit-')));
+    execFileSync('git', ['init', '-q', root]);
   });
   afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
@@ -151,7 +153,6 @@ describe('pinned-open seeding of pinned roots', () => {
 
   it.each([
     ['no-source', 'skipped: no index and no sibling worktree has one'],
-    ['not-git', 'skipped: no index, and it is not in a git worktree (a pin never builds one)'],
     ['disabled', 'skipped: no index (automatic seeding is off: CODEGRAPH_NO_AUTO_SEED=1)'],
     ['queued', 'not opened yet: its seed is queued on the index builder'],
     ['failed', 'not seeded: copy failed'],
@@ -255,6 +256,28 @@ describe('pinned-open seeding of pinned roots', () => {
   });
 });
 
+describe('pinned-open skips non-git roots', () => {
+  it.each([false, true])('skips without seeding or opening when indexed=%s', async (indexed) => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pinned-plain-')));
+    try {
+      if (indexed) await indexProject(root);
+      const seed = vi.fn(async (arg: string) => ({ kind: 'indexed' as const, root: arg }));
+      const open = vi.fn(async (_arg: string) => {});
+      const log = vi.fn((_line: string) => {});
+      const opener = new PinnedProjectOpener({ listPinned: () => [root], isOpen: () => false, seed, open, log });
+      await opener.pass();
+      await opener.pass();
+      expect(seed).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(log.mock.calls.map(([line]) => line)).toEqual([
+        `[CodeGraph MCP] Pinned project ${root} skipped: not in a git worktree`,
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('pinned-open opener, in process, against a stub builder', { timeout: 60_000 }, () => {
   let workspace: string;
   let repo: string;
@@ -270,6 +293,7 @@ describe('pinned-open opener, in process, against a stub builder', { timeout: 60
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     fs.mkdirSync(path.join(workspace, 'repo'));
     repo = fs.realpathSync(path.join(workspace, 'repo'));
+    execFileSync('git', ['init', '-q', repo]);
     await indexProject(repo);
     pinProject(repo);
     __setLoadCodeGraphForTests(CodeGraph);

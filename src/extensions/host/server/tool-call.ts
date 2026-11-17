@@ -19,13 +19,12 @@
  *     client's to fix, so it is never run: run, a string made the handler
  *     throw, which came back as an internal codegraph error to retry (#2981);
  *  3. a name that is neither a built-in nor a loaded extension's tool -> InvalidParams;
- *  4. {@link sessionCallGuard}: required `projectPath` inside the repo anchor,
- *     otherwise its success-shaped guidance;
+ *  4. {@link sessionCallGuard}: required `projectPath` inside the repo anchor
+ *     and in a git worktree, otherwise its success-shaped guidance;
  *  5. `execute` with the guard's absolute `projectPath` substituted, the
  *     session's {@link indexRootAdmission}, which `execute` insists on for an MCP
- *     engine's handler, the anchor's root, where the index builder cold-builds
- *     a path outside git that has no index, and the session's own tool
- *     allowlist, which decides whether the tool may be called at all.
+ *     engine's handler, and the session's own tool allowlist, which decides
+ *     whether the tool may be called at all.
  *
  * Two internal arguments carry the session's scope down to the handler
  * ({@link SESSION_FOCUS_ARG}, {@link SESSION_TOOLS_ARG}; see `./session-scope`).
@@ -135,7 +134,6 @@ export async function dispatchToolCall(call: ToolCallInput): Promise<ToolCallOut
     call.exploreSession,
     {
       admitIndexRoot: indexRootAdmission(call.anchor!),
-      anchorRoot: call.anchor!.root,
       toolAllowlist: call.toolAllowlist,
       indexVersionWarnings: call.indexVersionWarnings,
     },

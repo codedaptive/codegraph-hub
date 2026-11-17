@@ -78,6 +78,8 @@ import { isTestCode } from '../graph/test-code';
 import type { Node, Edge, Language } from '../types';
 import { isTestPath } from '../search/query-utils';
 import { registerExtensionCommands } from '../extensions/host/registry';
+import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
+import { gitRootByStat } from '../extensions/host/server/index-root';
 // Static: .option() needs the --fresh / --checkpoint help text when the program is built.
 import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
 import type { FreshAnswer } from '../extensions/host/fresh/cli';
@@ -721,11 +723,13 @@ function applyLocalOnlyGitignore(
 
 /**
  * The `init` flow — shared by `codegraph init` and `codegraph install --init`
- * (#1578): refuse an unsafe root, create `.codegraph/`, build the initial
- * index under supervision, then the post-index offers. `yes` makes every
- * offer non-interactive (defaults only), so a container / CI bootstrap never
- * blocks on a prompt. An unsafe root sets `process.exitCode = 1` and returns
- * (no `--force` is implied by any caller); an index failure exits 1.
+ * (#1578): refuse a path in no git worktree (a path below a worktree root
+ * initializes that root), refuse an unsafe root, create `.codegraph/`, build
+ * the initial index under supervision, then the post-index offers. `yes`
+ * makes every offer non-interactive (defaults only), so a container / CI
+ * bootstrap never blocks on a prompt. Either refusal sets
+ * `process.exitCode = 1` and returns (`--force` overrides only the unsafe-root
+ * one, and no caller implies it); an index failure exits 1.
  */
 async function runInit(
   projectPath: string,
@@ -736,6 +740,16 @@ async function runInit(
   clack.intro('Initializing CodeGraph');
 
   try {
+    // codegraph indexes only git worktrees (SPEC §3); --force does not reach past this.
+    const required = requireGitWorktreeRoot(projectPath);
+    if ('refusal' in required) {
+      clack.log.error(required.refusal);
+      clack.outro('');
+      process.exitCode = 1;
+      return;
+    }
+    projectPath = required.root;
+
     // Refuse to index your home directory / a filesystem root — it pulls in
     // caches, other projects, and your whole tree (a multi-GB index + watcher
     // churn, and on pre-1.0 macOS a machine-crashing fd blowup, #845).
@@ -992,13 +1006,15 @@ program
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
   .action(async (pathArg: string | undefined, options: { force?: boolean; quiet?: boolean; verbose?: boolean }) => {
-    // An EXPLICIT path names the project to rebuild — it is never a hint to go
-    // looking for one. resolveProjectPath walks up to the nearest initialized
-    // ancestor, which is right for `codegraph query` run from a subdirectory,
-    // but for a full re-index it silently rebuilt the parent's graph under a
-    // normal "Done" when <path> had no index of its own (#1524). Only a bare
-    // `codegraph index` (cwd) may resolve upward.
-    const projectPath = pathArg ? path.resolve(pathArg) : resolveProjectPath();
+    // The project rebuilt is the git worktree root of <path> (or of the cwd), never the nearest initialized
+    // ancestor (#1524): codegraph indexes only git worktrees (SPEC §3), and a path in none is refused here,
+    // before --force or anything else is looked at.
+    const required = requireGitWorktreeRoot(pathArg ? path.resolve(pathArg) : process.cwd());
+    if ('refusal' in required) {
+      error(required.refusal);
+      process.exit(1);
+    }
+    const projectPath = required.root;
 
     try {
       // Don't (re)index your home directory / a filesystem root (#845). --force
@@ -1011,8 +1027,9 @@ program
 
       if (!isInitialized(projectPath)) {
         error(`CodeGraph not initialized in ${projectPath}`);
+        // An initialized ancestor in no git worktree is one this command refuses, so it is never offered.
         const ancestor = pathArg ? resolveProjectPath(pathArg) : projectPath;
-        if (ancestor !== projectPath) {
+        if (ancestor !== projectPath && gitRootByStat(ancestor) !== null) {
           info(`The nearest initialized project is ${ancestor} — pass that path to rebuild it, or run "codegraph init" in ${projectPath} to index it on its own.`);
         } else {
           info('Run "codegraph init" first');
@@ -1094,7 +1111,14 @@ program
   .description('Sync changes since last index')
   .option('-q, --quiet', 'Suppress output (for git hooks)')
   .action(async (pathArg: string | undefined, options: { quiet?: boolean }) => {
-    const projectPath = resolveProjectPath(pathArg);
+    // The project synced is the git worktree root of <path> (or of the cwd); a path in no git worktree is
+    // refused (SPEC §3: codegraph indexes only git worktrees).
+    const required = requireGitWorktreeRoot(path.resolve(pathArg || process.cwd()));
+    if ('refusal' in required) {
+      error(required.refusal);
+      process.exit(1);
+    }
+    const projectPath = required.root;
 
     try {
       if (!isInitialized(projectPath)) {

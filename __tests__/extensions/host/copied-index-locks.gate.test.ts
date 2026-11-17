@@ -25,6 +25,7 @@ import { CodeGraph } from '../../../src';
 import { WASM_RUNTIME_FLAGS } from '../../../src/extraction/wasm-runtime-flags';
 import { canonicalProjectRoot, getCodeGraphDir, statInode } from '../../../src/directory';
 import { recordSpawns, recordedPids, removeSpawnLog, settleLosingCandidates } from '../../daemon-candidates';
+import { Fixtures } from './machine-server.harness';
 
 // Separate-state servers and builders each need a full startup/catch-up budget under load.
 const READY_WAIT_MS = 180_000;
@@ -207,8 +208,8 @@ describe('copied index locks: a copy of a live writer\'s index syncs independent
     copyDir = path.join(parent, 'copy-project');
     srcState = fs.mkdtempSync(path.join(parent, 'src-state-'));
     copyState = fs.mkdtempSync(path.join(parent, 'copy-state-'));
-    fs.mkdirSync(srcDir);
-    fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export function originalSymbol() { return 1; }\n');
+    // The server serves only git worktrees, so the source is a repository; the copy carries its .git with it.
+    new Fixtures().makeRepo(srcDir, { 'app.ts': 'export function originalSymbol() { return 1; }\n' });
     const cg = await CodeGraph.init(srcDir);
     try { await cg.indexAll(); } finally { cg.close(); }
     srcReal = fs.realpathSync(srcDir);

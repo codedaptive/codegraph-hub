@@ -147,7 +147,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 3, delayMs: 10 } });
-    host.queueColdBuild(root, { realRoot: root, plain: false });
+    host.queueColdBuild(root, { realRoot: root });
     await settle(queue);
     expect(host.hasFailedBuild(root)).toBe(false);
     expect(index).toHaveBeenCalledTimes(2);
@@ -158,7 +158,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
-    host.queueColdBuild(root, { realRoot: root, plain: false });
+    host.queueColdBuild(root, { realRoot: root });
     try {
       await vi.waitUntil(() => index.mock.calls.length === 1 && !fs.existsSync(lockFile()), { timeout: 2_000, interval: 5 });
       expect(host.buildingRootFor(root)).toBe(root);
@@ -177,7 +177,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
-    host.queueColdBuild(root, { realRoot: root, plain: false });
+    host.queueColdBuild(root, { realRoot: root });
     try {
       await vi.waitUntil(() => index.mock.calls.length === 1 && !fs.existsSync(lockFile()), { timeout: 2_000, interval: 5 });
       fs.renameSync(root, path.join(workspace, 'removed-repo'));
@@ -196,7 +196,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     const fences = new RebuildFences(queue, () => {});
     const isFenced = vi.spyOn(fences, 'isFenced').mockReturnValue(false);
     const host = new BuilderSeedHost(queue, { fences, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
-    host.queueColdBuild(root, { realRoot: root, plain: false });
+    host.queueColdBuild(root, { realRoot: root });
     try {
       await vi.waitUntil(() => index.mock.calls.length === 1 && !fs.existsSync(lockFile()), { timeout: 2_000, interval: 5 });
       isFenced.mockReturnValue(true);
@@ -216,7 +216,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValue(new Error('disk I/O error'));
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 3, delayMs: 10 } });
-    host.queueColdBuild(root, { realRoot: root, plain: false });
+    host.queueColdBuild(root, { realRoot: root });
     await settle(queue);
     expect(host.hasFailedBuild(root)).toBe(true);
     expect(index).toHaveBeenCalledTimes(1);
@@ -227,7 +227,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValue(new Error('database is locked'));
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 10 } });
-    const approval = { realRoot: root, plain: false };
+    const approval = { realRoot: root };
     host.queueColdBuild(root, approval);
     await settle(queue);
     expect.soft(host.hasFailedBuild(root)).toBe(false);
@@ -244,7 +244,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
     vi.spyOn(CodeGraph, 'init').mockImplementation(async () => leaveDbAndThrow());
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 10 } });
-    host.queueColdBuild(root, { realRoot: root, plain: false });
+    host.queueColdBuild(root, { realRoot: root });
     await settle(queue);
     expect(host.hasFailedBuild(root)).toBe(true);
     expect(fs.readFileSync(dbFile(), 'utf8')).toBe('another initializer');

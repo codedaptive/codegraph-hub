@@ -22,15 +22,20 @@
  * (its watcher, its writer slot, a catch-up sync), then the server opens it
  * read-only. The server writes nothing here.
  *
- * A pinned root with no index (isInitialized in src/directory.ts is false: no
+ * A pinned root with no git worktree at or above it (gitRootByStat in
+ * ../server/index-root.ts is null) is skipped, with a line saying so, before any
+ * seed: it is neither seeded nor opened, whether or not it has an index. Its
+ * registry record and its index stay; the opener deletes nothing.
+ *
+ * A pinned root in a git worktree with no index (isInitialized in src/directory.ts is false: no
  * `codegraph.db`, or one that is not a CodeGraph index) goes to a seed first when the
  * engine gives a `seed` dependency (the machine server wires it to the
  * builder's `seedWorktree` op, which runs seedWorktreeNow in
  * src/extensions/host/worktree-lifecycle/seed.ts): the index is copied from the
  * nearest sibling worktree that has a complete one, on the builder's job queue,
  * and the root is then opened as any indexed root is. It is never cold-built: a
- * root with no indexed sibling, or one not in a git worktree, is skipped with a
- * line saying why, because a pin is a request to keep a project current, not to
+ * root with no indexed sibling, or one the seed finds not in a git worktree, is
+ * skipped with a line saying why, because a pin is a request to keep a project current, not to
  * index a directory. A seed still queued on the builder is logged and retried
  * on the next pass. The copy goes only where no database file is in the way: over
  * an unusable `codegraph.db` the seed answers `failed`, and that is logged. Without a
@@ -43,6 +48,7 @@
  */
 import * as fs from 'fs';
 import { isInitialized } from '../../../directory';
+import { gitRootByStat } from '../server/index-root';
 import { listRegisteredProjects, PROJECT_FLAG_PINNED } from './project-registry';
 // Type only: the opener does not load seed.ts at runtime (the builder does the seeding).
 import type { WorktreeSeedOutcome } from './seed';
@@ -121,7 +127,7 @@ export class PinnedProjectOpener {
 
   /**
    * One pass: open every pinned root that is not open and held, seeding first one
-   * that has no index when the opener has a `seed`. Never rejects. A pass already running is awaited, not repeated.
+   * that has no index when the opener has a `seed`. A root in no git worktree is skipped. Never rejects. A pass already running is awaited, not repeated.
    */
   pass(): Promise<void> {
     if (this.stopped) return Promise.resolve();
@@ -224,6 +230,8 @@ const NO_INDEX = 'no index';
  * Why `root` must not be opened as it is, or null. A directory that is gone has
  * nothing to hold (the builder's sweep tears its registration down on its own
  * schedule), nor does a path that exists but is not a directory; a root with no
+ * git worktree at or above it is never served, so it is refused before its index
+ * is looked at, and a seed never sees it; a root in a git worktree with no
  * index ({@link NO_INDEX}: isInitialized is false, so a missing, empty, schema-less
  * or foreign `codegraph.db` alike) goes to the opener's `seed` when it has one, and
  * is never built from here. The seed copies only where no database file is in the
@@ -235,6 +243,7 @@ function unopenableReason(root: string): string | null {
   } catch {
     return 'directory is gone';
   }
+  if (gitRootByStat(root) === null) return 'not in a git worktree';
   if (!isInitialized(root)) return NO_INDEX;
   return null;
 }
