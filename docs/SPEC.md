@@ -101,11 +101,12 @@ that leaves the root.
 A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8 GB resident
 (`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
-applied), its writer lock released, and one log line names the root, the job kind, the limit and the measured
+applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root, the job kind, the limit and the measured
 value. It is not re-queued by itself, and the root's stopped mark survives every builder restart. A call for a
 stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
 limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
-it gets that guidance alone. Only an explicit `codegraph index` or `codegraph init` of that
+it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print the same
+line on stderr and answer as before (S-71). Only an explicit `codegraph index` or `codegraph init` of that
 root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
