@@ -30,6 +30,33 @@ describe('endedJobs', () => {
     expect(endedJobs.find('/other', 'cold-build')).toEqual(other);
   });
 
+  it('notifies the listener with the root after removing its marks', () => {
+    endedJobs.add(cold);
+    let presentDuringCall = true;
+    const listener = vi.fn((root: string) => { presentDuringCall = endedJobs.has(root, 'cold-build'); });
+    endedJobs.onClearRoot(listener);
+    endedJobs.clearRoot('/a/b/');
+    expect(listener).toHaveBeenCalledExactlyOnceWith('/a/b/');
+    expect(presentDuringCall).toBe(false);
+  });
+
+  it('replaces the previously registered listener', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    endedJobs.onClearRoot(first);
+    endedJobs.onClearRoot(second);
+    endedJobs.clearRoot('/a');
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledExactlyOnceWith('/a');
+  });
+
+  it('does not propagate a listener exception', () => {
+    endedJobs.add(cold);
+    endedJobs.onClearRoot(() => { throw new Error('disk failure'); });
+    expect(() => endedJobs.clearRoot('/a/b')).not.toThrow();
+    expect(endedJobs.has('/a/b', 'cold-build')).toBe(false);
+  });
+
   it('replaces the entire set', () => {
     endedJobs.add(cold);
     endedJobs.replaceAll([sync, other]);

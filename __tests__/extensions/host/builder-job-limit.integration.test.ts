@@ -66,7 +66,9 @@ describe('builder job limit restart', () => {
     }
     finish();
     await running;
-    endedJobs.replaceAll(new EndedJobsFile(file).take());
+    const journal = new EndedJobsFile(file);
+    endedJobs.onClearRoot((cleared) => journal.clearRoot(cleared));
+    endedJobs.replaceAll(journal.load());
     expect(endedJobs.has(root, 'cold-build')).toBe(true);
     fs.rmdirSync(dir);
     expect(await runColdBuild(root)).toBe(1);
@@ -74,6 +76,8 @@ describe('builder job limit restart', () => {
     const restarted = new JobQueue();
     // Cold builds are admitted to the queue, but their body refuses at runColdBuild.
     expect(await restarted.enqueue('cold-build', root, () => runColdBuild(root))).toBe(1);
+    endedJobs.replaceAll(journal.load());
+    expect(await new JobQueue().enqueue('cold-build', root, () => runColdBuild(root))).toBe(1);
     endedJobs.add({ root, kind: 'sync', limit, at: '2026-11-16T10:00:00.000Z' });
     const refused = restarted.enqueue('sync', root, async () => 99);
     await expect(refused).rejects.toBeInstanceOf(JobEndedError);
@@ -82,5 +86,9 @@ describe('builder job limit restart', () => {
     await restarted.enqueue('index', root, async () => undefined);
     expect(endedJobs.has(root, 'cold-build')).toBe(false);
     expect(endedJobs.has(root, 'sync')).toBe(false);
+    expect(fs.existsSync(file)).toBe(false);
+    endedJobs.replaceAll(journal.load());
+    expect(endedJobs.has(root, 'cold-build')).toBe(false);
+    expect(await new JobQueue().enqueue('sync', root, async () => 23)).toBe(23);
   });
 });

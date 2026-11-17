@@ -29,7 +29,7 @@ describe('EndedJobsFile', () => {
     expect(JSON.parse(lines[1])).toEqual({ root: '/b', kind: 'sync', limit: 'rss', at: '2026-11-16T10:01:00.000Z' });
   });
 
-  it('takes valid jobs, skips malformed and wrong-field lines, and deletes the file', () => {
+  it('loads valid jobs repeatedly without deleting the file, skipping bad lines', () => {
     writeFileSync(file, [
       JSON.stringify(first),
       '{not json',
@@ -43,20 +43,37 @@ describe('EndedJobsFile', () => {
       '',
     ].join('\n'));
     const journal = new EndedJobsFile(file);
-    expect(journal.take()).toEqual([first, second]);
-    expect(existsSync(file)).toBe(false);
-    expect(journal.take()).toEqual([]);
+    expect(journal.load()).toEqual([first, second]);
+    expect(existsSync(file)).toBe(true);
+    expect(journal.load()).toEqual([first, second]);
   });
 
   it('returns an empty list for a missing file', () => {
-    expect(new EndedJobsFile(file).take()).toEqual([]);
+    expect(new EndedJobsFile(file).load()).toEqual([]);
   });
 
-  it('never throws on filesystem errors during append or take', () => {
+  it('clearRoot matches canonical paths, preserves other lines in order, and deletes the empty file', () => {
+    const journal = new EndedJobsFile(file);
+    journal.append(first);
+    journal.append(second);
+    journal.append({ ...first, kind: 'sync' });
+    journal.clearRoot('/a/');
+    expect(journal.load()).toEqual([second]);
+    journal.clearRoot('/b');
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('clearRoot ignores missing files and filesystem errors', () => {
+    expect(() => new EndedJobsFile(file).clearRoot('/a')).not.toThrow();
+    expect(existsSync(file)).toBe(false);
+    expect(() => new EndedJobsFile(dir).clearRoot('/a')).not.toThrow();
+  });
+
+  it('never throws on filesystem errors during append or load', () => {
     const unwritable = new EndedJobsFile(join(dir, 'missing-parent', 'jobs'));
     expect(() => unwritable.append(first)).not.toThrow();
     const directory = new EndedJobsFile(dir);
     expect(() => directory.append(first)).not.toThrow();
-    expect(directory.take()).toEqual([]);
+    expect(directory.load()).toEqual([]);
   });
 });

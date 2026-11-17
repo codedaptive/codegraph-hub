@@ -20,8 +20,10 @@
  *                 init or index (the CLI's, ./cli-jobs.ts), recover or open. Past 4 MiB the file is moved to
  *                 builder.log.1 (replacing an older one) and a new one starts.
  *   builder-ended-jobs.jsonl  one JSON line `{"root","kind","limit","at"}` per job ended over a limit
- *                 (./ended-jobs-file.ts); taken (read, then deleted) at start, so this builder refuses those
- *                 jobs for its lifetime and the one after it tries them again.
+ *                 (./ended-jobs-file.ts); loaded at start and kept across every restart, so each builder
+ *                 refuses those jobs. Only a successful explicit `codegraph index` or `codegraph init` of a root
+ *                 removes its lines: one this builder runs (./queue.ts), or one the CLI runs in its own
+ *                 process (./clear-ended-root.ts).
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
  * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the one running gets
@@ -190,9 +192,10 @@ export function runBuilder(): void {
 
   writePidFile(pidFile, process.ppid);
   const endedFile = new EndedJobsFile(path.join(stateDir, 'builder-ended-jobs.jsonl'));
-  const loaded = endedFile.take();
+  const loaded = endedFile.load();
   endedJobs.replaceAll(loaded);
-  for (const job of loaded) log(`refusing ${job.kind} of ${job.root} until restart or \`codegraph index\`: ended over its ${job.limit} limit`);
+  endedJobs.onClearRoot((root) => endedFile.clearRoot(root));
+  for (const job of loaded) log(`refusing ${job.kind} of ${job.root} until \`codegraph index\`: ended over its ${job.limit} limit`);
   const { limits, warnings } = resolveJobLimits();
   for (const warning of warnings) log(warning);
   new JobWatchdog(service.queue, limits, {
