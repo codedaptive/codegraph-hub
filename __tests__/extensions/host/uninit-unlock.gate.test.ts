@@ -477,11 +477,11 @@ describe('uninit with a machine server running (UG3, RF1-RF4)', () => {
     launchDir = dir;
     stateDir = path.join(dir, 'state');
     stateB = path.join(dir, 'state-b');
-    U3r = plainProject(path.join(dir, 'u3-routed'), 'ug3Routed');
-    U3p = plainProject(path.join(dir, 'u3-plain'), 'ug3Routed');
+    U3r = fx.makeRepo(plainProject(path.join(dir, 'u3-routed'), 'ug3Routed'), {});
+    U3p = fx.makeRepo(plainProject(path.join(dir, 'u3-plain'), 'ug3Routed'), {});
     fx.index(U3r, stateDir);
     fx.index(U3p, stateB);
-    U4 = plainProject(path.join(dir, 'u4-refused'), 'rf4Base');
+    U4 = fx.makeRepo(plainProject(path.join(dir, 'u4-refused'), 'rf4Base'), {});
     fx.index(U4, stateDir);
 
     session = startSession(launchDir, stateDir);
@@ -615,7 +615,7 @@ describe('uninit releases the index before it deletes it (UG1b)', () => {
     // CLI start) with the stand-in server answering it.
     const dir = fx.tempRoot();
     const state = path.join(dir, 'state');
-    const repo = plainProject(path.join(dir, 'proj'), 'ug1bBase');
+    const repo = fx.makeRepo(plainProject(path.join(dir, 'proj'), 'ug1bBase'), {});
     fx.index(repo, state);
     // The in-process index does not create the state dir; the stand-in writes its server.pid into it.
     fs.mkdirSync(state, { recursive: true });
@@ -665,7 +665,7 @@ describe('uninit with no server running (UG2)', () => {
     // Over 5 s at load 45-100: an in-process index of one small project, then a CLI uninit.
     const dir = fx.tempRoot();
     const state = path.join(dir, 'state');
-    const repo = plainProject(path.join(dir, 'proj'), 'ug2Base');
+    const repo = fx.makeRepo(plainProject(path.join(dir, 'proj'), 'ug2Base'), {});
     fx.index(repo, state);
     const run = await runCli(['uninit', '--force', repo], state, dir);
     const problems = exitProblems('codegraph uninit --force', run);
@@ -682,7 +682,7 @@ describe('uninit with no server running (UG2)', () => {
     // Over 5 s at load 45-100: an in-process index of one small project, then a CLI uninit.
     const dir = fx.tempRoot();
     const state = path.join(dir, 'state');
-    const repo = plainProject(path.join(dir, 'proj'), 'ug2PidBase');
+    const repo = fx.makeRepo(plainProject(path.join(dir, 'proj'), 'ug2PidBase'), {});
     fx.index(repo, state);
     const run = await runCli(['uninit', '--force', repo], state, dir);
     const problems = exitProblems('codegraph uninit --force', run);
@@ -703,11 +703,11 @@ describe('unlock: a live holder keeps its lock, a stale one is taken (UL1, UL2)'
     await fx.teardown();
   }, 120_000);
 
-  /** An indexed plain project, with the state dir its CLI runs use. */
+  /** An indexed one-file project in its own git repository, with the state dir its CLI runs use. */
   function indexedRoot(): { root: string; state: string; dir: string } {
     const dir = fx.tempRoot();
     const state = path.join(dir, 'state');
-    const root = plainProject(path.join(dir, 'proj'), 'ulBase');
+    const root = fx.makeRepo(plainProject(path.join(dir, 'proj'), 'ulBase'), {});
     fx.index(root, state);
     return { root, state, dir };
   }
@@ -790,7 +790,7 @@ describe('unlock: links, directories, and owners the lock rule reads (UL3-UL8)',
   beforeAll(() => {
     dir = fx.tempRoot();
     state = path.join(dir, 'state');
-    root = plainProject(path.join(dir, 'proj'), 'ulEdgeBase');
+    root = fx.makeRepo(plainProject(path.join(dir, 'proj'), 'ulEdgeBase'), {});
     fx.index(root, state);
     lockPath = path.join(getCodeGraphDir(root), 'codegraph.lock');
   }, 300_000);
