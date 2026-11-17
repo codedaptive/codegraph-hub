@@ -30,12 +30,12 @@ of those two commits; `git-root-only-tests` also names three of them by short na
 `src/mcp/daemon-registry.ts` and `src/mcp/project-lifecycle.ts` were deleted by the fork (`machine-server`, `index-builder`); they
 still exist in upstream, and the earlier rows that name `daemon-registry.ts` (`copied-index-locks`, `lock-takeover-race`, `worktree-lifecycle`)
 edited it before that deletion. The merges of upstream `4499d007`, `5cd8a9a8` and `f72c9d2e` changed no row: every upstream file the fork edits still differs from upstream's,
-and every file that differs has a row. Each row from `machine-server` through `host-gate-load-tolerance` was checked on its own against its commit
+and every file that differs has a row. Each row from `machine-server` through `builder-job-limit` was checked on its own against its commit
 (`git diff-tree -r 1f967e06c2`, `-r cc0e43efad`, `-r 5b8ece1af7`, `-r e8448876f3`, `-r 7d58892b31`, `-r b8e3518608`,
 `-r 1929a06514`, `-r b9d7e144e5`, `-r 5e2d04a594`, `-r f983b1cc5d`, `-r 1c29eb7a3f`, `-r c46dbc4ae8`, `-r ef194975ef`, `-r e92dc2d2ab`, `-r 69de0412`,
 `-r 3648f06a`, `-r 34f595a1`, `-r 3eb1b655`, `-r 77b11301`, `-r 28e6e43a`, `-r 5cd5e2f7`, `-r cf921c51`, `-r b1e53be5`, `-r 85467837`, `-r 474aca5b`,
 `-r fca3b349`, `-r 802cfea9`, `-r 8cd5e14d`, `-r eaad59f7`, `-r 9378f209`, `-r 2f1b826a`, `-r 30fa7483`, `-r 4bf73c27`, `-r ad4ac35b`,
-`-r 6f4244c2`, `-r cd0da50b`, `-r 28951e16`, `-r a873dca8`, `-r ff4aa0b6`, `-r 216347fd`, `-r c5ddc1b7`, `-r 3334d326`) and against upstream; the `upstream-refresh` row is
+`-r 6f4244c2`, `-r cd0da50b`, `-r 28951e16`, `-r a873dca8`, `-r ff4aa0b6`, `-r 216347fd`, `-r c5ddc1b7`, `-r 3334d326`; each row from `macos-watcher-gap` through `builder-job-limit` against its landing's first-parent diff, `git diff <landing>^1 <landing>`, for `b1a3e736`, `3e51165d`, `b43a98e8`, `090ca05b`, `bca5e9f5`, `9864c5b0`) and against upstream; the `upstream-refresh` row is
 checked against `git diff 4499d007 exchange`, and the list and total at integration `8f08a1db` against `git diff --name-status f72c9d2e integration`.
 
 | Feature | Upstream files |
