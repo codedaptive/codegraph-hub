@@ -18,7 +18,6 @@ describe('choosePinRoot', () => {
   let workspace: string;
   let repo: string;
   let indexRoot: string;
-  let absolute: string;
 
   beforeEach(() => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '0');
@@ -26,9 +25,7 @@ describe('choosePinRoot', () => {
     workspace = fs.realpathSync(fs.mkdtempSync('/tmp/cg-pinroot-'));
     repo = path.join(workspace, 'repo');
     indexRoot = path.join(repo, 'index-root');
-    absolute = path.join(repo, 'src', 'nested');
     fs.mkdirSync(indexRoot, { recursive: true });
-    fs.mkdirSync(absolute, { recursive: true });
     execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore' });
   });
 
@@ -37,19 +34,19 @@ describe('choosePinRoot', () => {
     fs.rmSync(workspace, { recursive: true, force: true });
   });
 
-  it('returns the initialized index root inside git without seeding', async () => {
+  it('seeds and returns the worktree when only a subdirectory has an index', async () => {
     initialize(indexRoot);
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => ({ kind: 'queued', root: 'ignored' }));
 
-    expect(await choosePinRoot(absolute, repo, indexRoot, seed)).toBe(indexRoot);
-    expect(seed).not.toHaveBeenCalled();
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
+    expect(seed).toHaveBeenCalledExactlyOnceWith(repo);
   });
 
-  it('returns the resolved index root without seeding when auto-seeding is disabled', async () => {
+  it('returns the worktree without seeding when auto-seeding is disabled', async () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => ({ kind: 'queued', root: 'ignored' }));
 
-    expect(await choosePinRoot(absolute, repo, indexRoot, seed)).toBe(indexRoot);
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
     expect(seed).not.toHaveBeenCalled();
   });
 
@@ -60,7 +57,7 @@ describe('choosePinRoot', () => {
   ])('seeds the path worktree and returns it for $kind', async (outcome) => {
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => outcome);
 
-    expect(await choosePinRoot(absolute, repo, indexRoot, seed)).toBe(repo);
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
     expect(seed).toHaveBeenCalledExactlyOnceWith(repo);
   });
 
@@ -69,10 +66,10 @@ describe('choosePinRoot', () => {
     { kind: 'failed', root: 'ignored', reason: 'test failure' },
     { kind: 'disabled', root: 'ignored' },
     { kind: 'not-git', root: 'ignored' },
-  ])('seeds the path worktree and returns the resolved index root for $kind', async (outcome) => {
+  ])('seeds the worktree and returns it for $kind', async (outcome) => {
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => outcome);
 
-    expect(await choosePinRoot(absolute, repo, indexRoot, seed)).toBe(indexRoot);
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
     expect(seed).toHaveBeenCalledExactlyOnceWith(repo);
   });
 
@@ -80,7 +77,7 @@ describe('choosePinRoot', () => {
     initialize(workspace);
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => ({ kind: 'failed', root: 'ignored', reason: 'test failure' }));
 
-    expect(await choosePinRoot(absolute, repo, workspace, seed)).toBe(repo);
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
     expect(seed).toHaveBeenCalledExactlyOnceWith(repo);
   });
 
@@ -89,7 +86,7 @@ describe('choosePinRoot', () => {
     initialize(repo);
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => ({ kind: 'queued', root: 'ignored' }));
 
-    expect(await choosePinRoot(absolute, repo, workspace, seed)).toBe(repo);
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
     expect(seed).not.toHaveBeenCalled();
   });
 
@@ -98,7 +95,7 @@ describe('choosePinRoot', () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     const seed = vi.fn(async (): Promise<WorktreeSeedOutcome> => ({ kind: 'queued', root: 'ignored' }));
 
-    expect(await choosePinRoot(absolute, repo, workspace, seed)).toBe(repo);
+    expect(await choosePinRoot(repo, seed)).toBe(repo);
     expect(seed).not.toHaveBeenCalled();
   });
 });

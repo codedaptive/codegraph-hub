@@ -200,7 +200,7 @@ describe('project seed CLI and builder relay', () => {
   }, 30_000);
 
   // Initializing a real index and running git can exceed five seconds under load.
-  it('pins an indexed subdirectory without seeding, then unpins and removes it', async () => {
+  it('seeds and pins the worktree for an indexed subdirectory, then unpins and removes it', async () => {
     const root = path.join(workspace, 'repo');
     makeRepo(root);
     const sub = path.join(root, 'packages', 'sub');
@@ -211,14 +211,15 @@ describe('project seed CLI and builder relay', () => {
     expect(isInitialized(sub)).toBe(true);
     const stub = answering({ kind: 'no-source', root });
     await pinWith(sub, { route: stub.route });
-    expect(getRegisteredProject(sub)?.flags ?? 0).toBe(PROJECT_FLAG_PINNED);
-    expect(getRegisteredProject(root)).toBeNull();
-    expect(stub.route).not.toHaveBeenCalled();
-    projectCli.runProjectUnpin(sub);
-    expect(getRegisteredProject(sub)).not.toBeNull();
-    expect(getRegisteredProject(sub)!.flags & PROJECT_FLAG_PINNED).toBe(0);
-    projectCli.runProjectRemove(sub);
+    expect(getRegisteredProject(root)?.flags ?? 0).toBe(PROJECT_FLAG_PINNED);
     expect(getRegisteredProject(sub)).toBeNull();
+    expect(stub.route).toHaveBeenCalledOnce();
+    expect(stub.seed).toHaveBeenCalledExactlyOnceWith(root);
+    projectCli.runProjectUnpin(sub);
+    expect(getRegisteredProject(root)).not.toBeNull();
+    expect(getRegisteredProject(root)!.flags & PROJECT_FLAG_PINNED).toBe(0);
+    projectCli.runProjectRemove(sub);
+    expect(getRegisteredProject(root)).toBeNull();
   }, 30_000);
 
   // Initializing a real index and running git can exceed five seconds under load.
@@ -282,16 +283,17 @@ describe('project seed CLI and builder relay', () => {
   }, 30_000);
 
   // Building a real main index and running git can exceed five seconds under load.
-  it('pins an indexed main checkout for a nested linked worktree without a seed', async () => {
+  it('seeds and pins a nested linked worktree instead of its indexed main checkout', async () => {
     const main = path.join(workspace, 'main');
     makeRepo(main); await index(main);
     const target = path.join(main, '.worktrees', 't');
     addWorktree(main, target);
     const stub = answering({ kind: 'no-source', root: target });
     await pinWith(target, { route: stub.route });
-    expectPinned(main);
-    expect(getRegisteredProject(target)).toBeNull();
-    expect(stub.route).not.toHaveBeenCalled();
+    expectPinned(target);
+    expect(getRegisteredProject(main)).toBeNull();
+    expect(stub.route).toHaveBeenCalledOnce();
+    expect(stub.seed).toHaveBeenCalledExactlyOnceWith(target);
   }, 30_000);
 
   // Building an index and running git can exceed five seconds under load.
@@ -310,26 +312,26 @@ describe('project seed CLI and builder relay', () => {
     expect(getRegisteredProject(target)).toEqual(targetBefore);
   }, 30_000);
 
-  it('pins the given subdirectory and prints no sibling when no worktree has an index', async () => {
+  it('pins the worktree and prints no sibling when no worktree has an index', async () => {
     const { target, sub } = unindexedWorktree();
     log.mockClear(); error.mockClear();
     await pinWith(sub, { route: noRoute });
-    expectPinned(sub);
-    expect(getRegisteredProject(target)).toBeNull();
+    expectPinned(target);
+    expect(getRegisteredProject(sub)).toBeNull();
     expect(error).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledTimes(2);
     expect(String(log.mock.calls[0][0])).toMatch(/no sibling.*index/i);
-    expect(String(log.mock.calls[1][0])).toContain(`Pinned ${sub}`);
+    expect(String(log.mock.calls[1][0])).toContain(`Pinned ${target}`);
   });
 
-  it('pins the given subdirectory and prints a routed seed failure', async () => {
+  it('pins the worktree and prints a routed seed failure', async () => {
     const { target, sub } = unindexedWorktree();
     const stub = answering({ kind: 'failed', root: target, reason: 'copy failed' });
     await pinWith(sub, { route: stub.route });
     expect(stub.seed).toHaveBeenCalledExactlyOnceWith(target);
     expect(stub.close).toHaveBeenCalledOnce();
-    expectPinned(sub);
-    expect(getRegisteredProject(target)).toBeNull();
+    expectPinned(target);
+    expect(getRegisteredProject(sub)).toBeNull();
     expect(error).toHaveBeenCalledTimes(1);
     expect(String(error.mock.calls[0][0])).toMatch(/copy failed/i);
   });
@@ -346,13 +348,13 @@ describe('project seed CLI and builder relay', () => {
     expect(String(error.mock.calls[0][0])).toMatch(/queued/i);
   });
 
-  it('pins the given subdirectory without seeding when the kill switch is on', async () => {
+  it('pins the worktree without seeding when the kill switch is on', async () => {
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '1');
     const { target, sub } = unindexedWorktree();
     const stub = answering({ kind: 'seeded', root: target, source: '/sibling', method: 'copy' });
     await pinWith(sub, { route: stub.route });
-    expectPinned(sub);
-    expect(getRegisteredProject(target)).toBeNull();
+    expectPinned(target);
+    expect(getRegisteredProject(sub)).toBeNull();
     expect(stub.route).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledTimes(1);
