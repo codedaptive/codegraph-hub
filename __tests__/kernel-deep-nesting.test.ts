@@ -32,6 +32,7 @@ import { extractFromSource } from '../src/extraction';
 import { initGrammars, loadGrammarsForLanguages } from '../src/extraction/grammars';
 import { kernelRoutes, resetKernelForTests } from '../src/extraction/kernel';
 import type { Language } from '../src/types';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const REPO = path.resolve(__dirname, '..');
 const KERNEL_PATH = path.join(
@@ -238,7 +239,8 @@ describe.skipIf(!kernelBuilt || process.env.CODEGRAPH_KERNEL === '0')('kernel de
   describe.skipIf(!distBuilt)('end-to-end: codegraph init on a repo holding the deep file', () => {
     let tmp: string;
     beforeEach(() => {
-      tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-deep-cli-'));
+      // `init` refuses a folder in no git worktree, so the repo is a git repository.
+      tmp = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-deep-cli-')));
     });
     afterEach(() => {
       fs.rmSync(tmp, { recursive: true, force: true });

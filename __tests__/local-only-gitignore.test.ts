@@ -186,6 +186,7 @@ describe('local-only .codegraph/.gitignore', () => {
     });
 
     it('still builds the index', () => {
+      initRepo();
       codegraph('init', '-y', '--local-only');
 
       expect(fs.existsSync(path.join(dir, '.codegraph', 'codegraph.db'))).toBe(true);
@@ -219,12 +220,14 @@ describe('local-only .codegraph/.gitignore', () => {
     });
 
     it('says so when there is nothing to convert', () => {
+      initRepo();
       codegraph('init', '-y', '--local-only');
 
       expect(codegraph('init', '-y', '--local-only').output).toContain('.codegraph/.gitignore already ignores itself');
     });
 
     it('survives everything that opens the index afterwards', () => {
+      initRepo();
       codegraph('init', '-y', '--local-only');
 
       expect(codegraph('sync').code).toBe(0);
@@ -236,6 +239,7 @@ describe('local-only .codegraph/.gitignore', () => {
 
     it('says why it left a file with the user\'s own rules', () => {
       seedGitignore('codegraph.db\n');
+      initRepo();
 
       const { code, output } = codegraph('init', '-y', '--local-only');
 
@@ -258,14 +262,19 @@ describe('local-only .codegraph/.gitignore', () => {
     });
 
     it('refuses an unsafe root before touching anything', () => {
+      // The test's own temp dir, made a git worktree (init indexes only worktrees)
+      // and handed to the CLI as its home, so the run reaches the home-dir refusal.
+      initRepo();
       const home = spawnSync(process.execPath, [BIN, 'init', '-y', '--local-only'], {
-        cwd: os.homedir(),
+        cwd: dir,
         encoding: 'utf-8',
-        env: { ...process.env, CODEGRAPH_NO_DAEMON: '1', NO_COLOR: '1' },
+        env: { ...process.env, HOME: dir, USERPROFILE: dir, CODEGRAPH_NO_DAEMON: '1', NO_COLOR: '1' },
       });
 
       expect(home.status).toBe(1);
-      expect(fs.existsSync(path.join(os.homedir(), '.codegraph', '.gitignore'))).toBe(false);
+      expect(home.stdout + home.stderr).toContain('Refusing to initialize');
+      expect(home.stdout + home.stderr).toContain('your home directory');
+      expect(fs.existsSync(gitignore)).toBe(false);
     });
 
     it('offers the flag in --help', () => {

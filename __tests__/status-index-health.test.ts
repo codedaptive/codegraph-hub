@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -57,7 +58,8 @@ describe('status reports files indexed without their symbols (#2336, #2335)', ()
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-health-'));
+    // `sync` refuses a folder in no git worktree, so the project is a git repository.
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-health-')));
     fs.mkdirSync(path.join(dir, 'src', 'constants'), { recursive: true });
     fs.mkdirSync(path.join(dir, 'src', 'types'), { recursive: true });
     fs.writeFileSync(

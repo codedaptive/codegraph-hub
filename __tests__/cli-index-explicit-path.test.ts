@@ -1,11 +1,11 @@
 /**
- * `codegraph index <path>` rebuilds <path>, never an ancestor (#1524).
+ * `codegraph index <path>` rebuilds the git worktree root <path> belongs to,
+ * never the nearest initialized ancestor (#1524, S-70).
  *
- * The command used to resolve an uninitialized <path> upward to the nearest
- * initialized parent and rebuild THAT under a normal "Done" — so
- * `codegraph index child` from a monorepo re-indexed the whole container and
- * never said so. An explicit path that is not initialized is now an error that
- * names the ancestor it would have picked.
+ * codegraph indexes only git worktrees, so a <path> below a worktree root acts
+ * on that root: `codegraph index child`, run on a directory inside the
+ * `parent` worktree, rebuilds `parent` and creates no index of its own in
+ * `child`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'child_process';
@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -32,9 +33,9 @@ describe('codegraph index <path> (#1524)', () => {
 
   beforeAll(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-path-'));
-    parent = path.join(root, 'parent');
+    fs.mkdirSync(path.join(root, 'parent', 'child'), { recursive: true });
+    parent = gitInitTempRoot(path.join(root, 'parent'));
     child = path.join(parent, 'child');
-    fs.mkdirSync(child, { recursive: true });
     fs.writeFileSync(path.join(parent, 'p.py'), 'def parent_only():\n    return 1\n');
     fs.writeFileSync(path.join(child, 'c.py'), 'def child_only():\n    return 2\n');
     const cg = CodeGraph.initSync(parent);
@@ -46,14 +47,20 @@ describe('codegraph index <path> (#1524)', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('refuses an explicit path that has no index of its own, naming the ancestor it would have rebuilt', () => {
-    const before = fs.statSync(path.join(parent, '.codegraph', 'codegraph.db')).mtimeMs;
+  it('an explicit path below the worktree root rebuilds that root and creates no index of its own', () => {
+    // A file the beforeAll index never saw: it is in the parent's index afterwards
+    // only if `index child` rebuilt the parent root.
+    fs.writeFileSync(path.join(parent, 'fresh.py'), 'def fresh_symbol():\n    return 3\n');
+
     const r = run(root, ['index', child, '--quiet']);
-    expect(r.status).toBe(1);
-    expect(r.out).toContain(`not initialized in ${child}`);
-    expect(r.out).toContain(parent);
-    // The parent's index was not touched.
-    expect(fs.statSync(path.join(parent, '.codegraph', 'codegraph.db')).mtimeMs).toBe(before);
+
+    expect(r.status, r.out).toBe(0);
+    const cg = CodeGraph.openSync(parent);
+    try {
+      expect(cg.searchNodes('fresh_symbol').map((m) => m.node.name)).toContain('fresh_symbol');
+    } finally {
+      cg.close();
+    }
     expect(fs.existsSync(path.join(child, '.codegraph'))).toBe(false);
   });
 

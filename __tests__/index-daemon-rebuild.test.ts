@@ -19,6 +19,7 @@ import { isProcessAlive, requestProjectRelease, stopServer } from '../src/mcp/se
 import { readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../src/mcp/writer-lock';
 import { recordedPids, recordSpawns, removeSpawnLog } from './daemon-candidates';
 import { startFakeServer } from './fake-release-server';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const bin = path.resolve(__dirname, '../dist/bin/codegraph.js');
 let root: string;
@@ -91,7 +92,8 @@ async function rebuild() {
   expect(cmd.child.exitCode).toBe(0);
 }
 beforeEach(async () => {
-  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-rebuild-')));
+  // `index` refuses a folder in no git worktree, so the project is a git repository.
+  root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-rebuild-')));
   stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-rebuild-state-')));
   // This process finds the server (stopServer, requestProjectRelease) by the same state dir.
   savedStateDir = process.env.CODEGRAPH_STATE_DIR;

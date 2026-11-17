@@ -3,6 +3,7 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const COLLAPSE_WARNING = 'parse produced no symbols (tree has errors)';
@@ -19,7 +20,7 @@ describe('CLI parse warnings (#1522)', () => {
   let root: string;
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-parse-warning-'));
+    root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-parse-warning-')));
   });
 
   afterEach(() => {

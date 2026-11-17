@@ -15,6 +15,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const PKG_VERSION = JSON.parse(
@@ -56,11 +57,11 @@ describe('codegraph version affordances', () => {
   });
 
   it('a trailing `-v` is still the subcommand\'s --verbose, not the version intercept', () => {
-    // A fresh temp dir outside any indexed project: `index -v` parses `-v` as
-    // the index command's --verbose, then short-circuits at "not initialized"
-    // and exits non-zero. The point is it must NOT print the bare version,
-    // which would mean the top-level intercept swallowed a subcommand flag.
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-version-test-'));
+    // A fresh git repository with no index: `index -v` parses `-v` as the
+    // index command's --verbose, then short-circuits at "not initialized" and
+    // exits non-zero. The point is it must NOT print the bare version, which
+    // would mean the top-level intercept swallowed a subcommand flag.
+    const tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-version-test-')));
     let combined = '';
     try {
       combined = execFileSync(process.execPath, [BIN, 'index', '-v', tempDir], {

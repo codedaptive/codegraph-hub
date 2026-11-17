@@ -21,6 +21,7 @@ import { toDatabaseOpenError } from '../src/db/open-error';
 import { WslSharedIndexError } from '../src/db/wsl-shared-index';
 import { __setWslWindowsDriveForTests } from '../src/sync/watch-policy';
 import { ADMIT_ALL } from './helpers/admit-all';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 // Through require: vite does not resolve the node:sqlite builtin.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -59,9 +60,12 @@ function tempDir(): string {
   return dir;
 }
 
-/** An indexed project, closed again. */
+/**
+ * An indexed project, closed again. A git repository, since `sync` refuses a
+ * folder in no git worktree.
+ */
 async function indexedProject(): Promise<{ root: string; dbPath: string }> {
-  const root = tempDir();
+  const root = gitInitTempRoot(tempDir());
   fs.writeFileSync(path.join(root, 'a.ts'), 'export function alpha(): number { return 1; }\n');
   (await CodeGraph.init(root, { index: true })).close();
   return { root, dbPath: getDatabasePath(root) };

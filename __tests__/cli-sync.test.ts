@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../src/index';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -11,7 +12,7 @@ describe('codegraph sync reporting', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cli-sync-'));
+    testDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cli-sync-')));
     fs.writeFileSync(path.join(testDir, 'index.ts'), 'export function original() { return target(); }\nexport function target() { return 1; }');
     const cg = CodeGraph.initSync(testDir);
     try {
