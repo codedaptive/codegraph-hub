@@ -8,8 +8,8 @@
  * The state dir is read, never created (../server/state-dir.ts). Never throws: a missing or invalid state dir
  * or file means no mark, since a mark only adds a note to an answer that is served anyway.
  *
- * The root may be passed as a getter. It is called only when the file holds marks, so an answer from a root
- * with no mark costs no root read, and a getter that throws (a closed handle) means no mark.
+ * The root may be passed as a getter. It is called only when the file holds at least one mark (of any root), so
+ * with no marks an answer costs no root read; a getter that throws (a closed handle) means no mark.
  */
 import { statSync } from 'node:fs';
 import * as path from 'node:path';
