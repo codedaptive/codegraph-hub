@@ -8,8 +8,8 @@
  * are owned, so the server only reads (a CLI command's one-shot index writes on a root, which need no hold,
  * are ./cli-jobs.ts's):
  *   - the writable open is a job: taking `writer.pid` and opening the database (which can run migrations,
- *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, SYNC class, so it
- *     never runs beside a cold build or another root's sync;
+ *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, in the sync lane, so it
+ *     can run beside another root's cold build but never beside another job of its own root;
  *   - one writer per root: `writer.pid` is taken with mode `builder`; when another live process owns it (a
  *     `codegraph watch`, a server of another state dir) the hold serves no writes and tries again every
  *     {@link HolderDeps.ownRetryMs};
