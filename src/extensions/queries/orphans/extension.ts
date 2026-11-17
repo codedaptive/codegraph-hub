@@ -9,9 +9,10 @@
  * does no work: registering orphans adds nothing to startup. The project lookup
  * (`../../../directory`, and `../shared/nested-repo`, which loads the CodeGraph
  * class when it runs) and the report (`./index`: the database layer, the Rust parser,
- * ripgrep) and `../shared/stopped-index-warning` are loaded with `await import(...)` inside the command's action and
- * the tool's handler, as the zone's `../extension.ts` does for grep. A dynamic
- * import works under vitest; a lazy `require` of a `.ts` file does not (see the
+ * ripgrep) are loaded with `await import(...)` inside the command's action and
+ * the tool's handler, as the zone's `../extension.ts` does for grep;
+ * `../shared/stopped-index-warning` is loaded the same way inside the command's
+ * action only. A dynamic import works under vitest; a lazy `require` of a `.ts` file does not (see the
  * host registry).
  */
 import * as path from 'path';
