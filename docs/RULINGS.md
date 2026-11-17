@@ -622,7 +622,12 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: upstream's follow-everything; a size cap; no ignore file (S-68's first answer).
 - Supersedes: S-68's "no new ignore file".
 - Owner: host, as an orc-approved work order for the hook-in in upstream-owned src/extraction/ (rules/product.md),
-  with upstream-prs stacking the PR. Open for design: the file's syntax and how a re-include rule names a link.
+  with upstream-prs stacking the PR.
+- Syntax: 2026-11-16 / Bob, direct ("my thought .codegraphignore behaves like .gitignore", then "go" on
+  Designer-Codegraph's reading). `.codegraphignore` at the root has `.gitignore`'s syntax and meaning, and its rules
+  join the same matcher as the root `.gitignore` (buildDefaultIgnore, src/extraction/index.ts:642-656). A symlinked
+  folder that leaves the root is re-included by gitignore's own negation: a `!` line naming the link's path inside
+  the project (for example `!data/runs`). No new syntax.
 
 ## R-45. The builder vacuums a root whose freelist passes a quarter of the file
 - Date: 2026-11-16 / Bob, direct ("Q39 - Over a quater of the files and at least 256MB"), on Q-39
