@@ -17,16 +17,16 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 123 upstream files** (111 modified, 12 deleted), counted at integration `3334d326` (2026-11-09). An upstream file is one
+**Total: 138 upstream files** (126 modified, 12 deleted), counted at integration `8f08a1db` (2026-11-17). An upstream file is one
 that exists in upstream `f72c9d2e` (the upstream commit the fork last merged, `f4f8a03f`; before that `5cd8a9a8`, merged in `bb0a5dd3`; before that `4499d007`, merged in `e10a983e`;
 and before that the fork's base was `60b0d7a9`) and that integration modifies or deletes. Recount with
 `git diff --name-status f72c9d2e integration`, keeping the `M` and `D` lines outside the fork-only trees. Not counted:
-files the fork added (31: 19 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
-`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`), 13 new tests and 2 new test helpers (`__tests__/fake-release-server.ts`,
-`__tests__/helpers/admit-all.ts`) in `__tests__/`; and the 12 fork-only `Makefile`, `test-groups.json`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/SPEC-upstream.md`,
-`docs/lanes/queries.md`, `docs/lanes/upstream-prs.md` and five reports under `docs/upstream/`). 90 of the 123 are named in the rows below; the other 33 are
+files the fork added (32: 20 new files in upstream's folders, namely 4 in `src/` (`src/mcp/lock-takeover.ts`, `src/mcp/server-control.ts`,
+`src/resolution/swift-builtins.ts`, `src/resolution/swift-module.ts`), 13 new tests and 3 new test helpers (`__tests__/fake-release-server.ts`,
+`__tests__/helpers/admit-all.ts`, `__tests__/helpers/git-init-temp-root.ts`) in `__tests__/`; and the 12 fork-only `Makefile`, `test-groups.json`, `docs/RULINGS.md`, `docs/SPEC.md`, `docs/SPEC-upstream.md`,
+`docs/lanes/queries.md`, `docs/lanes/upstream-prs.md` and five reports under `docs/upstream/`). 105 of the 138 are named in the rows below: 93 by full path and 12 upstream flat tests that the `git-root-only-tests` row names by short name (`cli-install-init`, `cli-no-color`, `cli-parse-warning`, `cli-sync-stale-index`, `cli-sync`, `cli-version`, `kernel-deep-nesting`, `lazy-engine`, `local-only-gitignore`, `resolver-pool-pipeline`, `resolver-project-scans`, `schemaless-db-not-initialized`); the other 33 are
 flat upstream test files (23 edited tests, 9 deleted tests, and one edited fixture, `__tests__/fixtures/older-daemon.cjs`) that the `machine-server` and `index-builder` rows count without naming (checked: each is in one
-of those two commits). Three upstream files named below do not exist in the tree: `src/mcp/daemon-manager.ts`,
+of those two commits; `git-root-only-tests` also names three of them by short name: `cli-unlock`, `index-daemon-rebuild`, `sqlite-open-error`). Three upstream files named below do not exist in the tree: `src/mcp/daemon-manager.ts`,
 `src/mcp/daemon-registry.ts` and `src/mcp/project-lifecycle.ts` were deleted by the fork (`machine-server`, `index-builder`); they
 still exist in upstream, and the earlier rows that name `daemon-registry.ts` (`copied-index-locks`, `lock-takeover-race`, `worktree-lifecycle`)
 edited it before that deletion. The merges of upstream `4499d007`, `5cd8a9a8` and `f72c9d2e` changed no row: every upstream file the fork edits still differs from upstream's,
@@ -36,7 +36,7 @@ and every file that differs has a row. Each row from `machine-server` through `h
 `-r 3648f06a`, `-r 34f595a1`, `-r 3eb1b655`, `-r 77b11301`, `-r 28e6e43a`, `-r 5cd5e2f7`, `-r cf921c51`, `-r b1e53be5`, `-r 85467837`, `-r 474aca5b`,
 `-r fca3b349`, `-r 802cfea9`, `-r 8cd5e14d`, `-r eaad59f7`, `-r 9378f209`, `-r 2f1b826a`, `-r 30fa7483`, `-r 4bf73c27`, `-r ad4ac35b`,
 `-r 6f4244c2`, `-r cd0da50b`, `-r 28951e16`, `-r a873dca8`, `-r ff4aa0b6`, `-r 216347fd`, `-r c5ddc1b7`, `-r 3334d326`) and against upstream; the `upstream-refresh` row is
-checked against `git diff 4499d007 exchange`, and the list and total at integration `3334d326` against `git diff --name-status f72c9d2e integration`.
+checked against `git diff 4499d007 exchange`, and the list and total at integration `8f08a1db` against `git diff --name-status f72c9d2e integration`.
 
 | Feature | Upstream files |
 |---|---|
