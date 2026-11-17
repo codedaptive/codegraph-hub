@@ -35,6 +35,33 @@ function quietDeps(exit: (code: number) => void) {
 }
 
 describe('endOverLimit', () => {
+  it.each(['', '-wal', '-shm', '-journal'])('removes the seed pid staging file%s on limit exit while preserving other files', (suffix) => {
+    const own = `codegraph.db.seed-123-0a1b2c3d.tmp${suffix}`;
+    fs.writeFileSync(path.join(dir, own), 'own');
+    fs.writeFileSync(path.join(dir, 'codegraph.db.seed-124-ab.tmp'), 'other');
+    fs.writeFileSync(path.join(dir, 'codegraph.db'), 'database');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'ignore');
+    const marks: unknown[] = [];
+    const exit = vi.fn();
+    endOverLimit({ kind: 'seed', root }, breach, {
+      ...quietDeps(exit), pid: 123, endedFile: { append: (mark) => { marks.push(mark); } },
+    });
+    expect(marks).toEqual([{ root, kind: 'seed', limit: 'time', at }]);
+    expect(exit).toHaveBeenCalledWith(75);
+    expect(fs.readFileSync(path.join(dir, 'codegraph.db.seed-124-ab.tmp'), 'utf8')).toBe('other');
+    expect(fs.readFileSync(path.join(dir, 'codegraph.db'), 'utf8')).toBe('database');
+    expect(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8')).toBe('ignore');
+    expect(fs.existsSync(path.join(dir, own))).toBe(false);
+  });
+
+  it.each(['cold-build', 'sync'] as const)('preserves same-pid seed staging on a %s limit exit', (kind) => {
+    fs.writeFileSync(path.join(dir, 'codegraph.db.seed-123-0a1b2c3d.tmp'), 'staging');
+    const exit = vi.fn();
+    endOverLimit({ kind, root }, breach, { ...quietDeps(exit), pid: 123 });
+    expect(fs.readFileSync(path.join(dir, 'codegraph.db.seed-123-0a1b2c3d.tmp'), 'utf8')).toBe('staging');
+    expect(exit).toHaveBeenCalledWith(75);
+  });
+
   it('logs, marks, rolls back the cold build\'s own database and releases its locks before exiting', () => {
     writeDatabase('partial');
     coldBuildDatabases.set(root, statInode(path.join(dir, 'codegraph.db')));

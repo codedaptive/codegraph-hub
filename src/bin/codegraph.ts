@@ -391,16 +391,45 @@ function warn(message: string): void {
  * QueryBuilder.hasSchema).
  *
  * During a rebuild the answer comes from a graph still being built, so the
- * command says so, on stderr to keep a `--json` answer parseable.
+ * command says so, on stderr to keep a `--json` answer parseable. When the
+ * index builder's last job of the root was stopped at a limit
+ * (stopped-root-mark.ts), it writes the stopped-index note to stderr the same
+ * way: the index is read as it is, but may be partial or behind until an
+ * explicit `codegraph index` or `codegraph init`. explore, node and the prompt hook pass
+ * `stoppedNote: false`: their answer is a tool answer, or for the prompt
+ * hook's symbol list its own context block, and carries the note itself, so
+ * each answer these commands serve from a stopped root's index without an
+ * error has exactly one. `grep`, `blast`, `orphans` and `suspects` open the
+ * index themselves and carry no note yet (S-71: the queries and resolution
+ * lanes add it).
  */
-async function openIndexToRead(projectPath: string): Promise<import('../index').CodeGraph> {
+async function openIndexToRead(
+  projectPath: string,
+  { stoppedNote = true }: { stoppedNote?: boolean } = {},
+): Promise<import('../index').CodeGraph> {
   const { default: CodeGraph } = await loadCodeGraph();
   const cg = await CodeGraph.open(projectPath, { readOnly: true });
   const { isRebuildInProgress } = await import('../mcp/writer-lock');
   if (isRebuildInProgress(projectPath)) {
     console.error(`${chalk.yellow(getGlyphs().warn)} An index rebuild ("codegraph index") is running in another process — this answer comes from the part of the index it has rebuilt so far.`);
   }
+  if (stoppedNote) await warnStoppedIndex(cg);
   return cg;
+}
+
+/** The stopped-index note for `cg`'s root, or null while the root has no stopped mark (stopped-root-mark.ts). */
+async function stoppedNoteFor(cg: import('../index').CodeGraph): Promise<string | null> {
+  const { stoppedRootMark } = await import('../extensions/host/builder/stopped-root-mark');
+  const mark = stoppedRootMark(cg.getProjectRoot());
+  if (!mark) return null;
+  const { stoppedIndexNote } = await import('../extensions/host/builder/stopped-index-note');
+  return stoppedIndexNote(mark);
+}
+
+/** Write the stopped-index note to stderr with the warn glyph, so a `--json` stdout stays parseable. */
+async function warnStoppedIndex(cg: import('../index').CodeGraph): Promise<void> {
+  const note = await stoppedNoteFor(cg);
+  if (note) console.error(`${chalk.yellow(getGlyphs().warn)} ${note}`);
 }
 
 /** "not found" (+ optional did-you-mean) when no exact symbol matches. */
@@ -1271,6 +1300,7 @@ program
       // (#2913). Read-only, it leaves migrations, index repair and WAL
       // maintenance to the writer.
       const cg = await CodeGraph.open(projectPath, { readOnly: true });
+      await warnStoppedIndex(cg);
       const { isRebuildInProgress } = await import('../mcp/writer-lock');
       // A `codegraph index` in another process owns the database: the
       // numbers below are a snapshot of a graph being rebuilt.
@@ -1631,7 +1661,7 @@ program
       }
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
-      const cg = await openIndexToRead(projectPath);
+      const cg = await openIndexToRead(projectPath, { stoppedNote: false });
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
 
@@ -1800,7 +1830,7 @@ program
         if (isRebuildInProgress(plan.exploreRoot)) { gate('noop-rebuild'); return; }
         // Claude Code runs this hook on its own, on every prompt: read-only, so
         // it never repairs what an index or sync is in the middle of writing.
-        const cg = await openIndexToRead(plan.exploreRoot);
+        const cg = await openIndexToRead(plan.exploreRoot, { stoppedNote: false });
         try {
           const others = plan.nudgeProjects.length
             ? `\n${nudge(plan.nudgeProjects, 'Other indexed projects in this workspace — pass projectPath to query them:')}`
@@ -1863,8 +1893,11 @@ program
             .join('\n');
           const exampleQuery = related.slice(0, 3).map((m) => m.name).join(' ');
           const projectHint = plan.viaSubScan ? ` with projectPath: "${plan.exploreRoot}"` : '';
+          // This block is the hook's whole answer, so a stopped root's note goes inside it (HIGH carries it in explore's).
+          const stopped = await stoppedNoteFor(cg);
           process.stdout.write(
             `<codegraph_context note="CodeGraph found indexed symbols matching this prompt — query the graph before searching files.">\n` +
+            (stopped ? `⚠️ ${stopped}\n` : '') +
             `This project's CodeGraph index contains symbols matching this request:\n${lines}\n` +
             `Call codegraph_explore ONCE${projectHint} with the relevant names in one query (e.g. "${exampleQuery}") ` +
             `to get their source, call paths, and blast radius — cheaper and more complete than Read/Grep.\n${others}` +
@@ -1928,7 +1961,7 @@ program
       }
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
-      const cg = await openIndexToRead(projectPath);
+      const cg = await openIndexToRead(projectPath, { stoppedNote: false });
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
 

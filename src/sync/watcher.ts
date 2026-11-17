@@ -887,7 +887,8 @@ export class FileWatcher {
   /**
    * Disable live watching after a terminal runtime failure
    * (watch-resource exhaustion, lock contention past the retry budget, or a
-   * persistent generic sync failure past the retry budget).
+   * persistent generic sync failure past the retry budget, or a sync job the
+   * host builder ended over a limit).
    * Idempotent: logs one actionable warning, fires {@link WatchOptions.onDegraded}
    * once, and stops the watcher. A subsequent start() clears the latch.
    */
@@ -1169,6 +1170,10 @@ export class FileWatcher {
             true
           );
         }
+      } else if (err instanceof Error && err.name === 'JobEndedError') {
+        // The host builder ended this root's job over a limit and rejects every
+        // retry; its message names the limit and the command that rebuilds.
+        this.degrade(err.message, { error: err.message });
       } else {
         this.lockRetryCount = 0; // a non-lock failure isn't contention; reset that streak
         this.syncFailureRetryCount += 1;
