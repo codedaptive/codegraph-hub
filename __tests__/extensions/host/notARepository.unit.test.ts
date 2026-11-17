@@ -29,5 +29,7 @@ describe('notARepositoryAnswer', () => {
     expect(text).toMatch(/Read/);
     expect(text).toMatch(/Grep/);
     expect(text).toMatch(/Glob/);
+    expect(text).toContain('codegraph init');
+    expect(text).toContain('--no-git');
   });
 });

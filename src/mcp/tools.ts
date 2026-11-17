@@ -1756,7 +1756,7 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a path in no git worktree is never indexed and is answered that it is not in a git repository.',
+  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a path in no git worktree is never indexed, unless its folder was opted in with `codegraph init <dir> --no-git`, and is answered that it is not in a git repository.',
 };
 
 /**
@@ -2738,8 +2738,9 @@ export class ToolHandler {
       // call may still find an index (a sibling finishes, a build retries). seedWorktreeIndex memoizes it.
       const worktree = this.unseededWorktrees.get(projectPath);
       if (worktree && worktreeSeedModule) throw new NotIndexedError(worktreeSeedModule.unseededWorktreeNote(projectPath, worktree));
-      // With a builder, a path in no git worktree is answered that it is not in a git repository: codegraph
-      // indexes only git worktrees, so `codegraph init` there would be refused too.
+      // With a builder, a path in no git worktree and no opted-in folder is answered that it is not in a git
+      // repository: codegraph indexes only git worktrees and opted-in folders, so `codegraph init` there would be
+      // refused too unless it opts the folder in (`--no-git`).
       if (this.builder) {
         const required = requireGitWorktreeRoot(projectPath);
         if ('refusal' in required) throw new NotIndexedError(required.refusal);

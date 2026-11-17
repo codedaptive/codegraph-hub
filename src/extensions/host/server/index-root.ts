@@ -12,6 +12,7 @@ import * as path from 'path';
 import { findNearestCodeGraphRoot } from '../../../directory';
 import { classifyNestedRepository } from '../../../sync/worktree';
 import { canonicalGitPath, gitWorktreeRootMayBeBelow } from '../worktree-lifecycle/git';
+import { optedInRootByStat } from './optedInRootByStat';
 
 /** `child` is strictly below `parent`: inside it and not the same directory (both resolved, lexical). */
 function isStrictlyBelow(child: string, parent: string): boolean {
@@ -27,7 +28,7 @@ function isStrictlyBelow(child: string, parent: string): boolean {
  * and the `.git` of the directory the alias leads into, which the builder (deciding on the real path) builds.
  *
  * Exported for the callers that compare a path with what {@link selectIndexRoot} or {@link gitRootByStat}
- * returned (both spelled by {@link canonicalGitPath}): the path must be put through here first, so both sides
+ * returned (real locations: {@link canonicalGitPath}, or an opted-in folder's registry spelling): the path must be put through here first, so both sides
  * of the comparison are in one spelling. A lexical path walked against a real root never meets it.
  */
 export function realLocation(projectPath: string): string {
@@ -42,7 +43,11 @@ export function realLocation(projectPath: string): string {
   return existing === resolved ? real : path.join(real, path.relative(existing, resolved));
 }
 
-/** {@link gitRootByStat} for a path already given by its real location. */
+/**
+ * The git worktree root of a path already given by its real location: the nearest directory at or above it
+ * with a `.git` entry, or null. {@link gitRootByStat} adds the opted-in folders; {@link selectIndexRoot}
+ * uses this one alone, since an opted-in folder has no git root to skip a sub-project's index against.
+ */
 function gitRootOfReal(real: string): string | null {
   let dir = real;
   for (;;) {
@@ -54,14 +59,18 @@ function gitRootOfReal(real: string): string | null {
 }
 
 /**
- * The worktree root a call on `projectPath` belongs to: the nearest directory at or above it that has a
- * `.git` entry (a directory for a main checkout, a file for a linked worktree or a submodule), found by
- * stats alone. Null outside a git working tree. The walk starts from the path's real location
- * ({@link realLocation}), so an alias (a symlink into a nested checkout) belongs to the checkout it leads
- * into, and the result is spelled by {@link canonicalGitPath}, the spelling {@link selectIndexRoot} returns.
+ * The root a call on `projectPath` belongs to: the nearest directory at or above it that has a `.git` entry
+ * (a directory for a main checkout, a file for a linked worktree or a submodule), found by stats alone; or,
+ * only when there is none, the nearest folder opted in with `codegraph init <dir> --no-git`
+ * ({@link optedInRootByStat}: one registry read per level), so git always wins. Null for a path in no git
+ * worktree and no opted-in folder. The walk starts from the path's real location ({@link realLocation}), so
+ * an alias (a symlink into a nested checkout) belongs to the checkout it leads into; a git root is spelled
+ * by {@link canonicalGitPath}, the spelling {@link selectIndexRoot} returns, and an opted-in root as its
+ * registry record spells it.
  */
 export function gitRootByStat(projectPath: string): string | null {
-  return gitRootOfReal(realLocation(projectPath));
+  const real = realLocation(projectPath);
+  return gitRootOfReal(real) ?? optedInRootByStat(real);
 }
 
 /**
@@ -75,7 +84,7 @@ export function gitRootByStat(projectPath: string): string | null {
  * path from {@link realLocation} (`worktreeSeedMayApply`, seed.ts `ensureWorktreeIndex`); the ones that only
  * open or hold the root (the MCP handler, the builder's `ensure`) never compare it with a lexical path.
  *
- * `n` is the nearest `.codegraph/` at or above that location and `g` the worktree root ({@link gitRootByStat}).
+ * `n` is the nearest `.codegraph/` at or above that location and `g` the git worktree root ({@link gitRootOfReal}).
  * An index strictly below `g` is a sub-project's: it covers only its own subdirectory, so it cannot answer
  * for the worktree, and the answer is the nearest index at or above `g` (the worktree's own, or an
  * ancestor's, or none). Otherwise `n` stands. An index at a directory that has its own

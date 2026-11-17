@@ -230,8 +230,9 @@ const NO_INDEX = 'no index';
  * Why `root` must not be opened as it is, or null. A directory that is gone has
  * nothing to hold (the builder's sweep tears its registration down on its own
  * schedule), nor does a path that exists but is not a directory; a root with no
- * git worktree at or above it is never served, so it is refused before its index
- * is looked at, and a seed never sees it; a root in a git worktree with no
+ * git worktree and no opted-in folder (`codegraph init <dir> --no-git`) at or
+ * above it is never served, so it is refused before its index is looked at, and
+ * a seed never sees it; a root in either with no
  * index ({@link NO_INDEX}: isInitialized is false, so a missing, empty, schema-less
  * or foreign `codegraph.db` alike) goes to the opener's `seed` when it has one, and
  * is never built from here. The seed copies only where no database file is in the
