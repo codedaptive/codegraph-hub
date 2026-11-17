@@ -11,6 +11,18 @@ const deep = { root: '/project/sub/', kind: 'cold-build', limit: 'rss', at: '202
 describe('withEndedJob', () => {
   beforeEach(() => endedJobs.replaceAll([parent, deep]));
 
+  it('does not attach a vacuum mark to a none answer', () => {
+    endedJobs.replaceAll([{ root: '/project', kind: 'vacuum', limit: 'time', at: '2026-11-17T10:00:00Z' }]);
+    expect(withEndedJob({ kind: 'none' }, '/project')).toEqual({ kind: 'none' });
+  });
+
+  it('finds an ancestor non-vacuum mark past a vacuum mark', () => {
+    endedJobs.replaceAll([parent, { root: '/project/sub', kind: 'vacuum', limit: 'time', at: '2026-11-17T10:00:00Z' }]);
+    expect(withEndedJob({ kind: 'none' }, '/project/sub')).toEqual({
+      kind: 'none', ended: { root: '/project', kind: 'sync', limit: 'time' },
+    });
+  });
+
   it('attaches the deepest canonical ancestor mark to none', () => {
     expect(withEndedJob({ kind: 'none', worktree: '/project' }, '/project/sub/file')).toEqual({
       kind: 'none', worktree: '/project', ended: { root: '/project/sub/', kind: 'cold-build', limit: 'rss' },

@@ -5,8 +5,9 @@
  *
  * The index writes the builder makes as jobs happen here, one job at a time on
  * {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
- * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, and the CLI's `init` and `index`
- * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts). The one write a job does not await is the
+ * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, the CLI's `init` and `index`
+ * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts), and the VACUUM a job's end queues when it
+ * left its root's freelist over the limit (./vacuum-after-job.ts). The one write a job does not await is the
  * oversized-WAL checkpoint a writable open starts (see holder.ts openWritable). The housekeeping sweep runs on its own timer with its own hold set,
  * outside the queue, and tears down the indexes whose worktree is gone.
  */
@@ -24,6 +25,7 @@ import { HolderSet } from './holder';
 import type { BuilderRequest, BuilderToServer } from './protocol';
 import { JobQueue, formatJobLine } from './queue';
 import { BuilderSeedHost, resolveSeedWaitMs } from './seed-host';
+import { vacuumAfterJob } from './vacuum-after-job';
 
 export interface BuilderServiceOptions {
   /** Send a message to the server (the IPC channel). */
@@ -38,6 +40,8 @@ export interface BuilderServiceOptions {
   timing?: { recoverWaitMs?: number; ownRetryMs?: number; pollMs?: number; seedWaitMs?: number };
   /** Run the housekeeping sweep on its own timer (default true). */
   housekeeping?: boolean;
+  /** Test seams for the VACUUM after a job; the defaults are the 256 MiB freelist floor and the real free disk. */
+  vacuum?: { minFreelistBytes?: number; freeDiskBytes?: (dir: string) => number | null };
 }
 
 export class BuilderService {
@@ -50,7 +54,19 @@ export class BuilderService {
   private readonly housekeeping: EngineHousekeeping | null;
 
   constructor(private readonly opts: BuilderServiceOptions) {
-    this.queue = new JobQueue({ onEvent: (event) => opts.jobLog(formatJobLine(event)) });
+    // this.queue and this.fences are read when an event comes, after the constructor has set them.
+    this.queue = new JobQueue({
+      onEvent: (event) => {
+        opts.jobLog(formatJobLine(event));
+        vacuumAfterJob(event, {
+          queue: this.queue,
+          jobLog: (line) => opts.jobLog(line),
+          rebuildHeld: (root) => this.fences.rebuildHeld(root),
+          minFreelistBytes: opts.vacuum?.minFreelistBytes,
+          freeDisk: opts.vacuum?.freeDiskBytes,
+        });
+      },
+    });
     this.fences = new RebuildFences(this.queue, (line) => opts.log(line));
     this.seedHost = new BuilderSeedHost(this.queue, {
       seedWaitMs: opts.timing?.seedWaitMs ?? resolveSeedWaitMs(),

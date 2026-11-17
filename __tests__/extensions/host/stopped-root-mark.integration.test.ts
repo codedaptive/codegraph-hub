@@ -21,6 +21,19 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe('stoppedRootMark', () => {
+  it('returns null when the only mark is vacuum', () => {
+    new EndedJobsFile(file).append({ root, kind: 'vacuum', limit: 'time', at: '2026-11-17T10:00:00Z' });
+    expect(stoppedRootMark(root, dir)).toBeNull();
+  });
+
+  it('returns the earlier non-vacuum mark when vacuum was marked later', () => {
+    const journal = new EndedJobsFile(file);
+    const previous = { root, kind: 'sync', limit: 'rss', at: '2026-11-17T10:00:00Z' } as const;
+    journal.append(previous);
+    journal.append({ root, kind: 'vacuum', limit: 'time', at: '2026-11-17T11:00:00Z' });
+    expect(stoppedRootMark(root, dir)).toEqual(previous);
+  });
+
   it('returns the last matching line in file order using canonical paths', () => {
     const alias = path.join(dir, 'alias');
     fs.symlinkSync(root, alias, 'dir');

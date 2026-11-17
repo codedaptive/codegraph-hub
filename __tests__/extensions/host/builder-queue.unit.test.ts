@@ -37,6 +37,19 @@ function recordingQueue(): { queue: JobQueue; events: string[]; raw: JobEvent[] 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
 describe('JobQueue', () => {
+  it('runs a sync queued after a waiting vacuum before that vacuum', async () => {
+    const { queue } = recordingQueue();
+    const blocker = held();
+    const order: string[] = [];
+    const first = queue.enqueue('sync', '/blocker', blocker.run);
+    await blocker.started;
+    const vacuum = queue.enqueue('vacuum', '/project', async () => { order.push('vacuum'); });
+    const sync = queue.enqueue('sync', '/project', async () => { order.push('sync'); });
+    blocker.finish();
+    await Promise.all([first, vacuum, sync]);
+    expect(order).toEqual(['sync', 'vacuum']);
+  });
+
   it('a SYNC job queued while a COLD job runs and another COLD waits ends before the second COLD starts', async () => {
     const { queue, events } = recordingQueue();
     const coldX = held();

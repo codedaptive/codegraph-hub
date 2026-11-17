@@ -157,8 +157,10 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   builds, recovers an index or takes `writer.pid`, `rebuild.pid` or `codegraph.lock`. Every index
   write is a job on the builder, a child process of the server (`BuilderClient`, `builder/client.ts`),
   one job at a time, a sync going ahead of any queued cold build (the one exception: the oversized-WAL
-  checkpoint a writable open starts, which its job does not await). The builder holds each root a call
-  names: an `open` job opens it writable (migrating it), then it recovers it (waiting at most a bounded
+  checkpoint a writable open starts, which its job does not await). A job that leaves its root's freelist over
+  a quarter of the file and at least 256 MiB queues a `vacuum` of that root, in the cold class behind every
+  queued sync, run only when free disk exceeds twice the database (`builder/vacuum-after-job.ts`; R-45).
+  The builder holds each root a call names: an `open` job opens it writable (migrating it), then it recovers it (waiting at most a bounded
   time), watches it and queues its catch-up. The server's `ensure` resolves once the builder opened and
   migrated the index, or after a bounded wait (`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`, default 10 s) when
   that open is queued behind a running job such as a cold build, or when the hold could not open it

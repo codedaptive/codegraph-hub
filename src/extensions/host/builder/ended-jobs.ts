@@ -21,9 +21,14 @@ export const endedJobs = {
   find(root: string, kind: JobKind): EndedJob | undefined {
     return byRoot.get(canonicalProjectRoot(root))?.get(kind);
   },
-  /** The mark of any kind at exactly `root` (no ancestor search): the one of the kind first added for it. */
+  /**
+   * The mark at exactly `root` (no ancestor search): the one of the kind first added for it, a `vacuum` mark
+   * passed over (a VACUUM stopped over a limit leaves the index whole: SQLite rolls it back).
+   */
   findAt(root: string): EndedJob | undefined {
-    return byRoot.get(canonicalProjectRoot(root))?.values().next().value;
+    const kinds = byRoot.get(canonicalProjectRoot(root))?.values() ?? [];
+    for (const job of kinds) if (job.kind !== 'vacuum') return job;
+    return undefined;
   },
   add(job: EndedJob): void {
     const canonical = canonicalProjectRoot(job.root);
