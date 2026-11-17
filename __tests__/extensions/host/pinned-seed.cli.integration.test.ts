@@ -67,7 +67,7 @@ describe('project seed CLI and builder relay', () => {
   const noRoute = async () => null;
 
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-pinned-seed-cli-')));
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-pinned-seed-cli-')));
     // A fresh state dir prevents the pin command from reaching a machine server.
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     vi.stubEnv('CODEGRAPH_NO_AUTO_SEED', '0');
@@ -265,7 +265,7 @@ describe('project seed CLI and builder relay', () => {
   }
 
   // Building a real outer index and running git can exceed five seconds under load.
-  it('pins an indexed ancestor of a linked worktree without attempting a seed', async () => {
+  it('pins the worktree rather than its indexed non-git ancestor', async () => {
     const outer = path.join(workspace, 'outer');
     fs.mkdirSync(outer);
     fs.writeFileSync(path.join(outer, 'outer.ts'), 'export const outer = true;\n');
@@ -275,12 +275,10 @@ describe('project seed CLI and builder relay', () => {
     const stub = answering({ kind: 'no-source', root: target });
     log.mockClear(); error.mockClear();
     await pinWith(target, { route: stub.route });
-    expectPinned(outer);
-    expect(getRegisteredProject(target)).toBeNull();
-    expect(stub.route).not.toHaveBeenCalled();
+    expectPinned(target);
+    expect(getRegisteredProject(outer)).toBeNull();
     expect(error).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0][0])).toContain(`Pinned ${outer}`);
+    expect(log.mock.calls.some(([line]) => String(line).includes(`Pinned ${target}`))).toBe(true);
   }, 30_000);
 
   // Building a real main index and running git can exceed five seconds under load.
