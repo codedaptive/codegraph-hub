@@ -40,6 +40,8 @@ import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp, readBoundedSource, readBound
 export { oversizeStamp };
 import { followSymlinkedDir } from '../extensions/host/scan/follow-symlinked-dir';
 import { readCodegraphIgnore } from '../extensions/host/scan/read-codegraph-ignore';
+import { filesUnderReincludedLinks } from '../extensions/host/scan/files-under-reincluded-links';
+import { includeWalkLinkKind } from '../extensions/host/scan/include-walk-link-kind';
 
 /**
  * Number of files to read in parallel during indexing.
@@ -772,6 +774,9 @@ function includeStaticRoots(patterns: string[]): string[] {
  * under a built-in default-ignored dir (`node_modules`, `dist`, …), `.git`, or
  * CodeGraph's data dir — those are never resurfaced, mirroring `ScopeIgnore`.
  * `.gitignore` is deliberately NOT consulted: overriding it is the whole point.
+ * A directory link below an include root is followed only under R-44 (inside
+ * the root, or re-included by the root ignore); an include root that is itself
+ * the link is followed (fork S-77).
  */
 function collectIncludedFiles(
   rootDir: string,
@@ -783,6 +788,7 @@ function collectIncludedFiles(
   const out = new Set<string>();
   const defaults = defaultsOnlyIgnore();
   const visited = new Set<string>();
+  const rootIgnore = buildDefaultIgnore(rootDir);
 
   const consider = (abs: string, rel: string, isDir: boolean): void => {
     if (isDir) {
@@ -824,12 +830,10 @@ function collectIncludedFiles(
       const rel = normalizePath(path.relative(rootDir, abs));
       if (!rel || escapesRoot(rel)) continue;
       if (entry.isSymbolicLink()) {
-        try {
-          const st = fs.statSync(fs.realpathSync(abs));
-          consider(abs, rel, st.isDirectory());
-        } catch {
-          // broken symlink — skip
-        }
+        // A directory link is followed only under followSymlinkedDir (fork R-44, S-77): inside
+        // the root, or re-included by the root ignore. Broken links come back null and are skipped.
+        const kind = includeWalkLinkKind(rootDir, abs, rel, rootIgnore);
+        if (kind) consider(abs, rel, kind === 'dir');
         continue;
       }
       consider(abs, rel, entry.isDirectory());
@@ -1535,7 +1539,9 @@ function gitRepoPrefix(dir: string): string {
 /**
  * Get all files visible to git (tracked + untracked but not ignored).
  * Respects .gitignore at all levels (root, subdirectories) and descends into
- * embedded (nested, non-submodule) git repos. Returns null on failure
+ * embedded (nested, non-submodule) git repos. Also returns the files under a
+ * directory link in git's list whose real path leaves the root, when the root
+ * ignore re-includes it (fork R-44, S-76). Returns null on failure
  * (non-git project) so callers can fall back to a filesystem walk.
  */
 function getGitVisibleFiles(rootDir: string): Set<string> | null {
@@ -1569,6 +1575,11 @@ function getGitVisibleFiles(rootDir: string): Set<string> | null {
     // not from the index. (#514)
     const ig = buildScopeIgnore(rootDir, embeddedRoots);
     const visible = new Set([...files].filter((f) => !ig.ignores(f)));
+    // A directory link in git's list whose real path leaves the root is walked only when the
+    // root ignore re-includes it (fork R-44, S-76); in-root aliases are not followed.
+    const rootIgnore = buildDefaultIgnore(rootDir);
+    const keep = (rel: string, isDir: boolean): boolean => !ig.ignores(isDir ? rel + '/' : rel);
+    for (const f of filesUnderReincludedLinks(rootDir, files, rootIgnore, keep)) visible.add(f);
     // Force-include first-party source the project whitelisted in
     // `codegraph.json` `include`. These are gitignored, so `git ls-files` never
     // listed them above — discover them directly off disk and add them. (The
