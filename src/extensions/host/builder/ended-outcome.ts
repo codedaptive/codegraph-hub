@@ -24,11 +24,7 @@ export function withEndedJob(outcome: EnsureOutcome, projectPath: string): Ensur
   return outcome;
 }
 
-/**
- * The mark at `start` or at its nearest ancestor that has one, deepest first. A `vacuum` mark is passed over
- * (endedJobs.findAt): a stopped VACUUM leaves the index whole, so it explains no missing index, and the
- * directory's ancestors are still looked at.
- */
+/** The mark of any kind at `start` or at its nearest ancestor that has one, deepest first. */
 function nearestMark(start: string): EndedJob | undefined {
   for (let dir = canonicalProjectRoot(start); ; dir = path.dirname(dir)) {
     const mark = endedJobs.findAt(dir);

@@ -8,9 +8,6 @@
  * The state dir is read, never created (../server/state-dir.ts). Never throws: a missing or invalid state dir
  * or file means no mark, since a mark only adds a note to an answer that is served anyway.
  *
- * A `vacuum` mark is passed over: a VACUUM stopped over a limit leaves the index whole (SQLite rolls the VACUUM
- * back), so it is no reason to warn that the index may be incomplete.
- *
  * The root may be passed as a getter. It is called only when the file holds at least one mark (of any root), so
  * with no marks an answer costs no root read; a getter that throws (a closed handle) means no mark.
  */
@@ -47,8 +44,8 @@ function marksIn(file: string): Mark[] {
 }
 
 /**
- * The last mark in file order whose root is `root` (compared canonically) and whose kind is not `vacuum`, or
- * null. A `root` getter is called only when the file holds marks; when it throws, the answer is null.
+ * The last mark in file order whose root is `root` (compared canonically), or null. A `root` getter is called
+ * only when the file holds marks; when it throws, the answer is null.
  */
 export function stoppedRootMark(root: string | (() => string), stateDir?: string): EndedJob | null {
   let marks: Mark[];
@@ -61,5 +58,5 @@ export function stoppedRootMark(root: string | (() => string), stateDir?: string
   } catch {
     return null;
   }
-  return marks.filter((mark) => mark.canonical === canonical && mark.job.kind !== 'vacuum').at(-1)?.job ?? null;
+  return marks.filter((mark) => mark.canonical === canonical).at(-1)?.job ?? null;
 }

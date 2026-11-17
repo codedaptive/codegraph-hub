@@ -30,10 +30,10 @@ import type { BuilderFreshness } from '../../../src/extensions/host/builder/clie
 import type { BuilderToServer } from '../../../src/extensions/host/builder/protocol';
 
 // vite's resolver strips the `node:` prefix from an import of node:sqlite, so the module is required (as in the
-// server test and the followups gate).
+// server test and worktree-lifecycle-followups.validation.test.ts).
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
 
-/** A pid no process holds (the followups gate's choice): a rebuild.pid naming it is a killed build's. */
+/** A pid no process holds (worktree-lifecycle-followups.validation.test.ts's choice): a rebuild.pid naming it is a killed build's. */
 const DEAD_PID = 999999;
 
 function real(p: string): string {

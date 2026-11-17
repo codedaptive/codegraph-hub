@@ -14,24 +14,13 @@ import * as path from 'node:path';
 import { canonicalProjectRoot, getCodeGraphDir } from '../../../directory';
 import type { DbPageStats } from './db-page-stats-type';
 import { freeDiskBytes } from './free-disk-bytes';
-import { MIN_VACUUM_FREELIST_BYTES, freelistOverLimit } from './freelist-over-limit';
-import type { JobEvent, JobQueue } from './queue';
+import { freelistOverLimit } from './freelist-over-limit';
+import { MIN_VACUUM_FREELIST_BYTES } from './min-vacuum-freelist-bytes';
+import type { JobEvent } from './queue';
 import { readDbPageStats } from './read-db-page-stats';
 import { runVacuumOffThread } from './run-vacuum-off-thread';
+import type { VacuumAfterJobDeps } from './vacuum-after-job-deps';
 import { vacuumVerdict } from './vacuum-verdict';
-
-export interface VacuumAfterJobDeps {
-  queue: Pick<JobQueue, 'enqueue'>;
-  /** One line for the builder's job log. */
-  jobLog(line: string): void;
-  /** Whether a rebuild keeps the builder's writers off the root (./fences.ts rebuildHeld). */
-  rebuildHeld(root: string): boolean;
-  /** Test seams; the defaults are the real reads, the real VACUUM and the 256 MiB floor. */
-  readStats?: (dbPath: string) => DbPageStats | null;
-  freeDisk?: (dir: string) => number | null;
-  runVacuum?: (dbPath: string) => Promise<void>;
-  minFreelistBytes?: number;
-}
 
 type VacuumOutcome = 'fenced' | 'vacuum' | 'freelist-small' | 'disk-short';
 

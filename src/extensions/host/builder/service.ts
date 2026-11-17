@@ -22,10 +22,10 @@ import type { BuilderFreshness, EnsureOutcome } from './client';
 import { withEndedJob } from './ended-outcome';
 import { RebuildFences, parseFenceKind } from './fences';
 import { HolderSet } from './holder';
+import { jobEventListener } from './job-event-listener';
 import type { BuilderRequest, BuilderToServer } from './protocol';
-import { JobQueue, formatJobLine } from './queue';
+import { JobQueue } from './queue';
 import { BuilderSeedHost, resolveSeedWaitMs } from './seed-host';
-import { vacuumAfterJob } from './vacuum-after-job';
 
 export interface BuilderServiceOptions {
   /** Send a message to the server (the IPC channel). */
@@ -55,18 +55,7 @@ export class BuilderService {
 
   constructor(private readonly opts: BuilderServiceOptions) {
     // this.queue and this.fences are read when an event comes, after the constructor has set them.
-    this.queue = new JobQueue({
-      onEvent: (event) => {
-        opts.jobLog(formatJobLine(event));
-        vacuumAfterJob(event, {
-          queue: this.queue,
-          jobLog: (line) => opts.jobLog(line),
-          rebuildHeld: (root) => this.fences.rebuildHeld(root),
-          minFreelistBytes: opts.vacuum?.minFreelistBytes,
-          freeDisk: opts.vacuum?.freeDiskBytes,
-        });
-      },
-    });
+    this.queue = new JobQueue({ onEvent: jobEventListener({ jobLog: (line) => opts.jobLog(line), queue: () => this.queue, rebuildHeld: (root) => this.fences.rebuildHeld(root), vacuum: opts.vacuum }) });
     this.fences = new RebuildFences(this.queue, (line) => opts.log(line));
     this.seedHost = new BuilderSeedHost(this.queue, {
       seedWaitMs: opts.timing?.seedWaitMs ?? resolveSeedWaitMs(),
