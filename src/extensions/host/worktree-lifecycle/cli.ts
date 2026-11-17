@@ -160,9 +160,8 @@ export async function runProjectSeed(pathArg: string): Promise<void> {
  * `codegraph project pin <path>`: exit 1 for a missing directory or a path in no git worktree
  * (gitRootByStat is null), which is refused before anything is registered or pinned.
  *
- * The path then resolves as a tool call would resolve it (resolveProjectPath), and choosePinRoot picks the
- * root pinned: an index root in no git worktree gives way to the path's worktree root, and a root with no
- * index is seeded first (unless CODEGRAPH_NO_AUTO_SEED is 1), with the seed's outcome printed.
+ * The root pinned is always the path's git worktree root (choosePinRoot); a root with no index is seeded
+ * first unless CODEGRAPH_NO_AUTO_SEED is 1, with the seed's outcome printed.
  */
 export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Promise<void> {
   const absolute = path.resolve(pathArg);
@@ -175,7 +174,7 @@ export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Pr
     error(`${absolute} is not in a git repository ${getGlyphs().dash} only git worktrees can be pinned`);
     process.exit(1);
   }
-  const root = await choosePinRoot(absolute, gitRoot, resolveProjectPath(absolute), async (worktree) => {
+  const root = await choosePinRoot(gitRoot, async (worktree) => {
     const outcome = await seedProjectNow(worktree, deps);
     printSeedOutcome(outcome);
     return outcome;
