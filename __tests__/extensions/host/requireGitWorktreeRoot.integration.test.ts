@@ -1,3 +1,4 @@
+// Integration, not a ZUT: these tests run real git subprocesses on a throwaway repository (Orc #3349).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
