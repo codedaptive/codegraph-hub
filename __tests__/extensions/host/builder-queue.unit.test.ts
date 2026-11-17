@@ -5,6 +5,8 @@
  * The jobs are hand-held promises, so each case controls exactly when a job ends; nothing here touches disk.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../../src/directory', () => ({ canonicalProjectRoot: (root: string) => root }));
 import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
 import { JobEndedError } from '../../../src/extensions/host/builder/job-ended-error';
 import { JobQueue, formatJobLine, type JobEvent, type JobKind } from '../../../src/extensions/host/builder/queue';
