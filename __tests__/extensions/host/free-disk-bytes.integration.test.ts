@@ -12,8 +12,10 @@ describe('freeDiskBytes', () => {
   it('returns the blocks available to this user times the block size', () => {
     const bytes = freeDiskBytes(dir);
     const fsStats = fs.statfsSync(dir);
-    expect(bytes).toBe(fsStats.bavail * fsStats.bsize);
+    // Any writer on the volume moves bavail between the two reads, so allow 1 GiB of drift: that still fails
+    // the wrong answers (bsize alone, or bavail alone, a block count).
     expect(bytes).toBeGreaterThan(0);
+    expect(Math.abs((bytes ?? 0) - fsStats.bavail * fsStats.bsize)).toBeLessThan(1024 ** 3);
   });
 
   it('returns null for a nonexistent path', () => {
