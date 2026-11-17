@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -22,7 +23,7 @@ describe('codegraph unlock: indexing lock recovery', () => {
   }
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unlock-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unlock-')));
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-unlock-state-'));
     const cg = CodeGraph.initSync(tempDir);
     cg.close();

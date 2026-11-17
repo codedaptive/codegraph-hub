@@ -15,6 +15,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -55,7 +56,7 @@ describe('codegraph install --init / init --yes (#1578)', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-install-init-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-install-init-')));
     fs.writeFileSync(
       path.join(tempDir, 'a.ts'),
       `export function greet(name: string) { return hello(name); }\n` +
@@ -84,13 +85,14 @@ describe('codegraph install --init / init --yes (#1578)', () => {
     expect(r.stdout).toContain('Already initialized');
   });
 
-  it('install --init refuses an unsafe root (filesystem root) with exit code 1, like init does', () => {
-    // `/` (or the drive root on Windows) is the canonical unsafe root: the
-    // refusal fires before anything is created, so nothing is written there.
+  it('install --init refuses a path in no git worktree (the filesystem root) with exit code 1, like init does', () => {
+    // `/` (or the drive root on Windows) is in no git worktree: codegraph
+    // indexes only git worktrees, and that refusal fires before the unsafe-root
+    // check and before anything is created, so nothing is written there.
     const root = path.parse(process.cwd()).root;
     const r = runCodegraph(['install', '--yes', '--target', 'none', '--init'], root);
     expect(r.status).toBe(1);
-    expect(r.stdout).toContain('Refusing to initialize');
+    expect(r.stdout).toContain(`${root} is not in a git repository`);
     expect(fs.existsSync(path.join(root, '.codegraph'))).toBe(false);
   });
 

@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
 import { EXTRACTION_VERSION } from '../src/extraction/extraction-version';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const { DatabaseSync } = require('node:sqlite');
@@ -42,7 +43,7 @@ function indexState() {
 }
 
 beforeEach(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-sync-stale-'));
+  root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-sync-stale-')));
   fs.writeFileSync(path.join(root, 'original.ts'), 'export function original() { return 1; }\n');
   const cg = CodeGraph.initSync(root);
   try { await cg.indexAll(); } finally { cg.close(); }

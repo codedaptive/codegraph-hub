@@ -12,11 +12,12 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -53,7 +54,7 @@ describe('CLI color handling (#1281)', () => {
   let tempDir: string;
 
   beforeAll(async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-no-color-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-no-color-')));
     fs.writeFileSync(
       path.join(tempDir, 'a.ts'),
       'export function alpha(): number { return beta(); }\nexport function beta(): number { return 1; }\n'
@@ -99,8 +100,10 @@ describe('CLI color handling (#1281)', () => {
   });
 
   it('piped `codegraph index` emits plain per-phase lines: no ANSI, no \\r rewrites', () => {
-    const out = run(['index'], colorEnv(), tempDir);
-    expect(out).not.toMatch(ANSI);
-    expect(out).not.toContain('\r');
+    const r = spawnSync(process.execPath, [BIN, 'index'], { cwd: tempDir, encoding: 'utf-8', env: colorEnv() });
+    // The run must reach indexing: a refusal prints no ANSI either.
+    expect(r.status, r.stdout + r.stderr).toBe(0);
+    expect(r.stdout).not.toMatch(ANSI);
+    expect(r.stdout).not.toContain('\r');
   }, 60000);
 });

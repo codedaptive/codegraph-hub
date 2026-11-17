@@ -19,6 +19,7 @@ const { DatabaseSync } = require('node:sqlite');
 import { CodeGraph } from '../src';
 import { isInitialized, findNearestCodeGraphRoot, resolveServerRoot, planFrontload, hasSchemalessDb, hasForeignDbFile } from '../src/directory';
 import { ToolHandler } from '../src/mcp/tools';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 // A configurable `fs`, so a test can watch which files the probe opens.
 vi.mock('fs', async (importOriginal) => ({ ...await importOriginal<typeof import('fs')>() }));
@@ -195,6 +196,7 @@ describe('a schema-less codegraph.db is not an initialized project (#1895)', () 
   it('(d) codegraph init in the directory with the broken file repairs it', () => {
     const dbPath = plantBrokenDb(parent, 'no-tables');
     fs.writeFileSync(path.join(parent, 'a.py'), 'def alpha():\n    return 1\n');
+    gitInitTempRoot(parent);
     const r = run(parent, ['init', '--yes']);
     expect(r.status).toBe(0);
     expect(r.out).toContain('without the codegraph schema');
@@ -209,13 +211,14 @@ describe('a schema-less codegraph.db is not an initialized project (#1895)', () 
   it('(d) an empty file is repaired too; a file that is not SQLite is refused with guidance and left alone', () => {
     plantBrokenDb(parent, 'empty');
     fs.writeFileSync(path.join(parent, 'a.py'), 'def alpha():\n    return 1\n');
+    gitInitTempRoot(parent);
     const empty = run(parent, ['init', '--yes']);
     expect(empty.status).toBe(0);
     expect(empty.out).toContain('without the codegraph schema');
     expect(isInitialized(parent)).toBe(true);
 
     for (const bytes of ['x'.repeat(4096), 'hello']) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-1895-foreign-'));
+      const dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-1895-foreign-')));
       try {
         const cgDir = path.join(dir, '.codegraph');
         fs.mkdirSync(cgDir);
