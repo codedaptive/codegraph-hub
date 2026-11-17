@@ -56,7 +56,7 @@ import { extractProseCandidates } from '../search/identifier-segments';
 import { detectWorktreeIndexMismatch, worktreeMismatchWarning } from '../sync/worktree';
 import { createShimmerProgress } from '../ui/shimmer-progress';
 import { getGlyphs } from '../ui/glyphs';
-import { ansiColorsEnabled } from '../ui/color';
+import { cliColorsEnabled } from '../extensions/host/color/cliColorsEnabled';
 
 import { buildNodeTooOldBanner, MIN_NODE_MAJOR } from './node-version-check';
 import { installFatalHandlers } from './fatal-handler';
@@ -86,9 +86,10 @@ import type { FreshAnswer } from '../extensions/host/fresh/cli';
 import type { IndexWriter, SyncWriter } from '../extensions/host/builder/cli-route';
 import { clearEndedRoot } from '../extensions/host/builder/clear-ended-root';
 
-// Decided once, before `--color`/`--no-color` are stripped from argv below
-// (#1281). Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
-const COLORS_ENABLED = ansiColorsEnabled();
+// Decided once and recorded by cliColorsEnabled(), before `--color`/`--no-color`
+// are stripped from argv below (#1281); every later caller reads this answer.
+// Piped/redirected stdout, NO_COLOR, or --no-color -> plain output.
+const COLORS_ENABLED = cliColorsEnabled();
 
 // Lazy-load heavy modules (CodeGraph, runInstaller) to keep CLI startup fast.
 async function loadCodeGraph(): Promise<typeof import('../index')> {
@@ -180,8 +181,9 @@ if (firstArg === '-v' || firstArg === '-version') {
 // =============================================================================
 
 // `--color` / `--no-color` are global and position-independent — they were
-// already read by ansiColorsEnabled() at module load, so strip them before
-// commander parses (a subcommand would otherwise reject the unknown flag).
+// already read by cliColorsEnabled() at module load, which recorded the
+// decision there, so strip them before commander parses (a subcommand would
+// otherwise reject the unknown flag).
 process.argv = process.argv.filter((a) => a !== '--color' && a !== '--no-color');
 
 const colors = COLORS_ENABLED
