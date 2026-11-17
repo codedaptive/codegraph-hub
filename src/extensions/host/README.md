@@ -156,12 +156,13 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   session). The server only reads: it opens every index read-only and never syncs, watches, seeds,
   builds, recovers an index or takes `writer.pid`, `rebuild.pid` or `codegraph.lock`. Every index
   write is a job on the builder, a child process of the server (`BuilderClient`, `builder/client.ts`),
-  one job at a time, a sync going ahead of any queued cold build (the one exception: the oversized-WAL
+  in two lanes, one job at a time in each: cold builds, `init` and `index` in the cold lane, every other job
+  in the sync lane beside it, and never two jobs of one root together (the one exception: the oversized-WAL
   checkpoint a writable open starts, which its job does not await). The builder holds each root a call
   names: an `open` job opens it writable (migrating it), then it recovers it (waiting at most a bounded
   time), watches it and queues its catch-up. The server's `ensure` resolves once the builder opened and
   migrated the index, or after a bounded wait (`CODEGRAPH_BUILDER_ENSURE_WAIT_MS`, default 10 s) when
-  that open is queued behind a running job such as a cold build, or when the hold could not open it
+  that open is queued behind a running job of its root, or when the hold could not open it
   (another live writer, an open failure); the server then opens read-only whatever is on disk.
   A git worktree with no index gets one seeded
   from an indexed sibling

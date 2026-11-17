@@ -126,8 +126,8 @@ describe('BuilderService', { timeout: 60_000 }, () => {
 
     // Keep the queue busy so the watcher's sync waits: the edit stays pending, and the push says so.
     let release!: () => void;
-    const blocker = svc.queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { release = resolve; }));
-    await waitUntil(() => svc.queue.runningJob()?.root === '/blocker', 2_000);
+    const blocker = svc.queue.enqueue('cold-build', root, () => new Promise<void>((resolve) => { release = resolve; }));
+    await waitUntil(() => svc.queue.runningJobs().some((job) => job.root === root), 2_000);
     fs.writeFileSync(path.join(root, 'src', 'base.ts'), 'export function baseSymbol() { return 1; }\nexport function more() { return 2; }\n');
     expect(await waitUntil(() => freshnessOf(root).some((s) => s.pendingFiles.includes('src/base.ts')), 10_000)).toBe(true);
     expect(svc.freshness(root)?.pendingFiles).toContain('src/base.ts');
@@ -145,8 +145,8 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     const svc = startService(false, 200);
 
     let finishCold!: () => void;
-    const cold = svc.queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { finishCold = resolve; }));
-    await waitUntil(() => svc.queue.runningJob()?.root === '/blocker', 2_000);
+    const cold = svc.queue.enqueue('cold-build', root, () => new Promise<void>((resolve) => { finishCold = resolve; }));
+    await waitUntil(() => svc.queue.runningJobs().some((job) => job.root === root), 2_000);
 
     // The wait runs out (200 ms) with the open still queued: the answer is the same `ready`, the database is
     // not open for writing, writer.pid is not taken, and no open job has started.
@@ -171,8 +171,8 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     await indexedProject(root);
     const svc = startService(false, 100);
     let finishCold!: () => void;
-    const cold = svc.queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { finishCold = resolve; }));
-    await waitUntil(() => svc.queue.runningJob()?.root === '/blocker', 2_000);
+    const cold = svc.queue.enqueue('cold-build', root, () => new Promise<void>((resolve) => { finishCold = resolve; }));
+    await waitUntil(() => svc.queue.runningJobs().some((job) => job.root === root), 2_000);
     await svc.ensure(root);
 
     // The release answers while the cold build still runs.
@@ -462,7 +462,7 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     // A job that does not end holds the queue, so the outer checkout's cold build stays queued (nothing runs a build).
     let finishBlocker!: () => void;
     const blocker = queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { finishBlocker = resolve; }));
-    await waitUntil(() => queue.runningJob()?.root === '/blocker', 2_000);
+    await waitUntil(() => queue.runningJobs().some((job) => job.root === '/blocker'), 2_000);
     try {
       host.queueColdBuild(outer, { realRoot: outer });
       expect(host.buildingRootFor(outer)).toBe(outer);
