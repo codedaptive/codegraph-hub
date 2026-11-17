@@ -3791,8 +3791,8 @@ export class ToolHandler {
       // comes from the synced index. Never throws. The checkpoint (including a
       // passed bound or a sync error) is appended to a successful answer; an
       // isError result or a stale-file refusal is returned without it. The sync
-      // is the builder's (a sync job at sync priority, queued behind a running
-      // job); a read-only handler with no builder only measures: its checkpoint
+      // is the builder's (a sync job in the builder's sync lane, queued behind a running
+      // job of its root); a read-only handler with no builder only measures: its checkpoint
       // says the pending files were not synced, because it holds the index
       // read-only. A handler that is not read-only (the CLI's) syncs its own.
       const freshCp = args.fresh === true ? await waitForFresh(project, { sync: this.freshSyncFor(project) }) : undefined;

@@ -3,8 +3,8 @@
  * builder's queue (./queue.ts), and this class remembers which roots have one queued or running so a call for
  * such a root answers "building" instead of queuing a second.
  *
- * Two kinds of job, two classes: a seed is a `seed` job (SYNC class: a copy, short), a cold build a
- * `cold-build` job (COLD class: it indexes a whole repository, so every queued SYNC job goes before it).
+ * Two kinds of job, two lanes: a seed is a `seed` job (sync lane: a copy, short), a cold build a
+ * `cold-build` job (cold lane: it indexes a whole repository, and runs beside the sync lane's jobs of other roots).
  */
 import { canonicalProjectRoot } from '../../../directory';
 import { ownIndexRootFor } from '../server/index-root';
