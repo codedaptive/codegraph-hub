@@ -757,32 +757,41 @@ function applyLocalOnlyGitignore(
 
 /**
  * The `init` flow — shared by `codegraph init` and `codegraph install --init`
- * (#1578): refuse a path in no git worktree (a path below a worktree root
- * initializes that root), refuse an unsafe root, create `.codegraph/`, build
- * the initial index under supervision, then the post-index offers. `yes`
- * makes every offer non-interactive (defaults only), so a container / CI
- * bootstrap never blocks on a prompt. Either refusal sets
+ * (#1578): find the root to initialize (`resolveInitRoot`: a path below a git
+ * worktree root or an opted-in folder initializes that root; a path in neither
+ * is refused, unless `noGit` opts it in, R-50), refuse an unsafe root, create
+ * `.codegraph/`, build the initial index under supervision, then the
+ * post-index offers. `yes` makes every offer non-interactive (defaults only),
+ * so a container / CI bootstrap never blocks on a prompt. Every refusal sets
  * `process.exitCode = 1` and returns (`--force` overrides only the unsafe-root
- * one, and no caller implies it); an index failure exits 1.
+ * one and never opts a folder in; `install --init` passes neither `force` nor
+ * `noGit`); an index failure exits 1.
  */
 async function runInit(
   projectPath: string,
-  options: { index?: boolean; force?: boolean; verbose?: boolean; yes?: boolean; localOnly?: boolean },
+  options: { index?: boolean; force?: boolean; verbose?: boolean; yes?: boolean; localOnly?: boolean; noGit?: boolean },
 ): Promise<void> {
   const clack = await importESM('@clack/prompts');
 
   clack.intro('Initializing CodeGraph');
 
   try {
-    // codegraph indexes only git worktrees (SPEC §3); --force does not reach past this.
-    const required = requireGitWorktreeRoot(projectPath);
-    if ('refusal' in required) {
-      clack.log.error(required.refusal);
+    // codegraph indexes only git worktrees and opted-in folders (SPEC §3); --force does not reach past this.
+    const { resolveInitRoot } = await import('../extensions/host/worktree-lifecycle/resolveInitRoot');
+    const resolved = resolveInitRoot(projectPath, { noGit: !!options.noGit, force: !!options.force });
+    if ('refusal' in resolved) {
+      clack.log.error(resolved.refusal);
       clack.outro('');
       process.exitCode = 1;
       return;
     }
-    projectPath = required.root;
+    projectPath = resolved.root;
+    if (resolved.optedIn) {
+      clack.log.info(
+        `Opted ${projectPath} in to indexing: it is not in a git repository. ` +
+        'To undo it, run "codegraph uninit" there or "codegraph project remove".'
+      );
+    }
 
     // Refuse to index your home directory / a filesystem root — it pulls in
     // caches, other projects, and your whole tree (a multi-GB index + watcher
@@ -899,8 +908,9 @@ program
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
   .option('-y, --yes', 'Non-interactive: skip every prompt and take the defaults (for scripts / CI / container bootstraps)')
   .option('--local-only', 'Keep .codegraph/ out of git entirely: its .gitignore ignores itself too. Also converts an initialized project')
-  .action(async (pathArg: string | undefined, options: { index?: boolean; force?: boolean; verbose?: boolean; yes?: boolean; localOnly?: boolean }) => {
-    await runInit(path.resolve(pathArg || process.cwd()), options);
+  .option('--no-git', 'Opt a folder outside git in to indexing (R-50); run once')
+  .action(async (pathArg: string | undefined, options: { index?: boolean; force?: boolean; verbose?: boolean; yes?: boolean; localOnly?: boolean; git: boolean }) => {
+    await runInit(path.resolve(pathArg || process.cwd()), { ...options, noGit: !options.git });
   });
 
 /**
@@ -959,6 +969,13 @@ program
       } catch { /* non-fatal */ }
 
       success(`Removed CodeGraph from ${projectPath}`);
+
+      // An opted-in folder outside git stops being indexed with its index gone (R-50).
+      const { getRegisteredProject, clearNonGitOptIn, PROJECT_FLAG_NO_GIT } = await import('../extensions/host/worktree-lifecycle/project-registry');
+      if (((getRegisteredProject(projectPath)?.flags ?? 0) & PROJECT_FLAG_NO_GIT) !== 0) {
+        clearNonGitOptIn(projectPath);
+        info(`Cleared the opt-in of ${projectPath}: run "codegraph init --no-git" there to opt it in again.`);
+      }
 
       // Churn signal — and flush now, since after an uninit there may be no
       // "next run" to deliver it.
@@ -1043,9 +1060,9 @@ program
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
   .action(async (pathArg: string | undefined, options: { force?: boolean; quiet?: boolean; verbose?: boolean }) => {
-    // The project rebuilt is the git worktree root of <path> (or of the cwd), never the nearest initialized
-    // ancestor (#1524): codegraph indexes only git worktrees (SPEC §3), and a path in none is refused here,
-    // before --force or anything else is looked at.
+    // The project rebuilt is the git worktree root or opted-in folder of <path> (or of the cwd), never the
+    // nearest initialized ancestor (#1524): requireGitWorktreeRoot accepts only those two and refuses any
+    // other path here, before --force or anything else is looked at.
     const required = requireGitWorktreeRoot(pathArg ? path.resolve(pathArg) : process.cwd());
     if ('refusal' in required) {
       error(required.refusal);
@@ -1064,7 +1081,8 @@ program
 
       if (!isInitialized(projectPath)) {
         error(`CodeGraph not initialized in ${projectPath}`);
-        // An initialized ancestor in no git worktree is one this command refuses, so it is never offered.
+        // An initialized ancestor in no git worktree and no opted-in folder is one this command refuses, so
+        // it is never offered.
         const ancestor = pathArg ? resolveProjectPath(pathArg) : projectPath;
         if (ancestor !== projectPath && gitRootByStat(ancestor) !== null) {
           info(`The nearest initialized project is ${ancestor} — pass that path to rebuild it, or run "codegraph init" in ${projectPath} to index it on its own.`);
@@ -1151,8 +1169,8 @@ program
   .description('Sync changes since last index')
   .option('-q, --quiet', 'Suppress output (for git hooks)')
   .action(async (pathArg: string | undefined, options: { quiet?: boolean }) => {
-    // The project synced is the git worktree root of <path> (or of the cwd); a path in no git worktree is
-    // refused (SPEC §3: codegraph indexes only git worktrees).
+    // The project synced is the git worktree root or opted-in folder of <path> (or of the cwd);
+    // requireGitWorktreeRoot refuses any other path.
     const required = requireGitWorktreeRoot(path.resolve(pathArg || process.cwd()));
     if ('refusal' in required) {
       error(required.refusal);

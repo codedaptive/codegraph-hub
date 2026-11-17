@@ -221,7 +221,10 @@ d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect c
 
 ## 9. Out of scope (R-12)
 
-Builder robustness items closed by R-16 (watchdog, hook sync, stale `rebuild.pid`) until one surfaces.
+Builder robustness items closed by R-16 (watchdog, hook sync, stale `rebuild.pid`) until one surfaces. One
+neighbouring leftover did surface (F5, S-73): a cold build killed while writing the schema left a `codegraph.db`
+without it, and the next cold build failed on it. Under a dead holder's `rebuild.pid`, that database is now
+discarded, and the root is cold-built again or seeded from a sibling. R-16's three items stay closed.
 
 Performance targets; graft and anything only in MISSION.md. (The upstream process R-12 deferred is now in scope:
 R-17, `docs/SPEC-upstream.md`, R-26.)

@@ -1756,7 +1756,7 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a path in no git worktree is never indexed and is answered that it is not in a git repository.',
+  description: 'REQUIRED: the root path of the code to query (or any directory inside it) — codegraph uses the index of the git repository the path is in (the nearest .codegraph/ at or above it, unless that index belongs to another git repository nested around the path). There is no default project: a call without it is answered "missing argument: root path to the code you wish to query". The server answers only for the repository the session was launched in and that repository\'s git worktrees, or, launched outside git, only the launch directory and what is below it; a path outside them gets guidance, not results. A git worktree with no index of its own gets one copied from another indexed worktree of the same repository on the first call (built in the background when there is none); a path in no git worktree is never indexed, unless its folder was opted in with `codegraph init <dir> --no-git`, and is answered that it is not in a git repository.',
 };
 
 /**
@@ -2738,8 +2738,9 @@ export class ToolHandler {
       // call may still find an index (a sibling finishes, a build retries). seedWorktreeIndex memoizes it.
       const worktree = this.unseededWorktrees.get(projectPath);
       if (worktree && worktreeSeedModule) throw new NotIndexedError(worktreeSeedModule.unseededWorktreeNote(projectPath, worktree));
-      // With a builder, a path in no git worktree is answered that it is not in a git repository: codegraph
-      // indexes only git worktrees, so `codegraph init` there would be refused too.
+      // With a builder, a path in no git worktree and no opted-in folder is answered that it is not in a git
+      // repository: codegraph indexes only git worktrees and opted-in folders, so `codegraph init` there would be
+      // refused too unless it opts the folder in (`--no-git`).
       if (this.builder) {
         const required = requireGitWorktreeRoot(projectPath);
         if ('refusal' in required) throw new NotIndexedError(required.refusal);
@@ -2801,8 +2802,8 @@ export class ToolHandler {
    * repository nested in an indexed checkout is its own worktree root, so the checkout's index does not answer
    * for it, covered or not: the builder seeds or builds one for the nested repository unless
    * CODEGRAPH_NO_AUTO_SEED=1 turns automatic indexing off, the call answers the building note while that runs,
-   * and the not-indexed guidance when the copy or build fails; a path in no git worktree selects none, so a
-   * builder engine never opens an index outside git), {@link selectIndexRoot} on one without (the CLI,
+   * and the not-indexed guidance when the copy or build fails; a path in no git worktree and no opted-in folder selects none, so a
+   * builder engine never opens an index outside both), {@link selectIndexRoot} on one without (the CLI,
    * the read-only fallback, query workers: nothing builds there, and {@link uncoveredNestedRepo} guards the nested
    * case instead). The one place the choice is made, for the selection, the builder question, the sensitive-path
    * refusal and the focus root.
@@ -2910,9 +2911,9 @@ export class ToolHandler {
    * a `rebuild.pid` beside it (a worktree that may need a seed or a cold
    * build). The index is the call's own ({@link selectIndexRootForCall}): a
    * path in a git repository nested below an indexed checkout has none, so the
-   * builder is asked. Yes for a path in a git working tree with no index. Never
-   * for a path in no git worktree: nothing is built there, and the call is
-   * answered that it is not in a git repository. No otherwise: a
+   * builder is asked. Yes for a path in a git working tree or an opted-in folder
+   * with no index. Never for a path in neither: nothing is built there, and the
+   * call is answered that it is not in a git repository. No otherwise: a
    * call against an index already open and held costs a few stats, no IPC, so
    * a builder busy with a long job never delays a read of another project.
    */

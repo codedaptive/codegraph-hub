@@ -8,8 +8,9 @@ import { isDeadHolderRecord } from './isDeadHolderRecord';
 /**
  * Whether `root` has a `rebuild.pid` whose holder is gone (./isDeadHolderRecord.ts):
  * true when the file exists and names no live process other than this one,
- * false with no file. `runColdBuild` (./cold-build.ts) reads this before it
- * takes the lock, since taking it over replaces the record that tells.
+ * false with no file. `runColdBuild` (./cold-build.ts) and
+ * `discardSeedTargetLeftover` (./discardSeedTargetLeftover.ts) read this
+ * before they take the lock, since taking it over replaces the record that tells.
  */
 export function deadRebuildHolder(root: string): boolean {
   if (!fs.existsSync(path.join(getCodeGraphDir(root), 'rebuild.pid'))) return false;
