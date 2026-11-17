@@ -4,8 +4,9 @@
  * On a git root the scan takes git's own file list, and git lists a directory
  * link as one entry without its contents. A link whose real target leaves the
  * root is walked here only when the root ignore re-includes the link's path
- * (`followSymlinkedDir`). A link into the root is never followed: git already
- * lists the real files there, so walking it would index them twice.
+ * (`followSymlinkedDir`). A link into the root is not followed: on the git
+ * route git's list is what the index holds for in-root content, so an alias
+ * never indexes a file twice (S-76 (b)).
  *
  * Only listed paths a negation rule matches reach the file system, so a large
  * git list costs at most two ignore tests per path (file form, then folder form). The walk skips `.git` and CodeGraph
