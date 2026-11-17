@@ -65,6 +65,9 @@ describe('stale file refusal for a stopped root', () => {
     expect(text.split('partial or behind')).toHaveLength(2);
     const note = text.split(/\r?\n/).find(line => line.includes('partial or behind'));
     expect(note).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    expect(note).toContain(`last sync job of ${root} at its time limit`);
+    expect(note).toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_MS\b/);
+    expect(note).not.toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_RSS_MB\b/);
     expect(note).toContain(`codegraph index ${root}`);
     expect(text).not.toContain('codegraph sync');
     expect(text.split(/\r?\n/).find(line => /retry/i.test(line))).toContain(`codegraph index ${root}`);

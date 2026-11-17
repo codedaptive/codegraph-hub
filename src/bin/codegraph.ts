@@ -395,7 +395,7 @@ function warn(message: string): void {
  * index builder's last job of the root was stopped at a limit
  * (stopped-root-mark.ts), it writes the stopped-index note to stderr the same
  * way: the index is read as it is, but may be partial or behind until an
- * explicit `codegraph index`. explore, node and the prompt hook pass
+ * explicit `codegraph index` or `codegraph init`. explore, node and the prompt hook pass
  * `stoppedNote: false`: their answer is a tool answer, or for the prompt
  * hook's symbol list its own context block, and carries the note itself, so
  * every answer served from a stopped root's index without an error has

@@ -3662,7 +3662,8 @@ export class ToolHandler {
   /**
    * Prepend the stopped-index note to every answer served from a root whose
    * last builder job was ended at a limit (S-69): the index on disk is served,
-   * but may be partial or behind until an explicit `codegraph index`.
+   * but may be partial or behind until an explicit `codegraph index` or
+   * `codegraph init`.
    */
   private withStoppedJobNotice(result: ToolResult, project: CodeGraph): ToolResult {
     if (result.isError) return result;
@@ -3857,7 +3858,7 @@ export class ToolHandler {
               ...validation.unchecked.slice(0, 20).map(file => `- ${file}`));
             if (validation.unchecked.length > 20) lines.push(`- … ${validation.unchecked.length - 20} more (narrow the query)`);
           }
-          // A sync never clears the mark (and is refused under a sync-kind one); only `codegraph index` does.
+          // A sync never clears the mark (and is refused under a sync-kind one); only `codegraph index` or `codegraph init` does.
           const mark = stoppedRootMark(() => project.getProjectRoot());
           lines.push(mark
             ? `Retry after \`codegraph index ${mark.root}\`, or narrow the query.`

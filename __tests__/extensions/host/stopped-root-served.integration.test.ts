@@ -75,6 +75,11 @@ describe('serving a stopped root', () => {
       expect(textOf(result)).toContain(variable);
       expect(textOf(result)).toContain('partial or behind');
       expect(textOf(result)).toContain('codegraph index');
+      const note = textOf(result).split(/\r?\n/).find(line => line.includes('partial or behind'));
+      expect(note).toContain(`last ${kind} job of ${root} at its ${limit === 'time' ? 'time' : 'memory'} limit`);
+      expect(note).toMatch(new RegExp(`\\b${variable}\\b`));
+      expect(note).not.toMatch(limit === 'time' ? /\bCODEGRAPH_BUILDER_JOB_MAX_RSS_MB\b/ : /\bCODEGRAPH_BUILDER_JOB_MAX_MS\b/);
+      expect(note).toContain(`codegraph index ${root}`);
     }
   });
 
@@ -89,6 +94,11 @@ describe('serving a stopped root', () => {
     expect(textOf(result)).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(textOf(result)).toContain('partial or behind');
     expect(textOf(result)).toContain('codegraph index');
+    const note = textOf(result).split(/\r?\n/).find(line => line.includes('partial or behind'));
+    expect(note).toContain(`last open job of ${root} at its time limit`);
+    expect(note).toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_MS\b/);
+    expect(note).not.toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_RSS_MB\b/);
+    expect(note).toContain(`codegraph index ${root}`);
   });
 
   it('stops adding the note after the root is cleared', async () => {
@@ -99,6 +109,11 @@ describe('serving a stopped root', () => {
     engine = new MCPEngine({ builder: builderFor(root) });
     const before = await engine.getToolHandler().execute('codegraph_search', { query: 'alphaSymbol', projectPath: root }, undefined, ADMIT_ALL);
     expect(textOf(before)).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
+    const note = textOf(before).split(/\r?\n/).find(line => line.includes('partial or behind'));
+    expect(note).toContain(`last open job of ${root} at its time limit`);
+    expect(note).toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_MS\b/);
+    expect(note).not.toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_RSS_MB\b/);
+    expect(note).toContain(`codegraph index ${root}`);
     clearEndedRoot(root, stateDir);
     const after = await engine.getToolHandler().execute('codegraph_search', { query: 'alphaSymbol', projectPath: root }, undefined, ADMIT_ALL);
     expect(after.isError).toBeFalsy();

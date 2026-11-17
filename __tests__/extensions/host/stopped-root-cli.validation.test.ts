@@ -25,6 +25,14 @@ function runCli(command: string) {
   });
 }
 
+/** The note names the fixture's mark: a `sync` job of `root` over its time limit, and only that limit's variable. */
+function expectMarkNote(note: string | undefined): void {
+  expect(note).toContain(`last sync job of ${root} at its time limit`);
+  expect(note).toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_MS\b/);
+  expect(note).not.toMatch(/\bCODEGRAPH_BUILDER_JOB_MAX_RSS_MB\b/);
+  expect(note).toContain(`codegraph index ${root}`);
+}
+
 function mark(rootToMark: string): void {
   new EndedJobsFile(path.join(stateDir, 'builder-ended-jobs.jsonl')).append({
     root: rootToMark, kind: 'sync', limit: 'time', at: '2026-11-17T10:00:00Z',
@@ -63,6 +71,7 @@ describe('stopped root note: CLI', { timeout: 600_000 }, () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(lines[0]).toContain('codegraph index');
+    expectMarkNote(lines[0]);
   });
 
   it.each(['explore', 'node'])('%s serves a marked index with exactly one note across both streams', command => {
@@ -77,6 +86,7 @@ describe('stopped root note: CLI', { timeout: 600_000 }, () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(lines[0]).toContain('codegraph index');
+    expectMarkNote(lines[0]);
   });
 
   it('status reports a marked index with one note on stderr', () => {
@@ -93,6 +103,7 @@ describe('stopped root note: CLI', { timeout: 600_000 }, () => {
     const note = result.stderr.split(/\r?\n/).find(line => line.includes(NOTE));
     expect(note).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(note).toContain(`codegraph index ${root}`);
+    expectMarkNote(note);
   });
 
   it('status of an unmarked index has no stopped note', () => {
@@ -130,6 +141,7 @@ describe('stopped root note: CLI', { timeout: 600_000 }, () => {
     const note = block.split(/\r?\n/).find(line => line.includes(NOTE));
     expect(note).toContain('CODEGRAPH_BUILDER_JOB_MAX_MS');
     expect(note).toContain(`codegraph index ${root}`);
+    expectMarkNote(note);
   });
 
   it('query serves an unmarked index without another root’s note', () => {

@@ -2,7 +2,8 @@
  * The line every answer served from a root's index carries while the index builder's last job of that root
  * ended over a limit (./job-limits.ts) and an index is on disk: the index is served as it is, but it may be
  * partial or behind. Like ./ended-job-note.ts, it names the one variable for the limit that was hit and the
- * explicit `codegraph index` that clears the mark, since the builder never retries an ended job on its own.
+ * explicit `codegraph index` to run (an explicit `codegraph init` clears the mark too), since the builder never
+ * retries an ended job on its own.
  * The line has no warning sign of its own: a tool answer puts `⚠️` before it, the CLI its warn glyph.
  */
 import type { JobKind } from './queue';
