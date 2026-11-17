@@ -79,8 +79,10 @@ build to finish.
 ### Only a git worktree root is indexed (R-46)
 
 Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root: not the server, not
-the builder, not a CLI command that hands it work. A call whose path lies inside a git worktree resolves to that
-worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
+the builder, not a CLI command. `init`, `index` and `sync` refuse a path in no git worktree whether they hand the
+work to the builder or write in their own process (§2, R-14), before anything is written: an error and exit 1, as
+for an unsafe root, with no `--force` override; `uninit` and `project remove` still work on such a root (S-70). A
+call whose path lies inside a git worktree resolves to that worktree's root. A call whose path is in no git worktree gets success-shaped guidance that it is not a repository,
 never `isError`, and nothing is built. A session launched outside git keeps its launch directory as its anchor
 (§4); a call there resolves to the worktree enclosing its path, or gets that guidance. The builder still refuses
 what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the home directory, a
