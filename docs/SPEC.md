@@ -101,12 +101,18 @@ The builder still refuses what upstream's `unsafeIndexRootReason` (`src/director
 home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
 the queued job starts.
 
-### What a build reads (R-44)
+### What a build and the watcher read (R-44, S-72, S-75)
 
 The scan does not follow a symlinked folder whose real path is outside the root; it follows one whose real path is
 inside it. No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
-matcher as the root `.gitignore`; a `!` line naming a link's path inside the project re-includes a symlinked folder
-that leaves the root.
+matcher as the root `.gitignore` (`buildDefaultIgnore`), so it applies wherever that matcher does: the walk, the
+git path, sync and the watcher, and an embedded repository's own `.codegraphignore` applies inside it (S-72). A `!`
+line naming a link's path inside the project re-includes a symlinked folder that leaves the root.
+
+The file watcher follows directory links by the same rule (S-75): a link whose real path is inside the root is
+watched, one leaving it only when re-included. An edit to the root `.codegraphignore` rebuilds the watcher's scope
+at once, as an edit to the root `.gitignore` or `codegraph.json` does: the watched folders are refreshed and the next
+sync is a full reconcile.
 
 ### Job limits and space (R-47, S-69, R-45)
 
@@ -206,7 +212,7 @@ d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect c
 | sm.12 (ours 4fdda779, 2026-11-04) | `codegraph upgrade` and the update notice use the hub's releases, never upstream's package; `-sm.N` versions compared by number (R-32); comments and test names without internal citations (S-55); the hub's first release |
 | sm.13 (ours be5ab360, 2026-11-06) | a pinned project with no index is seeded from its nearest sibling; `codegraph project seed <path>` (S-57) |
 | sm.14 (ours 6a2b6eff, 2026-11-10) | a launcher no longer takes over a busy server, and a stopping server removes only its own socket (split-server fix, F-1/F-2, S-58); the R-38 bug list (Swift member and nested-supertype resolution, `grep`/`orphans` tool descriptions, install runbook, seed and upgrade-version fixes); upstream PRs #3249 (impact speed) and #3215 (order-independent resolution) taken early (R-40). Repo work landed with this commit, not in the package: the first test-group moves (D281); the S-65 moves follow |
-| sm.15 (ours d1e4c984, 2026-11-17) | after the 11-16 incident: only a git worktree root is indexed, and the CLI's `init`, `index` and `sync` refuse any other path on both routes (R-46, S-70); every builder job is ended at 60 minutes or 8 GB resident and not retried until an explicit `index` or `init` (R-47, S-69); on macOS a watcher is ready once its delivery probe sees its own event or gives up (macos-watcher-gap). Review follow-ups, the stopped note and R-50's opt-in for code outside git follow in sm.16 |
+| sm.15 (ours d1e4c984, 2026-11-17) | after the 11-16 incident: only a git worktree root is indexed: the CLI's `init`, `index` and `sync` refuse a path outside every git worktree on both routes, and a path below a worktree root acts on that root (R-46, S-70; code outside git waits for R-50's opt-in); every builder job is ended at 60 minutes or 8 GB resident and not retried until an explicit `index` or `init` (R-47, S-69); on macOS a watcher is ready once its delivery probe sees its own event or gives up (macos-watcher-gap). Review follow-ups, the stopped note and R-50's opt-in for code outside git follow in sm.16 |
 
 | Left | State |
 |---|---|

@@ -1288,7 +1288,8 @@ describe('FileWatcher', () => {
       vi.unstubAllEnvs();
     });
 
-    it('auto-syncs edits, creates and deletes through an external directory link', async () => {
+    it('auto-syncs edits, creates and deletes through a re-included external directory link', async () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!linked-project\n');
       const dir = external();
       fs.mkdirSync(path.join(dir, 'src'));
       const file = path.join(dir, 'src', 'item.ts');
@@ -1307,6 +1308,7 @@ describe('FileWatcher', () => {
     }, 30000);
 
     it('watches both targets of a real cycle and deduplicates aliases', async () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!linked\n!duplicate\n!linked/toB\n!duplicate/toB\n');
       const a = external();
       const b = external();
       link(b, path.join(a, 'toB'));
@@ -1323,6 +1325,7 @@ describe('FileWatcher', () => {
     }, 15000);
 
     it('discovers new links, retargets them, removes stale paths and restarts', async () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!linked\n');
       const a = external();
       const b = external();
       fs.writeFileSync(path.join(a, 'a.ts'), 'export function firstTarget() {}');
@@ -1346,22 +1349,25 @@ describe('FileWatcher', () => {
       await waitFor(() => !has('restartedEdit'), 8000);
     }, 45000);
 
-    it('refreshes excluded link scope without watching ignored targets', async () => {
+    it('skips an outside link by default and follows it while .codegraphignore re-includes it', async () => {
       const dir = external();
       link(dir, path.join(testDir, 'linked'));
       fs.writeFileSync(path.join(dir, 'a.ts'), 'export function scopeLinked() {}');
-      fs.writeFileSync(path.join(testDir, '.gitignore'), 'linked/\n');
       await start();
       expect(has('scopeLinked')).toBe(false);
-      fs.writeFileSync(path.join(testDir, '.gitignore'), '');
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!linked\n');
       await waitFor(() => has('scopeLinked'), 8000);
+      await untilLive(path.join(testDir, 'linked'));
       fs.writeFileSync(path.join(dir, 'a.ts'), 'export function scopeEdited() {}');
       await waitFor(() => has('scopeEdited'), 8000);
-      fs.writeFileSync(path.join(testDir, '.gitignore'), 'linked/\n');
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '');
       await waitFor(() => !has('scopeEdited'), 8000);
     }, 30000);
 
-    it('bounds watch handles, skips ignored targets and closes every handle on stop', () => {
+    it('bounds watch handles, skips ignored and non-re-included targets and closes every handle on stop', () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!linked\n!duplicate\n');
+      const outside = external();
+      link(outside, path.join(testDir, 'outside'));
       const dir = external();
       link(dir, path.join(testDir, 'linked'));
       link(dir, path.join(testDir, 'duplicate'));
@@ -1380,6 +1386,7 @@ describe('FileWatcher', () => {
       watchers.push(watcher);
       expect(watcher.start()).toBe(true);
       expect(opened.some(d => d.includes('node_modules'))).toBe(false);
+      expect(opened.some(d => fs.realpathSync(d) === fs.realpathSync(outside))).toBe(false);
       expect(opened.filter(d => fs.realpathSync(d) === fs.realpathSync(dir))).toHaveLength(1);
       watcher.stop();
       expect(closed.sort()).toEqual(opened.sort());
@@ -1389,6 +1396,7 @@ describe('FileWatcher', () => {
     });
 
     it.runIf(process.platform === 'darwin' || process.platform === 'win32')('caps supplemental recursive streams and degrades on their exhaustion', () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!first\n!second\n');
       link(external(), path.join(testDir, 'first'));
       link(external(), path.join(testDir, 'second'));
       vi.stubEnv('CODEGRAPH_MAX_DIR_WATCHES', '1');
@@ -1436,6 +1444,7 @@ describe('FileWatcher', () => {
     const selfName = (dir: string) => (process.platform === 'win32' ? `\\\\?\\${dir}` : dir);
 
     it('closes a linked folder\'s stream once its target is deleted, with one check per burst (#2487)', async () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!libs\n');
       const dir = external();
       fs.writeFileSync(path.join(dir, 'lib.ts'), 'export const lib = 1;');
       const linked = path.join(testDir, 'libs');
@@ -1502,6 +1511,7 @@ describe('FileWatcher', () => {
     });
 
     it.runIf(process.platform === 'win32')('ends the event storm of a real junction whose target is deleted (#2487)', async () => {
+      fs.writeFileSync(path.join(testDir, '.codegraphignore'), '!libs\n');
       const dir = external();
       fs.writeFileSync(path.join(dir, 'lib.ts'), 'export const lib = 1;');
       const linked = path.join(testDir, 'libs');

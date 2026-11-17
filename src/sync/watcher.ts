@@ -24,6 +24,9 @@
  *     a directory already reports create/modify/delete for its children, so
  *     per-file watches are never needed.
  *
+ * On every platform a directory symlink whose real target is outside the root
+ * is followed only when re-included (R-44).
+ *
  * Excluded trees (node_modules/, dist/, .git/, …) are filtered via the
  * indexer's `buildScopeIgnore` (built-in defaults + root `.gitignore` +
  * `.git/info/exclude` + `core.excludesFile` + git ignored-untracked dirs) —
@@ -35,12 +38,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { isSourceFile, buildScopeIgnore, type ScopeIgnore } from '../extraction';
+import type { Ignore } from 'ignore';
+import { isSourceFile, buildScopeIgnore, buildDefaultIgnore, type ScopeIgnore } from '../extraction';
 import { loadExtensionOverrides, PROJECT_CONFIG_FILENAME } from '../project-config';
 import { LockUnavailableError, logDebug, logWarn } from '../errors';
 import { escapesRoot, normalizePath } from '../utils';
 import { isCodeGraphDataDir } from '../directory';
 import { watchDisabledReason } from './watch-policy';
+import { followSymlinkedDir } from '../extensions/host/scan/follow-symlinked-dir';
 
 /**
  * Number of consecutive lock-contention retries the watcher tolerates before
@@ -385,6 +390,12 @@ export class FileWatcher {
   // scope (#1728). An embedded repo created after start() joins the scope on
   // the next scope refresh / watcher restart / re-index.
   private ignoreMatcher: ScopeIgnore | null = null;
+  // The root rules from `buildDefaultIgnore` (defaults + root `.gitignore` +
+  // `.git/info/exclude` + `.codegraphignore`), the same matcher the indexer's
+  // walk asks whether a directory symlink leaving the root is re-included
+  // (R-44). Built and rebuilt with `ignoreMatcher`; null (not started or
+  // stopped) follows no link.
+  private linkMatcher: Ignore | null = null;
 
   private readonly projectRoot: string;
   private readonly debounceMs: number;
@@ -445,6 +456,7 @@ export class FileWatcher {
 
     // Reuse the indexer's ignore set so the watcher and indexer agree on scope.
     this.ignoreMatcher = buildScopeIgnore(this.projectRoot);
+    this.linkMatcher = buildDefaultIgnore(this.projectRoot);
 
     try {
       if (this.inertForTests) {
@@ -549,11 +561,12 @@ export class FileWatcher {
           if (entry.isDirectory()) {
             walk(child, false);
           } else if (entry.isSymbolicLink()) {
-            // Follow directory symlinks just like the indexer's walk. Realpath
+            // Follow directory symlinks under the indexer's rule: inside the
+            // root always, outside only when re-included (R-44). Realpath
             // deduplication includes ordinary directories and the root itself.
             try {
-              if (fs.statSync(child).isDirectory()) walk(child, true);
-            } catch { /* broken link */ }
+              if (fs.statSync(child).isDirectory() && this.followsLink(child)) walk(child, true);
+            } catch { /* broken link or failed realpath */ }
           }
         }
       } catch { /* removed or unreadable directory */ }
@@ -564,6 +577,13 @@ export class FileWatcher {
       if (desired.get(dir) !== this.watchedRealDirs.get(dir)) this.unwatchDir(dir);
     }
     for (const [dir, real] of desired) this.watchDirectory(dir, real, recursive);
+  }
+
+  /** Whether the walk follows the directory symlink `child`; throws when realpath fails. */
+  private followsLink(child: string): boolean {
+    if (!this.linkMatcher) return false;
+    const rel = normalizePath(path.relative(this.projectRoot, child));
+    return followSymlinkedDir(this.projectRoot, fs.realpathSync(child), rel, this.linkMatcher);
   }
 
   /** Coalesce directory topology events before walking; file edits never walk the tree. */
@@ -685,10 +705,11 @@ export class FileWatcher {
       return;
     }
     if (this.isAlwaysIgnored(rel)) return;
-    // The two root files the scope matcher is derived from are handled BEFORE
-    // the matcher is consulted: a user `exclude` pattern that happens to cover
-    // them (`*.json`, `.*`) must not be able to hide their own edits (#1590).
-    if (rel === PROJECT_CONFIG_FILENAME || rel === '.gitignore') {
+    // The three root files the scope and link matchers are derived from are
+    // handled BEFORE the matcher is consulted: a user `exclude` pattern that
+    // happens to cover them (`*.json`, `.*`) must not be able to hide their
+    // own edits (#1590).
+    if (rel === PROJECT_CONFIG_FILENAME || rel === '.gitignore' || rel === '.codegraphignore') {
       this.refreshScope(rel);
       return;
     }
@@ -735,8 +756,10 @@ export class FileWatcher {
   }
 
   /**
-   * A scope-defining file changed (`codegraph.json`, a `.gitignore`): rebuild
-   * the ignore matcher and make the next sync a FULL reconcile (#1590).
+   * A scope-defining file changed (`codegraph.json`, a `.gitignore`, the root
+   * `.codegraphignore`): rebuild the ignore matcher and the link matcher
+   * (which outside-root directory links the walk follows, R-44), refresh the
+   * watch tree, and make the next sync a FULL reconcile (#1590).
    *
    * The matcher used to be built once in `start()` and kept for the watcher's
    * lifetime — in a long-lived MCP daemon that meant a `codegraph.json`
@@ -758,6 +781,7 @@ export class FileWatcher {
   private refreshScope(rel: string): void {
     logDebug('Scope config changed; rebuilding watcher scope', { file: rel });
     this.ignoreMatcher = buildScopeIgnore(this.projectRoot);
+    this.linkMatcher = buildDefaultIgnore(this.projectRoot);
     this.scheduleTreeRefresh();
     this.needsFullScan = true;
     this.scheduleSync();
@@ -806,8 +830,9 @@ export class FileWatcher {
    * of the burst finds it armed. The check closes a linked folder's stream
    * when the link no longer leads to the folder it watched (deleted, or
    * pointed elsewhere) and re-reads the tree: its full sync drops what the
-   * folder held, and a link that leads somewhere live is watched anew. A
-   * project folder that is gone degrades the watcher, closing every stream.
+   * folder held, and a link that leads somewhere live and is still followed
+   * (R-44) is watched anew. A project folder that is gone degrades the
+   * watcher, closing every stream.
    */
   private armGoneCheck(dir: string): void {
     if (this.stopped || this.goneChecks.has(dir)) return;
@@ -1015,6 +1040,7 @@ export class FileWatcher {
     this.pendingFiles.clear();
     this.ready = false;
     this.ignoreMatcher = null;
+    this.linkMatcher = null;
     if (IS_TEST_RUNTIME) liveWatchersForTests.delete(this.projectRoot);
     logDebug('File watcher stopped');
   }
