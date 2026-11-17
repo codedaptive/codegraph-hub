@@ -248,6 +248,16 @@ describe('JobQueue job limits', () => {
     expect(events).toEqual([]);
   });
 
+  it('refuses a vacuum of a root whose vacuum was ended, until an index of that root ends ok', async () => {
+    endedJobs.add({ ...mark, kind: 'vacuum' });
+    const run = vi.fn(async () => 42);
+    await expect(new JobQueue().enqueue('vacuum', '/ended', run)).rejects.toBeInstanceOf(JobEndedError);
+    expect(run).not.toHaveBeenCalled();
+    await new JobQueue().enqueue('index', '/ended', async () => undefined);
+    await expect(new JobQueue().enqueue('vacuum', '/ended', run)).resolves.toBe(42);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
   it.each(['cold-build', 'init', 'index'] as const)('does not refuse an ended %s job', async (kind) => {
     endedJobs.add({ ...mark, kind });
     const run = vi.fn(async () => 42);

@@ -9,11 +9,11 @@ beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-free-disk-'))
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe('freeDiskBytes', () => {
-  it('returns a positive whole byte count for an existing directory', () => {
+  it('returns the blocks available to this user times the block size', () => {
     const bytes = freeDiskBytes(dir);
-    expect(bytes).not.toBeNull();
+    const fsStats = fs.statfsSync(dir);
+    expect(bytes).toBe(fsStats.bavail * fsStats.bsize);
     expect(bytes).toBeGreaterThan(0);
-    expect(Number.isInteger(bytes)).toBe(true);
   });
 
   it('returns null for a nonexistent path', () => {

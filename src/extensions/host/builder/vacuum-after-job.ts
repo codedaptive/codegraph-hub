@@ -1,6 +1,6 @@
 /**
- * The builder's VACUUM rule (ruling R-45), run after every job's event: a job that ended ok and left its root's
- * freelist over the limit (./freelist-over-limit.ts) queues a `vacuum` job of that root. The VACUUM is a job of
+ * The builder's VACUUM rule (ruling R-45), run after each job that ends ok (./job-event-listener.ts): one that
+ * left its root's freelist over the limit (./freelist-over-limit.ts) queues a `vacuum` job of that root. The VACUUM is a job of
  * its own, in the cold class, so it waits behind every queued sync and never holds up an agent's edit; one queued
  * VACUUM per root is shared by every job that asks for it (its coalesce key).
  *

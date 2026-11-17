@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { freelistOverLimit } from '../../../src/extensions/host/builder/freelist-over-limit';
-import { MIN_VACUUM_FREELIST_BYTES } from '../../../src/extensions/host/builder/min-vacuum-freelist-bytes';
 
 const stats = (pageCount: number, freelistCount: number) => ({ pageSize: 4096, pageCount, freelistCount });
 
 describe('freelistOverLimit', () => {
-  it('exports the 256 MiB default and honors both boundaries', () => {
-    expect(MIN_VACUUM_FREELIST_BYTES).toBe(268_435_456);
+  it('honors both boundaries at the 256 MiB default', () => {
     expect(freelistOverLimit(stats(262144, 65536))).toBe(false);
     expect(freelistOverLimit(stats(200000, 65536))).toBe(true);
   });
