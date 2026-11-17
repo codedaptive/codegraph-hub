@@ -50,7 +50,9 @@ their own state directory. They never connect to, replace or write through the l
 - **Pinned** databases (standing worktrees) stay open and current: never closed for idleness, always synced, so they
   are always a good copy source [B13]. Who pins: codeteam, with `codegraph project pin`, for the worktrees it
   calls standing [B14].
-- A closed, unpinned database is not watched; the next call opens it and queues a catch-up sync. (R-12)
+- A closed, unpinned database is not watched; the next call opens it, starts its watcher and queues a catch-up sync
+  once the watcher is ready or the holder's 10 s bound runs out. On macOS ready means the delivery probe saw its own
+  event, or gave up after 5 s with delivery unproven. A root released before then queues no catch-up. (R-12)
 
 Index selection and admission stop at the call path's git root: a git clone nested under another checkout is its own
 repository, so it gets its own index root and is built, never answered from the outer checkout's index [B3].

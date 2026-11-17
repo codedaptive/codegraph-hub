@@ -303,7 +303,7 @@ When your agent (Claude Code, Cursor, Codex, opencode) launches `codegraph serve
 
 2. **Per-file staleness banner.** During the brief debounce window, MCP tool responses that would reference a still-pending file prepend a `⚠️` banner naming it and telling the agent to `Read` it directly. Pending files NOT referenced by the response surface as a small footer instead. Either way, the agent gets an explicit signal — validated with Claude Code, where the agent literally says "Reading the file directly for the live content" before opening it.
 
-3. **Connect-time catch-up.** When the MCP server (re)connects, codegraph runs a fast `(size, mtime)` + content-hash reconciliation against the working tree before answering the first query — so edits made while no MCP server was running (a `git pull` from the terminal, edits from another editor, a previous agent session that exited) get absorbed on the next session's first tool call.
+3. **Connect-time catch-up.** When the MCP server (re)connects, codegraph runs a fast `(size, mtime)` + content-hash reconciliation against the working tree before answering the first query (on macOS the first query on a newly opened project can first wait, up to 10 s, for the file watcher to show it delivers events) — so edits made while no MCP server was running (a `git pull` from the terminal, edits from another editor, a previous agent session that exited) get absorbed on the next session's first tool call.
 
 ```
 agent writes src/Widget.ts
