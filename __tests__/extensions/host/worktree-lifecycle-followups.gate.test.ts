@@ -439,9 +439,7 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 600_000
     expect(getRegisteredProject(real(wt))!.flags & PROJECT_FLAG_SEEDED).not.toBe(0);
   });
 
-  // slow: two cold build attempts, two builder engine loads, and the readiness
-  // wait take well over 5 s under load. The 150 generated files make the first
-  // build long enough to interrupt in practice.
+  // The 150 generated files make the first build long enough to interrupt.
   it('F5: a cold build killed with its builder by SIGKILL is built again by the restarted builder, not marked failed', async () => {
     makeRepo(main, 150);
     const wt = path.join(workspace, 'wt-killed');

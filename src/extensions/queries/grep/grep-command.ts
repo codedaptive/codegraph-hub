@@ -7,6 +7,7 @@ import * as path from 'path';
 import { findNearestCodeGraphRoot } from '../../../directory';
 import { GrepIndexError, GrepPatternError, GrepScopeError, grepIndex, type GrepOptions } from './grep-core';
 import { formatGrepResult, zeroHitNote } from './grep-format';
+import { stoppedIndexWarning } from '../shared/stopped-index-warning';
 
 export interface CommandOutput { stdout: string; stderr: string; exitCode: number }
 
@@ -74,6 +75,8 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
  * The project root is `--path` when given, else the nearest ancestor of `cwd`
  * holding an index.
  * Zero hits is not an error: text mode puts the note on stderr and exits 0.
+ * Every exit-0 answer carries the stopped-index line first on stderr when the
+ * builder marked the root (../shared/stopped-index-warning.ts); an error does not.
  */
 export async function runGrepCommand(argv: string[], cwd: string): Promise<CommandOutput> {
   const parsed = parseArgs(argv);
@@ -86,9 +89,10 @@ export async function runGrepCommand(argv: string[], cwd: string): Promise<Comma
       throw new GrepIndexError(`no codegraph index at or above ${cwd} — run codegraph init in the project first`, 'not-indexed');
     }
     const result = await grepIndex(root, pattern, parsed.opts);
-    if (parsed.json) return { stdout: JSON.stringify(result, null, 2) + '\n', stderr: '', exitCode: 0 };
-    if (result.totalHits === 0) return { stdout: '', stderr: zeroHitNote(result) + '\n', exitCode: 0 };
-    return { stdout: formatGrepResult(result), stderr: '', exitCode: 0 };
+    const warning = stoppedIndexWarning(root) ?? '';
+    if (parsed.json) return { stdout: JSON.stringify(result, null, 2) + '\n', stderr: warning, exitCode: 0 };
+    if (result.totalHits === 0) return { stdout: '', stderr: warning + zeroHitNote(result) + '\n', exitCode: 0 };
+    return { stdout: formatGrepResult(result), stderr: warning, exitCode: 0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof GrepPatternError) return { stdout: '', stderr: `✗ invalid pattern "${pattern}": ${message}\n`, exitCode: 1 };

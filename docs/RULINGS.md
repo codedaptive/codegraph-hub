@@ -665,6 +665,10 @@ General as a RULING line. Decisions already settled by a document live in `team/
   zone, codegraph host) and drops non-git roots from the project registry.
 - Related: R-44 (the scan does not follow a symlinked folder out of the root) is the creator's item 2 and stands
   as Bob ruled it, with its `.codegraphignore` re-include.
+- Confirmed 2026-11-17 / Bob, direct ("R-46: btw that include the new concept .codegraphignore"; "yes" to the
+  reading): inside any indexed root, `.codegraphignore` (R-44) decides what is read; for a folder outside git it is
+  the boundary git would otherwise give. Narrowed the same day by R-50: a folder outside git may be indexed once it
+  is opted in.
 
 ## R-47. A builder job over its time or memory limit is ended and logged
 - Date: 2026-11-16 20:09 / Bob, relayed by his creator (BUG #3298 item 3; Orc-Codegraph #3299), on the same
@@ -676,3 +680,64 @@ General as a RULING line. Decisions already settled by a document live in `team/
   the measured value. The numbers and what follows an ended job are S-69.
 - Reason: the relayed order; a job left running took the machine down.
 - Owner: host (builder-job-limit, ahead of its queue, Orc #3299).
+- The creator's reading, 2026-11-17 (#3707, #3709): Bob's go on Q-40 (R-48), whose question named R-47, shipped it
+  in sm.15, and the creator reads that go as confirming R-47 and S-69's numbers (60 minutes, 8 GB, no automatic
+  retry). #3709 says that reading is the creator's call under Bob's rules, not Bob's own words, so Bob's own
+  confirmation, named in the Date line above, is still open.
+
+## R-48. Q-40: release and install 1.6.2-sm.15 now
+- Date: 2026-11-17 / Bob, direct ("Q-40: a"); the creator relayed the same go (#3632).
+- Question: the live builder was cold-building a folder outside git and holding every tree's sync; the fix (R-46,
+  R-47) is in ours d1e4c984 and only a release stops it. Release now (R-18)?
+- Ruling: go. Release 1.6.2-sm.15 from ours d1e4c984 now by the sm.14 path (gate, pack, tarball check, global
+  install, verify-teams). The review follow-ups of git-root-only and builder-job-limit, and the stopped note
+  (S-69), go in sm.16. sm.15 ships R-46 strict, as built; R-50's opt-in follows in sm.16.
+- Work implied: Orc-Codegraph releases and installs it and reports to the creator when installed.
+
+## R-49. Q-41: codeteam-jj's two feature asks, after the incident set
+- Date: 2026-11-17 / Bob, direct ("both after the incident").
+- Question: take (a) indexing files with no extension by their shebang line and (b) linking a Python test that
+  loads its subject by a literal path (`SourceFileLoader`, `spec_from_file_location`) to that file, while R-38 has
+  the team on bug fixes only?
+- Ruling: both, once the incident set (R-43..R-47, R-50) is done. (a) is a hook-in in upstream-owned
+  src/extraction/grammars.ts (`isSourceFile`), orc-approved, and an upstream PR candidate; (b) is resolution's.
+- Basis: Orc-Codeteam #3515; team-codeteam/design/Orc-Codeteam/ledger/reports/codegraph-gaps-20261117.md section 2.
+- Work implied: Orc-Codegraph orders both after the incident set.
+
+## R-50. Code outside git is indexed once it is opted in
+- Date: 2026-11-17 / Bob, direct, overruling S-70 ("that's to absolute to be useful there are such things as code
+  developed without git. The default should be git mode with an override required the first time"), then "S70 is
+  fine" to the rule below.
+- Question: S-70 had `init`, `index` and `sync` refuse every folder outside git, with no override. Should code
+  developed without git be indexable?
+- Ruling: yes, by opt-in. Git stays the default.
+  1. A call or command whose path is in no git worktree and in no opted-in folder builds nothing and gets the
+     success-shaped "not a repository" answer (R-46), which also says how to opt in.
+  2. The opt-in is `codegraph init <dir> --no-git`, run once by a person. It is recorded in the project registry;
+     from then on that folder is served, synced and caught up like a git worktree root. `--force` keeps its own
+     meaning (the unsafe-root override) and does not opt in.
+  3. Only that explicit CLI command opts in. No MCP call, catch-up, seed or housekeeping pass does, so no agent
+     query can start the Model-NCM kind of build.
+  4. An opted-in folder keeps every incident guard: symlinked folders leaving it are not followed (R-44),
+     `.codegraphignore` decides what is read (R-46 as confirmed), and the job limits apply (R-47, S-69).
+  5. A `.codegraph/` with no registry opt-in (the strays from before) counts as not opted in.
+  6. sm.15 ships R-46 strict (R-48); the opt-in comes in sm.16.
+- Supersedes: S-70 so far as it refused an opted-in folder and ruled out any override; R-46's "nothing ...
+  cold-builds a folder that is not a git worktree root" for an opted-in folder.
+- Owner: host (the opt-in in the CLI, registry, server and builder), after builder-job-limit's follow-ups.
+
+## R-51. Take the five unmerged upstream PRs into ours
+- Date: 2026-11-17 / Bob, relayed by his creator (#3714), on Designer's recommendation #3238 (upstream status, moot
+  memory d82a62f0).
+- Question: take the unmerged upstream pull requests recommended in the 2026-11-16 upstream check?
+- Ruling: take all five into ours:
+  - #3261: callers are re-bound when a shared definition changes on sync;
+  - #3258: synthesis skips dispatch scans that have no targets;
+  - #3303: grammar loads that start together wait for each other;
+  - #3256: absolute fetch URLs stop linking to the project's own routes;
+  - #3226: TypeScript variance annotations.
+  They come after the incident set and the docs/SPEC-upstream.md §7 merge of upstream main, as normal work orders in
+  the owning lanes, each commit message naming its upstream PR number, through the usual landing and the next
+  release. If upstream merges one of them first, it comes in with the main merge instead.
+- Work implied: Orc-Codegraph orders them in that place in the queue.
+
