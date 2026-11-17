@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, execFileSync, ChildProcessWithoutNullStreams } from 'child_process';
 import { once } from 'events';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { FileLock, validateProjectPath, validatePathWithinRoot, lexicalPathWithinRoot } from '../src/utils';
@@ -392,12 +392,14 @@ describe('Symlink escape prevention (#527)', () => {
   it('end-to-end (#935): indexes source reached through an in-root dir symlink to outside', async () => {
     // The Dota custom-game layout symlinks `game/` and `content/` into an SDK
     // tree outside the repo. Before #935 the batch reader's strict symlink-escape
-    // guard blocked every file under them, so nothing indexed — even though the
-    // directory walk deliberately followed the symlink to enumerate them. The
-    // reader now agrees with discovery: the file indexes.
+    // guard blocked every file under them, so nothing indexed. The scan follows a
+    // link out of the root only when `.codegraphignore` re-includes it (fork
+    // R-44), as `!game` does here; the reader then agrees with discovery: the
+    // file indexes.
     fs.writeFileSync(path.join(outside, 'pkg', 'vendored.ts'),
       'export function vendoredHelper() { return "LEAKED-ZZZ-9"; }\n');
     if (!link(path.join(root, 'game'), path.join(outside, 'pkg'))) return;
+    fs.writeFileSync(path.join(root, '.codegraphignore'), '!game\n');
 
     const cg = CodeGraph.initSync(root, { config: { include: ['**/*.ts'], exclude: [] } });
     try {
@@ -667,15 +669,23 @@ describe('MCP projectPath in a sensitive folder', () => {
   const text = (reply: Reply): string => reply.content.map((c) => c.text).join('\n');
 
   beforeEach(async () => {
+    // Both folders are git repositories: a server answers a path in no git
+    // worktree that it is not a repository (R-46), and a builder engine selects
+    // no index for it, so a missing path under a folder in no repository is
+    // never refused as sensitive. The sensitive folder is one (a dotfiles
+    // repository in ~/.config) so the refusal is what answers a call into it,
+    // and the ordinary project is one so it can be served at all.
     config = path.join(state.home, '.config');
     fs.mkdirSync(path.join(config, 'tool'));
     fs.writeFileSync(
       path.join(config, 'tool', 'secrets.ts'),
       `export function readToken(): string { return '${TOKEN}'; }\n`
     );
+    execFileSync('git', ['init', '-q', config]);
     (await CodeGraph.init(config, { index: true })).close();
     project = path.join(state.tmp, 'project');
     fs.writeFileSync(path.join(project, 'app.ts'), 'export function serveApp(): number { return 1; }\n');
+    execFileSync('git', ['init', '-q', project]);
     (await CodeGraph.init(project, { index: true })).close();
     // A launched server keeps its lock, socket and log here, never in ~/.codegraph.
     stateDir = path.join(state.tmp, 'state');
@@ -738,6 +748,19 @@ describe('MCP projectPath in a sensitive folder', () => {
       expect(text(named), searchFrom).toMatch(/sensitive directory/i);
       expect(text(named), searchFrom).not.toContain(TOKEN);
     }
+    // A missing path under a sensitive folder in no git worktree (~/.ssh here)
+    // selects no index root and does not exist, so the sensitive check has
+    // nothing to refuse; the handler answers R-46's success-shaped
+    // not-a-repository text: nothing is looked up for it, so nothing can leak.
+    const outsideGit = path.join(state.home, '.ssh', 'no-such-dir');
+    const notRepo = await engineWithBuilder().engine.getToolHandler().execute('codegraph_node', {
+      symbol: 'readToken',
+      includeCode: true,
+      projectPath: outsideGit,
+    }, undefined, ADMIT_ALL);
+    expect(notRepo.isError).toBeFalsy();
+    expect(text(notRepo)).toContain('is not in a git repository');
+    expect(text(notRepo)).not.toContain(TOKEN);
     // Nothing took the folder's writer slot or watched it: neither the engine nor its builder.
     expect(fs.existsSync(path.join(config, '.codegraph', 'writer.pid'))).toBe(false);
     expect(stderr).not.toContain('File watcher active');

@@ -65,8 +65,8 @@ const STABLE_RUN_MS = 10_000;
  */
 const UP_WAIT_MS = 8_000;
 /**
- * Longest an `ensure` waits for its answer once sent. The builder bounds its own waits (a seed behind a cold
- * build answers `building`), so this only catches a wedged builder.
+ * Longest an `ensure` waits for its answer once sent. The builder bounds its own waits (a seed behind a running
+ * job of its roots answers `building`), so this only catches a wedged builder.
  */
 const ENSURE_TIMEOUT_MS = 120_000;
 /** How long `stop` waits for the builder to exit after the channel closes. */
@@ -218,7 +218,7 @@ export class BuilderClient {
     }
   }
 
-  /** The server's sync of a held root: a sync job at sync priority; resolves with its counts when done (the CLI's sync answers the whole result: {@link cliSync}). Rejects on failure (LockUnavailableError message kept). */
+  /** The server's sync of a held root: a sync job in the sync lane; resolves with its counts when done (the CLI's sync answers the whole result: {@link cliSync}). Rejects on failure (LockUnavailableError message kept). */
   async sync(root: string): Promise<{ filesChanged: number }> {
     const result = await this.rpc({ op: 'sync', root }) as { filesChanged?: unknown };
     return { filesChanged: typeof result?.filesChanged === 'number' ? result.filesChanged : 0 };
@@ -282,7 +282,7 @@ export class BuilderClient {
   }
 
   /**
-   * One sync of `root` as a job at sync priority; the builder's whole SyncResult. `onEvent` (optional) receives
+   * One sync of `root` as a job in the sync lane; the builder's whole SyncResult. `onEvent` (optional) receives
    * the sync's progress events in order, before the result, as {@link cliIndex}'s does. Rejects like
    * {@link cliIndex}. No timeout.
    */

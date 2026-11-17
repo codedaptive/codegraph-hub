@@ -3,8 +3,8 @@
  * the held roots, the cold-build and seed host, the rebuild fences, the codegraph CLI's jobs, the
  * housekeeping sweep, and the request handler the IPC channel feeds.
  *
- * The index writes the builder makes as jobs happen here, one job at a time on
- * {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
+ * The index writes the builder makes as jobs happen here, in two lanes (one job at a time
+ * in each) on {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
  * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, the CLI's `init` and `index`
  * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts), and the VACUUM a job's end queues when it
  * left its root's freelist over the limit (./vacuum-after-job.ts). The one write a job does not await is the
@@ -63,7 +63,7 @@ export class BuilderService {
       fences: this.fences,
     });
     // The holders' timings. openWaitMs, the seed wait (CODEGRAPH_BUILDER_ENSURE_WAIT_MS, 10 s): how long an
-    // `ensure` waits for its root's `open` job, which queues behind a running cold build, before it answers
+    // `ensure` waits for its root's `open` job, which queues behind a running job of its root, before it answers
     // and leaves the open queued. recoverWaitMs, 10 s: how long a hold waits for its recovery job before the
     // open answers anyway (a longer recovery leaves reads slower, never wrong). ownRetryMs, 1 s: how soon a
     // root another live process owns is tried again, so a takeover follows that process's exit quickly.
@@ -154,7 +154,7 @@ export class BuilderService {
    * Resolve `projectPath` to the index that answers it and make it ready: seed or queue a cold build when the
    * worktree has none (seed.ts), then hold the root that has one. Resolves once the builder opened (and
    * migrated) the index, or after a bounded wait ({@link BuilderServiceOptions.timing} `seedWaitMs`, from
-   * `CODEGRAPH_BUILDER_ENSURE_WAIT_MS`, default 10 s) when the open is queued behind a running job, or when
+   * `CODEGRAPH_BUILDER_ENSURE_WAIT_MS`, default 10 s) when the open is queued behind a running job of its root, or when
    * the hold could not open it (another live writer, an open failure). The server then opens read-only
    * whatever is on disk: the migrations are guaranteed only in the first case.
    *
