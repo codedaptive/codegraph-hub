@@ -51,6 +51,38 @@ describe('stoppedRootMark', () => {
     expect(stoppedRootMark(root, dir)).toBeNull();
   });
 
+  it('does not resolve a root getter when marks are missing or invalid', () => {
+    let calls = 0;
+    const getRoot = () => {
+      calls++;
+      throw new Error('root should not be resolved');
+    };
+
+    expect(stoppedRootMark(getRoot, dir)).toBeNull();
+    expect(calls).toBe(0);
+
+    fs.writeFileSync(file, '{bad json\nnull\n{"root": 42}\n');
+    expect(stoppedRootMark(getRoot, dir)).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  it('returns null for a throwing root getter and the mark for a matching getter', () => {
+    new EndedJobsFile(file).append({ root, kind: 'open', limit: 'time', at: '2026-11-17T10:00:00Z' });
+    let calls = 0;
+    expect(stoppedRootMark(() => {
+      calls++;
+      throw new Error('closed root');
+    }, dir)).toBeNull();
+    expect(calls).toBe(1);
+
+    calls = 0;
+    expect(stoppedRootMark(() => {
+      calls++;
+      return root;
+    }, dir)).toEqual({ root, kind: 'open', limit: 'time', at: '2026-11-17T10:00:00Z' });
+    expect(calls).toBe(1);
+  });
+
   it('sees an append and a subsequent clear on the next call', () => {
     const journal = new EndedJobsFile(file);
     const first = { root, kind: 'open', limit: 'time', at: '2026-11-17T10:00:00Z' } as const;

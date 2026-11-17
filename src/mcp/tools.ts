@@ -3668,7 +3668,8 @@ export class ToolHandler {
     if (result.isError) return result;
     const [first, ...rest] = result.content;
     if (!first || first.type !== 'text') return result;
-    const mark = stoppedRootMark(project.getProjectRoot());
+    // The root is read only when there are marks, and a closed handle's throw means no note.
+    const mark = stoppedRootMark(() => project.getProjectRoot());
     if (!mark) return result;
     return {
       ...result,
@@ -3857,8 +3858,9 @@ export class ToolHandler {
             if (validation.unchecked.length > 20) lines.push(`- … ${validation.unchecked.length - 20} more (narrow the query)`);
           }
           // A sync never clears the mark (and is refused under a sync-kind one); only `codegraph index` does.
-          lines.push(stoppedRootMark(project.getProjectRoot())
-            ? `Retry after \`codegraph index ${project.getProjectRoot()}\`, or narrow the query.`
+          const mark = stoppedRootMark(() => project.getProjectRoot());
+          lines.push(mark
+            ? `Retry after \`codegraph index ${mark.root}\`, or narrow the query.`
             : 'Retry after a successful codegraph sync, or narrow the query.');
           // Text only: Claude Code shows the model a result's structuredContent
           // in place of its text (#2088). The text names every stale file and

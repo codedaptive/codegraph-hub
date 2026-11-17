@@ -7,6 +7,9 @@
  *
  * The state dir is read, never created (../server/state-dir.ts). Never throws: a missing or invalid state dir
  * or file means no mark, since a mark only adds a note to an answer that is served anyway.
+ *
+ * The root may be passed as a getter. It is called only when the file holds marks, so an answer from a root
+ * with no mark costs no root read, and a getter that throws (a closed handle) means no mark.
  */
 import { statSync } from 'node:fs';
 import * as path from 'node:path';
@@ -40,13 +43,20 @@ function marksIn(file: string): Mark[] {
   return marks;
 }
 
-/** The last mark in file order whose root is `root` (compared canonically), or null. */
-export function stoppedRootMark(root: string, stateDir?: string): EndedJob | null {
-  let file: string;
+/**
+ * The last mark in file order whose root is `root` (compared canonically), or null. A `root` getter is called
+ * only when the file holds marks; when it throws, the answer is null.
+ */
+export function stoppedRootMark(root: string | (() => string), stateDir?: string): EndedJob | null {
+  let marks: Mark[];
+  let canonical: string;
   try {
-    file = path.join(stateDir ?? getStateDir(), 'builder-ended-jobs.jsonl');
+    // An invalid CODEGRAPH_STATE_DIR throws here: no builder can run there, so nothing is marked.
+    marks = marksIn(path.join(stateDir ?? getStateDir(), 'builder-ended-jobs.jsonl'));
+    if (marks.length === 0) return null;
+    canonical = canonicalProjectRoot(typeof root === 'string' ? root : root());
   } catch {
-    return null; // An invalid CODEGRAPH_STATE_DIR: no builder can run there, so nothing is marked.
+    return null;
   }
-  return marksIn(file).filter((mark) => mark.canonical === canonicalProjectRoot(root)).at(-1)?.job ?? null;
+  return marks.filter((mark) => mark.canonical === canonical).at(-1)?.job ?? null;
 }
