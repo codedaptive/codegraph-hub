@@ -32,6 +32,11 @@
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
  *     that seeds or rebuilds it discards both and builds again;
+ *   - a database killed before init wrote its schema is never judged abandoned
+ *     (root selection treats a database without the schema as no index), so
+ *     the next cold build of that root takes over the dead holder's
+ *     `rebuild.pid` and runColdBuild itself discards the schema-less database
+ *     (./discardSchemalessLeftover.ts) before init;
  *   - a root outside git is never cold-built (`admitColdBuild`, seed.ts), so it
  *     has no killed build's partial database to judge.
  * The job itself ({@link BuilderSeedHost.queueColdBuild}) runs `admitColdBuild`
@@ -44,9 +49,12 @@ import CodeGraph from '../../../index';
 import { getCodeGraphDir, isInitialized, statInode } from '../../../directory';
 import { gitCommonDirAsync } from './git';
 import { registerProject, stampSeedNonce } from './project-registry';
-import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
+import { readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
+import { isProcessAlive } from '../../../mcp/server-control';
 import { endedJobs } from '../builder/ended-jobs';
 import { coldBuildDatabases } from './cold-build-database';
+import { isDeadHolderRecord } from './isDeadHolderRecord';
+import { discardSchemalessLeftover } from './discardSchemalessLeftover';
 
 export const COLD_BUILD_EXIT_BUILT = 0;
 export const COLD_BUILD_EXIT_FAILED = 1;
@@ -107,6 +115,12 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
  * An init lock leaving a file returns FAILED; registration errors are handled
  * best-effort, not returned as LOCKED. A held rebuild.pid returns BUSY.
  *
+ * One database this call did not create is removed: when the `rebuild.pid`
+ * it took over named a dead holder (./isDeadHolderRecord.ts), a database
+ * without the schema is that killed build's leftover and is discarded before
+ * init (./discardSchemalessLeftover.ts). With no `rebuild.pid` in place (a
+ * user's own `codegraph init`, say) such a database stays, and init fails on it.
+ *
  * A root whose cold build the builder ended over a job limit (builder/ended-jobs.ts) is refused first: one
  * stderr line, FAILED, no lock taken and nothing created. It is not retried on its own; only an explicit
  * `codegraph index` or `codegraph init` clears it; a builder restart does not.
@@ -116,6 +130,8 @@ export async function runColdBuild(root: string): Promise<number> {
     process.stderr.write(`[CodeGraph] Cold build of ${root} refused: it was ended over a job limit (CODEGRAPH_BUILDER_JOB_MAX_MS or CODEGRAPH_BUILDER_JOB_MAX_RSS_MB) and is not retried automatically; run \`codegraph index\` to try again\n`);
     return COLD_BUILD_EXIT_FAILED;
   }
+  const leftover = fs.existsSync(path.join(getCodeGraphDir(root), 'rebuild.pid'))
+    && isDeadHolderRecord(readWriterLock(root, 'rebuild.pid'), process.pid, isProcessAlive);
   const lock = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
   if (lock.kind === 'taken') return COLD_BUILD_EXIT_BUSY;
   let cg: CodeGraph | null = null;
@@ -130,6 +146,7 @@ export async function runColdBuild(root: string): Promise<number> {
       ok = true;
       return COLD_BUILD_EXIT_BUILT;
     }
+    if (leftover) discardSchemalessLeftover(root);
     step = 'init';
     cg = await CodeGraph.init(root, { index: false });
     step = null;
