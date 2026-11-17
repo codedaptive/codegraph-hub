@@ -108,6 +108,7 @@ import {
 } from '../../../mcp/writer-lock';
 import { isProcessAlive } from '../../../mcp/server-control';
 import { registerProject, stampSeedNonce } from './project-registry';
+import { seedStagingPid } from './seed-staging-pid';
 
 export type SeedMethod = 'clone' | 'copy' | 'backup';
 
@@ -331,9 +332,6 @@ function discardAbandonedIndex(root: string, rebuildHeld: RebuildHeld): boolean 
   }
 }
 
-/** A seeder's staging copy: `codegraph.db.seed-<pid>-<hex>.tmp` and SQLite's side files for it. */
-const SEED_STAGING_NAME = /^codegraph\.db\.seed-(\d+)-[0-9a-f]+\.tmp(?:-journal|-wal|-shm)?$/;
-
 /**
  * Remove the staging copies in `dir` whose seeder is dead (killed mid-copy).
  * One whose pid is alive may be a copy in progress and is kept; so is this
@@ -343,9 +341,8 @@ function removeDeadSeedStaging(dir: string): void {
   let names: string[];
   try { names = fs.readdirSync(dir); } catch { return; }
   for (const name of names) {
-    const m = SEED_STAGING_NAME.exec(name);
-    if (!m) continue;
-    const pid = Number(m[1]);
+    const pid = seedStagingPid(name);
+    if (pid === null) continue;
     if (pid === process.pid || (pid > 0 && isProcessAlive(pid))) continue;
     try { fs.unlinkSync(path.join(dir, name)); } catch { /* gone meanwhile */ }
   }

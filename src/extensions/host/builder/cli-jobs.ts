@@ -59,8 +59,10 @@ export class CliJobs {
    * Run one `cliIndex` of `mode` on `root`. Resolves with the IndexResult once the job ended; rejects with its
    * error. `requestId` names the request the events are pushed for. A mode that needs the lease and finds none
    * (never taken, or ended) rejects before anything is queued; a lease job that waits in the queue past the end
-   * of its lease refuses to run. A root in no git worktree rejects every mode before anything is queued. A root fenced for its removal rejects every mode, when asked and again when the
-   * job starts ("the index of <root> is being removed").
+   * of its lease refuses to run. A root in no git worktree rejects every mode before anything is queued. A root
+   * fenced for its removal rejects every mode, when asked and again when the job starts ("the index of <root> is
+   * being removed"). A run that ends ok, in any mode, clears the root's stopped-over-limit marks: init queues an
+   * 'init' job and every other mode an 'index' job, and JobQueue clears the marks when either succeeds.
    */
   cliIndex(requestId: number, root: string, mode: CliIndexMode, verbose = false): Promise<IndexResult> {
     try {
