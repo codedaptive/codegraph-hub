@@ -1,7 +1,8 @@
 /**
- * Reads the root `.codegraphignore` (R-44, S-72): the same .gitignore syntax, read wherever
- * buildDefaultIgnore reads `.gitignore`, so a project can exclude paths from the index without
- * touching its git rules. Parsing is the caller's reader; this file only finds the file.
+ * Reads `.codegraphignore` from `rootDir` (R-44, S-72): the same .gitignore syntax, read from whichever
+ * directory buildDefaultIgnore reads `.gitignore` from (the project root, or an embedded repo's root),
+ * so a project can exclude paths from the index without touching its git rules.
+ * Parsing is the caller's reader; this file only finds the file.
  */
 import * as fs from 'fs';
 import * as path from 'path';
