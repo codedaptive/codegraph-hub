@@ -403,8 +403,9 @@ function warn(message: string): void {
  * hook's symbol list its own context block, and carries the note itself, so
  * each answer these commands serve from a stopped root's index without an
  * error has exactly one. `grep`, `blast` and `orphans` open the index
- * themselves and carry no note yet (S-71: the queries lane adds it); `suspects`
- * writes its own (src/extensions/resolution/warn-stopped-index.ts).
+ * themselves and print the note from the queries extensions
+ * (src/extensions/queries/shared/stopped-index-warning.ts); `suspects` writes
+ * its own (src/extensions/resolution/warn-stopped-index.ts).
  */
 async function openIndexToRead(
   projectPath: string,
