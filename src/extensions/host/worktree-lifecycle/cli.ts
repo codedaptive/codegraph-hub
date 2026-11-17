@@ -189,8 +189,8 @@ export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Pr
 
 /**
  * The roots unpin and remove try, in order, without duplicates: the index
- * root a tool call would use (what pin records when the path has an index),
- * the git worktree root (what pin records after seeding a worktree; only for a
+ * root a tool call would use (a sub-index root, which pin never records but
+ * `pinProject` can), the git worktree root (what pin records; only for a
  * path that exists), then the path as given. A removed directory has no
  * worktree root and may no longer resolve to its index root, so it is found
  * by the last.
