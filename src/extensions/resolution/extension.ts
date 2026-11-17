@@ -25,8 +25,8 @@
  * imports ./db/node-sqlite), the suspects library (./suspects, which pulls
  * in the db and resolution layers) and the stopped-index warning
  * (./warn-stopped-index) are all lazy for that reason: they are
- * loaded with `await import()` inside the command's action and the tool's
- * handler; `await import()` of a `.ts` module works under vitest, where a lazy
+ * loaded with `await import()` inside the command's action, and the suspects
+ * library also inside the tool's handler; `await import()` of a `.ts` module works under vitest, where a lazy
  * `require` would not.
  */
 import * as path from 'path';

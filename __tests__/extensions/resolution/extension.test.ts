@@ -12,7 +12,6 @@ vi.mock('../../../src/extensions/resolution/suspects', () => ({
   formatSuspects: vi.fn(() => 'known suspects'),
   suspectsToJson: vi.fn(() => ({ version: 1, suspects: [] })),
 }));
-vi.mock('../../../src/ui/color', () => ({ ansiColorsEnabled: vi.fn(() => false) }));
 vi.mock('../../../src/ui/glyphs', () => ({ getGlyphs: () => ({ warn: '[WARN]' }) }));
 
 const mark = { root: '/proj', kind: 'sync' as const, limit: 'time' as const, at: '2026-11-17T00:00:00.000Z' };
