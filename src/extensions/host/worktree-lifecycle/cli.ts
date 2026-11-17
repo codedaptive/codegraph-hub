@@ -19,6 +19,7 @@ import { choosePinRoot } from './choosePinRoot';
 import type { BuilderRoute } from '../builder/cli-route';
 import type { WorktreeSeedOutcome } from './seed';
 import {
+  PROJECT_FLAG_NO_GIT,
   PROJECT_FLAG_PINNED,
   PROJECT_FLAG_SEEDED,
   getRegisteredProject,
@@ -72,6 +73,7 @@ function projectFlagNames(flags: number): string[] {
   const names: string[] = [];
   if (flags & PROJECT_FLAG_PINNED) names.push('pinned');
   if (flags & PROJECT_FLAG_SEEDED) names.push('seeded');
+  if (flags & PROJECT_FLAG_NO_GIT) names.push('no-git');
   return names;
 }
 
@@ -157,11 +159,11 @@ export async function runProjectSeed(pathArg: string): Promise<void> {
 }
 
 /**
- * `codegraph project pin <path>`: exit 1 for a missing directory or a path in no git worktree
- * (gitRootByStat is null), which is refused before anything is registered or pinned.
+ * `codegraph project pin <path>`: exit 1 for a missing directory or a path in no git worktree and no
+ * opted-in folder (gitRootByStat is null), which is refused before anything is registered or pinned.
  *
- * The root pinned is always the path's git worktree root (choosePinRoot); a root with no index is seeded
- * first unless CODEGRAPH_NO_AUTO_SEED is 1, with the seed's outcome printed.
+ * The root pinned is the path's git worktree root or its opted-in folder (choosePinRoot); a root with no
+ * index is seeded first unless CODEGRAPH_NO_AUTO_SEED is 1, with the seed's outcome printed.
  */
 export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Promise<void> {
   const absolute = path.resolve(pathArg);
@@ -171,7 +173,10 @@ export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Pr
   }
   const gitRoot = gitRootByStat(absolute);
   if (!gitRoot) {
-    error(`${absolute} is not in a git repository ${getGlyphs().dash} only git worktrees can be pinned`);
+    error(
+      `${absolute} is not in a git repository ${getGlyphs().dash} only git worktrees and the folders opted in ` +
+        'once with `codegraph init <dir> --no-git` can be pinned',
+    );
     process.exit(1);
   }
   const root = await choosePinRoot(gitRoot, async (worktree) => {
@@ -190,16 +195,16 @@ export async function runProjectPin(pathArg: string, deps?: SeedProjectDeps): Pr
 /**
  * The roots unpin and remove try, in order, without duplicates: the index
  * root a tool call would use (a sub-index root, which pin never records but
- * `pinProject` can), the git worktree root (what pin records; only for a
- * path that exists), then the path as given. A removed directory has no
- * worktree root and may no longer resolve to its index root, so it is found
- * by the last.
+ * `pinProject` can), the git worktree root or opted-in folder (what pin
+ * records; only for a path that exists), then the path as given. A removed
+ * directory has neither and may no longer resolve to its index root, so it
+ * is found by the last.
  */
 function registeredRootCandidates(pathArg: string): string[] {
   const absolute = path.resolve(pathArg);
   const candidates = [resolveProjectPath(absolute)];
-  // For a removed directory gitRootByStat would name the repository around
-  // it, not the project the user named.
+  // For a removed directory gitRootByStat would name the repository or
+  // opted-in folder around it, not the project the user named.
   const worktree = fs.existsSync(absolute) ? gitRootByStat(absolute) : null;
   if (worktree) candidates.push(worktree);
   candidates.push(absolute);

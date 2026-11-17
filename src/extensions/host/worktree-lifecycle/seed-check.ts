@@ -29,7 +29,8 @@ export function worktreeSeedMayApply(projectPath: string): boolean {
   const nearest = selectOwnIndexRoot(projectPath);
   if (nearest !== null && fs.existsSync(path.join(getCodeGraphDir(nearest), 'rebuild.pid'))) return true;
   // No index of the path's own (selectOwnIndexRoot is null): a git worktree to seed or build (a path in
-  // no git worktree never reaches here: the caller, needsBuilderEnsure in src/mcp/tools.ts, checks gitRootByStat first).
+  // no git worktree and no opted-in folder never reaches here: the caller, needsBuilderEnsure in src/mcp/tools.ts,
+  // checks gitRootByStat first).
   // The builder decides (seed.ts ensureWorktreeIndex); a path that cannot be built answers there.
   if (nearest === null) return true;
   // `nearest` is spelled by its real location, so the walk up to it starts from the path's real location too:
