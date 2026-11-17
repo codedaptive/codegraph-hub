@@ -680,6 +680,9 @@ General as a RULING line. Decisions already settled by a document live in `team/
   the measured value. The numbers and what follows an ended job are S-69.
 - Reason: the relayed order; a job left running took the machine down.
 - Owner: host (builder-job-limit, ahead of its queue, Orc #3299).
+- Confirmed 2026-11-17: Bob's go on Q-40 (R-48), whose question named R-47, shipped it in sm.15. The creator reads
+  that go as confirming R-47 and S-69's numbers (60 minutes, 8 GB, no automatic retry), "nothing is owed" (#3707);
+  #3709 says that reading is the creator's call under Bob's rules, not Bob's own words.
 
 ## R-48. Q-40: release and install 1.6.2-sm.15 now
 - Date: 2026-11-17 / Bob, direct ("Q-40: a"); the creator relayed the same go (#3632).
@@ -721,3 +724,19 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: S-70 so far as it refused an opted-in folder and ruled out any override; R-46's "nothing ...
   cold-builds a folder that is not a git worktree root" for an opted-in folder.
 - Owner: host (the opt-in in the CLI, registry, server and builder), after builder-job-limit's follow-ups.
+
+## R-51. Take the five unmerged upstream PRs into ours
+- Date: 2026-11-17 / Bob, relayed by his creator (#3714), on Designer's recommendation #3238 (upstream status, moot
+  memory d82a62f0).
+- Question: take the unmerged upstream pull requests recommended in the 2026-11-16 upstream check?
+- Ruling: take all five into ours:
+  - #3261: callers are re-bound when a shared definition changes on sync;
+  - #3258: synthesis skips dispatch scans that have no targets;
+  - #3303: grammar loads that start together wait for each other;
+  - #3256: absolute fetch URLs stop linking to the project's own routes;
+  - #3226: TypeScript variance annotations.
+  They come after the incident set and the docs/SPEC-upstream.md §7 merge of upstream main, as normal work orders in
+  the owning lanes, each commit message naming its upstream PR number, through the usual landing and the next
+  release. If upstream merges one of them first, it comes in with the main merge instead.
+- Work implied: Orc-Codegraph orders them in that place in the queue.
+
