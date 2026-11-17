@@ -2,13 +2,15 @@
  * Ends the builder over a job that went past a limit (./job-watchdog.ts finds it). Jobs run inside the builder's
  * process and cannot be interrupted halfway, so the process itself exits: it logs the `job limit` line, writes
  * the job's mark (./ended-jobs-file.ts) so the restarted builder refuses it, rolls back a partial cold build,
- * releases the root's locks it holds, and exits with code 75. The server's client restarts it.
+ * removes a seed's staging copy, releases the root's locks it holds, and exits with code 75. The server's client
+ * restarts it.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { getCodeGraphDir } from '../../../directory';
 import { getWriterPidPath, readWriterLock } from '../../../mcp/writer-lock';
 import { coldBuildDatabases } from '../worktree-lifecycle/cold-build-database';
+import { seedStagingPid } from '../worktree-lifecycle/seed-staging-pid';
 import type { EndedJobsFile } from './ended-jobs-file';
 import { formatLimitLine } from './job-limit-line';
 import type { LimitBreach } from './limit-breach';
@@ -44,8 +46,20 @@ function rollBackColdBuild(root: string, pid: number): void {
 }
 
 /**
- * Log, mark, roll back and exit; see the header. A lock is removed only where it names `pid`
- * (releaseWriterLock compares with process.pid, so `pid` is compared here).
+ * Removes the seed's staging copies of `root` (../worktree-lifecycle/seed-staging-pid.ts) that carry `pid`. The
+ * seed ran in this process, so its staging copy, a whole index copy, names this pid; the marked seed is never
+ * retried, so nothing else would remove it.
+ */
+function removeSeedStaging(root: string, pid: number): void {
+  const dir = getCodeGraphDir(root);
+  for (const name of fs.readdirSync(dir)) {
+    if (seedStagingPid(name) === pid) attempt(() => fs.rmSync(path.join(dir, name), { force: true }));
+  }
+}
+
+/**
+ * Log, mark, roll back a cold build or remove a seed's staging copy, then exit; see the header. A lock is removed
+ * only where it names `pid` (releaseWriterLock compares with process.pid, so `pid` is compared here).
  */
 export function endOverLimit(
   job: { kind: JobKind; root: string },
@@ -65,6 +79,7 @@ export function endOverLimit(
   attempt(() => deps.jobLog(formatLimitLine(job, breach, now())));
   attempt(() => deps.endedFile.append({ root, kind, limit: breach.limit, at: now().toISOString() }));
   if (kind === 'cold-build') attempt(() => rollBackColdBuild(root, pid));
+  if (kind === 'seed') attempt(() => removeSeedStaging(root, pid));
   for (const lockName of ['rebuild.pid', 'writer.pid'] as const) {
     attempt(() => {
       if (lockNamesPid(root, lockName, pid)) fs.unlinkSync(getWriterPidPath(root, lockName));
