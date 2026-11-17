@@ -3668,12 +3668,7 @@ export class ToolHandler {
     if (result.isError) return result;
     const [first, ...rest] = result.content;
     if (!first || first.type !== 'text') return result;
-    let mark: ReturnType<typeof stoppedRootMark>;
-    try {
-      mark = stoppedRootMark(project.getProjectRoot());
-    } catch {
-      return result;
-    }
+    const mark = stoppedRootMark(project.getProjectRoot());
     if (!mark) return result;
     return {
       ...result,

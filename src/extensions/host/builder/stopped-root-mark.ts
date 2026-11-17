@@ -48,6 +48,5 @@ export function stoppedRootMark(root: string, stateDir?: string): EndedJob | nul
   } catch {
     return null; // An invalid CODEGRAPH_STATE_DIR: no builder can run there, so nothing is marked.
   }
-  const canonical = canonicalProjectRoot(root);
-  return marksIn(file).filter((mark) => mark.canonical === canonical).at(-1)?.job ?? null;
+  return marksIn(file).filter((mark) => mark.canonical === canonicalProjectRoot(root)).at(-1)?.job ?? null;
 }

@@ -394,15 +394,22 @@ function warn(message: string): void {
  * command says so, on stderr to keep a `--json` answer parseable. It does the
  * same when the index builder's last job of the root was stopped at a limit
  * (stopped-root-mark.ts): the index is read as it is, but may be partial or
- * behind until an explicit `codegraph index`.
+ * behind until an explicit `codegraph index`. That stderr note is for the
+ * commands whose answer is not a tool answer: a command answering through
+ * ToolHandler.execute passes `stoppedNote: false`, since a tool answer carries
+ * the note itself and every answer for a stopped root has exactly one.
  */
-async function openIndexToRead(projectPath: string): Promise<import('../index').CodeGraph> {
+async function openIndexToRead(
+  projectPath: string,
+  { stoppedNote = true }: { stoppedNote?: boolean } = {},
+): Promise<import('../index').CodeGraph> {
   const { default: CodeGraph } = await loadCodeGraph();
   const cg = await CodeGraph.open(projectPath, { readOnly: true });
   const { isRebuildInProgress } = await import('../mcp/writer-lock');
   if (isRebuildInProgress(projectPath)) {
     console.error(`${chalk.yellow(getGlyphs().warn)} An index rebuild ("codegraph index") is running in another process — this answer comes from the part of the index it has rebuilt so far.`);
   }
+  if (!stoppedNote) return cg;
   const { stoppedRootMark } = await import('../extensions/host/builder/stopped-root-mark');
   const mark = stoppedRootMark(cg.getProjectRoot());
   if (mark) {
@@ -1640,7 +1647,7 @@ program
       }
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
-      const cg = await openIndexToRead(projectPath);
+      const cg = await openIndexToRead(projectPath, { stoppedNote: false });
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
 
@@ -1809,7 +1816,7 @@ program
         if (isRebuildInProgress(plan.exploreRoot)) { gate('noop-rebuild'); return; }
         // Claude Code runs this hook on its own, on every prompt: read-only, so
         // it never repairs what an index or sync is in the middle of writing.
-        const cg = await openIndexToRead(plan.exploreRoot);
+        const cg = await openIndexToRead(plan.exploreRoot, { stoppedNote: false });
         try {
           const others = plan.nudgeProjects.length
             ? `\n${nudge(plan.nudgeProjects, 'Other indexed projects in this workspace — pass projectPath to query them:')}`
@@ -1937,7 +1944,7 @@ program
       }
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
-      const cg = await openIndexToRead(projectPath);
+      const cg = await openIndexToRead(projectPath, { stoppedNote: false });
       const { ToolHandler } = await import('../mcp/tools');
       const handler = new ToolHandler(cg);
 
