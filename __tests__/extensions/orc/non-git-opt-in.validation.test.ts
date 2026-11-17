@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Fixtures } from '../host/machine-server.harness';
+import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../src/extraction/wasm-runtime-flags';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 const ALPHA = 'export function alphaSymbol() { return 1; }\n';
@@ -24,7 +25,8 @@ function env(): NodeJS.ProcessEnv {
 }
 
 function cli(...args: string[]) {
-  const result = spawnSync(process.execPath, [BIN, ...args], {
+  // The relaunch is off (CODEGRAPH_WASM_RELAUNCHED), so pass the node options and WASM flags the relaunch would.
+  const result = spawnSync(process.execPath, [...NODE_RUNTIME_FLAGS, ...WASM_RUNTIME_FLAGS, BIN, ...args], {
     cwd: workspace, env: env(), encoding: 'utf8', timeout: 240_000,
   });
   expect(result.error, `CLI ${args.join(' ')} failed to run`).toBeUndefined();
