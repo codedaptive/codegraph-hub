@@ -640,3 +640,39 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word, and his threshold.
 - Not chosen: Orc's half-the-file threshold; leaving reclaiming to the user.
 - Owner: host (src/extensions/host/builder).
+
+## R-46. Only a git worktree root gets an index
+- Date: 2026-11-16 20:09 / Bob, relayed by his creator (BUG #3298, "Fix in our fork, through your release
+  procedure"; Orc-Codegraph #3299 records it as creator #3297 for Bob), after the builder took the Mac down: a
+  cold build of team-aimodel/workcrews/Model-NCM, a lane folder that is not a git worktree, ran 10:06-20:06 at 230%
+  CPU and 12 GB resident (swap 43 of 44 GB) through two symlinks into the lab's run data, and never finished. Four
+  aimodel lane folders held 26 GB of such indexes. Designer-Codegraph entered it on that relay while Bob was away;
+  Bob confirms or corrects it on his return.
+- Question: should CodeGraph register, catch up or cold-build a folder that is not a git worktree root?
+- Ruling: no. Nothing registers, catches up, seeds or cold-builds a folder that is not a git worktree root: not the
+  server, not the builder, not a CLI command handing work to it. A query whose path lies inside a git worktree
+  resolves to that worktree's root (as docs/SPEC.md §3 already says for index selection). A query whose path is in
+  no git worktree gets a success-shaped answer that it is not a repository, never `isError` (upstream's "errors
+  teach abandonment"), and nothing is built. A session launched outside git keeps its launch directory as its
+  anchor [B4]; a call there resolves to the worktree enclosing its path, or gets that answer.
+- Reason: the relayed order; a folder outside git has no boundary of its own, and its index takes in whatever lies
+  or links below it.
+- Supersedes: [B1]'s "or directory" for a folder outside git; docs/SPEC.md §3 "(or a directory that is not a git
+  worktree)" and its paragraph "A directory outside git with no index is cold-built at the session's launch
+  directory" (index-builder, c8a25bb5); R-12 so far as it let a launch directory outside git be indexed.
+- Owner: host (git-root-only, ahead of its queue, Orc #3299). Once it is live, Orc removes the stray lane-folder
+  indexes the creator named (mortar's six, tessera sync and tools, moot GeniusLocusKit and VaultKit, codeteam-jj
+  zone, codegraph host) and drops non-git roots from the project registry.
+- Related: R-44 (the scan does not follow a symlinked folder out of the root) is the creator's item 2 and stands
+  as Bob ruled it, with its `.codegraphignore` re-include.
+
+## R-47. A builder job over its time or memory limit is ended and logged
+- Date: 2026-11-16 20:09 / Bob, relayed by his creator (BUG #3298 item 3; Orc-Codegraph #3299), on the same
+  incident as R-46. Entered on that relay while Bob was away; Bob confirms or corrects it on his return.
+- Question: a builder job ran ten hours and was never stopped. Should a job have a limit?
+- Ruling: yes. Every builder job (cold build, catch-up, sync, seed, VACUUM; in either lane of R-43) has a wall-time
+  limit and a resident-memory limit. A job over either is ended, its partial work rolled back as a failed job's is
+  today, its writer lock released, and one log line written naming the root, the job kind, the limit crossed and
+  the measured value. The numbers and what follows an ended job are S-69.
+- Reason: the relayed order; a job left running took the machine down.
+- Owner: host (builder-job-limit, ahead of its queue, Orc #3299).
