@@ -1,5 +1,6 @@
 /**
- * The one rule every index write and every builder-backed read applies first: codegraph indexes only git
+ * The one rule applied first by every index write (init, index, sync), every CLI read command (through
+ * ./refuseReadOutsideRepository) and every builder-backed read: codegraph indexes only git
  * worktrees and the folders outside git a person opted in with `codegraph init <dir> --no-git` (SPEC §3,
  * "Only a git worktree root is indexed, unless a folder is opted in"; R-50). A path below such a root belongs
  * to that root; any other path is refused, whatever index may sit around it.
@@ -9,7 +10,8 @@ import { gitRootByStat } from '../server/index-root';
 /**
  * The root `projectPath` belongs to ({@link gitRootByStat}: stats only, the real location, the nearest `.git`
  * directory or file at or above it, else the nearest opted-in folder), or, for a path in neither, the refusal
- * to show the caller. The CLI prints the refusal as its error; the MCP handler and the builder answer with it.
+ * to show the caller. The CLI's index writes and read commands print the refusal as their error and exit 1;
+ * the MCP handler and the builder answer with it.
  */
 export function requireGitWorktreeRoot(projectPath: string): { root: string } | { refusal: string } {
   const root = gitRootByStat(projectPath);
