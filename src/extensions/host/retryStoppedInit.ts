@@ -1,17 +1,21 @@
 /**
  * An explicit `codegraph init` of an initialized root the index builder stopped at a limit (SPEC S-69): the one
- * place besides `codegraph index` that clears the mark and tries again, under the same limits. Null when the root
- * has no mark, so init answers that the root is initialized; otherwise whether the rebuild (./rebuildIndex.ts) succeeded.
+ * place besides `codegraph index` that clears the mark and tries again, under the same limits. It reads the root's
+ * mark once. With a mark it hands it to `onRetry` (init says why it rebuilds), rebuilds as `codegraph index` does
+ * (./rebuildIndex.ts) and answers whether the rebuild succeeded. With none it answers null: no rebuild ran, and the
+ * caller answers for the initialized root.
  */
-import type { IndexWriter } from './builder/cli-route';
+import type { EndedJob } from './builder/ended-job';
 import { stoppedRootMark } from './builder/stopped-root-mark';
 import { rebuildIndex } from './rebuildIndex';
 
 export async function retryStoppedInit(
   projectPath: string,
   options: { force?: boolean; verbose?: boolean; yes?: boolean },
-  runIndexOn: (writer: IndexWriter, dbPath: string, projectPath: string, options: { quiet?: boolean; verbose?: boolean; yes?: boolean }) => Promise<boolean>,
+  deps: Parameters<typeof rebuildIndex>[2] & { onRetry: (mark: EndedJob) => void },
 ): Promise<boolean | null> {
-  if (stoppedRootMark(projectPath) === null) return null;
-  return rebuildIndex(projectPath, options, runIndexOn);
+  const mark = stoppedRootMark(projectPath);
+  if (mark === null) return null;
+  deps.onRetry(mark);
+  return rebuildIndex(projectPath, options, deps);
 }

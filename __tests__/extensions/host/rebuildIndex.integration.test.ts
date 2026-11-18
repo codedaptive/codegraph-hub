@@ -9,6 +9,7 @@ import { EndedJobsFile } from '../../../src/extensions/host/builder/ended-jobs-f
 import { stoppedRootMark } from '../../../src/extensions/host/builder/stopped-root-mark';
 
 const REBUILD = path.resolve(__dirname, '../../../src/extensions/host/rebuildIndex');
+const ENGINE = path.resolve(__dirname, '../../../src/index');
 let workspace: string;
 let root: string;
 let stateDir: string;
@@ -48,7 +49,7 @@ describe('rebuildIndex', { timeout: 90_000 }, () => {
       try { return (await writer.indexAll()).success; } finally { writer.destroy(); }
     });
     const { rebuildIndex } = await import(REBUILD);
-    expect(await rebuildIndex(root, {}, run)).toBe(true);
+    expect(await rebuildIndex(root, {}, { runIndexOn: run, loadEngine: () => import(ENGINE) })).toBe(true);
     expect(run).toHaveBeenCalledTimes(1);
     expect(stoppedRootMark(root, stateDir)).toBeNull();
     expect(indexedNewFile()).toBe(true);
@@ -57,7 +58,7 @@ describe('rebuildIndex', { timeout: 90_000 }, () => {
   it('returns false and retains the mark when indexing fails', async () => {
     const run = vi.fn(async (writer: IndexWriter) => { writer.destroy(); return false; });
     const { rebuildIndex } = await import(REBUILD);
-    expect(await rebuildIndex(root, {}, run)).toBe(false);
+    expect(await rebuildIndex(root, {}, { runIndexOn: run, loadEngine: () => import(ENGINE) })).toBe(false);
     expect(run).toHaveBeenCalledTimes(1);
     expect(stoppedRootMark(root, stateDir)).toEqual({
       root, kind: 'sync', limit: 'time', at: '2026-11-17T10:00:00Z',

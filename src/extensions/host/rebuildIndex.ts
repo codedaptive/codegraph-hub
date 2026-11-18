@@ -1,8 +1,9 @@
 /**
  * The full rebuild of an initialized root, as `codegraph index` runs it (src/bin/codegraph.ts) and as an explicit
- * `codegraph init` of a root the index builder stopped at a limit runs it (./retryStoppedInit.ts). `runIndexOn` is
- * the CLI's supervised, progress-rendered index: it destroys the writer it is given and answers whether the index
- * succeeded. Throws when another rebuild holds the root, another process holds its writer lock, or a running
+ * `codegraph init` of a root the index builder stopped at a limit runs it (./retryStoppedInit.ts). The caller passes
+ * `runIndexOn`, the CLI's supervised, progress-rendered index (it destroys the writer it is given and answers
+ * whether the index succeeded), and `loadEngine`, its engine loader, so a module that fails to load is reported
+ * as the CLI reports it. Throws when another rebuild holds the root, another process holds its writer lock, or a running
  * server did not release it.
  */
 import * as fs from 'node:fs';
@@ -12,15 +13,18 @@ import { clearEndedRoot } from './builder/clear-ended-root';
 export async function rebuildIndex(
   projectPath: string,
   options: { force?: boolean; quiet?: boolean; verbose?: boolean; yes?: boolean },
-  runIndexOn: (writer: IndexWriter, dbPath: string, projectPath: string, options: { quiet?: boolean; verbose?: boolean; yes?: boolean }) => Promise<boolean>,
+  deps: {
+    runIndexOn: (writer: IndexWriter, dbPath: string, projectPath: string, options: { quiet?: boolean; verbose?: boolean; yes?: boolean }) => Promise<boolean>;
+    loadEngine: () => Promise<typeof import('../../index')>;
+  },
 ): Promise<boolean> {
   // With a machine server whose index builder is up, the builder rebuilds the index under a lease it holds
   // for this command, and this process takes no lock. Otherwise this process rebuilds, below.
   const routed = await (await import('./builder/cli-route')).startRoutedIndex(projectPath, !!options.force, !!options.verbose && !options.quiet);
   if (routed) {
     try {
-      const { getDatabasePath } = await import('../../index');
-      return await runIndexOn(routed, getDatabasePath(projectPath), projectPath, options);
+      const { getDatabasePath } = await deps.loadEngine();
+      return await deps.runIndexOn(routed, getDatabasePath(projectPath), projectPath, options);
     } finally {
       await routed.end();
     }
@@ -51,7 +55,7 @@ export async function rebuildIndex(
     const writer = tryAcquireWriterLock(projectPath, 'rebuild');
     if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
     try {
-      const { default: CodeGraph, getDatabasePath } = await import('../../index');
+      const { default: CodeGraph, getDatabasePath } = await deps.loadEngine();
       // A rebuild is a FULL re-index — identical to a fresh `init`. RECREATE the
       // database from scratch (discard .codegraph/codegraph.db + its WAL) rather
       // than opening the old graph and DELETE-ing every row. The clear-then-index
@@ -62,7 +66,7 @@ export async function rebuildIndex(
       // recreate() hands back a fresh, empty instance — no clear() needed. For
       // fast incremental updates use `sync`.
       const cg = await CodeGraph.recreate(projectPath);
-      if (!(await runIndexOn(cg, getDatabasePath(projectPath), projectPath, options))) return false;
+      if (!(await deps.runIndexOn(cg, getDatabasePath(projectPath), projectPath, options))) return false;
       // The rebuild succeeded, so the root's stopped-over-limit marks go. A builder started while this ran
       // keeps its in-memory mark until it restarts.
       clearEndedRoot(projectPath);

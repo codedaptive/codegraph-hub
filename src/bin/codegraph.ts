@@ -872,14 +872,14 @@ async function runInit(
 
     if (isInitialized(projectPath)) {
       // A root whose last index builder job was stopped at a limit is rebuilt, as `codegraph index` would
-      // (SPEC S-69): an explicit init is one of the two commands that clear the mark and try again.
-      const { stoppedRootMark } = await import('../extensions/host/builder/stopped-root-mark');
-      const mark = stoppedRootMark(projectPath);
-      if (mark) {
-        clack.log.info(`The index builder stopped the last ${mark.kind} job of ${projectPath} at its ${mark.limit === 'time' ? 'time' : 'memory'} limit, so init is rebuilding the index.`);
-        const { retryStoppedInit } = await import('../extensions/host/retryStoppedInit');
-        if ((await retryStoppedInit(projectPath, options, runIndexOn)) === false) process.exitCode = 1;
-      } else {
+      // (SPEC S-69); null means it had no mark and nothing ran.
+      const retried = await (await import('../extensions/host/retryStoppedInit')).retryStoppedInit(projectPath, options, {
+        runIndexOn,
+        loadEngine: loadCodeGraph,
+        onRetry: (mark) => clack.log.info(`The index builder stopped the last ${mark.kind} job of ${projectPath} at its ${mark.limit === 'time' ? 'time' : 'memory'} limit, so init is rebuilding the index.`),
+      });
+      if (retried === false) process.exitCode = 1;
+      if (retried === null) {
         // `.codegraph/` alone isn't a working index: a first run that was killed
         // or failed partway leaves it behind, and "Already initialized" then reads
         // like a setup that only needs a sync (#3228). Say how the last run ended,
@@ -1181,7 +1181,7 @@ program
       }
 
       const { rebuildIndex } = await import('../extensions/host/rebuildIndex');
-      if (!(await rebuildIndex(projectPath, options, runIndexOn))) process.exit(1);
+      if (!(await rebuildIndex(projectPath, options, { runIndexOn, loadEngine: loadCodeGraph }))) process.exit(1);
     } catch (err) {
       error(`Failed to index: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);

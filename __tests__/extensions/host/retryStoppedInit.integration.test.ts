@@ -9,6 +9,7 @@ import { EndedJobsFile } from '../../../src/extensions/host/builder/ended-jobs-f
 import { stoppedRootMark } from '../../../src/extensions/host/builder/stopped-root-mark';
 
 const RETRY = path.resolve(__dirname, '../../../src/extensions/host/retryStoppedInit');
+const ENGINE = path.resolve(__dirname, '../../../src/index');
 let workspace: string;
 let root: string;
 let stateDir: string;
@@ -54,7 +55,7 @@ describe('retryStoppedInit', { timeout: 90_000 }, () => {
     expect(stoppedRootMark(root, stateDir)).not.toBeNull();
     const run = vi.fn(runIndexOn);
     const { retryStoppedInit } = await import(RETRY);
-    expect(await retryStoppedInit(root, {}, run)).toBe(true);
+    expect(await retryStoppedInit(root, {}, { runIndexOn: run, loadEngine: () => import(ENGINE), onRetry: () => {} })).toBe(true);
     expect(run).toHaveBeenCalledTimes(1);
     expect(stoppedRootMark(root, stateDir)).toBeNull();
     expect(indexedNewFile()).toBe(true);
@@ -63,7 +64,7 @@ describe('retryStoppedInit', { timeout: 90_000 }, () => {
   it('leaves an unmarked root untouched and does not invoke the indexer', async () => {
     const run = vi.fn(runIndexOn);
     const { retryStoppedInit } = await import(RETRY);
-    expect(await retryStoppedInit(root, {}, run)).toBeNull();
+    expect(await retryStoppedInit(root, {}, { runIndexOn: run, loadEngine: () => import(ENGINE), onRetry: () => {} })).toBeNull();
     expect(run).not.toHaveBeenCalled();
     expect(indexedNewFile()).toBe(false);
   });
@@ -76,7 +77,7 @@ describe('retryStoppedInit', { timeout: 90_000 }, () => {
     const otherMark = { root: other, kind: 'sync', limit: 'time', at: '2026-11-17T10:00:00Z' };
     expect(stoppedRootMark(other, stateDir)).toEqual(otherMark);
     const { retryStoppedInit } = await import(RETRY);
-    expect(await retryStoppedInit(root, {}, runIndexOn)).toBe(true);
+    expect(await retryStoppedInit(root, {}, { runIndexOn: runIndexOn, loadEngine: () => import(ENGINE), onRetry: () => {} })).toBe(true);
     expect(stoppedRootMark(root, stateDir)).toBeNull();
     expect(stoppedRootMark(other, stateDir)).toEqual(otherMark);
   });
@@ -86,7 +87,7 @@ describe('retryStoppedInit', { timeout: 90_000 }, () => {
     expect(stoppedRootMark(root, stateDir)).not.toBeNull();
     const run = vi.fn(async (writer: IndexWriter) => { writer.destroy(); return false; });
     const { retryStoppedInit } = await import(RETRY);
-    expect(await retryStoppedInit(root, {}, run)).toBe(false);
+    expect(await retryStoppedInit(root, {}, { runIndexOn: run, loadEngine: () => import(ENGINE), onRetry: () => {} })).toBe(false);
     expect(run).toHaveBeenCalledTimes(1);
     expect(stoppedRootMark(root, stateDir)).toEqual({
       root, kind: 'sync', limit: 'time', at: '2026-11-17T10:00:00Z',
