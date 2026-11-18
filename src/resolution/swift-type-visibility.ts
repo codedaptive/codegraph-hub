@@ -394,10 +394,11 @@ function fitsPath(node: Node, path: string, context: ResolutionContext): boolean
   if (qn.includes('::')) return true;
   const head = path.slice(0, path.length - qn.length - 2);
   const parentName = head.split('::').pop()!;
-  // A member declared under `#if` in a type's body can be indexed at the top
-  // level — the grammar ends `enum NIOBSDSocket {` at an `#if` right inside
-  // it, so `typealias Handle` loses its parent. It still shares a file with a
-  // declaration or extension of the parent the site names.
+  // A member can be indexed at the top level — tree-sitter-swift 0.7.4 drops
+  // the parent of a member that follows a freestanding macro (`#Macro()`) in
+  // an extension's body (an `#if` directly inside an enum's body it parses).
+  // It still shares a file with a declaration or extension
+  // of the parent the site names.
   if (context.getNodesInFile(node.filePath).some((p) => p.name === parentName && TYPE_KINDS.has(p.kind) && p.id !== node.id)) return true;
   // `App.Build`: a top-level type under a qualifier that names no type — a module.
   return !head.includes('::') && !context.getNodesByName(head).some((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind));
