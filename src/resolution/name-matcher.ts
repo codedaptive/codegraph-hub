@@ -12488,10 +12488,9 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * one whose head a `use` takes from the standard library (`fs::read` under
  * `use std::fs;`), whatever module of that name the project has. A head a
  * `use` in a function's body binds is the path that `use` names (`use
- * crate::b as a;` makes `a::take()` `crate::b::take()`), following further
- * local aliases at each import's scope. If a nearer block `mod` declares the
- * head, expansion stops and this resolver returns null: the walk does not
- * reach modules declared in a function body.
+ * crate::b as a;` makes `a::take()` `crate::b::take()`), walked from the
+ * module that `use` is written in: one binding, not followed through a further
+ * local alias.
  */
 export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): Node | null {
   let segs = ref.referenceName.replace(/^::/, '').split('::');
