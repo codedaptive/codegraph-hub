@@ -12476,6 +12476,21 @@ const RUST_PATH_ITEM_KINDS: ReadonlySet<string> = new Set(['function', 'struct',
 const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | null>>();
 
 /**
+ * The items `path` names walked from `module`, else, when its head is not
+ * `crate`, `self` or `super`, from the crate's root of `filePath`: a 2015 path
+ * is crate-relative. Not when the module declares a module of the head's name
+ * itself (`pathMods`): where its `#[path]` puts it is the module's own choice
+ * (a cfg's), and another module of that name at the root is not it.
+ */
+function rustPathItemsOr2015(path: readonly string[], module: RustModule, filePath: string, pathMods: ReadonlySet<string>, context: ResolutionContext): Node[] | null {
+  const items = rustUsePathItems(path, module, context, new Set());
+  const head = path[0] ?? '';
+  if (items !== null || head === 'crate' || head === 'self' || head === 'super' || pathMods.has(head)) return items;
+  const root = rustCrateRootModule(filePath, context);
+  return root ? rustUsePathItems(path, root, context, new Set()) : null;
+}
+
+/**
  * The item a Rust path written in `ref`'s file names — `crate::util::take`,
  * `super::Item` (from an inline `mod tests { }` too), `util::take` through a
  * module a `use` binds (one in the function first) or a glob brings in
@@ -12534,32 +12549,18 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
       const ids = rustUseItemsAt(path[0]!, ref, context);
       return ids === null ? null : [...ids].map((id) => context.getNodeById?.(id)).filter((n): n is Node => !!n);
     }
-    // A head a `use` in the function binds: the path through that `use`'s, from where it is written,
-    // else as a 2015 path from the crate's root, by the rule below.
+    const pathMods = rustUsesOf(from.file, context).pathMods;
+    // A head a `use` in the function binds: the path through that `use`'s, from where it is written.
     if (headUse) {
       const found: Node[] = [];
       for (const p of headUse.paths) {
-        const full = [...p.segs, ...path.slice(1)];
-        const lead = full[0] ?? '';
-        let items = rustUsePathItems(full, rustModuleAt(ref.filePath, p.at, context), context, new Set());
-        if (items === null && lead !== 'crate' && lead !== 'self' && lead !== 'super' && !rustUsesOf(from.file, context).pathMods.has(lead)) {
-          const root = rustCrateRootModule(ref.filePath, context);
-          if (root) items = rustUsePathItems(full, root, context, new Set());
-        }
+        const items = rustPathItemsOr2015([...p.segs, ...path.slice(1)], rustModuleAt(ref.filePath, p.at, context), ref.filePath, pathMods, context);
         if (items === null) return null;
         found.push(...items);
       }
       return found;
     }
-    let items = rustUsePathItems(path, from, context, new Set());
-    // As a 2015 path, from the crate's root — unless the module declares the
-    // head itself, where a `#[path]` puts it (a cfg's choice): another module
-    // of that name at the root is not it.
-    if (items === null && bare && !rustUsesOf(from.file, context).pathMods.has(head)) {
-      const root = rustCrateRootModule(ref.filePath, context);
-      if (root) items = rustUsePathItems(path, root, context, new Set());
-    }
-    return items;
+    return rustPathItemsOr2015(path, from, ref.filePath, pathMods, context);
   };
   let target: Node | null = null;
   if (typed) {

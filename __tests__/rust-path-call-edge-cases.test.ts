@@ -451,6 +451,7 @@ describe('Rust calls through a type a path names', () => {
   });
 
   it('resolves a local use from the crate root when the module-relative path is absent', () => {
+    // The 2015 reading applies whatever the package's edition, as it does for a path no `use` binds.
     expect(calls('src/sub2015.rs', 'via_root')).toEqual(['function take src/util2015.rs:1']);
   });
 
