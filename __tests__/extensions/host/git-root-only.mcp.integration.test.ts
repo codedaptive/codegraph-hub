@@ -10,6 +10,7 @@ import { __setLoadCodeGraphForTests } from '../../../src/mcp/tools';
 import { listRegisteredProjects } from '../../../src/extensions/host/worktree-lifecycle/project-registry';
 import { resolveRepoAnchor } from '../../../src/extensions/host/server/repo-anchor';
 import { dispatchToolCall } from '../../../src/extensions/host/server/tool-call';
+import { ADMIT_ALL } from '../../helpers/admit-all';
 
 describe('MCP calls require a git worktree', { timeout: 60_000 }, () => {
   let tmp: string;
@@ -88,5 +89,53 @@ describe('MCP calls require a git worktree', { timeout: 60_000 }, () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain(`${plain} is not in a git repository`);
     expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
+  });
+
+  it('refuses a stray index through the session when a builder is present', async () => {
+    const plain = path.join(tmp, 'plain');
+    fs.mkdirSync(plain);
+    fs.writeFileSync(path.join(plain, 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
+    const cg = await CodeGraph.init(plain);
+    try { await cg.indexAll(); } finally { cg.close(); }
+    const requests: string[] = [];
+    const builder = {
+      ensure: async (root: string) => { requests.push(root); return { kind: 'none' }; },
+      caughtUp: async () => undefined,
+      sync: async () => ({ filesChanged: 0 }),
+      release: async () => undefined,
+      freshness: () => null,
+    } as unknown as BuilderClient;
+    engine = new MCPEngine({ builder });
+    const result = await search(tmp, plain);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].type).toBe('text');
+    expect(result.content[0].text).toContain(`${plain} is not in a git repository`);
+    expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
+    expect(requests).toEqual([]);
+  });
+
+  it('refuses a stray index through the handler when a builder is present', async () => {
+    const plain = path.join(tmp, 'plain');
+    fs.mkdirSync(plain);
+    fs.writeFileSync(path.join(plain, 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
+    const cg = await CodeGraph.init(plain);
+    try { await cg.indexAll(); } finally { cg.close(); }
+    const requests: string[] = [];
+    const builder = {
+      ensure: async (root: string) => { requests.push(root); return { kind: 'none' }; },
+      caughtUp: async () => undefined,
+      sync: async () => ({ filesChanged: 0 }),
+      release: async () => undefined,
+      freshness: () => null,
+    } as unknown as BuilderClient;
+    engine = new MCPEngine({ builder });
+    const result = await engine.getToolHandler().execute(
+      'codegraph_search', { query: 'alphaSymbol', projectPath: plain }, undefined, ADMIT_ALL,
+    );
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].type).toBe('text');
+    expect(result.content[0].text).toContain(`${plain} is not in a git repository`);
+    expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
+    expect(requests).toEqual([]);
   });
 });
