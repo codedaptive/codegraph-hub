@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { indexRootAdmission, resolveRepoAnchor } from '../../../src/extensions/host/server/repo-anchor';
 
 describe('non-git index root admission', () => {
   let workspace: string;
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'cg-opted-anchor-')));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-opted-anchor-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
   });
   afterEach(() => {

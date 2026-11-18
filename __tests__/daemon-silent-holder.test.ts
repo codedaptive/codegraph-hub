@@ -26,6 +26,7 @@ import { getStateDir, getStateDirIdentity } from '../src/extensions/host/server/
 import { CodeGraphPackageVersion } from '../src/mcp/version';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -177,7 +178,7 @@ describe('a session whose server never says hello', () => {
     stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-silent-state-')));
     priorStateDir = process.env.CODEGRAPH_STATE_DIR;
     process.env.CODEGRAPH_STATE_DIR = stateDir;
-    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-silent-holder-')));
+    root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-silent-holder-')));
     fs.writeFileSync(path.join(root, 'a.ts'), 'export function alpha(): number { return 1; }\n');
     (await CodeGraph.init(root, { index: true })).close();
   }

@@ -5,6 +5,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { scanDirectory, scanDirectoryAsync } from '../../../src/extraction/index';
 import { clearProjectConfigCache } from '../../../src/project-config';
+import { canLinkDirs } from '../../helpers/canLinkDirs';
+
+const linkIt = it.skipIf(!canLinkDirs);
 
 describe('include walker symlink boundaries on a git root', () => {
   let root: string;
@@ -29,7 +32,7 @@ describe('include walker symlink boundaries on a git root', () => {
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init'], { cwd: root });
   }
 
-  it('does not follow an outside link reached by a wildcard include', () => {
+  linkIt('does not follow an outside link reached by a wildcard include', () => {
     fs.writeFileSync(path.join(root, 'codegraph.json'), JSON.stringify({ include: ['**/*.ts'] }));
     fs.writeFileSync(path.join(outside, 'y.ts'), 'export const y = 1;\n');
     fs.symlinkSync(outside, path.join(root, 'ext'), 'dir');
@@ -40,7 +43,7 @@ describe('include walker symlink boundaries on a git root', () => {
     expect(files.filter(file => file.startsWith('ext/'))).toEqual([]);
   });
 
-  it.each([
+  linkIt.each([
     ['scanDirectory', scanDirectory],
     ['scanDirectoryAsync', scanDirectoryAsync],
   ])('%s follows an outside link named as the include root', async (_name, scan) => {
@@ -54,7 +57,7 @@ describe('include walker symlink boundaries on a git root', () => {
     expect(await scan(root)).toContain('data/runs/x.ts');
   });
 
-  it('follows an outside link re-included by .codegraphignore', () => {
+  linkIt('follows an outside link re-included by .codegraphignore', () => {
     fs.writeFileSync(path.join(root, 'codegraph.json'), JSON.stringify({ include: ['**/*.ts'] }));
     fs.writeFileSync(path.join(root, '.codegraphignore'), '!ext\n');
     fs.writeFileSync(path.join(outside, 'y.ts'), 'export const y = 1;\n');
@@ -64,8 +67,13 @@ describe('include walker symlink boundaries on a git root', () => {
     expect(scanDirectory(root)).toContain('ext/y.ts');
   });
 
-  it('follows an in-root link below an include root', () => {
-    fs.writeFileSync(path.join(root, 'codegraph.json'), JSON.stringify({ include: ['**/*.ts'] }));
+  linkIt('follows an in-root link below an include root', () => {
+    // The include walk visits each real folder once, so if it reached vendor-real/ first it would skip lib/.
+    // Excluding vendor-real/ keeps the walk out of it, leaving the link as the only way in.
+    fs.writeFileSync(
+      path.join(root, 'codegraph.json'),
+      JSON.stringify({ include: ['**/*.ts'], exclude: ['vendor-real/'] }),
+    );
     fs.mkdirSync(path.join(root, 'vendor-real'));
     fs.writeFileSync(path.join(root, 'vendor-real/a.ts'), 'export const a = 1;\n');
     fs.symlinkSync(path.join(root, 'vendor-real'), path.join(root, 'lib'), 'dir');

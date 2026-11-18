@@ -17,6 +17,7 @@ import { ToolHandler } from '../src/mcp/tools';
 import { getKernel, resetKernelForTests } from '../src/extraction/kernel';
 import { extractFromSource } from '../src/extraction';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 beforeAll(async () => {
   await initGrammars();
@@ -83,7 +84,7 @@ describe.each(['native', 'wasm'].filter((backend) => backend === 'wasm' || kerne
   );
 
   it('persists prose for FTS, keeps exact names first, and renders it through MCP and CLI', async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1905-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1905-')));
     fs.writeFileSync(path.join(dir, 'ledger.py'), fixture);
     cg = CodeGraph.initSync(dir);
     await cg.indexAll();

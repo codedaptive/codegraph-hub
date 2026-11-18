@@ -5,8 +5,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { scanDirectory, scanDirectoryAsync } from '../../../src/extraction/index';
 import { clearProjectConfigCache } from '../../../src/project-config';
+import { canLinkDirs } from '../../helpers/canLinkDirs';
 
-describe.each([
+describe.skipIf(!canLinkDirs).each([
   ['scanDirectory', scanDirectory],
   ['scanDirectoryAsync', scanDirectoryAsync],
 ])('%s on a git root', (_name, scan) => {

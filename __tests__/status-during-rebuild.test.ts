@@ -17,6 +17,7 @@ import * as path from 'path';
 import { CodeGraph } from '../src';
 import { DatabaseConnection } from '../src/db';
 import { QueryBuilder } from '../src/db/queries';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -46,7 +47,7 @@ describe('codegraph status during an index rebuild (#2913)', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-rebuild-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-rebuild-')));
     fs.writeFileSync(path.join(dir, 'a.ts'), 'export function a() { return b(); }\nexport function b() { return 1; }\n');
     const cg = CodeGraph.initSync(dir);
     await cg.indexAll();
@@ -191,7 +192,7 @@ describe('codegraph status on an index an older release built (#2913)', () => {
   let dbPath: string;
 
   beforeEach(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-legacy-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-legacy-')));
     fs.writeFileSync(path.join(dir, 'a.ts'), 'export function a() { return b(); }\nexport function b() { return 1; }\n');
     const cg = CodeGraph.initSync(dir);
     await cg.indexAll();
