@@ -8,8 +8,9 @@
  *
  * A cold build's database is rolled back at the job's end, while its `rebuild.pid` still names `pid`. When the
  * child reported the database's identity, only a file with that identity is removed. When it reported none
- * (killed before CodeGraph.init returned), the file is discarded by the rule for a killed cold build's leftover
- * (../worktree-lifecycle/discardDeadColdBuildLeftover.ts): kept while another live process holds `writer.pid`.
+ * (killed before CodeGraph.init returned, or a platform with no identity: win32), the file is discarded by the
+ * rule for a killed cold build's leftover (../worktree-lifecycle/discardDeadColdBuildLeftover.ts): kept while
+ * another live process holds `writer.pid`.
  * Either way the `rebuild.pid` naming `pid` is then released.
  */
 import * as fs from 'fs';
