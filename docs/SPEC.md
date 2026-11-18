@@ -86,14 +86,14 @@ success-shaped guidance that it is not a repository and how to opt in, never `is
 session launched outside git keeps its launch directory as its anchor (§4); a call there resolves to the worktree
 or opted-in folder enclosing its path, or gets that guidance.
 
-The CLI gives the same text as an error with exit 1, since a shell command has no `isError` (S-85). `init`,
-`index` and `sync` refuse such a path whether they hand the work to the builder or write in their own process
-(§2, R-14), before anything is written, as for an unsafe root; `--force` does not override it. The commands that
-read an index (`status`, `query`, `explore` and the rest, the fork's `grep`, `blast`, `orphans` and `suspects`
-included) refuse it the same way when the index they find is a stray one, in no git worktree and never opted in;
-with no index there, they give upstream's no-index answer, which reads and builds nothing (S-82, S-84, S-85). The
-prompt hook drops a stray root from its plan and adds nothing for it. `uninit`, `unlock` and `project remove`
-still work on such a root.
+The CLI gives that answer, worded for a command, as an error with exit 1, since a shell command has no `isError`
+(S-85, S-88). `init`, `index` and `sync` refuse such a path whether they hand the work to the builder or write in
+their own process (§2, R-14), before anything is written, as for an unsafe root; `--force` does not override it.
+The commands that read an index (`status`, `query`, `explore` and the rest, the fork's `grep`, `blast`, `orphans`
+and `suspects` included) refuse it the same way when the index they find is a stray one, in no git worktree and
+never opted in; with no index there, they give upstream's no-index answer, which reads and builds nothing (S-82,
+S-84, S-85). The prompt hook drops a stray root from its plan and adds nothing for it. `uninit`, `unlock` and
+`project remove` still work on such a root.
 
 **Opting in (R-50, shipped in sm.16).** `codegraph init <dir> --no-git`, run once by a person, opts a folder
 outside git in. The opt-in is recorded in the project registry, and from then on the folder is served, synced and
