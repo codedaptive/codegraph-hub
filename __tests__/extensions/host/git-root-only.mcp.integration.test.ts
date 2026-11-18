@@ -91,7 +91,7 @@ describe('MCP calls require a git worktree', { timeout: 60_000 }, () => {
     expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
   });
 
-  it('refuses a stray index through the session when a builder is present', async () => {
+  it('refuses a stray index at the session guard, before any builder request', async () => {
     const plain = path.join(tmp, 'plain');
     fs.mkdirSync(plain);
     fs.writeFileSync(path.join(plain, 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
@@ -135,6 +135,7 @@ describe('MCP calls require a git worktree', { timeout: 60_000 }, () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0].type).toBe('text');
     expect(result.content[0].text).toContain(`${plain} is not in a git repository`);
+    expect(result.content[0].text).toContain('codegraph indexes only git worktrees and the folders opted in to indexing');
     expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
     expect(requests).toEqual([]);
   });
