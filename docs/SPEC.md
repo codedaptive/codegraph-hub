@@ -22,7 +22,7 @@ opted in (R-46, R-50), through one MCP server and the
 | Process | Count | Does |
 |---|---|---|
 | Server | one per computer [B1] | Answers every query, for every repository. Reads databases; never writes an index. |
-| Builder | one, long-lived, separate from the server [B9] | Every index write: cold builds, catch-up after a copy, syncs, VACUUM. Runs a queue; small syncs go ahead of cold builds [B10]; work on roots that already have an index (syncs, catch-ups, seeds, opens) runs in its own lane, alongside a running cold build, while cold builds stay serial (R-43, S-78). Every job has a time and a memory limit (R-47, S-69). R-53 replaces these two lanes after sm.16 (not yet in the code): one lane per git repository, plus two bypass lanes any repository may use while the 1-minute load average is below 95, each job in its own child process. |
+| Builder | one, long-lived, separate from the server [B9] | Every index write: cold builds, catch-up after a copy, syncs, VACUUM. Runs a queue with one lane per git repository (every worktree sharing one git common dir; an opted-in folder outside git has a lane of its own), and the lanes of different repositories run at the same time (R-53). A lane runs one job at a time; the jobs that build or rewrite a whole index (cold builds, `init`, `index`, VACUUM) wait behind its small ones (syncs, catch-ups, seeds, opens) [B10]. Two bypass lanes are shared by every repository: while a repository's lane is busy, its next job may start in a free bypass lane if the machine's 1-minute load average is below 95 when it starts; a running job is never stopped for load. Two jobs never run on the same root at once. Each job runs in its own child process of the builder, under a time and a memory limit (R-47, S-69). |
 | `serve --mcp` session | one per agent session | Carries the session's launch settings (§4) and forwards calls to the server. |
 
 The first client starts the server; the server starts the builder; neither exits when idle (R-12). That keeps
@@ -134,16 +134,14 @@ A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8
 (`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
 applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root,
-the job kind, the limit and the measured value. Jobs run inside the builder process, so ending one ends the
-process: a job running beside it in the other lane ends with it, rolled back and not marked (S-79); its log line
-is a failed `job end` naming the over-limit job. Memory is one figure for the process; host charges a breach to
-the cold build when one runs (`rssOwner`, a heuristic). The ended job is not re-queued by itself, and the root's
-stopped mark survives every builder restart. A call for a stopped root that has an index is answered from it, with
-one line saying its last builder job was stopped at a limit, so the index may be partial or behind, naming the
-variable to raise and `codegraph index`; with no index, it gets that guidance alone. The fork's CLI read commands
-(`grep`, `blast`, `orphans`, `suspects`) print the same line on stderr and answer as before (S-71,
-team/settled.md). Only an explicit `codegraph index` or `codegraph init` of that root clears the mark and tries
-again, under the same limits (S-69).
+the job kind, the limit and the measured value. Each job runs in its own child process of the builder, so its
+memory is measured on its own and a limit ends only that process: the builder and the jobs running beside it go
+on (R-53). The ended job is not re-queued by itself, and the root's stopped mark survives every builder restart. A
+call for a stopped root that has an index is answered from it, with one line saying its last builder job was
+stopped at a limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with
+no index, it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print
+the same line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or
+`codegraph init` of that root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
 queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
@@ -207,7 +205,8 @@ On throwaway clones, never live team worktrees, and against a development server
 - With `--focus`, `search`/`explore`/`grep` return only focus results unless asked for the repository; `callers`/
   `impact`/`blast` return the whole repository with out-of-focus results listed separately.
 - With the hook deployed, an agent passing a wrong `projectPath` is answered from its own cwd's git root.
-- With cold builds queued, a small sync queued after them runs before the next cold build starts.
+- With cold builds of a repository queued, a small sync of that repository queued after them runs before its next
+  cold build starts.
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
@@ -236,7 +235,6 @@ order, is the second table.
 
 | Left | State |
 |---|---|
-| R-53's builder lanes (§2): one per git repository, two bypass lanes below load 95, each job in its own child process | host (`builder-repo-lanes`), before the upstream merge |
 | Upstream main merged into ours (docs/SPEC-upstream.md §7 item 5) | Orc-Codegraph |
 | R-51's five upstream pull requests | the owning lanes, after the upstream merge |
 | R-49: (a) a file with no extension indexed by its shebang line; (b) a Python test linked to the file it loads by path | (a) a hook-in in upstream-owned code, orc-approved; (b) resolution |
