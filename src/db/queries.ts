@@ -3659,8 +3659,10 @@ export class QueryBuilder {
    * Every ordered pair of files where one imports the other, once each: the
    * graph circular imports are read from. See `src/graph/file-cycles.ts`.
    *
-   * Only `imports` edges, which the import resolver made from a statement in
-   * the file. Every other cross-file edge says something ran or was mentioned
+   * Only `imports` edges: the import resolver's, made from a statement in the
+   * file, and the python-importlib resolver's, made from a `SourceFileLoader`
+   * or `spec_from_file_location` call that loads another file by its path.
+   * Every other cross-file edge says something ran or was mentioned
    * there, and a loop of those is not a circular import: an interface's call
    * fans out to a test's fake that implements it, two pages link to each other,
    * and the files of one Go package call each other freely.
@@ -3804,9 +3806,9 @@ export class QueryBuilder {
    * graph and the basis for blast-radius / `affected` test selection.
    *
    * It deliberately does NOT restrict to `imports` edges. In this graph an
-   * `imports` edge connects a file to its own local import declarations
-   * (it is always same-file), so an imports-only lookup returns zero
-   * cross-file dependents for every file. The real cross-file dependency
+   * `imports` edge mostly connects a file to its own local import
+   * declarations, so an imports-only lookup misses most cross-file
+   * dependents. The real cross-file dependency
    * signal is the resolved call/reference graph — calls, references,
    * instantiates, extends, implements, overrides, type_of, returns,
    * decorates — exactly what {@link GraphTraverser.getImpactRadius} traverses.
