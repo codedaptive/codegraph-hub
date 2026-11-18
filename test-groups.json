@@ -279,6 +279,7 @@
     "__tests__/go-unread-file-methods.test.ts",
     "__tests__/goframe.test.ts",
     "__tests__/gradle-kts-dsl-calls.test.ts",
+    "__tests__/grammar-load-concurrency.test.ts",
     "__tests__/grammar-load-failure.test.ts",
     "__tests__/graph.test.ts",
     "__tests__/import-default-as.test.ts",
