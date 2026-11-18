@@ -36,7 +36,7 @@ describe('holder ownership and background jobs', { timeout: 90_000 }, () => {
 
   function setup(queue: JobQueue, runJob: ReturnType<typeof inProcessJobRunner>['runJob']): void {
     holders = new HolderSet({
-      queue, fences: new RebuildFences(queue, () => undefined), onFreshness: () => undefined,
+      queue, fences: new RebuildFences(() => undefined), onFreshness: () => undefined,
       log: () => undefined, watchOptions: () => ({ debounceMs: 100 }),
       openWaitMs: 10_000, recoverWaitMs: 10_000, ownRetryMs: 50, pollMs: 100,
       ...{ runJob },

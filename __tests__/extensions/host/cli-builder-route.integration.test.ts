@@ -17,6 +17,7 @@
  * The fence registry, the queue and the holder are not reached into.
  */
 import { inProcessJobRunner } from './helpers/in-process-job-runner';
+import { testJobSupervisor } from './helpers/test-job-supervisor';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -351,27 +352,41 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
     expect(lockPid(r, 'rebuild.pid')).toBe(process.pid);
   });
 
-  // A fence is refused while a cold build of this process holds rebuild.pid. The build is the real one (seed.ts
-  // queues it, runColdBuild takes rebuild.pid under this pid); CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS holds it open
-  // after it took the record and before the database.
-  it('U5 fence is refused while a cold build of this process holds rebuild.pid', async () => {
+  // A cold build's child takes rebuild.pid. The delay holds it open after taking the record and before the database.
+  it('U5 fence is refused while a cold build\'s child holds rebuild.pid', async () => {
     vi.stubEnv('CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS', '1500');
     const plain = path.join(workspace, 'plain');
     fs.mkdirSync(path.join(plain, 'src'), { recursive: true });
     fs.writeFileSync(path.join(plain, 'src', 'a.ts'), 'export function a() { return 1; }\n');
     git(plain, 'init', '-q');
     const r = real(plain);
-    const svc = startService();
+    const supervisor = testJobSupervisor();
+    const svc = service = new BuilderService({
+      runJob: supervisor.run.bind(supervisor),
+      send: (message) => { sent.push(message as unknown as Outbound); },
+      jobLog: (line) => { jobLines.push(line); },
+      log: () => { /* diagnostics are not under test */ },
+      watchOptions: () => ({ debounceMs: 100 }),
+      timing: { pollMs: 25, ownRetryMs: 50, recoverWaitMs: 1_000, seedWaitMs: 1_000 },
+      housekeeping: false,
+    });
 
     expect(await svc.ensure(r), 'premise: an unindexed worktree queues a cold build').toEqual({ kind: 'building', root: r });
+    let childPid: number | null = null;
     expect(
-      await waitUntil(() => lockPid(r, 'rebuild.pid') === process.pid, 10_000),
-      'the cold build took rebuild.pid under this pid',
+      await waitUntil(() => {
+        const pid = lockPid(r, 'rebuild.pid');
+        if (pid === null || !pidAlive(pid)) return false;
+        if (Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim()) !== process.pid) return false;
+        childPid = pid;
+        return true;
+      }, 10_000),
+      'the cold build took rebuild.pid under a live child of this process',
     ).toBe(true);
 
     await ask(svc, { id: 1, op: 'fence', root: r });
     expect(replyTo(1)).toMatchObject({ id: 1, ok: false, error: 'Another index rebuild is already in progress.' });
-    expect(lockPid(r, 'rebuild.pid'), 'the build still holds its record').toBe(process.pid);
+    expect(lockPid(r, 'rebuild.pid'), 'the build still holds its record').toBe(childPid);
 
     // Let the build finish, so teardown does not race it.
     expect(await waitUntil(() => jobLines.some((l) => / job end cold-build /.test(l)), 30_000)).toBe(true);

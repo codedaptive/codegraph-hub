@@ -36,7 +36,7 @@ describe('holder job runner', { timeout: 60_000 }, () => {
   function setup(runJob: ReturnType<typeof inProcessJobRunner>['runJob'], watchOptions = () => ({})): void {
     const queue = new JobQueue({ loadAverage: () => 0 });
     holders = new HolderSet({
-      queue, fences: new RebuildFences(queue, () => undefined),
+      queue, fences: new RebuildFences(() => undefined),
       onFreshness: () => undefined, log: () => undefined, watchOptions,
       openWaitMs: 10_000, recoverWaitMs: 1_000, ownRetryMs: 50, pollMs: 100,
       ...{ runJob },

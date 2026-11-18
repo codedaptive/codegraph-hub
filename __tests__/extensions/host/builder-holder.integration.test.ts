@@ -132,7 +132,7 @@ describe('HolderSet catch-up readiness publication', { timeout: 60_000 }, () => 
     const queue = new JobQueue();
     holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
       queue,
-      fences: new RebuildFences(queue, (line) => logLines.push(line)),
+      fences: new RebuildFences((line) => logLines.push(line)),
       onFreshness: () => undefined,
       log: (line) => logLines.push(line),
       watchOptions: () => ({}),

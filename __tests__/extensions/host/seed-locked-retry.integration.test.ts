@@ -199,7 +199,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('does not retry when a fence appears during the retry delay', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
-    const fences = new RebuildFences(queue, () => {});
+    const fences = new RebuildFences(() => {});
     const isFenced = vi.spyOn(fences, 'isFenced').mockReturnValue(false);
     const host = new BuilderSeedHost(queue, { runJob, fences, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
     host.queueColdBuild(root, { realRoot: root });

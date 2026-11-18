@@ -63,7 +63,7 @@ export class BuilderService {
       jobLog: (line) => opts.jobLog(line), queue: () => this.queue, runJob: opts.runJob,
       rebuildHeld: (root) => this.fences.rebuildHeld(root), vacuum: opts.vacuum,
     }) });
-    this.fences = new RebuildFences(this.queue, (line) => opts.log(line));
+    this.fences = new RebuildFences((line) => opts.log(line));
     this.seedHost = new BuilderSeedHost(this.queue, {
       runJob: opts.runJob,
       seedWaitMs: opts.timing?.seedWaitMs ?? resolveSeedWaitMs(),

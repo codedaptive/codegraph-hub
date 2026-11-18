@@ -35,7 +35,7 @@ it('logs an ended own-retry open once and does not re-arm it', async () => {
   const enqueue = vi.spyOn(queue, 'enqueue');
   const lines: string[] = [];
   const holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
-    queue, fences: new RebuildFences(queue, (line) => lines.push(line)),
+    queue, fences: new RebuildFences((line) => lines.push(line)),
     onFreshness: () => undefined, log: (line) => lines.push(line), watchOptions: () => ({}),
     openWaitMs: 10000, recoverWaitMs: 1000, ownRetryMs: 50, pollMs: 1000,
   });

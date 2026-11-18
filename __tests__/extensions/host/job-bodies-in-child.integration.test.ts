@@ -40,7 +40,7 @@ describe('job bodies in child processes', { timeout: 90_000 }, () => {
   function setup(runJob: (id: number, spec: JobSpec, progress?: (payload: unknown) => void) => Promise<unknown>): void {
     const queue = new JobQueue({ loadAverage: () => 0 });
     holders = new HolderSet({
-      queue, fences: new RebuildFences(queue, () => undefined),
+      queue, fences: new RebuildFences(() => undefined),
       onFreshness: () => undefined, log: () => undefined, watchOptions: () => ({}),
       openWaitMs: 30_000, recoverWaitMs: 5_000, ownRetryMs: 50, pollMs: 100,
       ...{ runJob },

@@ -58,7 +58,7 @@ describe('macOS watcher delivery readiness', () => {
     const recorded = vi.spyOn(queue, 'enqueue');
     return { queue, jobs: () => recorded.mock.calls.map((call) => call[0]), held: holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
       queue,
-      fences: new RebuildFences(queue, () => undefined),
+      fences: new RebuildFences(() => undefined),
       onFreshness: () => undefined,
       log: () => undefined,
       watchOptions: () => ({}),
