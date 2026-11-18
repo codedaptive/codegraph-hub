@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { canonicalProjectRoot } from '../../../src/directory';
 import { repoKeyByStat } from '../../../src/extensions/host/builder/repo-key-by-stat';
+import { canLinkDirs } from '../../helpers/canLinkDirs';
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'ignore' });
@@ -45,11 +46,14 @@ describe('repoKeyByStat', () => {
     expect(repoKeyByStat(missing)).toBe(canonicalProjectRoot(missing));
   });
 
-  it('does not throw for a malformed git file or inaccessible git directory', () => {
+  it('falls back to the canonical root for a .git file naming a missing gitdir', () => {
     const malformed = path.join(tmp, 'malformed');
     fs.mkdirSync(malformed);
     fs.writeFileSync(path.join(malformed, '.git'), 'gitdir: /no/such/git/directory\n');
     expect(repoKeyByStat(malformed)).toBe(canonicalProjectRoot(malformed));
+  });
+
+  it.runIf(canLinkDirs)('falls back to the canonical root for a .git symlink to a missing target', () => {
     const broken = path.join(tmp, 'broken');
     fs.mkdirSync(broken);
     fs.symlinkSync(path.join(tmp, 'missing'), path.join(broken, '.git'));

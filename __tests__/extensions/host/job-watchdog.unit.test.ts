@@ -176,6 +176,43 @@ describe('JobWatchdog', async () => {
     expect(onBreach).not.toHaveBeenCalled();
   });
 
+  it('drops a stale sample after a child retry and reports the new child on the next check', async () => {
+    let pid = 101;
+    let finish: (rss: number | null) => void = () => undefined;
+    const sample = new Promise<number | null>((resolve) => { finish = resolve; });
+    const readChildRssBytes = vi.fn().mockReturnValueOnce(sample).mockResolvedValue(9437184);
+    const onBreach = vi.fn();
+    const watchdog = new JobWatchdog({ runningJobs: () => [sync] }, { maxMs: 1000, maxRssMb: 8 }, {
+      clock: () => 0, childPid: () => pid, readChildRssBytes, onBreach,
+    });
+    const first = watchdog.check();
+    expect(readChildRssBytes).toHaveBeenCalledExactlyOnceWith(101);
+    pid = 202;
+    finish(9437184);
+    await first;
+    expect(onBreach).not.toHaveBeenCalled();
+    await watchdog.check();
+    expect(readChildRssBytes).toHaveBeenLastCalledWith(202);
+    expect(onBreach).toHaveBeenCalledExactlyOnceWith(sync, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 }, 202);
+  });
+
+  it('drops a stale sample when the child disappears during the read', async () => {
+    let pid: number | null = 101;
+    let finish: (rss: number | null) => void = () => undefined;
+    const sample = new Promise<number | null>((resolve) => { finish = resolve; });
+    const readChildRssBytes = vi.fn(() => sample);
+    const onBreach = vi.fn();
+    const watchdog = new JobWatchdog({ runningJobs: () => [sync] }, { maxMs: 1000, maxRssMb: 8 }, {
+      clock: () => 0, childPid: () => pid, readChildRssBytes, onBreach,
+    });
+    const check = watchdog.check();
+    expect(readChildRssBytes).toHaveBeenCalledExactlyOnceWith(101);
+    pid = null;
+    finish(9437184);
+    await check;
+    expect(onBreach).not.toHaveBeenCalled();
+  });
+
   it('skips a second check while a child RSS sample is pending', async () => {
     let finish: (rss: number | null) => void = () => undefined;
     const sample = new Promise<number | null>((resolve) => { finish = resolve; });

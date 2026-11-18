@@ -8,7 +8,7 @@
  *
  * The children are forked with the flags the builder itself runs with (./client.ts) and share its stderr.
  */
-import { fork, type ChildProcess } from 'child_process';
+import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'child_process';
 import * as path from 'path';
 import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm-runtime-flags';
 import type { JobChildMessage } from './job-child-message-type';
@@ -40,11 +40,15 @@ export class JobSupervisor {
   run<T>(jobId: number, spec: JobSpec, onProgress?: (payload: unknown) => void): Promise<T> {
     this.databases.delete(jobId);
     return new Promise<T>((resolve, reject) => {
-      const child = fork(this.entry, [], {
+      // `fork` hands its options to `spawn`, which honors windowsHide; @types/node lists it only on SpawnOptions,
+      // so the type adds it. A builder with no console of its own must not give each job a visible one on Windows.
+      const options: ForkOptions & Pick<SpawnOptions, 'windowsHide'> = {
         execArgv: [...this.execArgv],
         env: process.env,
         stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
-      });
+        windowsHide: true,
+      };
+      const child = fork(this.entry, [], options);
       let outcome: { ok: true; value: T } | { ok: false; error: Error } | null = null;
       let settle: () => void = () => undefined;
       const closed = new Promise<void>((done) => { settle = done; });
@@ -76,7 +80,10 @@ export class JobSupervisor {
     });
   }
 
-  /** The pid of job `jobId`'s child while it runs; null before it starts and after it has closed. */
+  /**
+   * The pid of job `jobId`'s child while it runs; null before it starts and after it has closed. A job that runs
+   * again (a cold build's retry) gets a new child with another pid.
+   */
   childPid(jobId: number): number | null {
     return this.children.get(jobId)?.child.pid ?? null;
   }
@@ -91,13 +98,19 @@ export class JobSupervisor {
     return identity;
   }
 
-  /** SIGKILL job `jobId`'s child; resolves once it has closed, at once when no child runs for that id. */
-  async kill(jobId: number): Promise<void> {
+  /**
+   * SIGKILL job `jobId`'s child and resolve true once it has closed; without `pid`, true at once when no child
+   * runs for that id. Given `pid`, false when that child is not the job's running child (another child runs, or
+   * none), so nothing was killed.
+   */
+  async kill(jobId: number, pid?: number): Promise<boolean> {
     const running = this.children.get(jobId);
-    if (!running) return;
+    if (!running) return pid === undefined;
+    if (pid !== undefined && running.child.pid !== pid) return false;
     running.killed = true;
     running.child.kill('SIGKILL');
     await running.closed;
+    return true;
   }
 
   /**
