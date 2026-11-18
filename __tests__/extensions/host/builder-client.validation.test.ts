@@ -3,8 +3,8 @@
  * builder (dist/extensions/host/builder/main.js, which the suite's global setup rebuilds when src/ changed),
  * forked over IPC, against throwaway repositories with CODEGRAPH_STATE_DIR in a temp dir.
  *
- * What is pinned here is what only a separate process shows: every lock holder is the builder's pid and never
- * this (the server's) process; a cold build runs under the builder's `rebuild.pid`; a sync, a hold and a
+ * What is pinned here is what only a separate process shows: held roots name the builder as their writer,
+ * and a cold build's `rebuild.pid` names the builder or its child, never this (the server's) process; a sync, a hold and a
  * release do what the client's contract says; a plain directory is not built; a builder
  * started on a closed channel exits 0; stop() ends the builder. The SIGKILL case for held roots and dead locks
  * is in builder-client-sigkill.validation.test.ts.
@@ -156,7 +156,7 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
   });
 
   // slow: forks a real builder that loads the engine; indexing and IPC wait for host CPU under heavy load.
-  it('cold-builds a worktree with no index and no sibling under the builder\'s own rebuild.pid, no opt-in needed', async () => {
+  it('cold-builds a worktree with no index and no sibling under rebuild.pid held by the builder or its cold-build child, no opt-in needed', async () => {
     const main = path.join(workspace, 'main');
     makeRepo(main);
     const wt = path.join(workspace, 'wt');
@@ -167,10 +167,29 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
 
     const first = await client.ensure(wt);
     expect(first).toEqual({ kind: 'building', root: real(wt) });
-    // The build holds rebuild.pid for the delay: the holder is the builder.
-    expect(await waitUntil(() => readWriterLock(wt, 'rebuild.pid') !== null, 120_000)).toBe(true);
-    expect(readWriterLock(wt, 'rebuild.pid')?.pid).toBe(client.pid());
-    expect(readWriterLock(wt, 'rebuild.pid')?.mode).toBe('cold-build');
+    // The build holds rebuild.pid for the delay: the holder is the builder or its child.
+    const builderPid = client.pid();
+    expect(builderPid).not.toBeNull();
+    const observed: { lock: ReturnType<typeof readWriterLock>; parent: number | null } = { lock: null, parent: null };
+    expect(await waitUntil(() => {
+      const lock = readWriterLock(wt, 'rebuild.pid');
+      if (!lock) return false;
+      if (lock.pid === builderPid) {
+        observed.lock = lock;
+        observed.parent = builderPid;
+        return true;
+      }
+      try {
+        observed.parent = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(lock.pid)], { encoding: 'utf8' }).trim());
+      } catch (err) {
+        if (!alive(lock.pid)) return false;
+        throw err;
+      }
+      observed.lock = lock;
+      return true;
+    }, 120_000)).toBe(true);
+    expect(observed.parent).toBe(builderPid);
+    expect(observed.lock?.mode).toBe('cold-build');
     // A second call for the same worktree while it builds queues no second build.
     expect(await client.ensure(path.join(wt, 'src'))).toEqual({ kind: 'building', root: real(wt) });
 
