@@ -510,13 +510,19 @@ export class FlowChange {
   }
 
   /**
-   * Call with each file a sync is about to change or remove, while its rows are there to read. A file
-   * already indexed takes the language its row records; a new one takes it from `content` (an extensionless
-   * script's `#!` line, fork R-49), so a new script over the size limit, which arrives as a stamp, is not
-   * recorded.
+   * Call with each file a sync is about to change or remove, while its rows are there to read. The file is
+   * recorded under the language its row records (what the sync removes) and under the language of the
+   * `content` the sync read (what it indexes): an extensionless script whose `#!` line changed interpreter
+   * changes language (fork R-49). A new file with no content, such as a script over the size limit that
+   * arrives as a stamp, is recorded under the language its path gives.
    */
   before(file: string, content?: string): void {
-    const language = this.queries.getFileByPath(file)?.language ?? detectLanguage(file, content);
+    const stored = this.queries.getFileByPath(file)?.language;
+    const read = content === undefined && stored ? undefined : detectLanguage(file, content);
+    for (const language of new Set([stored, read])) if (language) this.note(file, language);
+  }
+
+  private note(file: string, language: Language): void {
     if (!LANGUAGES.some((l) => l.language === language)) return;
     const flows = this.queries.parameterFlows;
     let changed = this.languages.get(language);

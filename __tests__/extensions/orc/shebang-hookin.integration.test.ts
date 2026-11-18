@@ -81,6 +81,28 @@ describe('parameter-flow snapshot before a sync (R-49 D)', () => {
     expect(change.languages.size).toBe(0);
   });
 
+  function indexedAs(q: QueryBuilder, file: string, language: 'python' | 'ruby'): void {
+    q.upsertFile({
+      path: file, contentHash: 'h', language, size: 1, modifiedAt: 1, indexedAt: 1, nodeCount: 0, errors: [],
+    } as Parameters<QueryBuilder['upsertFile']>[0]);
+  }
+
+  it('records Ruby for an indexed Python script whose #! now names ruby (r49-shebang-files#2)', () => {
+    const q = queries();
+    indexedAs(q, 'bin/tool', 'python');
+    const change = new FlowChange(q);
+    change.before('bin/tool', '#!/usr/bin/env ruby\nputs "hi"\n');
+    expect([...change.languages.keys()]).toEqual(['ruby']);
+  });
+
+  it('keeps Ruby for an indexed Ruby script whose #! now names python, so its old flows are removed', () => {
+    const q = queries();
+    indexedAs(q, 'bin/tool', 'ruby');
+    const change = new FlowChange(q);
+    change.before('bin/tool', '#!/usr/bin/env python3\nprint(1)\n');
+    expect([...change.languages.keys()]).toEqual(['ruby']);
+  });
+
   it('records nothing for an extensionless path with no row and no content', () => {
     const change = new FlowChange(queries());
     change.before('bin/rails');
