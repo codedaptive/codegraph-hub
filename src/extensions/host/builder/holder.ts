@@ -56,6 +56,8 @@ import type { OpenHeldRootResult } from './open-held-root-result-type';
 import type { JobQueue } from './queue';
 import { requireWritable } from './require-writable';
 import { runSyncJob } from './run-sync-job';
+import { valveRetryWaitMs } from './valve-retry-wait-ms';
+import { valveStopLine } from './valve-stop-line';
 
 export type HoldResult =
   | { kind: 'held'; root: string }
@@ -110,8 +112,8 @@ interface Hold {
   /**
    * Waits for watcher readiness or the holder's bound, then settles (never rejects) when the first catch-up
    * job has run, or when released before it queues; at once when nothing was opened (another process owns
-   * `writer.pid` or a rebuild holds the root). A catch-up that found the lock held
-   * settles at that failure, before the retry it schedules (see queueCatchUp).
+   * `writer.pid` or a rebuild holds the root). A catch-up that found the lock held or that the WAL valve
+   * stopped settles at that failure, before the retry it schedules (see queueCatchUp).
    */
   caughtUp: Promise<void>;
   /**
@@ -123,6 +125,10 @@ interface Hold {
   publishFailed: boolean;
   /** The retry for a root another process owns. */
   ownTimer: NodeJS.Timeout | null;
+  /** The pending catch-up retry after lock contention or a WAL valve stop; cleared by teardown. */
+  catchUpTimer: NodeJS.Timeout | null;
+  /** WAL valve stops of the catch-up in a row, from zero per hold; a finished catch-up ends the retries. */
+  valveStops: number;
   closing: Promise<void> | null;
   /** Settles when a job of this root releases it (see {@link HolderSet.release}): teardown stops waiting for the root to go idle. */
   releasedByJobOfRoot: Promise<void>;
@@ -223,7 +229,7 @@ export class HolderSet {
       key, root, watcher: null, owner: false, closed: false, openJobPending: false,
       released, release,
       opening: Promise.resolve({ kind: 'held', root }), caughtUp: Promise.resolve(),
-      publishFailed: false, ownTimer: null, closing: null, releasedByJobOfRoot, jobOfRootReleasing, lastPushed: '',
+      publishFailed: false, ownTimer: null, catchUpTimer: null, valveStops: 0, closing: null, releasedByJobOfRoot, jobOfRootReleasing, lastPushed: '',
     };
     this.holds.set(key, hold);
     hold.opening = this.open(hold).then(
@@ -249,7 +255,8 @@ export class HolderSet {
    * Waits for watcher readiness or the holder's bound (not at all without a watcher: the catch-up is queued at
    * once), then resolves when the first catch-up has run (ok or
    * failed). Resolves without a catch-up when released before queuing, not held, or nothing was opened. A
-   * catch-up that found the lock held resolves at that failure, before its retry, which this call does not wait for. Never rejects.
+   * catch-up that found the lock held or that the WAL valve stopped resolves at that failure, before its retry,
+   * which this call does not wait for. Never rejects.
    * When that catch-up's readiness publication threw (logged) or returned without the record reading ready (not
    * logged), this call tries the publication again, so a later call can still make the root ready.
    */
@@ -493,10 +500,13 @@ export class HolderSet {
    * The catch-up sync after watcher readiness or the holder's bound (or immediately without a watcher): one
    * job that reconciles changes since the last sync, including during stream startup. Delivery may be unproven.
    * A hold released before queuing does not queue it. Lock contention (a CLI index run holds `codegraph.lock`)
-   * is retried with a growing wait; any other failure is logged and left to the watcher's and callers' syncs.
+   * is retried with a growing wait (1 s to 30 s). A WAL valve stop (a `WalValveAbortError`) is logged and retried
+   * after {@link valveRetryWaitMs} of the hold's stops in a row, counted from zero; lock contention between
+   * valve stops leaves the count unchanged. A finished catch-up ends the retries: no further catch-up is queued
+   * on the hold. Any other failure, a job ended at a limit included, is logged and left to the watcher's and callers' syncs. Teardown clears a pending retry.
    * A readiness publication afterwards that throws (logged) or leaves the record not ready (not logged) is
-   * retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock contention that
-   * is at the failure, before the retry, which is not waited for.
+   * retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock contention or a
+   * valve stop that is at the failure, before the retry, which is not waited for.
    */
   private queueCatchUp(hold: Hold, attempt: number): Promise<void> {
     return this.deps.queue.enqueue('catch-up', hold.root, async ({ id }) => {
@@ -511,17 +521,28 @@ export class HolderSet {
       },
       (err: unknown) => {
         if (hold.closed) return;
+        let wait: number;
+        let nextAttempt = attempt;
         if (err instanceof LockUnavailableError) {
           // The first retry waits 1 s and the wait doubles per attempt: a CLI index run holds codegraph.lock for
           // a while, so the retries back off rather than hammer it. Capped at CATCH_UP_RETRY_MAX_MS.
-          const wait = Math.min(1_000 * 2 ** attempt, CATCH_UP_RETRY_MAX_MS);
-          const timer = setTimeout(() => {
-            if (!hold.closed) void this.queueCatchUp(hold, attempt + 1);
-          }, wait);
-          timer.unref();
+          wait = Math.min(1_000 * 2 ** attempt, CATCH_UP_RETRY_MAX_MS);
+          nextAttempt = attempt + 1;
+        } else if (err instanceof Error && err.name === 'WalValveAbortError') {
+          // A valve stop crosses the job child as a plain Error rebuilt with its name (./job-supervisor.ts), so
+          // the name, not the class, identifies it.
+          hold.valveStops += 1;
+          wait = valveRetryWaitMs(hold.valveStops);
+          this.deps.log(valveStopLine(hold.root, err.message, wait, new Date(Date.now() + wait)));
+        } else {
+          this.deps.log(`Catch-up sync failed for ${hold.root}: ${messageOf(err)}`);
           return;
         }
-        this.deps.log(`Catch-up sync failed for ${hold.root}: ${messageOf(err)}`);
+        hold.catchUpTimer = setTimeout(() => {
+          hold.catchUpTimer = null;
+          if (!hold.closed) void this.queueCatchUp(hold, nextAttempt);
+        }, wait);
+        hold.catchUpTimer.unref();
       },
     );
   }
@@ -548,6 +569,8 @@ export class HolderSet {
     hold.release();
     if (hold.ownTimer) clearTimeout(hold.ownTimer);
     hold.ownTimer = null;
+    if (hold.catchUpTimer) clearTimeout(hold.catchUpTimer);
+    hold.catchUpTimer = null;
     // An open that has started finishes first, so what it acquired is what is released. One still waiting in
     // the queue (behind a running job of its root, say) is not waited for: it finds the hold closed and opens nothing.
     if (!hold.openJobPending) await hold.opening;
