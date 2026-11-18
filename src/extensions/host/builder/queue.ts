@@ -3,9 +3,10 @@
  *
  * The `sync` lane runs the short jobs (`sync`, `catch-up`, `watch-sync`, `seed`, `recover`, `open`): a changed
  * file or two, a copy of an index, the writable open of one (its migrations and repairs). The `cold` lane runs
- * the whole-repository writes (`cold-build`, and the CLI's `init` and `index`, ./cli-jobs.ts), which run for
- * minutes. The lanes run beside each other, so an edit of an indexed root becomes visible while another root's
- * cold build runs.
+ * the whole-repository writes (`cold-build`, and the CLI's `init` and `index`, ./cli-jobs.ts) and the VACUUM a
+ * job's end queues when it left the index's freelist over its limit (`vacuum`, ./vacuum-after-job.ts), which
+ * run for minutes. The lanes run beside each other, so an edit of an indexed root becomes visible while another
+ * root's cold build or VACUUM runs.
  *
  * One writer per root: a job starts only when none of its roots (its own and its `alsoRoots`) is a root of a
  * running job in either lane; ./next-start.ts picks the next job (jobs of one root keep their order, and a
@@ -19,7 +20,8 @@
  * `<state dir>/builder.log`.
  *
  * A job ended over a limit (./job-limit-guard.ts) is refused here afterwards: a later enqueue of the same root
- * and kind rejects with {@link JobEndedError} (./ended-jobs.ts holds the marks). Cold builds are refused by
+ * and kind rejects with {@link JobEndedError} (./ended-jobs.ts holds the marks). So a `vacuum` ended over a
+ * limit is not queued again for its root until an explicit `init` or `index` of it. Cold builds are refused by
  * their own body instead (cold-build.ts), and `init` and `index` never are: they are the explicit way to try
  * again, and one that ends ok clears its root's marks.
  */
@@ -33,9 +35,10 @@ import type { RunningJob } from './running-job';
 
 /**
  * What a job does, and so which lane it runs in (./job-lane.ts). `sync` is a caller's sync (the server's, or
- * the CLI's `sync`); `init` and `index` are the CLI's whole-repository index writes (./cli-jobs.ts).
+ * the CLI's `sync`); `init` and `index` are the CLI's whole-repository index writes (./cli-jobs.ts); `vacuum`
+ * is the VACUUM of one root's index (./vacuum-after-job.ts).
  */
-export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build' | 'init' | 'index' | 'recover' | 'open';
+export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build' | 'init' | 'index' | 'recover' | 'open' | 'vacuum';
 
 /** The kinds an ended mark never refuses at enqueue: `init` and `index` are the explicit retry; a cold build refuses in its body (cold-build.ts). */
 const NEVER_REFUSED: ReadonlySet<JobKind> = new Set<JobKind>(['cold-build', 'init', 'index']);

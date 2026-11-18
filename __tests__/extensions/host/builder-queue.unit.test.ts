@@ -36,6 +36,31 @@ function recordingQueue(): { queue: JobQueue; events: string[]; raw: JobEvent[] 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
 describe('JobQueue', () => {
+  it('runs a sync of a root queued after that root\'s waiting vacuum before the vacuum', async () => {
+    const { queue, events } = recordingQueue();
+    const blocker = held();
+    const first = queue.enqueue('cold-build', '/blocker', blocker.run);
+    const vacuum = queue.enqueue('vacuum', '/project', async () => undefined);
+    const sync = queue.enqueue('sync', '/project', async () => undefined);
+    await sync;
+    expect(events).toEqual(['start cold-build /blocker', 'start sync /project', 'end sync /project']);
+    blocker.finish();
+    await Promise.all([first, vacuum]);
+    expect(events.slice(3)).toEqual(['end cold-build /blocker', 'start vacuum /project', 'end vacuum /project']);
+  });
+
+  it('starts a sync of another root beside a running vacuum', async () => {
+    const { queue, events } = recordingQueue();
+    const vacuum = held();
+    const sync = held();
+    const a = queue.enqueue('vacuum', '/a', vacuum.run);
+    const b = queue.enqueue('sync', '/b', sync.run);
+    expect(events).toEqual(['start vacuum /a', 'start sync /b']);
+    vacuum.finish();
+    sync.finish();
+    await Promise.all([a, b]);
+  });
+
   it('starts a sync of another root synchronously alongside a cold build', async () => {
     const { queue, events } = recordingQueue();
     const cold = held();
@@ -390,6 +415,16 @@ describe('JobQueue job limits', () => {
     await expect(result).rejects.toMatchObject({ root: '/ended', kind: 'sync', limit: 'time' });
     expect(run).not.toHaveBeenCalled();
     expect(events).toEqual([]);
+  });
+
+  it('refuses a vacuum of a root whose vacuum was ended, until an index of that root ends ok', async () => {
+    endedJobs.add({ ...mark, kind: 'vacuum' });
+    const run = vi.fn(async () => 42);
+    await expect(new JobQueue().enqueue('vacuum', '/ended', run)).rejects.toBeInstanceOf(JobEndedError);
+    expect(run).not.toHaveBeenCalled();
+    await new JobQueue().enqueue('index', '/ended', async () => undefined);
+    await expect(new JobQueue().enqueue('vacuum', '/ended', run)).resolves.toBe(42);
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it.each(['cold-build', 'init', 'index'] as const)('does not refuse an ended %s job', async (kind) => {
