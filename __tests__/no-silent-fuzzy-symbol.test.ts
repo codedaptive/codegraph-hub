@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -149,7 +150,7 @@ describe.skipIf(!HAS_SQLITE || !fs.existsSync(BIN))('no silent fuzzy substitutio
   let projectRoot: string;
 
   beforeEach(async () => {
-    projectRoot = tmpRoot('codegraph-1473-cli-');
+    projectRoot = gitInitTempRoot(tmpRoot('codegraph-1473-cli-'));
     const src = path.join(projectRoot, 'src', 'a', 'b', 'c');
     fs.mkdirSync(src, { recursive: true });
     fs.writeFileSync(

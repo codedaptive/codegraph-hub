@@ -34,6 +34,7 @@ import { connectWithHello } from '../src/mcp/proxy';
 import { CodeGraphPackageVersion, isOlderRelease } from '../src/mcp/version';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const DIST = path.resolve(__dirname, '../dist');
@@ -242,6 +243,7 @@ describe('a launcher meeting a server of another version (#2335)', () => {
 
   beforeEach(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-older-version-'));
+    gitInitTempRoot(tempDir);
     stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-older-state-')));
     fs.writeFileSync(path.join(tempDir, 'app.ts'), 'export function appMain() { return 1; }\n');
     const cg = await CodeGraph.init(tempDir);

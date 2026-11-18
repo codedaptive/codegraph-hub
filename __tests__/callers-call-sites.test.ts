@@ -18,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
 import { ToolHandler } from '../src/mcp/tools';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 import type { Node } from '../src/types';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
@@ -82,7 +83,8 @@ const files: Record<string, string> = {
 };
 
 beforeAll(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-call-sites-'));
+  // A git repository, as the CLI expects of the project it reads (see gitInitTempRoot).
+  root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-call-sites-')));
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), content);

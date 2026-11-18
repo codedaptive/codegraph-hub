@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../../../src/index';
 import { MCPEngine } from '../../../src/mcp/engine';
@@ -13,7 +14,8 @@ describe('MCP non-git opt-in', { timeout: 60_000 }, () => {
   let workspace: string;
   let engine: MCPEngine;
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'cg-opted-mcp-')));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-opted-mcp-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     __setLoadCodeGraphForTests(CodeGraph);
     engine = new MCPEngine();

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import CodeGraph from '../../../src/index';
@@ -21,7 +22,8 @@ describe('builder queue lanes', { timeout: 60_000 }, () => {
   let sent: BuilderToServer[];
 
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync('/tmp/cg-sync-lane-'));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-sync-lane-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     lines = [];

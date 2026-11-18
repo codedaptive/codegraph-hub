@@ -23,6 +23,7 @@ import { ToolHandler } from '../src/mcp/tools';
 import { extractFromSource } from '../src/extraction';
 import { initGrammars, loadGrammarsForLanguages } from '../src/extraction/grammars';
 import type { Node } from '../src/types';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -30,7 +31,8 @@ afterEach(() => {
 });
 
 async function indexed(files: Record<string, string>): Promise<CodeGraph> {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cpp-calls-'));
+  // A git repository, as the CLI expects of the project it reads (see gitInitTempRoot).
+  const root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cpp-calls-')));
   roots.push(root);
   for (const [rel, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });

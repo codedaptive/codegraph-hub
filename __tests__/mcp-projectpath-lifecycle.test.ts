@@ -26,6 +26,7 @@ import { MCPEngine } from '../src/mcp/engine';
 import { __setLoadCodeGraphForTests } from '../src/mcp/tools';
 import { BuilderClient, type BuilderFreshness, type EnsureOutcome } from '../src/extensions/host/builder/client';
 import { ADMIT_ALL } from './helpers/admit-all';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 // Read-only opens use the engine's lazy CommonJS loader.
 const { MCPEngine: BuiltMCPEngine } = require('../dist/mcp/engine') as typeof import('../src/mcp/engine');
@@ -45,6 +46,7 @@ class RecordingCodeGraph extends CodeGraph {
 async function makeProject(dir: string, symbol: string): Promise<void> {
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', 'sample.ts'), `export function ${symbol}() { return 1; }\n`);
+  gitInitTempRoot(dir);
   const cg = await CodeGraph.init(dir, { config: { include: ['**/*.ts'], exclude: [] } });
   await cg.indexAll();
   cg.close();

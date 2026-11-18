@@ -22,6 +22,7 @@ import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../src';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const PROXY = path.resolve(__dirname, '../dist/mcp/proxy.js');
@@ -131,6 +132,7 @@ describe('MCP stdio output failure (#2991)', () => {
   it('stops a direct-mode server through its normal shutdown, which releases the writer lock', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-stdout-direct-'));
     dirs.push(dir);
+    gitInitTempRoot(dir);
     CodeGraph.initSync(dir).close();
     const writerPid = path.join(dir, '.codegraph', 'writer.pid');
 

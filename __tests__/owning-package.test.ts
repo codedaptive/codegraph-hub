@@ -15,6 +15,7 @@ import * as path from 'path';
 import CodeGraph from '../src/index';
 import { ToolHandler, tools } from '../src/mcp/tools';
 import { MAX_SOURCE_FILE_SIZE_BYTES } from '../src/file-limits';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 import {
   groupFilesByPackage,
   owningPackageLookup,
@@ -205,6 +206,7 @@ describe('listing an indexed project by package', () => {
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-files-package-'));
+    gitInitTempRoot(dir);
     manifest(dir, 'package.json', { private: true });
     manifest(dir, 'apps/api/package.json', { name: '@acme/api' });
     manifest(dir, 'apps/web/package.json', { name: '@acme/web' });
