@@ -5,9 +5,10 @@
  *
  * The server (the machine server, or a direct-mode session) forks one builder and keeps it running. Every
  * cold build, seed copy, sync and watcher sync of every index happens here, and so does every `init`, `index`
- * and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts), on a queue with two lanes (./queue.ts):
- * the cold lane runs cold builds, `init` and `index` one at a time, and the sync lane runs every other job one at
- * a time beside it; the server opens the databases read-only and asks for the rest over IPC (./protocol.ts). The builder has no idle timer of any kind: it lives until its
+ * and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts), on a queue with one lane per git
+ * repository plus two shared bypass slots (./queue.ts): each repository runs one job at a time, its short jobs
+ * ahead of its cold builds, `init`, `index` and VACUUMs, different repositories run at once, and a busy
+ * repository's next job may take a bypass slot while the load average is below 95; the server opens the databases read-only and asks for the rest over IPC (./protocol.ts). The builder has no idle timer of any kind: it lives until its
  * IPC channel closes (the server is gone) or it is signalled.
  *
  * Files in the state dir (CODEGRAPH_STATE_DIR, inherited from the server, else ~/.codegraph):
@@ -36,13 +37,15 @@
  * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) cannot be
  * interrupted inside this process, so the builder ends itself: it writes the `job limit` line and the job's mark,
  * rolls back a partial cold build, releases this pid's rebuild.pid and writer.pid at that job's root, removes
- * builder.pid and exits with code 75 (./job-limit-guard.ts), with no grace for any other job. The exit also ends
- * the job running in the other lane: it gets a failed `job end` line naming the over-limit job, no mark, the same
- * rollback of a partial cold build and release of this pid's locks at its root, and runs again only when something
- * asks for it. Only the over-limit job is marked, so nothing retries it automatically. The server's client
- * restarts the builder. Other held roots' writer.pid still name the dead pid, for the next builder to reclaim.
- * The watchdog (./job-watchdog.ts) samples both lanes every 5 s on the main thread, so a job that blocks the
- * event loop is caught only when the loop turns; the process's RSS is charged to the cold-lane job when one runs.
+ * builder.pid and exits with code 75 (./job-limit-guard.ts), with no grace for any other job. Every job runs in
+ * this one process, so the exit also ends each job running beside it, in any repository's lane or bypass slot:
+ * each gets a failed `job end` line naming the over-limit job, no mark, the same rollback of a partial cold build
+ * and release of this pid's locks at its root, and runs again only when something asks for it. Only the
+ * over-limit job is marked, so nothing retries it automatically. The server's client restarts the builder. Other
+ * held roots' writer.pid still name the dead pid, for the next builder to reclaim. The watchdog
+ * (./job-watchdog.ts) samples every running job every 5 s on the main thread, so a job that blocks the event loop
+ * is caught only when the loop turns; the process's RSS is charged to the oldest running whole-repository job
+ * when one runs (./rss-owner.ts).
  *
  * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
  * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.

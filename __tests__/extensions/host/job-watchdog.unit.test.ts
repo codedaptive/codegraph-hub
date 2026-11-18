@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { JobWatchdog } from '../../../src/extensions/host/builder/job-watchdog';
 import type { RunningJob } from '../../../src/extensions/host/builder/running-job';
 
-const sync: RunningJob = { id: 1, kind: 'sync', root: '/sync', lane: 'sync' };
-const cold: RunningJob = { id: 2, kind: 'cold-build', root: '/cold', lane: 'cold' };
+const sync: RunningJob = { id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' };
+const cold: RunningJob = { id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' };
 
 describe('JobWatchdog', () => {
   it('ignores an idle queue and measures time from the first check of each job', () => {
@@ -24,7 +24,7 @@ describe('JobWatchdog', () => {
     watchdog.check();
     watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', lane: 'sync' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
+    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
   });
 
   it('reports only the older job when the other is not over time', () => {
@@ -41,7 +41,7 @@ describe('JobWatchdog', () => {
     now = 1001;
     watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', lane: 'sync' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
+    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
     watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
   });
@@ -64,17 +64,17 @@ describe('JobWatchdog', () => {
     watchdog.check();
     watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(2);
-    expect(onBreach).toHaveBeenLastCalledWith({ id: 2, kind: 'cold-build', root: '/cold', lane: 'cold' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
+    expect(onBreach).toHaveBeenLastCalledWith({ id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
   });
 
-  it('charges process RSS to the cold job when both lanes run', () => {
+  it('charges process RSS to the whole-repository job even in a bypass slot', () => {
     const onBreach = vi.fn();
     const watchdog = new JobWatchdog({ runningJobs: () => [sync, cold] }, { maxMs: 1000, maxRssMb: 8 }, {
       clock: () => 0, readRssBytes: () => 9437184, onBreach,
     });
     watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 2, kind: 'cold-build', root: '/cold', lane: 'cold' }, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 });
+    expect(onBreach).toHaveBeenCalledWith({ id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 });
   });
 
   it('charges process RSS to a lone sync job', () => {
@@ -89,7 +89,7 @@ describe('JobWatchdog', () => {
     watchdog.check();
     watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', lane: 'sync' }, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 });
+    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 });
   });
 
   it('reports the first breach in ascending id order, once per job', () => {
@@ -102,11 +102,11 @@ describe('JobWatchdog', () => {
     now = 1001;
     watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(1);
-    expect(onBreach).toHaveBeenNthCalledWith(1, { id: 1, kind: 'sync', root: '/sync', lane: 'sync' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
+    expect(onBreach).toHaveBeenNthCalledWith(1, { id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
     watchdog.check();
     watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(2);
-    expect(onBreach).toHaveBeenNthCalledWith(2, { id: 2, kind: 'cold-build', root: '/cold', lane: 'cold' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
+    expect(onBreach).toHaveBeenNthCalledWith(2, { id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
   });
 
   it('times a new id from its first check after the breached job finishes', () => {
@@ -122,7 +122,7 @@ describe('JobWatchdog', () => {
     jobs = [];
     watchdog.check();
     now = 5000;
-    jobs = [{ id: 3, kind: 'sync', root: '/new', lane: 'sync' }];
+    jobs = [{ id: 3, kind: 'sync', root: '/new', repo: '/b', lane: 'repo' }];
     watchdog.check();
     now = 6000;
     watchdog.check();
@@ -130,7 +130,7 @@ describe('JobWatchdog', () => {
     now = 6001;
     watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(2);
-    expect(onBreach).toHaveBeenLastCalledWith({ id: 3, kind: 'sync', root: '/new', lane: 'sync' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
+    expect(onBreach).toHaveBeenLastCalledWith({ id: 3, kind: 'sync', root: '/new', repo: '/b', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 });
   });
 
   it('starts an unrefed interval and stops it', () => {

@@ -5,10 +5,11 @@
  * removes a seed's staging copy, releases the root's locks it holds, and exits with code 75. The server's client
  * restarts it.
  *
- * The builder runs two lanes, so a job may be running beside the over-limit one, and the exit ends it too. That
- * job gets a failed `job end` line naming the over-limit job, and the same cleanup (its partial cold build rolled
- * back, its seed staging removed, its locks released), but no mark: it was not over a limit, so it runs again
- * only when something asks for it. Only the over-limit job is marked, so nothing retries it automatically.
+ * The builder runs a lane per repository plus two bypass slots, all in this one process, so other jobs may be
+ * running beside the over-limit one, and the exit ends them too. Each gets a failed `job end` line naming the
+ * over-limit job, and the same cleanup (its partial cold build rolled back, its seed staging removed, its locks
+ * released), but no mark: it was not over a limit, so it runs again only when something asks for it. Only the
+ * over-limit job is marked, so nothing retries it automatically.
  */
 import * as fs from 'fs';
 import * as path from 'path';

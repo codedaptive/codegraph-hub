@@ -1,10 +1,11 @@
 /**
- * Samples the builder's running jobs, at most one per lane, against their limits (./job-limits.ts). Jobs run in
+ * Samples the builder's running jobs, one per busy repository slot and bypass slot, against their limits
+ * (./job-limits.ts). Jobs run in
  * the builder's own process, so the only way to end one over a limit is to end the process
  * (./job-limit-guard.ts, through `onBreach`); this only decides when, and which job is over. Each job's time is
  * measured from the first check that saw it running, so it can be up to one interval late (and later while a job
  * blocks the event loop, since the sample runs on the main thread). The resident size is the whole builder
- * process's, read once per check and charged to one job (./rss-owner.ts); the other job is judged on time alone.
+ * process's, read once per check and charged to one job (./rss-owner.ts); the other jobs are judged on time alone.
  */
 import { checkJobLimits } from './job-limit-breach';
 import type { JobLimits } from './job-limits-type';

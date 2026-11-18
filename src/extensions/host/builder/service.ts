@@ -3,8 +3,8 @@
  * the held roots, the cold-build and seed host, the rebuild fences, the codegraph CLI's jobs, the
  * housekeeping sweep, and the request handler the IPC channel feeds.
  *
- * The index writes the builder makes as jobs happen here, in two lanes (one job at a time
- * in each) on {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
+ * The index writes the builder makes as jobs happen here, in a lane per git repository (one job at a time in
+ * each) plus two shared bypass slots on {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
  * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, the CLI's `init` and `index`
  * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts), and the VACUUM a job's end queues when it
  * left its root's freelist over the limit (./vacuum-after-job.ts). The one write a job does not await is the

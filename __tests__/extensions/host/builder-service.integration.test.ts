@@ -153,7 +153,7 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     expect(await svc.ensure(root)).toEqual({ kind: 'ready', root: real(root) });
     expect(readWriterLock(root)).toBeNull();
     expect(jobLines.filter((l) => / job start open /.test(l))).toEqual([]);
-    expect(svc.queue.waiting().sync).toBe(1);
+    expect(svc.queue.waiting()).toBe(1);
 
     // The cold build ends: the open job runs next, takes the slot as the builder and catches up.
     finishCold();
@@ -459,24 +459,30 @@ describe('BuilderService', { timeout: 60_000 }, () => {
     const { outer, nested, src } = await outerAndNested();
     const queue = new JobQueue();
     const host = new BuilderSeedHost(queue, { seedWaitMs: 1_000 });
-    // A job that does not end holds the queue, so the outer checkout's cold build stays queued (nothing runs a build).
-    let finishBlocker!: () => void;
-    const blocker = queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { finishBlocker = resolve; }));
-    await waitUntil(() => queue.runningJobs().some((job) => job.root === '/blocker'), 2_000);
+    // Hold each root so neither queued build can start, even though their repositories have separate lanes.
+    let finishOuter!: () => void;
+    let finishNested!: () => void;
+    const outerGate = new Promise<void>((resolve) => { finishOuter = resolve; });
+    const nestedGate = new Promise<void>((resolve) => { finishNested = resolve; });
+    const outerBlocker = queue.enqueue('cold-build', outer, () => outerGate);
+    const nestedBlocker = queue.enqueue('cold-build', nested, () => nestedGate);
+    void nestedBlocker.catch(() => undefined);
     try {
+      expect(queue.runningJobs().map((job) => job.root)).toEqual([outer, nested]);
       host.queueColdBuild(outer, { realRoot: outer });
       expect(host.buildingRootFor(outer)).toBe(outer);
       expect(host.buildingRootFor(src), 'the outer checkout\'s build does not name a path in the nested repository').toBeNull();
 
       expect(await ensureWorktreeIndex(src, host)).toEqual({ kind: 'building', root: nested });
       expect(host.buildingRootFor(src)).toBe(nested);
-      expect(queue.waiting().cold, 'the outer build and the nested build both wait').toBe(2);
+      expect(queue.waiting(), 'the outer build and the nested build both wait').toBe(2);
     } finally {
-      // Dropping the queue rejects the two waiting builds (nothing runs them); the blocker then ends.
+      // Dropping the queue rejects the two waiting builds; the blockers then end.
       const closing = queue.close();
-      finishBlocker();
+      finishOuter();
+      finishNested();
       await closing;
-      await blocker;
+      await Promise.allSettled([outerBlocker, nestedBlocker]);
     }
   });
 

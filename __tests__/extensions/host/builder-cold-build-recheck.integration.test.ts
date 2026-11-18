@@ -37,6 +37,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
   let home: string;
   let service: BuilderService;
   let jobLines: string[];
+  let releaseBlocker: () => void;
 
   beforeEach(() => {
     workspace = real(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-cold-recheck-')));
@@ -49,6 +50,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     jobLines = [];
+    releaseBlocker = () => {};
     service = new BuilderService({
       send: () => { /* the pushes are not under test */ },
       jobLog: (line) => { jobLines.push(line); },
@@ -60,6 +62,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
   });
 
   afterEach(async () => {
+    releaseBlocker();
     await service.stop(0);
     vi.unstubAllEnvs();
     fs.rmSync(workspace, { recursive: true, force: true });
@@ -73,11 +76,11 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
     return dir;
   }
 
-  /** Hold the queue: a running cold-build job that ends when the returned function is called. */
-  function holdQueue(): () => void {
-    let release!: () => void;
-    void service.queue.enqueue('cold-build', '/blocker', () => new Promise<void>((resolve) => { release = resolve; }));
-    return () => release();
+  /** Hold each build root until the returned function releases the blocker. */
+  function holdQueue(...roots: string[]): () => void {
+    const gate = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+    void service.queue.enqueue('sync', '/blocker', () => gate, { alsoRoots: roots });
+    return releaseBlocker;
   }
 
   const jobEnd = (root: string): string | undefined => jobLines.find((l) => l.includes(` job end cold-build ${root} `));
@@ -89,7 +92,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
     execFileSync('git', ['init', '-q'], { cwd: a2, stdio: 'ignore' });
     execFileSync('git', ['init', '-q'], { cwd: a3, stdio: 'ignore' });
     const victim = project('victim');
-    const release = holdQueue();
+    const release = holdQueue(a2, a3);
     // Both builds queue behind the blocker.
     expect(await service.ensure(path.join(a2, 'sub'))).toEqual({ kind: 'building', root: real(a2) });
     expect(await service.ensure(path.join(a3, 'sub'))).toEqual({ kind: 'building', root: real(a3) });
@@ -119,7 +122,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
     const wt = project('wt');
     execFileSync('git', ['init', '-q'], { cwd: wt, stdio: 'ignore' });
     const victim = project('victim');
-    const release = holdQueue();
+    const release = holdQueue(wt);
     // No sibling worktree to copy from: the build is queued, at the worktree root.
     expect(await service.ensure(path.join(wt, 'sub'))).toEqual({ kind: 'building', root: real(wt) });
 
@@ -136,7 +139,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
   it('a worktree that loses its git root while queued is refused before the build starts', async () => {
     const root = project('repo');
     execFileSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore' });
-    const release = holdQueue();
+    const release = holdQueue(root);
     expect(await service.ensure(path.join(root, 'sub'))).toEqual({ kind: 'building', root: real(root) });
 
     fs.renameSync(path.join(root, '.git'), path.join(workspace, 'removed-git'));
@@ -150,7 +153,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
   it('a build whose root is unchanged still runs after the admission: the index is built', async () => {
     const anchor = project('repo');
     execFileSync('git', ['init', '-q'], { cwd: anchor, stdio: 'ignore' });
-    const release = holdQueue();
+    const release = holdQueue(anchor);
     expect(await service.ensure(path.join(anchor, 'sub'))).toEqual({ kind: 'building', root: real(anchor) });
     release();
     expect(await waitUntil(() => jobEnd(anchor) !== undefined, 30_000), jobLines.join('\n')).toBe(true);

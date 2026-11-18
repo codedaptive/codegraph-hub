@@ -298,9 +298,8 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     expect(problems, 'IB1 problems (empty when every lock holder is the builder, and the cold build sampled one)').toEqual([]);
   }, 600_000);
 
-  // IB2: builder lanes. A sync of indexed root Z sent while cold build X runs starts beside X, without waiting for
-  // it, and ends before cold build Y (queued behind X) starts.
-  it('IB2: a sync sent while cold build X runs starts beside X and ends before cold build Y starts', async () => {
+  // IB2: jobs in different repositories can run together: a sync of Z and a cold build of Y start while X runs.
+  it('IB2: a sync and another repository cold build start while cold build X runs', async () => {
     // Over 5 s by design: three repositories, a CLI index run, three serve --mcp spawns, and two cold builds held open for 60 s each so requests can queue under heavy load.
     const root = fx.tempRoot();
     const stateDir = stateDirUnder(root);
@@ -334,7 +333,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
     if (xStart === undefined) {
       problems.push(`cold build of X never started within ${jobWait / 1000} s (first call answered ${excerpt(xCall)})`);
     } else {
-      // Y's cold build is queued behind X: a cold-build job while X runs waits for it.
+      // Y is another repository: its cold build can start while X is still running.
       await sy.tool(EXPLORE, { query: 'ib2YOnly', projectPath: y }, JOB_WAIT_MS);
       // The sync: an edit in Z, then a fresh status call. The window must be open when the call is sent (X started
       // and has not ended), so the sync is queued while X runs.
@@ -356,14 +355,14 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
         (j) => j.edge === 'start' && j.kind === 'cold-build' && j.root === y,
         jobWait,
       );
-      const all = jobsOf(stateDir);
-      const xEnd = all.find((j) => j.index > xStart.index && j.edge === 'end' && j.kind === 'cold-build' && j.root === x);
-      const zStart = all.find((j) => j.index > xStart.index && isZSync(j, 'start'));
+      const xEnd = await waitForJob(stateDir, xStart.index + 1,
+        (j) => j.edge === 'end' && j.kind === 'cold-build' && j.root === x, jobWait);
+      const zStart = jobsOf(stateDir).find((j) => j.index > xStart.index && isZSync(j, 'start'));
       if (xEnd === undefined) problems.push('X never ended');
       if (zEnd === undefined) problems.push(`no sync job of Z ended within ${jobWait / 1000} s after X started`);
       if (yStart === undefined) problems.push(`Y's cold build never started within ${jobWait / 1000} s`);
-      if (zEnd !== undefined && yStart !== undefined && zEnd.index > yStart.index) {
-        problems.push(`Z's sync ended at builder.log line ${zEnd.index}, after Y's cold build started at line ${yStart.index}`);
+      if (yStart !== undefined && xEnd !== undefined && yStart.index > xEnd.index) {
+        problems.push(`Y's cold build started at builder.log line ${yStart.index}, after X ended at line ${xEnd.index}`);
       }
       if (zStart === undefined) problems.push('no sync job of Z started after X started');
       if (zStart !== undefined && xEnd !== undefined && zStart.index > xEnd.index) {
@@ -371,7 +370,7 @@ describe('index builder gates (serve --mcp over stdio, throwaway repos)', () => 
       }
     }
 
-    expect(problems, 'IB2 problems (empty when Z sync, sent while X ran, starts before X ends and ends before Y cold build starts)').toEqual([]);
+    expect(problems, 'IB2 problems (empty when Z sync and Y cold build both start before X ends)').toEqual([]);
   }, 600_000);
 
   // IB3: the builder is a restartable child. SIGKILL during a cold build leaves the server running, the server starts

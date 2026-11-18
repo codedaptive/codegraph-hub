@@ -638,7 +638,7 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
     expect(await waitUntil(() => jobStarted('sync', r), 20_000, 5), 'premise: the first sync started').toBe(true);
     expect(jobOk('sync', r), 'premise: the first sync is still running').toBe(false);
     const second = ask(svc, { id: 2, op: 'cliSync', root: r });
-    expect(svc.queue.waiting().sync, 'premise: the second sync waits behind the first').toBe(1);
+    expect(svc.queue.waiting(), 'premise: the second sync waits behind the first').toBe(1);
 
     await ask(svc, { id: 3, op: 'fence', root: r, kind: 'release' });
     expect(replyTo(3), 'the release fence is taken').toMatchObject({ id: 3, ok: true });
@@ -672,7 +672,7 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
       const blocker = svc.queue.enqueue('cold-build', w, () => gate);
       try {
         await svc.ensure(w);
-        expect(svc.queue.waiting().sync, 'the seed of W waits behind the same-root job').toBe(1);
+        expect(svc.queue.waiting(), 'the seed of W waits behind the same-root job').toBe(1);
         expect(jobStarted('seed', w), 'the seed has not started').toBe(false);
 
         await ask(svc, { id: 2, op: 'fence', root: s, kind: 'release' });

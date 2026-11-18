@@ -1,17 +1,21 @@
 /**
- * The index builder's job queue: two lanes, each running one job at a time (./job-lane.ts picks the lane).
+ * The index builder's job queue: one lane per git repository, plus two bypass slots any repository may use
+ * (R-53). A job's repository is taken once, when it is queued (`repoOf`, by default ./repo-key-by-stat.ts: the
+ * worktrees of one repository share its lane).
  *
- * The `sync` lane runs the short jobs (`sync`, `catch-up`, `watch-sync`, `seed`, `recover`, `open`): a changed
- * file or two, a copy of an index, the writable open of one (its migrations and repairs). The `cold` lane runs
- * the whole-repository writes (`cold-build`, and the CLI's `init` and `index`, ./cli-jobs.ts) and the VACUUM a
- * job's end queues when it left the index's freelist over its limit (`vacuum`, ./vacuum-after-job.ts), which
- * run for minutes. The lanes run beside each other, so an edit of an indexed root becomes visible while another
- * root's cold build or VACUUM runs.
+ * Each repository runs one job at a time in its own slot, and different repositories run at once. Within a
+ * repository the short jobs (`sync`, `catch-up`, `watch-sync`, `seed`, `recover`, `open`: a changed file or two,
+ * a copy of an index, the writable open of one) go ahead of its whole-repository jobs (`cold-build`, the CLI's
+ * `init` and `index`, ./cli-jobs.ts, and the VACUUM a job's end queues, ./vacuum-after-job.ts), which run for
+ * minutes and start oldest first. While a repository's own slot is busy, its next job may start in a free bypass
+ * slot when the machine's load average is below the limit at that start; ./next-start.ts makes the pick.
  *
  * One writer per root: a job starts only when none of its roots (its own and its `alsoRoots`) is a root of a
- * running job in either lane; ./next-start.ts picks the next job (jobs of one root keep their order, and a
- * root's queued syncs go before its cold write). A running job is never preempted: the queue cannot interrupt
- * an index run halfway (a job over its limit ends the whole builder process instead, ./job-limit-guard.ts).
+ * running job in any slot. The pick is first-eligible (./first-startable.ts): a later job of a root can start
+ * before an earlier waiting job that names it among other roots, and a root's short jobs go before its
+ * whole-repository job only while that job still waits. A running job is never preempted: the queue cannot
+ * interrupt an index run halfway (a job over its limit ends the whole builder process instead,
+ * ./job-limit-guard.ts).
  *
  * {@link JobQueue.whenRootIdle} tells when no job of one root runs or waits (the release of an index being
  * removed waits on it, ./cli-relay.ts); the jobs are keyed by the root's canonical spelling.
@@ -25,18 +29,19 @@
  * their own body instead (cold-build.ts), and `init` and `index` never are: they are the explicit way to try
  * again, and one that ends ok clears its root's marks.
  */
+import * as os from 'os';
 import { canonicalProjectRoot } from '../../../directory';
 import { endedJobs } from './ended-jobs';
 import { JobEndedError } from './job-ended-error';
-import { jobLane } from './job-lane';
 import type { JobLane } from './job-lane-type';
 import { nextStart } from './next-start';
+import { repoKeyByStat } from './repo-key-by-stat';
 import type { RunningJob } from './running-job';
 
 /**
- * What a job does, and so which lane it runs in (./job-lane.ts). `sync` is a caller's sync (the server's, or
- * the CLI's `sync`); `init` and `index` are the CLI's whole-repository index writes (./cli-jobs.ts); `vacuum`
- * is the VACUUM of one root's index (./vacuum-after-job.ts).
+ * What a job does, and so whether it goes ahead of its repository's long jobs (./is-whole-repository-job.ts).
+ * `sync` is a caller's sync (the server's, or the CLI's `sync`); `init` and `index` are the CLI's
+ * whole-repository index writes (./cli-jobs.ts); `vacuum` is the VACUUM of one root's index (./vacuum-after-job.ts).
  */
 export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build' | 'init' | 'index' | 'recover' | 'open' | 'vacuum';
 
@@ -60,6 +65,10 @@ export function formatJobLine(event: JobEvent, now: Date = new Date()): string {
 
 export interface JobQueueOptions {
   onEvent?: (event: JobEvent) => void;
+  /** The repository key of a root, taken once when its job is queued; default ./repo-key-by-stat.ts. */
+  repoOf?: (root: string) => string;
+  /** The machine's 1-minute load average, read when a job would start in a bypass slot; default `os.loadavg()[0]`. */
+  loadAverage?: () => number;
 }
 
 export interface EnqueueOptions {
@@ -81,6 +90,8 @@ interface Entry {
   id: number;
   kind: JobKind;
   root: string;
+  /** The repository key of `root` ({@link JobQueueOptions.repoOf}), taken when the job was queued. */
+  repo: string;
   /** `root` and its {@link EnqueueOptions.alsoRoots} in their canonical spelling, taken when the job was queued; what {@link JobQueue.whenRootIdle} matches. */
   rootKeys: readonly string[];
   coalesceKey: string | undefined;
@@ -98,20 +109,25 @@ function oneLine(err: unknown): string {
 }
 
 export class JobQueue {
-  private readonly syncJobs: Entry[] = [];
-  private readonly coldJobs: Entry[] = [];
+  /** The jobs not started yet, in the order they were queued. */
+  private readonly waitingJobs: Entry[] = [];
   /** Queued, not started, entries by coalesce key. */
   private readonly byKey = new Map<string, Entry>();
-  /** The job each lane runs now. */
-  private readonly running = new Map<JobLane, Entry>();
-  /** The id of the job started last, in either lane: 1 for the first, one more for each next. */
+  /** The jobs running now with the slot each holds, by ascending id. */
+  private readonly running: Array<{ job: Entry; lane: JobLane }> = [];
+  /** The id of the job started last, in any slot: 1 for the first, one more for each next. */
   private lastId = 0;
+  private readonly repoOf: (root: string) => string;
+  private readonly loadAverage: () => number;
   private closed = false;
   private idleWaiters: Array<() => void> = [];
   /** Callers of {@link whenRootIdle}, by the canonical root they wait on. */
   private rootWaiters: Array<{ rootKey: string; resolve: () => void }> = [];
 
-  constructor(private readonly options: JobQueueOptions = {}) {}
+  constructor(private readonly options: JobQueueOptions = {}) {
+    this.repoOf = options.repoOf ?? repoKeyByStat;
+    this.loadAverage = options.loadAverage ?? (() => os.loadavg()[0] ?? 0);
+  }
 
   /**
    * Queue a job. Resolves with `run`'s value, rejects with its error (the failure is logged as well). A
@@ -131,25 +147,28 @@ export class JobQueue {
     let resolve!: (value: unknown) => void;
     let reject!: (reason: unknown) => void;
     const promise = new Promise<unknown>((res, rej) => { resolve = res; reject = rej; });
-    const entry: Entry = { id: 0, kind, root, rootKeys: [root, ...(opts.alsoRoots ?? [])].map(canonicalProjectRoot), coalesceKey: key, run, resolve, reject, promise };
+    const rootKeys = [root, ...(opts.alsoRoots ?? [])].map(canonicalProjectRoot);
+    const entry: Entry = { id: 0, kind, root, repo: this.repoOf(root), rootKeys, coalesceKey: key, run, resolve, reject, promise };
     if (key !== undefined) this.byKey.set(key, entry);
-    (jobLane(kind) === 'cold' ? this.coldJobs : this.syncJobs).push(entry);
+    this.waitingJobs.push(entry);
     this.pump();
     return promise as Promise<T>;
   }
 
-  /** The jobs running now, at most one per lane, by ascending id. `id` tells one run from the next (./job-watchdog.ts times each from its first sight). */
+  /**
+   * The jobs running now, by ascending id: at most one per repository in its own slot, and up to two more in the
+   * bypass slots. `id` tells one run from the next (./job-watchdog.ts times each from its first sight).
+   */
   runningJobs(): RunningJob[] {
-    return [...this.running].sort(([, a], [, b]) => a.id - b.id)
-      .map(([lane, { id, kind, root }]) => ({ id, kind, root, lane }));
+    return this.running.map(({ job: { id, kind, root, repo }, lane }) => ({ id, kind, root, repo, lane }));
   }
 
-  /** How many jobs wait, by lane (the running ones are not counted). */
-  waiting(): { sync: number; cold: number } {
-    return { sync: this.syncJobs.length, cold: this.coldJobs.length };
+  /** How many jobs wait, across every repository (the running ones are not counted). */
+  waiting(): number {
+    return this.waitingJobs.length;
   }
 
-  /** Resolves when no job runs in either lane and none waits. */
+  /** Resolves when no job runs in any slot and none waits. */
   whenIdle(): Promise<void> {
     // pump() has already started every job it can, so here it only resolves the waiters if nothing is left.
     return new Promise((resolve) => {
@@ -173,11 +192,11 @@ export class JobQueue {
 
   /**
    * Stop taking jobs and reject every one still waiting (a stopping builder). The running jobs are left to
-   * finish: resolves once both lanes' have.
+   * finish: resolves once every slot's have.
    */
   async close(): Promise<void> {
     this.closed = true;
-    const dropped = [...this.syncJobs.splice(0), ...this.coldJobs.splice(0)];
+    const dropped = this.waitingJobs.splice(0);
     this.byKey.clear();
     for (const entry of dropped) entry.reject(new Error('the index builder is stopping'));
     this.settleRootWaiters();
@@ -185,33 +204,35 @@ export class JobQueue {
   }
 
   /**
-   * Start each job the writer rule allows (./next-start.ts), one at a time; resolve the {@link whenIdle}
-   * callers when nothing is left. Runs inside {@link enqueue}, {@link whenIdle} and after each job ends. The
-   * pick is taken again after every start: a job's `run` can enqueue, and so pump, before its first await.
+   * Start each job the pick allows (./next-start.ts), one at a time; resolve the {@link whenIdle} callers when
+   * nothing is left. Runs inside {@link enqueue}, {@link whenIdle} and after each job ends; there is no timer, so
+   * a job held back by the load waits for the next of those. The pick is taken again after every start: a job's
+   * `run` can enqueue, and so pump, before its first await.
    */
   private pump(): void {
-    const state = { syncJobs: this.syncJobs, coldJobs: this.coldJobs, running: this.running };
-    for (let next = nextStart(state); next !== null; next = nextStart(state)) {
-      const lane = next.lane;
-      for (const entry of (lane === 'sync' ? this.syncJobs : this.coldJobs).splice(next.index, 1)) {
+    for (;;) {
+      const next = nextStart(this.waitingJobs, this.running, this.loadAverage);
+      if (next === null) break;
+      for (const entry of this.waitingJobs.splice(next.index, 1)) {
         if (entry.coalesceKey !== undefined && this.byKey.get(entry.coalesceKey) === entry) this.byKey.delete(entry.coalesceKey);
         this.lastId += 1;
         entry.id = this.lastId;
-        this.running.set(lane, entry);
+        const slot = { job: entry, lane: next.lane };
+        this.running.push(slot);
         this.emit({ edge: 'start', kind: entry.kind, root: entry.root });
         // `run` may throw before its first await; the async wrapper turns that into a rejection too.
         void (async () => entry.run())().then(
           (value) => {
             if (entry.kind === 'init' || entry.kind === 'index') endedJobs.clearRoot(entry.root);
             this.emit({ edge: 'end', kind: entry.kind, root: entry.root, ok: true });
-            this.running.delete(lane);
+            this.running.splice(this.running.indexOf(slot), 1);
             entry.resolve(value);
             this.pump();
             this.settleRootWaiters();
           },
           (err: unknown) => {
             this.emit({ edge: 'end', kind: entry.kind, root: entry.root, ok: false, error: oneLine(err) });
-            this.running.delete(lane);
+            this.running.splice(this.running.indexOf(slot), 1);
             entry.reject(err);
             this.pump();
             this.settleRootWaiters();
@@ -219,7 +240,7 @@ export class JobQueue {
         );
       }
     }
-    if (this.running.size + this.syncJobs.length + this.coldJobs.length > 0) return;
+    if (this.running.length + this.waitingJobs.length > 0) return;
     const waiters = this.idleWaiters;
     this.idleWaiters = [];
     for (const w of waiters) w();
@@ -227,7 +248,7 @@ export class JobQueue {
 
   /** A job of the root with this canonical key runs or waits. */
   private hasJobOf(rootKey: string): boolean {
-    return [...this.running.values(), ...this.syncJobs, ...this.coldJobs].some((e) => e.rootKeys.includes(rootKey));
+    return [...this.running.map(({ job }) => job), ...this.waitingJobs].some((e) => e.rootKeys.includes(rootKey));
   }
 
   /**
