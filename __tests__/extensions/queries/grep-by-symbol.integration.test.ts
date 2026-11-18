@@ -12,7 +12,7 @@
  * and ranking vectors also pin the localeCompare rule.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -104,6 +104,8 @@ let unindexedRoot = '';
 
 beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-grep-by-symbol-'));
+  const git = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+  if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
   for (const [rel, content] of Object.entries(FILES)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), content);

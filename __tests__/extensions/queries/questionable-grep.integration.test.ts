@@ -27,6 +27,7 @@
  * ToolHandler.execute('codegraph_grep').
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -90,6 +91,8 @@ let cg: CodeGraph;
 
 beforeAll(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-questionable-grep-')));
+  const git = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+  if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
   for (const [rel, content] of Object.entries(FILES)) {
     fs.writeFileSync(path.join(root, rel), content);
   }

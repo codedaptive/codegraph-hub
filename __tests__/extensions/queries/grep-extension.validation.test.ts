@@ -9,7 +9,7 @@
  *
  * The constants, the fixture (beforeAll/afterAll), childEnv, the stderr
  * capture and request() are verbatim copies of
- * grep-extension.integration.test.ts's.
+ * grep-extension-cli.validation.test.ts's.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
