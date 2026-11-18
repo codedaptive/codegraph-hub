@@ -17,9 +17,10 @@
  * a kernel is staged. Each arm indexes one real temp project holding every
  * vector, so the index cost is paid once per arm.
  *
- * The placement blocks at the end (a same-named type in one file, a `#if`-split
- * member, a supertype across the test-suite boundary, extensions that share a
- * line or a last segment) index their own projects on the wasm path.
+ * The placement blocks at the end (same-named types in one file, members in
+ * conditional compilation and macro-bearing extensions, a supertype across the
+ * test-suite boundary, extensions that share a line or a last segment) index
+ * their own projects on the wasm path.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -279,9 +280,11 @@ describe('Swift qualified inheritance placement, wasm arm', () => {
         // The top-level Base and Kit.Base are the same shape and share a file;
         // the nested one must win on its own path, not on which is declared first.
         'Sources/App/Nesting.swift': 'class Base {}\nenum Kit { class Base {} }\nclass Child: Kit.Base {}\n',
-        // The `#if` right inside `enum Frame {` leaves `Deep` without a parent
-        // in the index, so it is indexed at the top level. Nothing else declares `Deep`.
+        // The `#if` inside Frame's body is parsed, so Deep keeps its parent.
         'Sources/App/Recovery.swift': 'enum Frame {\n#if os(Linux)\n    protocol Deep {}\n#endif\n}\nclass Lower: Frame.Deep {}\n',
+        // A freestanding macro in the extension leaves Lost indexed at the top
+        // level, beside the struct that the written Container.Lost path names.
+        'Sources/App/Macro.swift': 'struct Container {}\nextension Container {\n    #Macro()\n    protocol Lost {}\n}\nclass Recovered: Container.Lost {}\n',
       }));
     });
 
@@ -295,10 +298,17 @@ describe('Swift qualified inheritance placement, wasm arm', () => {
       expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Kit::Base (Nesting.swift)']);
     });
 
-    it('lands `Frame.Deep` on the top-level protocol that has no parent in the index, beside its enum', () => {
-      expect(cg.getNodesByName('Deep').map((n) => n.qualifiedName)).toEqual(['Deep']);
+    it('lands `Frame.Deep` on the protocol nested under the conditional compilation block', () => {
+      expect(cg.getNodesByName('Deep').map((n) => n.qualifiedName)).toEqual(['Frame::Deep']);
       const s = supers(cg, 'Lower');
-      expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Deep (Recovery.swift)']);
+      expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Frame::Deep (Recovery.swift)']);
+    });
+
+    it('lands `Container.Lost` on the top-level indexed member beside its parent after a freestanding macro', () => {
+      expect(cg.getNodesByName('Container').map((n) => `${n.qualifiedName} (${path.basename(n.filePath)})`)).toEqual(['Container (Macro.swift)']);
+      expect(cg.getNodesByName('Lost').map((n) => n.qualifiedName)).toEqual(['Lost']);
+      const s = supers(cg, 'Recovered');
+      expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Lost (Macro.swift)']);
     });
   });
 
