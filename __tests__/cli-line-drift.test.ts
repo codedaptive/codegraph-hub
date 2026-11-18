@@ -18,6 +18,7 @@ import * as path from 'path';
 import { CodeGraph } from '../src';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { fileDrift, filesChangedSinceIndexed } from '../src/graph/file-drift';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const DIST = path.resolve(__dirname, '../dist');
 const BIN = path.join(DIST, 'bin', 'codegraph.js');
@@ -53,6 +54,7 @@ describe('callers, callees and impact flag files edited since the last index (#3
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-line-drift-'));
     dir = path.join(root, 'project');
     fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    dir = gitInitTempRoot(dir);
     fs.writeFileSync(path.join(dir, 'src/helper.ts'), HELPER);
     fs.writeFileSync(path.join(dir, 'src/direct.ts'), DIRECT);
     const cg = await CodeGraph.init(dir, { index: true });
