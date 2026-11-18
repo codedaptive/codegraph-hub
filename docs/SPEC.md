@@ -90,14 +90,13 @@ or opted-in folder enclosing its path, or gets that guidance.
 process (§2, R-14), before anything is written: an error and exit 1, as for an unsafe root; `--force` does not
 override it. `uninit` and `project remove` still work on such a root.
 
-**Opting in (R-50; built, ships in sm.16).** `codegraph init <dir> --no-git`, run once by a person,
-opts a folder outside git in. The opt-in is recorded in the project registry, and from then on the folder is
-served, synced and caught up like a git worktree root. Nothing else opts in: no MCP call, catch-up, seed or
-housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. `codegraph project list` marks
-an opted-in folder `no-git`; `codegraph uninit` or `codegraph project remove` on it ends the opt-in, and running
-`init --no-git` there again opts it back in. An opted-in folder keeps the
-guards below: symlinked folders leaving it are not followed and `.codegraphignore` decides what is read (R-44),
-and the job limits apply (R-47).
+**Opting in (R-50, shipped in sm.16).** `codegraph init <dir> --no-git`, run once by a person, opts a folder
+outside git in. The opt-in is recorded in the project registry, and from then on the folder is served, synced and
+caught up like a git worktree root. Nothing else opts in: no MCP call, catch-up, seed or housekeeping pass. A
+`.codegraph/` with no registry opt-in counts as not opted in. `codegraph project list` marks an opted-in folder
+`no-git`; `codegraph uninit` or `codegraph project remove` on it ends the opt-in, and running `init --no-git` there
+again opts it back in. An opted-in folder keeps the guards below: symlinked folders leaving it are not followed and
+`.codegraphignore` decides what is read (R-44), and the job limits apply (R-47).
 
 The builder still refuses what upstream's `unsafeIndexRootReason` (`src/directory.ts`, upstream #860) refuses (the
 home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
@@ -106,10 +105,11 @@ the queued job starts.
 ### What a build and the watcher read (R-44, S-72, S-75, S-76, S-77)
 
 The scan does not follow a symlinked folder whose real path is outside the root; the folder walk follows one whose
-real path is inside it (a git root's list, below, needs no alias). No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
-matcher as the root `.gitignore` (`buildDefaultIgnore`), so it applies wherever that matcher does: the walk, the
-git path, sync and the watcher, and an embedded repository's own `.codegraphignore` applies inside it (S-72). A `!`
-line naming a link's path inside the project re-includes a symlinked folder that leaves the root.
+real path is inside it (a git root's list, below, needs no alias). No size cap. A `.codegraphignore` at the root
+has `.gitignore`'s syntax and meaning and joins the same matcher as the root `.gitignore` (`buildDefaultIgnore`),
+so it applies wherever that matcher does: the walk, the git path, sync and the watcher, and an embedded
+repository's own `.codegraphignore` applies inside it (S-72). A `!` line naming a link's path inside the project
+re-includes a symlinked folder that leaves the root.
 
 On a git root the scan takes git's file list, which names a folder link without its contents. A link in it whose
 real path leaves the root is walked when the root's rules re-include it; a link into the root is not followed
@@ -128,16 +128,16 @@ sync is a full reconcile.
 A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8 GB resident
 (`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
-applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root, the job kind, the limit and the measured
-value. Jobs run inside the builder process, so ending one ends the process: a job running beside it in the other
-lane ends with it, rolled back, logged as failed and not marked (S-79). Memory is one figure for the process; host
-charges a breach to the cold build when one runs (`rssOwner`, a heuristic). The ended job is not re-queued by itself, and the root's stopped mark
-survives every builder restart. A call for a
-stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
-limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
-it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print the same
-line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or `codegraph init` of that
-root clears the mark and tries again, under the same limits (S-69).
+applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root,
+the job kind, the limit and the measured value. Jobs run inside the builder process, so ending one ends the
+process: a job running beside it in the other lane ends with it, rolled back, logged as failed and not marked
+(S-79). Memory is one figure for the process; host charges a breach to the cold build when one runs (`rssOwner`, a
+heuristic). The ended job is not re-queued by itself, and the root's stopped mark survives every builder restart.
+A call for a stopped root that has an index is answered from it, with one line saying its last builder job was
+stopped at a limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`;
+with no index, it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`)
+print the same line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or
+`codegraph init` of that root clears the mark and tries again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
 queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
@@ -207,10 +207,11 @@ On throwaway clones, never live team worktrees, and against a development server
 
 ## 8. Status (2026-11-17)
 
-Every item of the governing spec [B1]-[B14] is built and shipped, except [B1]'s "or directory" as R-50 restores it
-(the opt-in for a folder outside git), which is built and ships in sm.16. Installed globally: **1.6.2-sm.15** (ours
-d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
-`codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38); upstream main f72c9d2e is already in ours.
+Every item of the governing spec [B1]-[B14] is built and shipped, [B1]'s "or directory" included as R-50 restores
+it (the opt-in for a folder outside git, sm.16). Installed globally: **1.6.2-sm.16** (ours 3d65edec, 2026-11-17,
+R-52); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public: `codedaptive/codegraph-hub`,
+release `v1.6.2-sm.12` (R-31, R-32). The last upstream main merged into ours is f72c9d2e. What is left, in queue
+order, is the second table.
 
 | Release | What it shipped |
 |---|---|
@@ -225,9 +226,15 @@ d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect c
 | sm.13 (ours be5ab360, 2026-11-06) | a pinned project with no index is seeded from its nearest sibling; `codegraph project seed <path>` (S-57) |
 | sm.14 (ours 6a2b6eff, 2026-11-10) | a launcher no longer takes over a busy server, and a stopping server removes only its own socket (split-server fix, F-1/F-2, S-58); the R-38 bug list (Swift member and nested-supertype resolution, `grep`/`orphans` tool descriptions, install runbook, seed and upgrade-version fixes); upstream PRs #3249 (impact speed) and #3215 (order-independent resolution) taken early (R-40). Repo work landed with this commit, not in the package: the first test-group moves (D281); the S-65 moves follow |
 | sm.15 (ours d1e4c984, 2026-11-17) | after the 11-16 incident: only a git worktree root is indexed: the CLI's `init`, `index` and `sync` refuse a path outside every git worktree on both routes, and a path below a worktree root acts on that root (R-46, S-70; code outside git waits for R-50's opt-in); every builder job is ended at 60 minutes or 8 GB resident and not retried until an explicit `index` or `init` (R-47, S-69); on macOS a watcher is ready once its delivery probe sees its own event or gives up (macos-watcher-gap). Review follow-ups, the stopped note and R-50's opt-in for code outside git follow in sm.16 |
+| sm.16 (ours 3d65edec, 2026-11-17) | the rest of the 11-16 incident set: a folder outside git is indexed once a person opts it in with `codegraph init <dir> --no-git`, ended by `uninit` or `project remove` (R-50); `project pin` pins the enclosing git worktree root (R-46); a root stopped at a job limit is answered from its index with a note naming the limit's variable and `codegraph index`, in tool answers, `status`, the CLI's reads and the prompt hook, and its watcher degrades at once (S-69, S-71); `--color` and `--no-color` reach the CLI's warnings; a folder link leaving the root is followed only when `.codegraphignore` re-includes it, in the scan, git's file list, the `include` walk and the watcher (R-44, S-72, S-75, S-76, S-77); a cold build or a seed replaces the schema-less database a killed build left (S-73); syncs, catch-ups, seeds and opens of indexed roots run beside a cold build (R-43, S-78); a VACUUM after a job that leaves a large freelist, when free disk allows (R-45, S-81). Repo work, not in the package: its gate was the first to run the integration test group (S-83) |
 
 | Left | State |
 |---|---|
+| R-53's builder lanes (§2): one per git repository, two bypass lanes below load 95, each job in its own child process | host (`builder-repo-lanes`), before the upstream merge |
+| CLI read commands refuse a path in no git worktree and no opted-in folder as `init`, `index` and `sync` do: the refusal as their error, a non-zero exit (R-50, S-82). Today they answer from a stray `.codegraph/` there | host (`cli-read-opt-in`), with each test owner's fixtures (S-83) |
+| Upstream main merged into ours (docs/SPEC-upstream.md §7 item 5) | Orc-Codegraph |
+| R-51's five upstream pull requests | the owning lanes, after the upstream merge |
+| R-49: (a) a file with no extension indexed by its shebang line; (b) a Python test linked to the file it loads by path | (a) a hook-in in upstream-owned code, orc-approved; (b) resolution |
 | fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
 | The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
 
