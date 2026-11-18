@@ -510,25 +510,30 @@ export class FlowChange {
   }
 
   /**
-   * Call with each file a sync is about to change or remove, while its rows are there to read. A file
-   * already indexed takes the language its row records; a new one takes it from `content` (an extensionless
-   * script's `#!` line, fork R-49), so a new script over the size limit, which arrives as a stamp, is not
-   * recorded.
+   * Call with each file a sync is about to change or remove, while its rows are there to read. The file is
+   * recorded under the language its row records (what the sync removes) and under the language of the
+   * `content` the sync read (what it indexes): an extensionless script whose `#!` line changed interpreter
+   * changes language (fork R-49). A file with no row and no content is recorded under the language its path
+   * gives; a file over the size limit arrives with its size stamp as content and is recorded the same way, so
+   * a new extensionless script over the limit, whose path gives no language, is not recorded.
    */
   before(file: string, content?: string): void {
-    const language = this.queries.getFileByPath(file)?.language ?? detectLanguage(file, content);
-    if (!LANGUAGES.some((l) => l.language === language)) return;
+    const stored = this.queries.getFileByPath(file)?.language;
+    const read = content === undefined && stored ? undefined : detectLanguage(file, content);
     const flows = this.queries.parameterFlows;
-    let changed = this.languages.get(language);
-    if (!changed) {
-      // Taken rather than read: a sync that stops short of its pass leaves no
-      // record, and the next one starts over rather than trust a stale count.
-      changed = { record: this.settled ? parseRecord(flows.getRecord(language)) : null, before: new Map() };
-      flows.setRecord(language, '');
-      this.languages.set(language, changed);
+    for (const language of new Set([stored, read])) {
+      if (!language || !LANGUAGES.some((l) => l.language === language)) continue;
+      let changed = this.languages.get(language);
+      if (!changed) {
+        // Taken rather than read: a sync that stops short of its pass leaves no
+        // record, and the next one starts over rather than trust a stale count.
+        changed = { record: this.settled ? parseRecord(flows.getRecord(language)) : null, before: new Map() };
+        flows.setRecord(language, '');
+        this.languages.set(language, changed);
+      }
+      if (changed.before.size >= MAX_CHANGED_FILES) changed.record = null;
+      if (changed.record && !changed.before.has(file)) changed.before.set(file, flows.getFlowFacts(file));
     }
-    if (changed.before.size >= MAX_CHANGED_FILES) changed.record = null;
-    if (changed.record && !changed.before.has(file)) changed.before.set(file, flows.getFlowFacts(file));
   }
 }
 
