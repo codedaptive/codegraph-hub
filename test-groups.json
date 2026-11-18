@@ -607,6 +607,7 @@
     "__tests__/sync-python-import-binding-retry.test.ts",
     "__tests__/sync-rebuild-convergence.test.ts",
     "__tests__/sync-removed-competitor.test.ts",
+    "__tests__/sync-reopen-by-name.test.ts",
     "__tests__/sync-route-module-retry.test.ts",
     "__tests__/sync-size-cap-shrink.test.ts",
     "__tests__/sync-synthesis-inputs.test.ts",
