@@ -509,9 +509,14 @@ export class FlowChange {
     this.settled = state !== 'indexing' && state !== 'failed' && queries.getUnresolvedReferencesCount() === 0;
   }
 
-  /** Call with each file a sync is about to change or remove, while its rows are there to read. */
-  before(file: string): void {
-    const language = detectLanguage(file);
+  /**
+   * Call with each file a sync is about to change or remove, while its rows are there to read. A file
+   * already indexed takes the language its row records; a new one takes it from `content` (an extensionless
+   * script's `#!` line, fork R-49), so a new script over the size limit, which arrives as a stamp, is not
+   * recorded.
+   */
+  before(file: string, content?: string): void {
+    const language = this.queries.getFileByPath(file)?.language ?? detectLanguage(file, content);
     if (!LANGUAGES.some((l) => l.language === language)) return;
     const flows = this.queries.parameterFlows;
     let changed = this.languages.get(language);
