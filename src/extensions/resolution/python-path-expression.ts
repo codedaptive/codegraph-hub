@@ -3,65 +3,50 @@
  * loading module can be linked to the file it loads. Read: string literals, `__file__`,
  * Path()/PurePath()/str()/fspath()/abspath()/realpath()/normpath() (identity), dirname(),
  * join(), `/`, `.parent`, `.parents[N]`, `.resolve()`, `.absolute()`, `.joinpath()`, and
- * the module's single-assignment `names`, to a bounded depth so `A = B` / `B = A` ends.
- * A call is matched by its last dotted name only: `os.path.join` and `x.join` are alike.
+ * the module's single-binding `names`, to a bounded depth so `A = B` / `B = A` ends.
+ *
+ * `trust` (pythonTrust) says what the expression's file leaves alone: `__file__` gives null
+ * unless trusted, a bare call needs its name trusted, and a dotted call needs the prefix
+ * os.path, os, posixpath or pathlib with its first word trusted (`x.join` gives null).
  * Anything else is computed at run time and gives null: a guessed path is a false edge.
  * A path anchored on `__file__` comes back root-relative with a leading '/' (null when it
  * climbs above the root); any other is relative as written, normalized, with './'
  * prepended when it has no '/'. An absolute literal gives null.
  */
 import type { PathToken } from './python-path-token';
+import type { PathTrust } from './python-path-trust';
 import { pythonPathTokens } from './python-path-tokens';
+import { PathValue } from './python-path-value';
 
-interface PathValue {
-  anchored: boolean;
-  segs: string[];
+interface Context {
+  filePath: string;
+  names: ReadonlyMap<string, string>;
+  trust: PathTrust;
 }
 
 /** Deep enough for ROOT -> SCRIPT -> its use; a cycle runs out of it. */
 const MAX_DEPTH = 8;
 const IDENTITY_CALLS = new Set(['Path', 'PurePath', 'PosixPath', 'PurePosixPath', 'str', 'fspath', 'abspath', 'realpath', 'normpath']);
 const IDENTITY_METHODS = new Set(['resolve', 'absolute']);
+const MODULES = new Set(['os.path', 'os', 'posixpath', 'pathlib']);
 
-export function pythonPathExpression(expression: string, filePath: string, names: ReadonlyMap<string, string>): string | null {
-  const value = evaluate(expression, filePath, names, MAX_DEPTH);
+export function pythonPathExpression(expression: string, filePath: string, names: ReadonlyMap<string, string>, trust: PathTrust): string | null {
+  const value = evaluate(expression, { filePath, names, trust }, MAX_DEPTH);
   if (!value || value.segs.length === 0) return null;
   const joined = value.segs.join('/');
   if (value.anchored) return `/${joined}`;
   return joined.includes('/') ? joined : `./${joined}`;
 }
 
-function evaluate(expression: string, filePath: string, names: ReadonlyMap<string, string>, depth: number): PathValue | null {
+function evaluate(expression: string, context: Context, depth: number): PathValue | null {
   const tokens = depth > 0 ? pythonPathTokens(expression) : null;
-  return tokens && new Parser(tokens, filePath, names, depth).whole();
-}
-
-function push(value: PathValue, part: string): PathValue | null {
-  const segs = [...value.segs];
-  for (const seg of part.split('/')) {
-    if (seg === '' || seg === '.') continue;
-    if (seg !== '..') segs.push(seg);
-    else if (segs.length > 0 && segs[segs.length - 1] !== '..') segs.pop();
-    else if (value.anchored) return null;
-    else segs.push('..');
-  }
-  return { anchored: value.anchored, segs };
-}
-
-/** A path joined onto `base`; an anchored or unknown part gives null. */
-function join(base: PathValue, part: PathValue | null): PathValue | null {
-  return part && !part.anchored ? push(base, part.segs.join('/')) : null;
-}
-
-function joinAll([first, ...rest]: PathValue[]): PathValue | null {
-  return rest.reduce<PathValue | null>((acc, part) => acc && join(acc, part), first ?? null);
+  return tokens && new Parser(tokens, context, depth).whole();
 }
 
 class Parser {
   private pos = 0;
 
-  constructor(private readonly tokens: PathToken[], private readonly filePath: string,
-    private readonly names: ReadonlyMap<string, string>, private readonly depth: number) {}
+  constructor(private readonly tokens: PathToken[], private readonly context: Context, private readonly depth: number) {}
 
   whole(): PathValue | null {
     const value = this.expr();
@@ -77,7 +62,7 @@ class Parser {
 
   private expr(): PathValue | null {
     let value = this.term();
-    while (value && this.eat('/')) value = join(value, this.term());
+    while (value && this.eat('/')) value = value.join(this.term());
     return value;
   }
 
@@ -90,7 +75,7 @@ class Parser {
   private primary(): PathValue | null {
     const token = this.tokens[this.pos++];
     if (token?.kind === 'name') return this.named(token.text);
-    if (token?.kind === 'string') return token.text.startsWith('/') ? null : push({ anchored: false, segs: [] }, token.text);
+    if (token?.kind === 'string') return token.text.startsWith('/') ? null : new PathValue(false, []).push(token.text);
     if (token?.kind !== 'punct' || token.text !== '(') return null;
     const value = this.expr();
     return value && this.eat(')') ? value : null;
@@ -98,41 +83,49 @@ class Parser {
 
   /** `__file__`, a module name, or a call of a dotted function name. */
   private named(name: string): PathValue | null {
-    if (name === '__file__') return { anchored: true, segs: this.filePath.split('/') };
-    const assigned = this.names.get(name);
-    if (assigned !== undefined) return evaluate(assigned, this.filePath, this.names, this.depth - 1);
-    let callee = name;
+    const { filePath, names, trust } = this.context;
+    if (name === '__file__') return trust.file ? new PathValue(true, filePath.split('/')) : null;
+    const assigned = names.get(name);
+    if (assigned !== undefined) return evaluate(assigned, this.context, this.depth - 1);
+    const callee = [name];
     while (this.eat('.')) {
       const next = this.tokens[this.pos++];
       if (next?.kind !== 'name') return null;
-      callee = next.text;
+      callee.push(next.text);
     }
     return this.eat('(') ? this.call(callee) : null;
   }
 
-  private call(callee: string): PathValue | null {
+  private call(callee: string[]): PathValue | null {
     const args = this.args();
+    const name = this.trusted(callee);
     const only = args?.length === 1 ? args[0] : undefined;
-    if (only && IDENTITY_CALLS.has(callee)) return only;
-    if (only && callee === 'dirname') return push(only, '..');
-    return args && callee === 'join' ? joinAll(args) : null;
+    if (only && IDENTITY_CALLS.has(name)) return only;
+    if (only && name === 'dirname') return only.push('..');
+    return args && name === 'join' ? PathValue.joinAll(args) : null;
+  }
+
+  /** The function a dotted callee names when the file's trust covers it; '' when it does not. */
+  private trusted(callee: string[]): string {
+    const prefix = callee.slice(0, -1).join('.');
+    const trusted = (prefix === '' || MODULES.has(prefix)) && this.context.trust.names.has(callee[0] ?? '');
+    return trusted ? callee[callee.length - 1] ?? '' : '';
   }
 
   private attribute(value: PathValue): PathValue | null {
     const token = this.tokens[this.pos++];
     if (token?.kind !== 'name') return null;
-    if (token.text === 'parent') return push(value, '..');
+    if (token.text === 'parent') return value.push('..');
     if (token.text === 'parents') return this.parents(value);
     if (IDENTITY_METHODS.has(token.text)) return this.eat('(') && this.args()?.length === 0 ? value : null;
     const args = token.text === 'joinpath' && this.eat('(') ? this.args() : null;
-    return args && joinAll([value, ...args]);
+    return args && PathValue.joinAll([value, ...args]);
   }
 
-  /** `.parents[N]` is the (N+1)-th parent; an N past the path's own parents is null, as Python raises. */
+  /** `.parents[N]`; anything but an integer index is null. */
   private parents(value: PathValue): PathValue | null {
     const index = this.eat('[') ? this.tokens[this.pos++] : undefined;
-    const n = index?.kind === 'number' && this.eat(']') ? Number(index.text) : Infinity;
-    return n < value.segs.length ? { anchored: value.anchored, segs: value.segs.slice(0, -n - 1) } : null;
+    return index?.kind === 'number' && this.eat(']') ? value.parent(Number(index.text)) : null;
   }
 
   /** Positional arguments after an eaten '(' through its ')'; a keyword argument fails to parse. */

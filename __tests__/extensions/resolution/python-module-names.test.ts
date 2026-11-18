@@ -1,65 +1,75 @@
 /**
- * Unit tests of pythonModuleNames over hand-written logical lines: a name bound once in
- * module scope (at top level or in an if/try body) is known with its value; one rebound in
- * a module-level block, declared `global` in a function, bound only in a def or class
- * body, or bound other than by `name = value` on one line is not.
+ * Unit tests of pythonModuleNames, over the possible bindings pythonNameBindings reads from
+ * hand-written source: a name is known with its value only when its one possible binding
+ * is a one-line `NAME = value` at any indent (A1); any other possible binding of it makes
+ * it unknown (A2); a dynamic file knows no name (A3).
  */
 import { describe, expect, it } from 'vitest';
 import { pythonModuleNames } from '../../../src/extensions/resolution/python-module-names';
+import { pythonNameBindings } from '../../../src/extensions/resolution/python-name-bindings';
 
-const line = (indent: number, text: string) => ({ indent, text });
+const namesOf = (source: string) => pythonModuleNames(pythonNameBindings(source));
 
 describe('pythonModuleNames', () => {
-  it('knows names bound once in module scope, at column 0 or in a block body', () => {
-    expect(pythonModuleNames([
-      line(0, 'ROOT = Path(__file__).parent'),
-      line(0, 'if True:'),
-      line(4, 'SCRIPT = ROOT / "x.py"'),
-    ])).toEqual(new Map([['ROOT', 'Path(__file__).parent'], ['SCRIPT', 'ROOT / "x.py"']]));
+  it('knows a name bound once, at any indent, with the value trimmed', () => {
+    expect(namesOf('ROOT = Path(__file__).parent  \nif True:\n    SCRIPT=ROOT / "x.py"\nprint(SCRIPT)'))
+      .toEqual(new Map([['ROOT', 'Path(__file__).parent'], ['SCRIPT', 'ROOT / "x.py"']]));
   });
 
-  it('drops a name rebound in a module-level try, except or for', () => {
-    expect(pythonModuleNames([
-      line(0, 'A = "a.py"'),
-      line(0, 'B = "b.py"'),
-      line(0, 'C = "c.py"'),
-      line(0, 'try:'),
-      line(4, 'A = "other.py"'),
-      line(0, 'except ImportError as B:'),
-      line(4, 'pass'),
-      line(0, 'for C in []:'),
-      line(4, 'pass'),
-    ])).toEqual(new Map());
+  it('knows no value spread over two physical lines', () => {
+    expect(namesOf('E = Path(\n    "e.py")\nF = "f.py" \\\n    + "g"')).toEqual(new Map());
   });
 
-  it('ignores def and class bodies, nested ones included, and resumes after them', () => {
-    expect(pythonModuleNames([
-      line(0, 'ROOT = "r.py"'),
-      line(0, 'class C:'),
-      line(4, 'ROOT = 1'),
-      line(4, 'def m(self):'),
-      line(8, 'if x:'),
-      line(12, 'ROOT = 2'),
-      line(0, 'LATER = "l.py"'),
-    ])).toEqual(new Map([['ROOT', '"r.py"'], ['LATER', '"l.py"']]));
+  it('drops a name with two binding lines, even at different indents', () => {
+    expect(namesOf('A = "a.py"\nclass C:\n    A = 1\nB = "b.py"')).toEqual(new Map([['B', '"b.py"']]));
   });
 
-  it('drops every name a function declares global', () => {
-    expect(pythonModuleNames([
-      line(0, 'A = "a.py"'),
-      line(0, 'B = "b.py"'),
-      line(0, 'C = "c.py"'),
-      line(0, 'def reset():'),
-      line(4, 'global A, B'),
-    ])).toEqual(new Map([['C', '"c.py"']]));
+  it.each([
+    ['annotation', 'A: str = "a.py"'],
+    ['augmented assignment', 'A = "a.py"\nA += "b"'],
+    ['tuple target', 'A, B = "a.py", "b.py"'],
+    ['later tuple target', 'A = "a.py"\nB, A = 1, 2'],
+    ['subscript target', 'A = "a.py"\nA[0] = 1'],
+    ['walrus', 'A = "a.py"\nif (A := 1): pass'],
+    ['one-line if body', 'A = "a.py"\nif X: A = 1'],
+    ['semicolon statement', 'A = "a.py"\nx = 1; A = 2'],
+    ['chained assignment', 'A = "a.py"\nB = A = 2'],
+    ['parameter', 'A = "a.py"\ndef f(A): pass'],
+    ['multi-line parameter', 'A = "a.py"\ndef f(\n    A,\n): pass'],
+    ['lambda parameter', 'A = "a.py"\ng = lambda A: A'],
+    ['for target', 'A = "a.py"\nfor A in []: pass'],
+    ['as target', 'A = "a.py"\nwith c() as A: pass'],
+    ['import', 'A = "a.py"\nimport A'],
+    ['from import', 'A = "a.py"\nfrom m import A'],
+    ['global declaration', 'A = "a.py"\ndef f():\n    global A'],
+    ['nonlocal declaration', 'A = "a.py"\ndef f():\n    nonlocal A'],
+    ['del', 'A = "a.py"\ndel A'],
+    ['case pattern', 'A = "a.py"\nmatch x:\n    case A: pass'],
+    ['string mention', 'A = "a.py"\npatch("m.A")'],
+  ])('drops a name after a possible %s binding', (_form, source) => {
+    expect(namesOf(source).has('A')).toBe(false);
   });
 
-  it('knows no value for an annotated, augmented, tuple or multi-line binding', () => {
-    expect(pythonModuleNames([
-      line(0, 'A: str = "a.py"'),
-      line(0, 'B += "b.py"'),
-      line(0, 'C, D = "c.py", "d.py"'),
-      line(0, 'E = Path(\n    "e.py")'),
-    ])).toEqual(new Map());
+  it('keeps a name whose other occurrences are reads', () => {
+    expect(namesOf('A = "a.py"\nprint(A == 1, A <= 2, A != 3)\nB = f(A, key=1)\nC = [A for x in y]\nload(A)'))
+      .toEqual(new Map([['A', '"a.py"'], ['B', 'f(A, key=1)'], ['C', '[A for x in y]']]));
+  });
+
+  it.each([
+    'from m import *',
+    'globals()["X"] = 1',
+    'vars()',
+    'locals()',
+    'exec("X = 1")',
+    'eval("X")',
+    'setattr(mod, "X", 1)',
+    'mod.__dict__["X"] = 1',
+    'sys.modules[__name__].X = 1',
+  ])('knows no name in a file with %s', (dynamic) => {
+    expect(namesOf(`A = "a.py"\n${dynamic}`)).toEqual(new Map());
+  });
+
+  it('still knows names beside spec.loader.exec_module', () => {
+    expect(namesOf('A = "a.py"\nspec.loader.exec_module(module)')).toEqual(new Map([['A', '"a.py"']]));
   });
 });

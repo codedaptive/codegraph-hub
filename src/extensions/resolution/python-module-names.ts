@@ -1,44 +1,22 @@
 /**
- * The module names a Python file binds exactly once, to the expression text bound, read
- * from its logical lines (each with its indent and trimmed text).
+ * The names a Python file binds exactly once, each to the expression text bound, read from
+ * the possible bindings pythonNameBindings found (null, a dynamic file, knows none).
  *
- * Module scope is every line outside a `def` or `class` body: a line's enclosing blocks
- * are the earlier lines still open at a smaller indent, and a line is in module scope
- * when none of them opens a def or class. The bodies of `if`, `try`, `for`, `with` and
- * the like stay in module scope, so a rebinding there counts. A class attribute does not.
- * A name is known only with one binding in module scope, and that one `name = value` on
- * one physical line. A name a function declares `global` may be rebound by any call to
- * it, so it is unknown everywhere. Why: pythonLoaderPaths evaluates loader paths against
- * these names, and a name with any other value at run time would make a false edge.
+ * A name is known only when its one possible binding is a logical line `NAME = value`, at
+ * any indent, with the value on that one physical line. Any second possible binding (a
+ * rebinding in a block, a class body, a parameter, a `global` declaration, an import, a
+ * name in a string) leaves it unknown. Why: with one textual binding and no dynamic
+ * namespace access, every lookup of the name, in any scope, reads that value or none, so
+ * pythonLoaderPaths can evaluate a loader path through it without making a false edge.
  */
-import { pythonBoundNames } from './python-bound-names';
 
-interface ScopedLine {
-  indent: number;
-  text: string;
-}
+const BINDING = /^([A-Za-z_]\w*)[ \t]*=(?!=)([^\n]*)$/;
 
-const SCOPE_OPENER = /^(?:async\s+)?(?:def|class)\b/;
-const GLOBAL = /^global\s+([\s\S]+)$/;
-const MODULE_VALUE = /^[A-Za-z_]\w*[ \t]*=(?!=)([^\n]*)$/;
-
-export function pythonModuleNames(lines: readonly ScopedLine[]): Map<string, string> {
-  const bindings = new Map<string, string[]>();
-  const globals = new Set<string>();
-  const open: Array<{ indent: number; scope: boolean }> = [];
-  for (const line of lines) {
-    while ((open[open.length - 1]?.indent ?? -1) >= line.indent) open.pop();
-    if (open.some((block) => block.scope)) {
-      for (const name of GLOBAL.exec(line.text)?.[1]?.split(',') ?? []) globals.add(name.trim());
-    } else {
-      const value = MODULE_VALUE.exec(line.text)?.[1]?.trim() ?? '';
-      for (const name of pythonBoundNames(line.text)) bindings.set(name, [...(bindings.get(name) ?? []), value]);
-    }
-    open.push({ indent: line.indent, scope: SCOPE_OPENER.test(line.text) });
-  }
+export function pythonModuleNames(bindings: ReadonlyMap<string, readonly string[]> | null): Map<string, string> {
   const names = new Map<string, string>();
-  for (const [name, values] of bindings) {
-    if (values.length === 1 && values[0] && !globals.has(name)) names.set(name, values[0]);
+  for (const [name, lines] of bindings ?? []) {
+    const binding = lines.length === 1 ? BINDING.exec(lines[0] ?? '') : null;
+    if (binding?.[1] === name) names.set(name, (binding[2] ?? '').trim());
   }
   return names;
 }
