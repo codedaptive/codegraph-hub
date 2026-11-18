@@ -1,6 +1,6 @@
 /**
- * The language of an extensionless file from its `#!` line (R-49(a)). A scan calls this for every path whose
- * last segment has no dot, so it costs one open and one read of at most 256 bytes, and it never throws:
+ * The language of an extensionless file from its `#!` line (R-49(a)). For a path whose
+ * last segment has no dot it costs one open and one read of at most 256 bytes, and it never throws:
  * any failure to read means "not a script CodeGraph parses".
  */
 import * as fs from 'fs';
