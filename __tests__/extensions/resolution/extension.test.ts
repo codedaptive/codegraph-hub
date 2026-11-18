@@ -2,11 +2,13 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findNearestCodeGraphRoot } from '../../../src/directory';
 import { stoppedRootMark } from '../../../src/extensions/host/builder/stopped-root-mark';
+import { requireGitWorktreeRoot } from '../../../src/extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
 import { findSuspects } from '../../../src/extensions/resolution/suspects';
 import { registerSuspectsCommand } from '../../../src/extensions/resolution/extension';
 
 vi.mock('../../../src/directory', () => ({ findNearestCodeGraphRoot: vi.fn() }));
 vi.mock('../../../src/extensions/host/builder/stopped-root-mark', () => ({ stoppedRootMark: vi.fn() }));
+vi.mock('../../../src/extensions/host/worktree-lifecycle/requireGitWorktreeRoot', () => ({ requireGitWorktreeRoot: vi.fn() }));
 vi.mock('../../../src/extensions/resolution/suspects', () => ({
   findSuspects: vi.fn(),
   formatSuspects: vi.fn(() => 'known suspects'),
@@ -24,6 +26,7 @@ let previousExitCode: typeof process.exitCode;
 beforeEach(() => {
   previousExitCode = process.exitCode;
   vi.clearAllMocks();
+  vi.mocked(requireGitWorktreeRoot).mockReset().mockReturnValue({ root: '/some/path' });
   vi.mocked(findNearestCodeGraphRoot).mockReset().mockReturnValue('/proj');
   vi.mocked(findSuspects).mockReset().mockReturnValue([]);
   vi.mocked(stoppedRootMark).mockReturnValue(null);
@@ -57,6 +60,19 @@ async function run(...args: string[]) {
     exitCode: process.exitCode,
   };
 }
+
+describe('suspects worktree refusal', () => {
+  it('prints the refusal and stops before looking for an index or suspects', async () => {
+    vi.mocked(requireGitWorktreeRoot).mockReturnValue({ refusal: '/some/path is not in a git repository, and codegraph indexes only git worktrees and the folders opted in to indexing' });
+    const result = await run();
+    expect(result.stderr).toBe('✗ /some/path is not in a git repository, and codegraph indexes only git worktrees and the folders opted in to indexing\n');
+    expect(result.stdout).toBe('');
+    expect(result.exitCode).toBe(1);
+    expect(requireGitWorktreeRoot).toHaveBeenCalledWith('/some/path');
+    expect(findNearestCodeGraphRoot).not.toHaveBeenCalled();
+    expect(findSuspects).not.toHaveBeenCalled();
+  });
+});
 
 describe('suspects stopped-index warning', () => {
   it('writes the marked-root note before unchanged text output and succeeds', async () => {

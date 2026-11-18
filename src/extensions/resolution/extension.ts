@@ -21,8 +21,9 @@
  * The host loads this module in every CLI invocation that reaches
  * program.parse() and, in a query-pool worker, on its first call of a
  * non-built-in tool, so the top level defines values and does no work, and
- * imports only `path` and types. Project-root lookup (../../directory, which
- * imports ./db/node-sqlite), the suspects library (./suspects, which pulls
+ * imports only `path` and types. The git-worktree rule
+ * (../host/worktree-lifecycle/requireGitWorktreeRoot), project-root lookup
+ * (../../directory, which imports ./db/node-sqlite), the suspects library (./suspects, which pulls
  * in the db and resolution layers) and the stopped-index warning
  * (./warn-stopped-index) are all lazy for that reason: they are
  * loaded with `await import()` inside the command's action, and the suspects
@@ -85,7 +86,8 @@ interface SuspectsCommandOptions {
 /**
  * Add `codegraph suspects` to `program`. The project is the nearest CodeGraph
  * root at or above `--path` (default: the working directory). A bad --limit or
- * --edges, or no index at or above the path, prints a ✗ line on stderr,
+ * --edges, a path in no git worktree and not opted in (requireGitWorktreeRoot's
+ * refusal), or no index at or above the path, prints a ✗ line on stderr,
  * nothing on stdout, and exits 1. On a root whose index builder's last job was
  * stopped at a limit, it writes the stopped-index note on stderr
  * (./warn-stopped-index) before the answer. The action is async (its modules
@@ -119,6 +121,13 @@ export function registerSuspectsCommand(program: Command): void {
       // The imports sit inside the try, so a module that fails to load ends as
       // the ✗ line below with exit 1, not an unhandled rejection.
       try {
+        const { requireGitWorktreeRoot } = await import('../host/worktree-lifecycle/requireGitWorktreeRoot');
+        const required = requireGitWorktreeRoot(start);
+        if ('refusal' in required) {
+          process.stderr.write(`✗ ${required.refusal}\n`);
+          process.exitCode = 1;
+          return;
+        }
         const { findNearestCodeGraphRoot } = await import('../../directory');
         const root = findNearestCodeGraphRoot(start);
         if (!root) {
