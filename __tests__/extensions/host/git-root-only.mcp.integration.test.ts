@@ -110,6 +110,7 @@ describe('MCP calls require a git worktree', { timeout: 60_000 }, () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0].type).toBe('text');
     expect(result.content[0].text).toContain(`${plain} is not in a git repository`);
+    expect(result.content[0].text).toContain('codegraph indexes and answers only for git worktrees');
     expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
     expect(requests).toEqual([]);
   });
