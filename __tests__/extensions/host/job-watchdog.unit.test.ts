@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+beforeEach(() => vi.spyOn(process.memoryUsage, 'rss').mockReturnValue(0));
+afterEach(() => vi.restoreAllMocks());
 import { JobWatchdog } from '../../../src/extensions/host/builder/job-watchdog';
 import type { RunningJob } from '../../../src/extensions/host/builder/running-job';
 
@@ -6,12 +9,27 @@ const sync: RunningJob = { id: 1, kind: 'sync', root: '/sync', repo: '/a', lane:
 const cold: RunningJob = { id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' };
 
 describe('JobWatchdog', async () => {
+  it('does not judge a parent prelude but counts its time when the child starts', async () => {
+    let now = 0;
+    let pid: number | null = null;
+    const onBreach = vi.fn();
+    const watchdog = new JobWatchdog({ runningJobs: () => [sync] }, { maxMs: 1000, maxRssMb: 8 }, {
+      clock: () => now, childPid: () => pid, readChildRssBytes: async () => 0, onBreach,
+    });
+    await watchdog.check();
+    now = 1001;
+    await watchdog.check();
+    expect(onBreach).not.toHaveBeenCalled();
+    pid = 101;
+    await watchdog.check();
+    expect(onBreach).toHaveBeenCalledExactlyOnceWith(sync, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 101);
+  });
   it('ignores an idle queue and measures time from the first check of each job', async () => {
     let now = 100;
     let jobs: RunningJob[] = [];
     const onBreach = vi.fn();
     const watchdog = new JobWatchdog({ runningJobs: () => jobs }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => now, readRssBytes: () => 0, onBreach,
+      clock: () => now, childPid: (id: number) => 100 + id, readChildRssBytes: async () => 0, onBreach,
     });
     await watchdog.check();
     now = 5000;
@@ -24,7 +42,7 @@ describe('JobWatchdog', async () => {
     await watchdog.check();
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, null);
+    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 101);
   });
 
   it('reports only the older job when the other is not over time', async () => {
@@ -32,7 +50,7 @@ describe('JobWatchdog', async () => {
     let jobs = [sync];
     const onBreach = vi.fn();
     const watchdog = new JobWatchdog({ runningJobs: () => jobs }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => now, readRssBytes: () => 0, onBreach,
+      clock: () => now, childPid: (id: number) => 100 + id, readChildRssBytes: async () => 0, onBreach,
     });
     await watchdog.check();
     now = 500;
@@ -41,7 +59,7 @@ describe('JobWatchdog', async () => {
     now = 1001;
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, null);
+    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 101);
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledOnce();
   });
@@ -51,7 +69,7 @@ describe('JobWatchdog', async () => {
     let jobs = [sync];
     const onBreach = vi.fn();
     const watchdog = new JobWatchdog({ runningJobs: () => jobs }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => now, readRssBytes: () => 0, onBreach,
+      clock: () => now, childPid: (id: number) => 100 + id, readChildRssBytes: async () => 0, onBreach,
     });
     await watchdog.check();
     now = 500;
@@ -64,49 +82,24 @@ describe('JobWatchdog', async () => {
     await watchdog.check();
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(2);
-    expect(onBreach).toHaveBeenLastCalledWith({ id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, null);
-  });
-
-  it('charges process RSS to the whole-repository job even in a bypass slot', async () => {
-    const onBreach = vi.fn();
-    const watchdog = new JobWatchdog({ runningJobs: () => [sync, cold] }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => 0, readRssBytes: () => 9437184, onBreach,
-    });
-    await watchdog.check();
-    expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 }, null);
-  });
-
-  it('charges process RSS to a lone sync job', async () => {
-    let rss = 8388608;
-    const onBreach = vi.fn();
-    const watchdog = new JobWatchdog({ runningJobs: () => [sync] }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => 0, readRssBytes: () => rss, onBreach,
-    });
-    await watchdog.check();
-    expect(onBreach).not.toHaveBeenCalled();
-    rss = 9437184;
-    await watchdog.check();
-    await watchdog.check();
-    expect(onBreach).toHaveBeenCalledOnce();
-    expect(onBreach).toHaveBeenCalledWith({ id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'rss', maxRssMb: 8, measuredRssMb: 9 }, null);
+    expect(onBreach).toHaveBeenLastCalledWith({ id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 102);
   });
 
   it('reports the first breach in ascending id order, once per job', async () => {
     let now = 0;
     const onBreach = vi.fn();
     const watchdog = new JobWatchdog({ runningJobs: () => [sync, cold] }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => now, readRssBytes: () => 0, onBreach,
+      clock: () => now, childPid: (id: number) => 100 + id, readChildRssBytes: async () => 0, onBreach,
     });
     await watchdog.check();
     now = 1001;
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(1);
-    expect(onBreach).toHaveBeenNthCalledWith(1, { id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, null);
+    expect(onBreach).toHaveBeenNthCalledWith(1, { id: 1, kind: 'sync', root: '/sync', repo: '/a', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 101);
     await watchdog.check();
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(2);
-    expect(onBreach).toHaveBeenNthCalledWith(2, { id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, null);
+    expect(onBreach).toHaveBeenNthCalledWith(2, { id: 2, kind: 'cold-build', root: '/cold', repo: '/a', lane: 'bypass' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 102);
   });
 
   it('times a new id from its first check after the breached job finishes', async () => {
@@ -114,7 +107,7 @@ describe('JobWatchdog', async () => {
     let jobs: RunningJob[] = [sync];
     const onBreach = vi.fn();
     const watchdog = new JobWatchdog({ runningJobs: () => jobs }, { maxMs: 1000, maxRssMb: 8 }, {
-      clock: () => now, readRssBytes: () => 0, onBreach,
+      clock: () => now, childPid: (id: number) => 100 + id, readChildRssBytes: async () => 0, onBreach,
     });
     await watchdog.check();
     now = 1001;
@@ -130,7 +123,7 @@ describe('JobWatchdog', async () => {
     now = 6001;
     await watchdog.check();
     expect(onBreach).toHaveBeenCalledTimes(2);
-    expect(onBreach).toHaveBeenLastCalledWith({ id: 3, kind: 'sync', root: '/new', repo: '/b', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, null);
+    expect(onBreach).toHaveBeenLastCalledWith({ id: 3, kind: 'sync', root: '/new', repo: '/b', lane: 'repo' }, { limit: 'time', maxMs: 1000, measuredMs: 1001 }, 103);
   });
 
   it('starts an unrefed interval and stops it', async () => {
@@ -139,7 +132,7 @@ describe('JobWatchdog', async () => {
     try {
       const onBreach = vi.fn();
       const watchdog = new JobWatchdog({ runningJobs: () => [sync] },
-        { maxMs: 1000, maxRssMb: 8 }, { clock: () => 0, readRssBytes: () => 9437184, intervalMs: 5000, onBreach });
+        { maxMs: 1000, maxRssMb: 8 }, { clock: () => 0, childPid: () => 101, readChildRssBytes: async () => 9437184, intervalMs: 5000, onBreach });
       watchdog.start();
       expect(setIntervalSpy).toHaveBeenCalledOnce();
       expect(setIntervalSpy.mock.results[0]?.value.hasRef()).toBe(false);
@@ -154,7 +147,7 @@ describe('JobWatchdog', async () => {
   });
   it('charges each child its own RSS and reports the second pid', async () => {
     const onBreach = vi.fn();
-    const opts = { clock: () => 0, readRssBytes: () => 0, onBreach,
+    const opts = { clock: () => 0, onBreach,
       childPid: (id: number) => id === 1 ? 101 : 102,
       readChildRssBytes: async (pid: number) => pid === 101 ? 1048576 : 9437184 };
     const watchdog = new JobWatchdog({ runningJobs: () => [sync, cold] }, { maxMs: 1000, maxRssMb: 8 }, opts);
@@ -165,7 +158,7 @@ describe('JobWatchdog', async () => {
 
   it('charges child RSS to the child beside a no-child cold build', async () => {
     const onBreach = vi.fn();
-    const opts = { clock: () => 0, readRssBytes: () => 0, onBreach,
+    const opts = { clock: () => 0, onBreach,
       childPid: (id: number) => id === 1 ? 101 : null,
       readChildRssBytes: async () => 9437184 };
     const watchdog = new JobWatchdog({ runningJobs: () => [sync, cold] }, { maxMs: 1000, maxRssMb: 8 }, opts);
@@ -175,7 +168,7 @@ describe('JobWatchdog', async () => {
 
   it('does not charge builder RSS to a child with an unavailable RSS sample', async () => {
     const onBreach = vi.fn();
-    const opts = { clock: () => 0, readRssBytes: () => 9437184, onBreach,
+    const opts = { clock: () => 0, onBreach,
       childPid: () => 101, readChildRssBytes: async () => null };
     const watchdog = new JobWatchdog({ runningJobs: () => [sync] }, { maxMs: 1000, maxRssMb: 8 }, opts);
     await watchdog.check();
@@ -186,7 +179,7 @@ describe('JobWatchdog', async () => {
     let finish: (rss: number | null) => void = () => undefined;
     const sample = new Promise<number | null>((resolve) => { finish = resolve; });
     const readChildRssBytes = vi.fn(() => sample);
-    const opts = { clock: () => 0, readRssBytes: () => 0, onBreach: vi.fn(), childPid: () => 101, readChildRssBytes };
+    const opts = { clock: () => 0, onBreach: vi.fn(), childPid: () => 101, readChildRssBytes };
     const watchdog = new JobWatchdog({ runningJobs: () => [sync] }, { maxMs: 1000, maxRssMb: 8 }, opts);
     const first = watchdog.check();
     await watchdog.check();

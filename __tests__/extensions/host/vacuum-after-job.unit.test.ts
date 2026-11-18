@@ -7,32 +7,32 @@ vi.mock('../../../src/directory', () => ({
   getCodeGraphDir: (root: string) => `${root}/.codegraph`,
   canonicalProjectRoot: () => '/canonical/project',
 }));
+vi.mock('../../../src/extensions/host/builder/take-vacuum-writer-slot', () => ({
+  takeVacuumWriterSlot: () => ({ kind: 'held', release: () => {} }),
+}));
+vi.mock('../../../src/extensions/host/builder/free-disk-bytes', () => ({ freeDiskBytes: () => 3_000_000_000 }));
+vi.mock('../../../src/extensions/host/builder/run-vacuum-off-thread', () => ({ runVacuumOffThread: async () => {} }));
 
 const root = '/project';
-const dbPath = path.join(`${root}/.codegraph`, 'codegraph.db');
+const dbPath = path.join(root, '.codegraph', 'codegraph.db');
 const end = { edge: 'end', kind: 'sync', root, ok: true } as const;
 const large = { pageSize: 4096, pageCount: 200000, freelistCount: 65536 };
 
 function setup() {
-  const jobs: { kind: JobKind; root: string; body: () => Promise<unknown>; options?: EnqueueOptions }[] = [];
-  const enqueue = <T>(kind: JobKind, jobRoot: string, body: () => Promise<T>, options?: EnqueueOptions): Promise<T> => {
+  const jobs: { kind: JobKind; root: string; body: (job: { id: number }) => Promise<unknown>; options?: EnqueueOptions }[] = [];
+  const enqueue = <T>(kind: JobKind, jobRoot: string, body: (job: { id: number }) => Promise<T>, options?: EnqueueOptions): Promise<T> => {
     jobs.push({ kind, root: jobRoot, body, options });
     return new Promise<T>(() => {});
   };
-  const release = vi.fn();
-  const takeWriterSlot = vi.fn((_root: string):
-    | { kind: 'held'; release: () => void }
-    | { kind: 'busy'; holder: { pid: number; mode: string; startedAt: number } | null } => ({ kind: 'held', release }));
   const deps = {
     queue: { enqueue },
-    takeWriterSlot,
+    runJob: vi.fn(async (_id: number, _spec: unknown, _progress?: (payload: unknown) => void): Promise<unknown> => 'vacuum'),
+    minFreelistBytes: 10000,
     jobLog: vi.fn((_line: string) => {}),
     rebuildHeld: vi.fn(() => false),
     readStats: vi.fn((): typeof large | null => large),
-    freeDisk: vi.fn((): number | null => 3_000_000_000),
-    runVacuum: vi.fn(async (_path: string) => {}),
   };
-  return { jobs, deps, release };
+  return { jobs, deps };
 }
 
 describe('vacuumAfterJob', () => {
@@ -59,90 +59,28 @@ describe('vacuumAfterJob', () => {
     vacuumAfterJob(end, deps);
     expect(jobs).toHaveLength(0);
   });
-  it('fences a queued body before re-reading stats or checking disk', async () => {
+  it('runs an unfenced vacuum in a child with the root and database arguments', async () => {
+    const { jobs, deps } = setup();
+    vacuumAfterJob(end, deps);
+    expect(await jobs[0].body({ id: 7 })).toBe('vacuum');
+    expect(deps.runJob).toHaveBeenCalledOnce();
+    expect(deps.runJob.mock.calls[0][0]).toBe(7);
+    expect(deps.runJob.mock.calls[0][1]).toMatchObject({ kind: 'vacuum', root, args: { root, dbPath, minFreelistBytes: 10000 } });
+  });
+  it('fences a queued body without running a child', async () => {
     const { jobs, deps } = setup();
     vacuumAfterJob(end, deps);
     deps.rebuildHeld.mockReturnValue(true);
-    expect(await jobs[0].body()).toBe('fenced');
+    expect(await jobs[0].body({ id: 7 })).toBe('fenced');
     expect(deps.rebuildHeld).toHaveBeenCalledWith(root);
-    expect(deps.takeWriterSlot).not.toHaveBeenCalled();
-    expect(deps.readStats).toHaveBeenCalledTimes(1);
-    expect(deps.freeDisk).not.toHaveBeenCalled();
-    expect(deps.runVacuum).not.toHaveBeenCalled();
+    expect(deps.runJob).not.toHaveBeenCalled();
   });
-  it('logs one skip and does not vacuum when disk is short', async () => {
+  it('forwards a child log progress line to jobLog', async () => {
     const { jobs, deps } = setup();
+    deps.runJob.mockImplementation(async (_id, _spec, progress) => { progress?.({ log: 'vacuum skipped: writer held' }); return 'writer-held'; });
     vacuumAfterJob(end, deps);
-    deps.freeDisk.mockReturnValue(0);
-    expect(await jobs[0].body()).toBe('disk-short');
-    expect(deps.freeDisk).toHaveBeenCalledExactlyOnceWith(path.dirname(dbPath));
-    expect(deps.jobLog).toHaveBeenCalledTimes(1);
-    expect(deps.jobLog.mock.calls[0][0]).toContain('vacuum skipped');
-    expect(deps.jobLog.mock.calls[0][0]).toContain(root);
-    expect(deps.runVacuum).not.toHaveBeenCalled();
-  });
-  it('rechecks the freelist before running', async () => {
-    const { jobs, deps } = setup();
-    vacuumAfterJob(end, deps);
-    deps.readStats.mockReturnValue({ pageSize: 4096, pageCount: 200000, freelistCount: 1 });
-    expect(await jobs[0].body()).toBe('freelist-small');
-    expect(deps.runVacuum).not.toHaveBeenCalled();
-  });
-  it('vacuum awaits the operation on the database with ample disk', async () => {
-    const { jobs, deps } = setup();
-    vacuumAfterJob(end, deps);
-    expect(await jobs[0].body()).toBe('vacuum');
-    expect(deps.readStats).toHaveBeenCalledTimes(2);
-    expect(deps.runVacuum).toHaveBeenCalledExactlyOnceWith(dbPath);
-  });
-  it('skips a busy writer without rechecking or vacuuming', async () => {
-    const { jobs, deps } = setup();
-    deps.takeWriterSlot.mockReturnValue({ kind: 'busy', holder: { pid: 12345, mode: 'watch', startedAt: 1 } });
-    vacuumAfterJob(end, deps);
-    expect(await jobs[0].body()).toBe('writer-held');
-    expect(deps.takeWriterSlot).toHaveBeenCalledExactlyOnceWith(root);
-    expect(deps.jobLog).toHaveBeenCalledTimes(1);
-    expect(deps.jobLog.mock.calls[0][0]).toContain('vacuum skipped');
-    expect(deps.jobLog.mock.calls[0][0]).toContain(root);
-    expect(deps.jobLog.mock.calls[0][0]).toContain('12345');
-    expect(deps.readStats).toHaveBeenCalledTimes(1);
-    expect(deps.freeDisk).not.toHaveBeenCalled();
-    expect(deps.runVacuum).not.toHaveBeenCalled();
-  });
-  it('holds the slot until the vacuum settles, then releases it once', async () => {
-    const { jobs, deps, release } = setup();
-    let finish = () => {};
-    deps.runVacuum.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
-    vacuumAfterJob(end, deps);
-    const result = jobs[0].body();
-    expect(deps.runVacuum).toHaveBeenCalledOnce();
-    expect(release).not.toHaveBeenCalled();
-    finish();
-    expect(await result).toBe('vacuum');
-    expect(release).toHaveBeenCalledOnce();
-    expect(deps.runVacuum.mock.invocationCallOrder[0]).toBeLessThan(release.mock.invocationCallOrder[0]);
-  });
-  it('releases the slot once when vacuum rejects', async () => {
-    const { jobs, deps, release } = setup();
-    deps.runVacuum.mockRejectedValue(new Error('vacuum failed'));
-    vacuumAfterJob(end, deps);
-    await expect(jobs[0].body()).rejects.toThrow('vacuum failed');
-    expect(release).toHaveBeenCalledOnce();
-    expect(deps.runVacuum.mock.invocationCallOrder[0]).toBeLessThan(release.mock.invocationCallOrder[0]);
-  });
-  it('releases the slot once when disk is short', async () => {
-    const { jobs, deps, release } = setup();
-    deps.freeDisk.mockReturnValue(0);
-    vacuumAfterJob(end, deps);
-    expect(await jobs[0].body()).toBe('disk-short');
-    expect(release).toHaveBeenCalledOnce();
-  });
-  it('releases the slot once when the freelist is small', async () => {
-    const { jobs, deps, release } = setup();
-    vacuumAfterJob(end, deps);
-    deps.readStats.mockReturnValue({ pageSize: 4096, pageCount: 200000, freelistCount: 1 });
-    expect(await jobs[0].body()).toBe('freelist-small');
-    expect(release).toHaveBeenCalledOnce();
+    expect(await jobs[0].body({ id: 7 })).toBe('writer-held');
+    expect(deps.jobLog).toHaveBeenCalledExactlyOnceWith('vacuum skipped: writer held');
   });
   it('swallows a throwing stats reader', () => {
     const { deps } = setup();

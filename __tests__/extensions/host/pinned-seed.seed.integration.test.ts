@@ -46,6 +46,7 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const seedSpec = (root: string, args: string) => ({ kind: 'seed' as const, root, module: '/test-seed', export: 'seed', args, writerPid: 123 });
 
 // Real Git and SQLite indexes may take over five seconds on the heavily loaded machine.
 describe('pinned seed core and builder', { timeout: 60_000 }, () => {
@@ -218,52 +219,65 @@ describe('pinned seed core and builder', { timeout: 60_000 }, () => {
   });
 
   it('runSeed wait true waits past seedWaitMs for the job result', async () => {
-    const host = new BuilderSeedHost(new JobQueue(), { seedWaitMs: 25 });
-    const run = host.runSeed.bind(host) as <T>(root: string, source: string, copy: () => Promise<T>, opts?: { wait?: boolean }) => Promise<{ done: boolean; value?: T }>;
+    vi.useFakeTimers();
     const gate = deferred<string>();
     const started = deferred();
-    const pending = run(workspace, main, async () => { started.resolve(); return gate.promise; }, { wait: true });
-    await started.promise;
-    let settled = false;
-    void pending.then(() => { settled = true; });
+    const host = new BuilderSeedHost(new JobQueue({ loadAverage: () => 0 }), {
+      seedWaitMs: 25, runJob: async () => { started.resolve(); return gate.promise; },
+    });
     try {
-      await delay(100);
+      const pending = host.runSeed(workspace, main, seedSpec(workspace, 'copy'), { wait: true });
+      await Promise.race([started.promise, pending.then(() => { throw new Error('seed ended before starting'); })]);
+      let settled = false;
+      void pending.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(100);
       expect(settled).toBe(false);
+      gate.resolve('copied');
+      expect(await pending).toEqual({ done: true, value: 'copied' });
     } finally {
       gate.resolve('copied');
+      vi.useRealTimers();
     }
-    expect(await pending).toEqual({ done: true, value: 'copied' });
   });
 
   it('runSeed without options returns done false at its bounded wait behind a job', async () => {
-    const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 25 });
+    vi.useFakeTimers();
+    const queue = new JobQueue({ loadAverage: () => 0 });
+    let copied = false;
+    const host = new BuilderSeedHost(queue, { seedWaitMs: 25, runJob: async () => { copied = true; return null; } });
     const gate = deferred();
     const started = deferred();
     const blocker = queue.enqueue('cold-build', workspace, async () => { started.resolve(); await gate.promise; });
     await started.promise;
-    let copied = false;
     try {
-      expect(await host.runSeed(workspace, main, async () => { copied = true; })).toEqual({ done: false });
+      const pending = host.runSeed(workspace, main, seedSpec(workspace, 'copy'));
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await pending).toEqual({ done: false });
       expect(copied).toBe(false);
     } finally {
       gate.resolve();
       await blocker;
       await queue.whenIdle();
+      vi.useRealTimers();
     }
     expect(copied).toBe(true);
   });
 
   it('buildingRootFor names a root until both in-flight seed jobs end', async () => {
-    const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 2_000 });
+    const queue = new JobQueue({ loadAverage: () => 0 });
     const firstGate = deferred();
     const secondGate = deferred();
     const firstStarted = deferred();
     const secondStarted = deferred();
-    const first = host.runSeed(workspace, main, async () => { firstStarted.resolve(); await firstGate.promise; });
-    const second = host.runSeed(workspace, main, async () => { secondStarted.resolve(); await secondGate.promise; });
-    await firstStarted.promise;
+    const host = new BuilderSeedHost(queue, { seedWaitMs: 2_000, runJob: async (_id, spec) => {
+      if (spec.args === 'first') { firstStarted.resolve(); await firstGate.promise; }
+      else { secondStarted.resolve(); await secondGate.promise; }
+      return null;
+    } });
+    const first = host.runSeed(workspace, main, seedSpec(workspace, 'first'), { wait: true });
+    const second = host.runSeed(workspace, main, seedSpec(workspace, 'second'), { wait: true });
+    void second.catch(() => {});
+    await Promise.race([firstStarted.promise, first.then(() => { throw new Error('seed ended before starting'); })]);
     expect(host.buildingRootFor(workspace)).toBe(workspace);
     firstGate.resolve();
     await first;

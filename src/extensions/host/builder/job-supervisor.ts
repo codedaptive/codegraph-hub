@@ -14,10 +14,11 @@ import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../extraction/wasm
 import type { JobChildMessage } from './job-child-message-type';
 import type { JobSpecMessage } from './job-spec-message-type';
 import type { JobSpec } from './job-spec-type';
+import type { JobKind } from './queue';
 
 export class JobSupervisor {
-  /** The running children by job id, each with the promise of its 'close' and whether {@link kill} ended it. */
-  private readonly children = new Map<number, { child: ChildProcess; closed: Promise<void>; killed: boolean }>();
+  /** The running children by job id, each with its job's spec, the promise of its 'close' and whether {@link kill} ended it. */
+  private readonly children = new Map<number, { child: ChildProcess; spec: JobSpec; closed: Promise<void>; killed: boolean }>();
   /**
    * The database identity each job's child reported, by job id. A child that closes without a kill drops its
    * entry then, so identities do not pile up for the builder's life. A killed job's entry outlives its child,
@@ -52,7 +53,7 @@ export class JobSupervisor {
         else if (outcome.ok) resolve(outcome.value);
         else reject(outcome.error);
       };
-      this.children.set(jobId, { child, closed, killed: false });
+      this.children.set(jobId, { child, spec, closed, killed: false });
       child.on('close', (code, signal) => {
         finish(new Error(`job child ended without a result (${signal ? `signal ${signal}` : `exit code ${code}`})`));
       });
@@ -95,8 +96,15 @@ export class JobSupervisor {
     await running.closed;
   }
 
-  /** Kill every running child; resolves once all have closed. */
-  async killAll(): Promise<void> {
+  /**
+   * Kill every running child; resolves once all have closed, with each killed job's kind and root, its child's
+   * pid and the database identity the child reported (null when none), for the cleanup after it
+   * (./end-jobs-after-grace.ts).
+   */
+  async killAll(): Promise<{ kind: JobKind; root: string; pid: number; createdDatabase: string | null }[]> {
+    const running = [...this.children].flatMap(([jobId, { child, spec }]) =>
+      child.pid === undefined ? [] : [{ jobId, kind: spec.kind, root: spec.root, pid: child.pid }]);
     await Promise.all([...this.children.keys()].map((jobId) => this.kill(jobId)));
+    return running.map(({ jobId, kind, root, pid }) => ({ kind, root, pid, createdDatabase: this.createdDatabase(jobId) }));
   }
 }

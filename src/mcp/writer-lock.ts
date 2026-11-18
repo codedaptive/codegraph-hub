@@ -302,7 +302,11 @@ export function getWriterPidPath(projectRoot: string, lockName: 'writer.pid' | '
  */
 export interface WriterLockInfo extends Partial<LockStamp> {
   pid: number;
-  /** Who took the slot (`builder`: the index builder's hold on a project; `cold-build`, `seed`: the builder's index jobs; `rebuild`: `codegraph index`) — for actionable error text only. */
+  /**
+   * Who took the slot (`builder`: the index builder's hold on a project, or the builder's VACUUM job, which shares
+   * that hold or takes the slot for itself, src/extensions/host/builder/take-vacuum-writer-slot.ts; `cold-build`,
+   * `seed`: the builder's index jobs; `rebuild`: `codegraph index`) — for actionable error text only.
+   */
   mode: string;
   startedAt: number;
   /** False until the MCP owner has finished its initial catch-up. */

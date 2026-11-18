@@ -11,6 +11,7 @@ import type { IndexProgress, IndexResult } from '../../../extraction';
 import type { IndexWriteEvent } from './cli-wire';
 import { jobBodySpec } from './job-body-spec';
 import type { JobRunner } from './job-runner-type';
+import { progressLogLine } from './progress-log-line';
 
 export async function runIndexJob(
   runJob: JobRunner,
@@ -27,8 +28,9 @@ export async function runIndexJob(
   const spec = jobBodySpec(args.open === 'init' ? 'init' : 'index', args.root, 'index-root-body', 'indexRootBody', args);
   const result = await runJob(jobId, spec, (payload) => {
     announce();
-    if (typeof payload === 'object' && payload !== null && 'log' in payload && typeof payload.log === 'string') {
-      emit({ kind: 'log', line: payload.log });
+    const line = progressLogLine(payload);
+    if (line !== null) {
+      emit({ kind: 'log', line });
     } else {
       emit({ kind: 'progress', progress: payload as IndexProgress });
     }

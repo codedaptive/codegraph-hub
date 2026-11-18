@@ -62,7 +62,7 @@ describe('vacuum after a no-op open with a writer', () => {
     const lines: string[] = [];
     service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => {}, jobLog: (line) => { lines.push(line); }, log: () => {}, housekeeping: false,
-      vacuum: { minFreelistBytes: 65536, freeDiskBytes: () => 1_000_000_000 },
+      vacuum: { minFreelistBytes: 65536 },
     });
     const beforeSize = fs.statSync(dbPath).size;
     const beforeFree = freelist();
@@ -83,7 +83,7 @@ describe('vacuum after a no-op open with a writer', () => {
     const lines: string[] = [];
     service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => {}, jobLog: (line) => { lines.push(line); }, log: () => {}, housekeeping: false,
-      vacuum: { minFreelistBytes: 65536, freeDiskBytes: () => 1_000_000_000 },
+      vacuum: { minFreelistBytes: 65536 },
     });
     const beforeSize = fs.statSync(dbPath).size;
     expect(freelist()).toBeGreaterThan(16);

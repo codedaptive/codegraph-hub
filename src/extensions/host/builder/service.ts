@@ -7,10 +7,10 @@
  * each) plus two shared bypass slots on {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
  * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, the CLI's `init` and `index`
  * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts), and the VACUUM a job's end queues when it
- * left its root's freelist over the limit (./vacuum-after-job.ts). The held roots' jobs and the CLI's run their
- * bodies through {@link BuilderServiceOptions.runJob} (the builder's: a child process per job, ./main.ts); the
- * cold builds, seed copies and VACUUMs run in this process. The housekeeping sweep runs on its own timer with its own hold set,
- * outside the queue, and tears down the indexes whose worktree is gone.
+ * left its root's freelist over the limit (./vacuum-after-job.ts). Every job runs its body through
+ * {@link BuilderServiceOptions.runJob} (the builder's: a child process per job, ./main.ts). The housekeeping
+ * sweep runs on its own timer with its own hold set, outside the queue, and tears down the indexes whose
+ * worktree is gone.
  */
 import { canonicalProjectRoot } from '../../../directory';
 import type { WatchOptions } from '../../../sync/watcher';
@@ -36,7 +36,7 @@ export interface BuilderServiceOptions {
   jobLog(line: string): void;
   /** One diagnostic line for stderr. */
   log(line: string): void;
-  /** Runs a held root's or the CLI's job body (./job-runner-type.ts). */
+  /** Runs every job's body (./job-runner-type.ts). */
   runJob: JobRunner;
   /** The watcher options for every held root (debounce, logging callbacks). */
   watchOptions(): WatchOptions;
@@ -44,8 +44,8 @@ export interface BuilderServiceOptions {
   timing?: { recoverWaitMs?: number; ownRetryMs?: number; pollMs?: number; seedWaitMs?: number };
   /** Run the housekeeping sweep on its own timer (default true). */
   housekeeping?: boolean;
-  /** Test seams for the VACUUM after a job; the defaults are the 256 MiB freelist floor and the real free disk. */
-  vacuum?: { minFreelistBytes?: number; freeDiskBytes?: (dir: string) => number | null };
+  /** Test seam for the VACUUM after a job; the default is the 256 MiB freelist floor. */
+  vacuum?: { minFreelistBytes?: number };
 }
 
 export class BuilderService {
@@ -59,9 +59,13 @@ export class BuilderService {
 
   constructor(private readonly opts: BuilderServiceOptions) {
     // this.queue and this.fences are read when an event comes, after the constructor has set them.
-    this.queue = new JobQueue({ onEvent: jobEventListener({ jobLog: (line) => opts.jobLog(line), queue: () => this.queue, rebuildHeld: (root) => this.fences.rebuildHeld(root), vacuum: opts.vacuum }) });
+    this.queue = new JobQueue({ onEvent: jobEventListener({
+      jobLog: (line) => opts.jobLog(line), queue: () => this.queue, runJob: opts.runJob,
+      rebuildHeld: (root) => this.fences.rebuildHeld(root), vacuum: opts.vacuum,
+    }) });
     this.fences = new RebuildFences(this.queue, (line) => opts.log(line));
     this.seedHost = new BuilderSeedHost(this.queue, {
+      runJob: opts.runJob,
       seedWaitMs: opts.timing?.seedWaitMs ?? resolveSeedWaitMs(),
       log: (line) => opts.log(line),
       fences: this.fences,

@@ -1,9 +1,10 @@
 /**
- * What a job ended over a limit, or ended beside one (./job-limit-guard.ts), leaves behind at its root: a cold
- * build's partial database, a seed's staging copy, and the root's locks. Everything is matched against `pid`, the
- * process the job ran in (the builder's, or its own child's): a lock is removed only where it names `pid`
- * (releaseWriterLock compares with process.pid, so `pid` is compared here), and a staging copy only where its name
- * carries it. An `index` or `init` keeps its database: it may be a user's.
+ * What a job ended over a limit (./job-limit-guard.ts), or killed after the stop's grace
+ * (./end-jobs-after-grace.ts), leaves behind at its root: a cold build's partial database, a seed's staging copy,
+ * and the locks it took. Everything is matched against `pid`, the job's child process: a lock is removed only where
+ * it names `pid` (releaseWriterLock compares with process.pid, so `pid` is compared here), so a writer.pid naming
+ * the builder (its hold on the root) stays, and a staging copy only where its name carries it. An `index` or
+ * `init` keeps its database: it may be a user's.
  */
 import * as fs from 'fs';
 import * as path from 'path';

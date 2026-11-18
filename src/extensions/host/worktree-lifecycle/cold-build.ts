@@ -21,14 +21,15 @@
  * someone else indexed meanwhile is not registered (that index is theirs).
  *
  * Return codes of {@link runColdBuild}: 0 built (or already indexed by someone
- * else), 1 failed (or refused: this root's cold build was ended over a job
- * limit, see runColdBuild), 3 another live process holds `rebuild.pid`, 4 a retryable
+ * else), 1 failed, 3 another live process holds `rebuild.pid`, 4 a retryable
  * SQLite lock thrown by indexAll or reported in its errors, or thrown by init
  * with no database file at dbFile. On 1 or 4, removal of this build's database
  * is best-effort and only if its identity still matches; see runColdBuild.
- * A builder that ends itself over a job limit removes its `rebuild.pid`, and the partial database only
- * when it is this build's by the same identity check (builder/job-limit-guard.ts). A builder killed mid-build leaves its partial database and a `rebuild.pid` naming a
- * dead pid, and what the next builder does depends on the root:
+ * The builder runs each attempt in its own child process (builder/cold-build-body.ts). A child the builder
+ * ends at a job limit or after its stop's grace is killed; the builder then removes the `rebuild.pid` naming
+ * that child, and the partial database only when it is this build's by the same identity check, which the
+ * child reported (builder/clean-up-ended-job.ts). A build killed with its builder leaves its partial database
+ * and a `rebuild.pid` naming a dead pid, and what the next builder does depends on the root:
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
  *     that seeds or rebuilds it discards both and builds again;
@@ -39,8 +40,8 @@
  *     (./discardSchemalessLeftover.ts) before init;
  *   - a root outside git is never cold-built (`admitColdBuild`, seed.ts), so it
  *     has no killed build's partial database to judge.
- * The job itself ({@link BuilderSeedHost.queueColdBuild}) runs `admitColdBuild`
- * (seed.ts) before each attempt to reject a root that no longer passes admission
+ * The job itself (builder/cold-build-job.ts) refuses a root whose cold build was ended over a job limit, and
+ * runs `admitColdBuild` (seed.ts) before each attempt to reject a root that no longer passes admission
  * after queueing or a retry delay; this function takes the root as it is given.
  */
 import * as fs from 'fs';
@@ -50,7 +51,6 @@ import { getCodeGraphDir, isInitialized, statInode } from '../../../directory';
 import { gitCommonDirAsync } from './git';
 import { registerProject, stampSeedNonce } from './project-registry';
 import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
-import { endedJobs } from '../builder/ended-jobs';
 import { coldBuildDatabases } from './cold-build-database';
 import { deadRebuildHolder } from './deadRebuildHolder';
 import { discardSchemalessLeftover } from './discardSchemalessLeftover';
@@ -121,16 +121,8 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
  * init (./discardSchemalessLeftover.ts), unless another live process holds
  * `writer.pid` or the file is not SQLite. With no `rebuild.pid` in place (a
  * user's own `codegraph init`, say) such a database stays, and init fails on it.
- *
- * A root whose cold build the builder ended over a job limit (builder/ended-jobs.ts) is refused first: one
- * stderr line, FAILED, no lock taken and nothing created. It is not retried on its own; only an explicit
- * `codegraph index` or `codegraph init` clears it; a builder restart does not.
  */
 export async function runColdBuild(root: string): Promise<number> {
-  if (endedJobs.has(root, 'cold-build')) {
-    process.stderr.write(`[CodeGraph] Cold build of ${root} refused: it was ended over a job limit (CODEGRAPH_BUILDER_JOB_MAX_MS or CODEGRAPH_BUILDER_JOB_MAX_RSS_MB) and is not retried automatically; run \`codegraph index\` to try again\n`);
-    return COLD_BUILD_EXIT_FAILED;
-  }
   const afterDeadHolder = deadRebuildHolder(root);
   const lock = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
   if (lock.kind === 'taken') return COLD_BUILD_EXIT_BUSY;
@@ -184,8 +176,8 @@ export async function runColdBuild(root: string): Promise<number> {
 /**
  * Test knob, read here only: `CODEGRAPH_BUILDER_COLD_BUILD_DELAY_MS` makes a
  * cold build wait that many milliseconds after it took `rebuild.pid` and
- * before it creates the database. The gates (__tests__/extensions/host/
- * index-builder.gate.test.ts) use it to hold a cold build open long enough to
+ * before it creates the database. The validation tests (__tests__/extensions/host/
+ * index-builder.validation.test.ts) use it to hold a cold build open long enough to
  * sample its locks, queue more work behind it, or kill the builder inside it.
  * Unset, empty or not a positive number: no wait. Production never sets it.
  */
