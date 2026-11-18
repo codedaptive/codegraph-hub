@@ -27,7 +27,6 @@
  * ToolHandler.execute('codegraph_grep').
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -41,6 +40,7 @@ import {
 } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
 import { candidateEdgeSql, isCandidateEdge } from '../../../src/extensions/resolution/suspects';
+import { gitInitTempRoot } from '../../helpers/git-init-temp-root';
 
 // node:sqlite through require, as wal-heal.test.ts does: vitest's import transform does not resolve it.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -91,8 +91,7 @@ let cg: CodeGraph;
 
 beforeAll(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-questionable-grep-')));
-  const git = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
-  if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
+  gitInitTempRoot(root);
   for (const [rel, content] of Object.entries(FILES)) {
     fs.writeFileSync(path.join(root, rel), content);
   }

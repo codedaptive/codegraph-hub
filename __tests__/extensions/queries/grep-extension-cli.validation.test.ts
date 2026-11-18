@@ -33,6 +33,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import { formatGrepResult, grepIndex } from '../../../src/extensions/queries/grep';
+import { gitInitTempRoot } from '../../helpers/git-init-temp-root';
 
 const REPO = path.resolve(__dirname, '../../..');
 const BIN = path.join(REPO, 'dist/bin/codegraph.js');
@@ -59,8 +60,7 @@ let unindexed: string;
 
 beforeAll(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-grep-ext-')));
-  const git = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
-  if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
+  gitInitTempRoot(root);
   for (const [rel, content] of Object.entries(FILES)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), content);

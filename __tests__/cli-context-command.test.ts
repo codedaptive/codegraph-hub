@@ -19,6 +19,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -37,7 +38,7 @@ describe('codegraph context — registered CLI command (#1611)', () => {
 
   beforeEach(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-context-cmd-'));
-    execFileSync('git', ['init', '-q'], { cwd: tempDir, stdio: 'ignore' });
+    gitInitTempRoot(tempDir);
     fs.mkdirSync(path.join(tempDir, 'src'));
     fs.writeFileSync(
       path.join(tempDir, 'src/auth.ts'),

@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -47,8 +48,7 @@ describe('codegraph cycles', () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cycles-cli-'));
-    const git = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8' });
-    if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
+    gitInitTempRoot(dir);
   });
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
