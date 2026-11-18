@@ -644,6 +644,7 @@
     "__tests__/tsconfig-baseurl-imports.test.ts",
     "__tests__/type-hierarchy.test.ts",
     "__tests__/type-parameter-refs.test.ts",
+    "__tests__/typescript-variance-parse.test.ts",
     "__tests__/ui-entrypoints-api.test.ts",
     "__tests__/ui-filecode-api.test.ts",
     "__tests__/ui-flow-api.test.ts",
