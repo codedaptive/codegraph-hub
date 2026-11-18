@@ -396,7 +396,8 @@ function fitsPath(node: Node, path: string, context: ResolutionContext): boolean
   const parentName = head.split('::').pop()!;
   // A member can be indexed at the top level — tree-sitter-swift 0.7.4 drops
   // the parent of a member that follows a freestanding macro (`#Macro()`) in
-  // an extension's body (an `#if` inside a type's body it parses). It still shares a file with a declaration or extension
+  // an extension's body (an `#if` directly inside an enum's body it parses).
+  // It still shares a file with a declaration or extension
   // of the parent the site names.
   if (context.getNodesInFile(node.filePath).some((p) => p.name === parentName && TYPE_KINDS.has(p.kind) && p.id !== node.id)) return true;
   // `App.Build`: a top-level type under a qualifier that names no type — a module.
