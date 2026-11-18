@@ -705,6 +705,7 @@
   "validation": [
     "__tests__/ui-highlight.test.ts",
     "__tests__/cli-parse-warning.test.ts",
+    "__tests__/parse-deadline.test.ts",
     "__tests__/cli-line-drift.test.ts",
     "__tests__/bundle-launcher.test.ts",
     "__tests__/callers-call-sites.test.ts",
