@@ -39,9 +39,11 @@
  * lease (./fences.ts) after the holds.
  *
  * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) is ended
- * alone by ./job-limit-guard.ts: its child is killed, the `job limit` line and the job's mark are written, so
- * nothing retries it automatically, a partial cold build it reported creating is rolled back, the locks and seed
- * staging naming the child's pid are removed, and the builder and every other job go on. The watchdog
+ * alone by ./job-limit-guard.ts, only while it still runs in the child it was measured in: that child is killed,
+ * the `job limit` line and the job's mark are written, so nothing retries it automatically, a partial cold build
+ * it reported creating is rolled back, the locks and seed staging naming the child's pid are removed, and the
+ * builder and every other job go on. A job already in another child, or in none, is left alone and nothing is
+ * written. The watchdog
  * (./job-watchdog.ts) samples every running job every 5 s on the main thread, so it is late while the event loop
  * is blocked; each job is charged its own child's resident size (./read-process-rss.ts).
  *
@@ -216,8 +218,14 @@ export function runBuilder(): void {
     onBreach: (job, breach, childPid) => void endOverLimit(job, breach, {
       jobLog: (line) => logFile.append(line), endedFile,
       // A getter: the guard reads the identity after the kill has closed the child, so a report the child sent
-      // just before the kill is not missed, and the read drops the killed job's entry (./job-supervisor.ts).
-      child: { pid: childPid, get createdDatabase() { return supervisor.createdDatabase(job.id); }, kill: () => supervisor.kill(job.id) },
+      // just before the kill is not missed, and the read drops the killed job's entry (./job-supervisor.ts). The
+      // kill names `childPid`, so the child killed is the one the guard cleans up after; a job already running in
+      // a new child is left alone.
+      child: {
+        pid: childPid,
+        get createdDatabase() { return supervisor.createdDatabase(job.id); },
+        kill: () => supervisor.kill(job.id, childPid),
+      },
     }),
   }).start();
   service.start();

@@ -24,10 +24,10 @@ afterEach(async () => {
   fs.rmSync(base, { recursive: true, force: true });
 });
 
-async function start(id: number, kind: 'seed' | 'cold-build', root: string) {
+async function start(id: number, kind: 'seed' | 'cold-build', root: string, exportName = kind === 'seed' ? 'seed' : 'coldBuild') {
   let ready: () => void = () => {};
   const started = new Promise<void>((resolve) => { ready = resolve; });
-  const job = supervisor.run(id, { kind, root, module: fixture, export: kind === 'seed' ? 'seed' : 'coldBuild', args: { root }, writerPid: process.pid }, () => ready());
+  const job = supervisor.run(id, { kind, root, module: fixture, export: exportName, args: { root }, writerPid: process.pid }, () => ready());
   const rejected = expect(job).rejects.toThrow();
   await Promise.race([started, job.then(() => { throw new Error('fixture returned'); })]);
   const pid = supervisor.childPid(id);
@@ -36,7 +36,7 @@ async function start(id: number, kind: 'seed' | 'cold-build', root: string) {
 }
 
 describe('ending jobs after grace', { timeout: 90_000 }, () => {
-  it('killAll returns the identities and roots of the jobs it killed', async () => {
+  it.runIf(process.platform !== 'win32')('killAll returns the identities and roots of the jobs it killed (POSIX)', async () => {
     const seed = await start(1, 'seed', seedRoot);
     const cold = await start(2, 'cold-build', coldRoot);
     const identity = statInode(path.join(coldRoot, '.codegraph', 'codegraph.db'));
@@ -46,6 +46,20 @@ describe('ending jobs after grace', { timeout: 90_000 }, () => {
     expect(killed).toEqual(expect.arrayContaining([
       { kind: 'seed', root: seedRoot, pid: seed.pid, createdDatabase: null },
       { kind: 'cold-build', root: coldRoot, pid: cold.pid, createdDatabase: identity },
+    ]));
+    await Promise.all([seed.rejected, cold.rejected]);
+  });
+
+  // statInode reports no identity on win32 (src/directory.ts), so the cold build reports none there.
+  it.runIf(process.platform === 'win32')('killAll returns the roots of the jobs it killed and no database identity (Windows)', async () => {
+    const seed = await start(1, 'seed', seedRoot);
+    const cold = await start(2, 'cold-build', coldRoot);
+    expect(statInode(path.join(coldRoot, '.codegraph', 'codegraph.db'))).toBeNull();
+    const killed = await supervisor.killAll();
+    expect(killed).toHaveLength(2);
+    expect(killed).toEqual(expect.arrayContaining([
+      { kind: 'seed', root: seedRoot, pid: seed.pid, createdDatabase: null },
+      { kind: 'cold-build', root: coldRoot, pid: cold.pid, createdDatabase: null },
     ]));
     await Promise.all([seed.rejected, cold.rejected]);
   });
@@ -67,6 +81,22 @@ describe('ending jobs after grace', { timeout: 90_000 }, () => {
       expect(fs.existsSync(staging + suffix)).toBe(false);
       expect(fs.existsSync(db + suffix)).toBe(false);
     }
+    expect(fs.existsSync(rebuild)).toBe(false);
+  });
+
+  it('removes a cold build\'s database and lock when the build reported no identity and no other process holds writer.pid', async () => {
+    const cold = await start(2, 'cold-build', coldRoot, 'coldBuildWithoutIdentity');
+    const db = path.join(coldRoot, '.codegraph', 'codegraph.db');
+    const rebuild = path.join(coldRoot, '.codegraph', 'rebuild.pid');
+    expect(fs.existsSync(db)).toBe(true);
+    expect(fs.existsSync(rebuild)).toBe(true);
+    const killed = await supervisor.killAll();
+    expect(killed).toEqual([{ kind: 'cold-build', root: coldRoot, pid: cold.pid, createdDatabase: null }]);
+    await cold.rejected;
+    expect(fs.existsSync(db)).toBe(true);
+    expect(fs.existsSync(rebuild)).toBe(true);
+    await endJobsAfterGrace({ killAll: async () => killed });
+    for (const suffix of suffixes) expect(fs.existsSync(db + suffix)).toBe(false);
     expect(fs.existsSync(rebuild)).toBe(false);
   });
 });

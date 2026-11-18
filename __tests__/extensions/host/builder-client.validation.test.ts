@@ -22,6 +22,7 @@ import { isInitialized } from '../../../src/directory';
 import { BuilderClient, builderEntry } from '../../../src/extensions/host/builder/client';
 import { NODE_RUNTIME_FLAGS, WASM_RUNTIME_FLAGS } from '../../../src/extraction/wasm-runtime-flags';
 import { readWriterLock } from '../../../src/mcp/writer-lock';
+import { parentPid } from '../../helpers/parent-pid';
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
@@ -179,12 +180,10 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
         observed.parent = builderPid;
         return true;
       }
-      try {
-        observed.parent = Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(lock.pid)], { encoding: 'utf8' }).trim());
-      } catch (err) {
-        if (!alive(lock.pid)) return false;
-        throw err;
-      }
+      // Null only when the holder is already gone (keep waiting for the next one); a broken probe throws.
+      const parent = parentPid(lock.pid);
+      if (parent === null) return false;
+      observed.parent = parent;
       observed.lock = lock;
       return true;
     }, 120_000)).toBe(true);
@@ -194,6 +193,8 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
     expect(await client.ensure(path.join(wt, 'src'))).toEqual({ kind: 'building', root: real(wt) });
 
     expect(await waitUntil(() => isInitialized(wt) && readWriterLock(wt, 'rebuild.pid') === null, 180_000)).toBe(true);
+    // The child releases rebuild.pid before the builder logs the job's end, so wait for that line.
+    expect(await waitUntil(() => builderLog(stateDir).some((l) => / job end cold-build \S+ ok$/.test(l)), 120_000)).toBe(true);
     const log = builderLog(stateDir);
     expect(log.filter((l) => / job start cold-build /.test(l))).toHaveLength(1);
     expect(log.some((l) => / job end cold-build \S+ ok$/.test(l))).toBe(true);

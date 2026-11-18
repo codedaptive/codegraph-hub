@@ -103,7 +103,44 @@ describe('JobSupervisor', () => {
     expect(supervisor.createdDatabase(11)).toBeNull();
   });
 
-  it('resolves a kill for an unknown id', async () => {
-    await expect(supervisor.kill(999)).resolves.toBeUndefined();
+  it('does not kill a running child when the requested pid differs', async () => {
+    let ready: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    const rejected = expect(supervisor.run(13, spec('hold'), () => ready())).rejects.toThrow();
+    await started;
+    const pid = supervisor.childPid(13);
+    if (pid === null) throw new Error('no child pid');
+    try {
+      await expect(supervisor.kill(13, pid + 1)).resolves.toBe(false);
+      expect(supervisor.childPid(13)).toBe(pid);
+      expect(() => process.kill(pid, 0)).not.toThrow();
+    } finally {
+      await supervisor.kill(13);
+      await rejected;
+    }
+  });
+
+  it('kills the matching child and resolves true after it closes', async () => {
+    let ready: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    const rejected = expect(supervisor.run(14, spec('hold'), () => ready())).rejects.toThrow();
+    await started;
+    const pid = supervisor.childPid(14);
+    if (pid === null) throw new Error('no child pid');
+    try {
+      await expect(supervisor.kill(14, pid)).resolves.toBe(true);
+      expect(supervisor.childPid(14)).toBeNull();
+    } finally {
+      await supervisor.kill(14);
+      await rejected;
+    }
+  });
+
+  it('resolves true for an unknown id without a pid', async () => {
+    await expect(supervisor.kill(999)).resolves.toBe(true);
+  });
+
+  it('resolves false for an unknown id with a pid', async () => {
+    await expect(supervisor.kill(999, 101)).resolves.toBe(false);
   });
 });
