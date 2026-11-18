@@ -298,7 +298,7 @@ describe('Swift qualified inheritance placement, wasm arm', () => {
       expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Kit::Base (Nesting.swift)']);
     });
 
-    it('lands `Frame.Deep` on the protocol nested under the conditional compilation block', () => {
+    it('lands `Frame.Deep` on the protocol nested in `Frame` through its conditional compilation block', () => {
       expect(cg.getNodesByName('Deep').map((n) => n.qualifiedName)).toEqual(['Frame::Deep']);
       const s = supers(cg, 'Lower');
       expect(s.map((e) => `${e.target} (${e.file})`), JSON.stringify(s)).toEqual(['Frame::Deep (Recovery.swift)']);
