@@ -71,13 +71,13 @@ describe('readProcessRssBytes Windows path', () => {
 
   it('returns null when tasklist errors', async () => {
     execFile.mockImplementation((file, _args, _options, callback) =>
-      file === 'tasklist' ? callback(new Error('tasklist failed'), '') : callback(null, '2048'));
+      file === 'tasklist' ? callback(new Error('tasklist failed'), '"node.exe","123","Console","1","45,678 K"') : callback(null, '2048'));
     await expect(readProcessRssBytes(123)).resolves.toBeNull();
   });
 
   it('returns null when tasklist times out', async () => {
     execFile.mockImplementation((file, _args, _options, callback) =>
-      file === 'tasklist' ? callback(new Error('timed out'), '') : callback(null, '2048'));
+      file === 'tasklist' ? callback(new Error('timed out'), '"node.exe","123","Console","1","45,678 K"') : callback(null, '2048'));
     await expect(readProcessRssBytes(123)).resolves.toBeNull();
   });
 

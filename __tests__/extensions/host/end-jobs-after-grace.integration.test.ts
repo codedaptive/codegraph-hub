@@ -36,18 +36,30 @@ async function start(id: number, kind: 'seed' | 'cold-build', root: string, expo
 }
 
 describe('ending jobs after grace', { timeout: 90_000 }, () => {
-  it('killAll returns the identities and roots of the jobs it killed', async () => {
+  it.runIf(process.platform !== 'win32')('killAll returns the identities and roots of the jobs it killed (POSIX)', async () => {
     const seed = await start(1, 'seed', seedRoot);
     const cold = await start(2, 'cold-build', coldRoot);
-    // statInode reports no identity on win32 (src/directory.ts), so the child reports none there either.
     const identity = statInode(path.join(coldRoot, '.codegraph', 'codegraph.db'));
-    if (process.platform === 'win32') expect(identity).toBeNull();
-    else expect(identity).not.toBeNull();
+    expect(identity).not.toBeNull();
     const killed = await supervisor.killAll();
     expect(killed).toHaveLength(2);
     expect(killed).toEqual(expect.arrayContaining([
       { kind: 'seed', root: seedRoot, pid: seed.pid, createdDatabase: null },
       { kind: 'cold-build', root: coldRoot, pid: cold.pid, createdDatabase: identity },
+    ]));
+    await Promise.all([seed.rejected, cold.rejected]);
+  });
+
+  // statInode reports no identity on win32 (src/directory.ts), so the cold build reports none there.
+  it.runIf(process.platform === 'win32')('killAll returns the roots of the jobs it killed and no database identity (Windows)', async () => {
+    const seed = await start(1, 'seed', seedRoot);
+    const cold = await start(2, 'cold-build', coldRoot);
+    expect(statInode(path.join(coldRoot, '.codegraph', 'codegraph.db'))).toBeNull();
+    const killed = await supervisor.killAll();
+    expect(killed).toHaveLength(2);
+    expect(killed).toEqual(expect.arrayContaining([
+      { kind: 'seed', root: seedRoot, pid: seed.pid, createdDatabase: null },
+      { kind: 'cold-build', root: coldRoot, pid: cold.pid, createdDatabase: null },
     ]));
     await Promise.all([seed.rejected, cold.rejected]);
   });

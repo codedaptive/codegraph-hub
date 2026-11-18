@@ -180,7 +180,7 @@ describe('the index builder process, through BuilderClient', { timeout: 600_000 
         observed.parent = builderPid;
         return true;
       }
-      // Null when the holder is already gone: keep waiting for the next holder.
+      // Null only when the holder is already gone (keep waiting for the next one); a broken probe throws.
       const parent = parentPid(lock.pid);
       if (parent === null) return false;
       observed.parent = parent;
