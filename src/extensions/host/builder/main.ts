@@ -45,8 +45,9 @@
  * (./job-watchdog.ts) samples every running job every 5 s on the main thread, so it is late while the event loop
  * is blocked; each job is charged its own child's resident size (./read-process-rss.ts).
  *
- * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
- * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.
+ * Parse workers run inside `indexAll`, in a job's child, which destroys its pool before it returns; this
+ * process's exit path collects garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in
+ * flight when it ends.
  */
 import * as fs from 'fs';
 import * as path from 'path';

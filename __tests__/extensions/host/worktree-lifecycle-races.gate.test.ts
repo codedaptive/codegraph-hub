@@ -97,7 +97,7 @@ function real(p: string): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** The builder's seed host over a fresh queue: seeds and cold builds run as queued jobs, as in the builder process. */
+/** The builder's seed host over a fresh queue: seeds and cold builds run as queued jobs, as in the builder, with their bodies run in this process. */
 function seedHost(): BuilderSeedHost {
   return new BuilderSeedHost(new JobQueue(), { runJob: inProcessJobRunner().runJob });
 }

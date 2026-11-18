@@ -23,8 +23,8 @@
  * The lease's jobs (./cli-jobs.ts) run on the builder's queue and may take `writer.pid` for the lease; the
  * locks stay until the lease ends, so the interactive re-run of `index` runs under them as the in-process
  * command holds them. {@link RebuildFences.unfence} waits for the lease's jobs before it lets either lock go:
- * a running job is never preempted (queue.ts), and releasing `writer.pid` under it would delete the live run's
- * own same-pid lock (writer-lock.ts `releaseWriterLock`).
+ * a running job is never preempted (queue.ts), and releasing `writer.pid` under it would delete the lock the
+ * live run writes under (writer-lock.ts `releaseWriterLock`).
  *
  * One registry per {@link BuilderService}: tests run several services in one process, and the roots one
  * service fences are not another's.
@@ -92,7 +92,7 @@ export class RebuildFences {
   private readonly leases = new Map<string, RebuildLease>();
   private readonly ending = new Map<RebuildLease, Promise<void>>();
 
-  /** `queue` tells whether a cold build of this process is running on a root (it holds `rebuild.pid` under this pid). */
+  /** `queue` tells whether a cold build job is running on a root. */
   constructor(private readonly queue: JobQueue, private readonly log: (line: string) => void) {}
 
   /** Whether `root` is fenced, from the request until its locks are released. */
@@ -129,14 +129,14 @@ export class RebuildFences {
    * Fence `root` for `kind`: take its `rebuild.pid`. Refused ({@link REBUILD_IN_PROGRESS_MESSAGE}) when the root is
    * fenced already, when another live process holds `rebuild.pid`, when this pid holds it for a cold build
    * that is running now, or when the lock cannot be taken. A `rebuild.pid` that names this pid with no running
-   * holder is a leftover of an earlier lease or cold build and is adopted. Answers at once: nothing is queued.
+   * holder is a leftover of an earlier lease and is adopted. Answers at once: nothing is queued.
    */
   fence(root: string, kind: FenceKind = 'index'): void {
     const key = canonicalProjectRoot(root);
     if (this.leases.has(key)) throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
     if (isRebuildInProgress(root)) throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
-    // The cold build takes `rebuild.pid` inside its job, under this pid, so only the running job tells a record
-    // in use from a leftover. A cold build still queued has taken nothing: it checks the fence when it starts.
+    // A record naming this pid while a cold build job runs is in use. A cold build still queued has taken nothing:
+    // it checks the fence when it starts.
     if (readWriterLock(root, 'rebuild.pid')?.pid === process.pid && this.coldBuildRunningOn(key)) {
       throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
     }

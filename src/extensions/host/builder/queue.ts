@@ -14,8 +14,8 @@
  * running job in any slot. The pick is first-eligible (./first-startable.ts): a later job of a root can start
  * before an earlier waiting job that names it among other roots, and a root's short jobs go before its
  * whole-repository job only while that job still waits. The queue never preempts a running job. A job over its
- * limit is ended by ./job-limit-guard.ts: one in its own child process (./job-supervisor.ts) is ended alone, and
- * one still running in the builder's process ends the builder.
+ * limit is ended by ./job-limit-guard.ts: its child process (./job-supervisor.ts) is killed, and the builder and
+ * the other jobs go on.
  *
  * {@link JobQueue.whenRootIdle} tells when no job of one root runs or waits (the release of an index being
  * removed waits on it, ./cli-relay.ts); the jobs are keyed by the root's canonical spelling.
@@ -26,7 +26,7 @@
  * A job ended over a limit (./job-limit-guard.ts) is refused here afterwards: a later enqueue of the same root
  * and kind rejects with {@link JobEndedError} (./ended-jobs.ts holds the marks). So a `vacuum` ended over a
  * limit is not queued again for its root until an explicit `init` or `index` of it. Cold builds are refused by
- * their own body instead (cold-build.ts), and `init` and `index` never are: they are the explicit way to try
+ * the builder before their child starts instead (cold-build-job.ts), and `init` and `index` never are: they are the explicit way to try
  * again, and one that ends ok clears its root's marks.
  */
 import * as os from 'os';
@@ -45,7 +45,7 @@ import type { RunningJob } from './running-job';
  */
 export type JobKind = 'sync' | 'catch-up' | 'watch-sync' | 'seed' | 'cold-build' | 'init' | 'index' | 'recover' | 'open' | 'vacuum';
 
-/** The kinds an ended mark never refuses at enqueue: `init` and `index` are the explicit retry; a cold build refuses in its body (cold-build.ts). */
+/** The kinds an ended mark never refuses at enqueue: `init` and `index` are the explicit retry; a cold build is refused before its child starts (cold-build-job.ts). */
 const NEVER_REFUSED: ReadonlySet<JobKind> = new Set<JobKind>(['cold-build', 'init', 'index']);
 
 /** One job's start or end, for the log. `error` is set on a failed end, one line. */

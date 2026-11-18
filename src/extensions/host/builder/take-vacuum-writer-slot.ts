@@ -3,7 +3,7 @@
  * process. `ownerPid` is the builder's pid (the job context's `writerPid`).
  *
  * A record that names `ownerPid` is the builder's hold on the root (./holder.ts): the VACUUM shares it and writes
- * nothing, and its release leaves the record in place; the hold releases it when it closes, after the root's jobs
+ * no lock record, and its release leaves the record in place; the hold releases it when it closes, after the root's jobs
  * end. Sharing it is safe from the builder's other jobs, which never run at once on one root (./next-start.ts).
  * Otherwise the slot is taken in mode 'builder' under this process's pid (the job's child): taken by another live
  * process (or unreadable) answers busy, and a slot taken here is freed on release.
