@@ -1,4 +1,10 @@
-/** Catch-up valve retries, their logs and termination, alongside lock and other failure controls. */
+/**
+ * What the builder's holder does when a catch-up is stopped by the WAL valve: the retry timing (5 s, doubling per
+ * stop in a row, capped at 5 min), the builder.log line for each stop, how the retries end (a finished catch-up,
+ * a release of the hold, a retry ended at a job limit) and that `caughtUp` settles at the first stop. Controls:
+ * lock contention keeps its 1 s doubling retry (and does not break a valve run), and any other failure is logged
+ * once and not retried.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
