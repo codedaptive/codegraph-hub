@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -29,7 +30,7 @@ describe('codegraph affected --filter globs (#1273)', () => {
   }
 
   beforeAll(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-affected-globs-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-affected-globs-')));
     const w = (rel: string, body: string) => {
       fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
       fs.writeFileSync(path.join(dir, rel), body);

@@ -20,6 +20,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
 import { DEFAULT_UI_PORT as DEFAULT_PORT } from '../src/ui-server/constants';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -209,7 +210,7 @@ describe('codegraph ui — serving', () => {
   let opener: string;
 
   beforeAll(async () => {
-    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ui-cli-'));
+    projectDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ui-cli-')));
     fs.mkdirSync(path.join(projectDir, 'src'));
     fs.writeFileSync(
       path.join(projectDir, 'src', 'auth.ts'),
