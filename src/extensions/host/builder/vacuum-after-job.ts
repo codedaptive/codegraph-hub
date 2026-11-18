@@ -1,8 +1,9 @@
 /**
  * The builder's VACUUM rule (ruling R-45), run after each job that ends ok (./job-event-listener.ts): one that
  * left its root's freelist over the limit (./freelist-over-limit.ts) queues a `vacuum` job of that root. The VACUUM is a job of
- * its own, in the cold lane (./job-lane.ts): syncs of other roots run beside it, its own root's syncs queued
- * before it starts go first, and a sync of its root queued while it runs waits for it (one writer per root); one queued
+ * its own, in the cold lane (./job-lane.ts): `sync` jobs of other roots run beside it, its own root's syncs queued
+ * before it starts go first, and a job naming its root queued while it runs (its sync, or a `seed` copying from
+ * it, S-78) waits for it (one writer per root); one queued
  * VACUUM per root is shared by every job that asks for it (its coalesce key).
  *
  * When the job runs it decides again on what is on disk then: a rebuild that holds the root (a release or index
