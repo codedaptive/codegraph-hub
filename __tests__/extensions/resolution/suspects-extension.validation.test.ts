@@ -40,7 +40,7 @@ let unindexed = '';
 
 beforeAll(async () => {
   // Git repositories, as the CLI expects of a project (see gitInitTempRoot); `suspects`
-  // itself does not refuse a folder in no git worktree.
+  // refuses a folder in no git worktree (requireGitWorktreeRoot) before it looks for an index.
   project = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-suspects-ext-')));
   const files: Record<string, string> = {
     'Cargo.toml': '[package]\nname = "app"\nversion = "0.1.0"\n',
