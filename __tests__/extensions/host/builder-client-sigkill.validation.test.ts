@@ -1,5 +1,5 @@
 /**
- * The SIGKILL replacement case of builder-client.integration.test.ts: a killed builder is replaced, its dead
+ * The SIGKILL replacement case of builder-client.validation.test.ts: a killed builder is replaced, its dead
  * locks are reclaimed, and the roots it held and the build it was running are taken up again by the new one.
  * It is in the validation group because its outcome is timing-sensitive under load (ruling S-67).
  */

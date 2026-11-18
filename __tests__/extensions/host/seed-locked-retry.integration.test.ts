@@ -10,8 +10,14 @@ import { COLD_BUILD_EXIT_FAILED, COLD_BUILD_EXIT_LOCKED } from '../../../src/ext
 import { RebuildFences } from '../../../src/extensions/host/builder/fences';
 import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
 import { JobQueue } from '../../../src/extensions/host/builder/queue';
+import { coldBuildBody } from '../../../src/extensions/host/builder/cold-build-body';
+import type { JobSpec } from '../../../src/extensions/host/builder/job-spec-type';
 
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+
+// Each attempt's body runs in this test's module graph, so the CodeGraph spies below reach it.
+const runJob = async (_id: number, spec: JobSpec) =>
+  coldBuildBody({ root: spec.root }, { progress: () => {}, reportDatabase: () => {}, writerPid: process.pid });
 
 describe('cold build database lock retry', { timeout: 30_000 }, () => {
   let workspace: string;
@@ -146,7 +152,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('retries a transient indexAll lock and indexes the root', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 3, delayMs: 10 } });
+    const host = new BuilderSeedHost(queue, { runJob, seedWaitMs: 0, coldBuildRetry: { attempts: 3, delayMs: 10 } });
     host.queueColdBuild(root, { realRoot: root });
     await settle(queue);
     expect(host.hasFailedBuild(root)).toBe(false);
@@ -157,7 +163,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('keeps the root building during the retry delay', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
+    const host = new BuilderSeedHost(queue, { runJob, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
     host.queueColdBuild(root, { realRoot: root });
     try {
       await vi.waitUntil(() => index.mock.calls.length === 1 && !fs.existsSync(lockFile()), { timeout: 2_000, interval: 5 });
@@ -176,7 +182,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('does not retry when admission refuses during the retry delay', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
+    const host = new BuilderSeedHost(queue, { runJob, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
     host.queueColdBuild(root, { realRoot: root });
     try {
       await vi.waitUntil(() => index.mock.calls.length === 1 && !fs.existsSync(lockFile()), { timeout: 2_000, interval: 5 });
@@ -193,9 +199,9 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('does not retry when a fence appears during the retry delay', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValueOnce(new Error('database is locked'));
     const queue = new JobQueue();
-    const fences = new RebuildFences(queue, () => {});
+    const fences = new RebuildFences(() => {});
     const isFenced = vi.spyOn(fences, 'isFenced').mockReturnValue(false);
-    const host = new BuilderSeedHost(queue, { fences, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
+    const host = new BuilderSeedHost(queue, { runJob, fences, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 300 } });
     host.queueColdBuild(root, { realRoot: root });
     try {
       await vi.waitUntil(() => index.mock.calls.length === 1 && !fs.existsSync(lockFile()), { timeout: 2_000, interval: 5 });
@@ -215,7 +221,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('marks a non-lock indexing error failed without retrying', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValue(new Error('disk I/O error'));
     const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 3, delayMs: 10 } });
+    const host = new BuilderSeedHost(queue, { runJob, seedWaitMs: 0, coldBuildRetry: { attempts: 3, delayMs: 10 } });
     host.queueColdBuild(root, { realRoot: root });
     await settle(queue);
     expect(host.hasFailedBuild(root)).toBe(true);
@@ -226,7 +232,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('leaves an exhausted lock retry eligible for a later successful build', async () => {
     const index = vi.spyOn(CodeGraph.prototype, 'indexAll').mockRejectedValue(new Error('database is locked'));
     const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 10 } });
+    const host = new BuilderSeedHost(queue, { runJob, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 10 } });
     const approval = { realRoot: root };
     host.queueColdBuild(root, approval);
     await settle(queue);
@@ -243,7 +249,7 @@ describe('cold build database lock retry', { timeout: 30_000 }, () => {
   it('marks locked init with a database left behind as failed', async () => {
     vi.spyOn(CodeGraph, 'init').mockImplementation(async () => leaveDbAndThrow());
     const queue = new JobQueue();
-    const host = new BuilderSeedHost(queue, { seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 10 } });
+    const host = new BuilderSeedHost(queue, { runJob, seedWaitMs: 0, coldBuildRetry: { attempts: 2, delayMs: 10 } });
     host.queueColdBuild(root, { realRoot: root });
     await settle(queue);
     expect(host.hasFailedBuild(root)).toBe(true);
