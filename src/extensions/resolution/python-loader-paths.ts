@@ -11,10 +11,9 @@
  * The path is the 2nd positional argument or the `path=` / `location=` keyword. It is
  * evaluated by pythonPathExpression against the module names pythonModuleNames reads from
  * the logical lines. A line that starts inside an open bracket continues the line before
- * and binds nothing. A name a
- * function enclosing the call binds (a parameter, or any binding in its body) is the
- * function's at that call, not the module's, so it is unknown there. A path built from
- * an unknown name is skipped.
+ * and binds nothing. A name a function enclosing the call binds (a parameter, or any
+ * binding in its body) is the function's at that call, not the module's, so it is
+ * unknown there. A path built from an unknown name is skipped.
  */
 import { stripCommentsForRegex } from '../../resolution/strip-comments';
 import { pythonBoundNames } from './python-bound-names';
@@ -78,7 +77,7 @@ function logicalLines(source: string): LogicalLine[] {
 /**
  * Names bound in every `def` enclosing lines[at]. Walking back from the call's line, each
  * line indented less than every line seen so far opens a block enclosing the call; the
- * walk stops at column 0. The call's own line counts, for a one-line def.
+ * walk stops once it reaches a line with no indent. The call's own line counts, for a one-line def.
  */
 function localNames(source: string, lines: LogicalLine[], at: number): Set<string> {
   const local: string[] = [];

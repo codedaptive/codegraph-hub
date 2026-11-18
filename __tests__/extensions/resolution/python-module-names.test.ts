@@ -1,6 +1,6 @@
 /**
  * Unit tests of pythonModuleNames over hand-written logical lines: a name bound once in
- * module scope (at column 0 or in an if/try body) is known with its value; one rebound in
+ * module scope (at top level or in an if/try body) is known with its value; one rebound in
  * a module-level block, declared `global` in a function, bound only in a def or class
  * body, or bound other than by `name = value` on one line is not.
  */
