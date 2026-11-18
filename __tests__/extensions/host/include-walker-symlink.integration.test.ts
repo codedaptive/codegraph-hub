@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { scanDirectory, scanDirectoryAsync } from '../../../src/extraction/index';
 import { clearProjectConfigCache } from '../../../src/project-config';
-import { canLinkDirs } from '../../helpers/can-link-dirs';
+import { canLinkDirs } from '../../helpers/canLinkDirs';
 
 const linkIt = it.skipIf(!canLinkDirs);
 
