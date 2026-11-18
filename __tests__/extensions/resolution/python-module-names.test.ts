@@ -1,8 +1,8 @@
 /**
  * Unit tests of pythonModuleNames, over the possible bindings pythonNameBindings reads from
  * hand-written source: a name is known with its value only when its one possible binding
- * is a one-line `NAME = value` at any indent (A1); any other possible binding of it makes
- * it unknown (A2); a dynamic file knows no name (A3).
+ * is a one-line `NAME = value` at any indent; any other possible binding of it makes it
+ * unknown; a dynamic file knows no name.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonModuleNames } from '../../../src/extensions/resolution/python-module-names';

@@ -1,9 +1,9 @@
 /**
  * Unit tests of pythonLoaderPaths: the path expressions it evaluates (Path/os.path
  * chains, string literals, module-level names) and the lines it reports, multiline and
- * keyword calls, calls in comments and docstrings, and the dynamic, absolute, escaping,
- * ambiguous name bindings, dynamic namespace access, trusted callees and continuation
- * lines, plus production-style loader calls.
+ * keyword calls, calls in comments and docstrings; the refusals of dynamic, absolute and
+ * escaping expressions, ambiguous name bindings, dynamic namespace access, untrusted
+ * callees and keywords on continuation lines; plus production-style loader calls.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonLoaderPaths } from '../../../src/extensions/resolution/python-loader-paths';
@@ -118,7 +118,7 @@ def load():
     expect(pythonLoaderPaths(file, source)).toEqual([]);
   });
 
-  it('does not resolve a name bound in an enclosing function', () => {
+  it('does not resolve a name that an outer function takes as a parameter', () => {
     const source = `from pathlib import Path
 path = Path(__file__).parent / "x.py"
 def outer(path):
