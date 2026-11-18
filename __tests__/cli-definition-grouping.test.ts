@@ -39,7 +39,7 @@ function write(file: string, source: string) {
   fs.writeFileSync(absolute, source);
 }
 
-/** The CLI read commands refuse a folder outside a git worktree. */
+/** callers, callees and impact refuse a folder that is neither in a git worktree nor opted in with `init --no-git`. */
 function gitInit(dir: string): void {
   const git = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8' });
   if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
