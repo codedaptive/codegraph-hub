@@ -280,7 +280,8 @@ describe('Swift qualified inheritance placement, wasm arm', () => {
         // The top-level Base and Kit.Base are the same shape and share a file;
         // the nested one must win on its own path, not on which is declared first.
         'Sources/App/Nesting.swift': 'class Base {}\nenum Kit { class Base {} }\nclass Child: Kit.Base {}\n',
-        // The `#if` inside Frame's body is parsed, so Deep keeps its parent.
+        // tree-sitter-swift 0.7.4 (upstream 7efa65b6, #3392) parses an `#if`
+        // directly inside an enum body, so Deep keeps its parent.
         'Sources/App/Recovery.swift': 'enum Frame {\n#if os(Linux)\n    protocol Deep {}\n#endif\n}\nclass Lower: Frame.Deep {}\n',
         // A freestanding macro in the extension leaves Lost indexed at the top
         // level, beside the struct that the written Container.Lost path names.
