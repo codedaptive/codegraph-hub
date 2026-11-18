@@ -6,7 +6,22 @@ import * as path from 'path';
 import { scanDirectory, scanDirectoryAsync } from '../../../src/extraction/index';
 import { clearProjectConfigCache } from '../../../src/project-config';
 
-describe.each([
+// Windows refuses a directory symlink with EPERM without Developer Mode or admin rights. A junction would get past
+// that, but git lists a symlink as one entry and these cases test exactly that, so the cases skip instead.
+const canLinkDirs = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-link-probe-'));
+  try {
+    fs.symlinkSync(dir, path.join(dir, 'link'), 'dir');
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'EPERM') return false;
+    throw error;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+})();
+
+describe.skipIf(!canLinkDirs).each([
   ['scanDirectory', scanDirectory],
   ['scanDirectoryAsync', scanDirectoryAsync],
 ])('%s on a git root', (_name, scan) => {
