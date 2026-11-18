@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
 import type { BuilderToServer } from '../../../src/extensions/host/builder/protocol';
@@ -10,7 +11,8 @@ describe('builder non-git opt-in', () => {
   let service: BuilderService;
   let messages: BuilderToServer[];
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'cg-opted-builder-')));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-opted-builder-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     messages = [];
     service = new BuilderService({ send: (message) => messages.push(message), jobLog: () => {}, log: () => {}, watchOptions: () => ({}), housekeeping: false });

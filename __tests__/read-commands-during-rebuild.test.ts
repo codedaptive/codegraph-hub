@@ -19,6 +19,7 @@ import * as path from 'path';
 import { CodeGraph } from '../src';
 import { DatabaseConnection } from '../src/db';
 import { QueryBuilder } from '../src/db/queries';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -149,7 +150,7 @@ describe('read commands while another process writes the index (#2913)', () => {
   let dir: string;
 
   beforeAll(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-rebuild-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-rebuild-')));
     writeProject(dir);
     const cg = CodeGraph.initSync(dir);
     await cg.indexAll();
@@ -255,7 +256,7 @@ describe('read commands on an index an older release built (#2913)', () => {
   const copies: string[] = [];
 
   beforeAll(async () => {
-    base = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-legacy-'));
+    base = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-legacy-')));
     writeProject(base);
     const cg = CodeGraph.initSync(base);
     await cg.indexAll();
@@ -338,7 +339,7 @@ describe('the prompt hook fills an empty segment vocabulary under the index lock
   const segmentTier = READ_COMMANDS.find((c) => c.name === 'prompt-hook, segment tier')!;
 
   beforeAll(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-vocab-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-vocab-')));
     writeProject(dir);
     const cg = CodeGraph.initSync(dir);
     await cg.indexAll();

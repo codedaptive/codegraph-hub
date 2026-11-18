@@ -5,6 +5,7 @@ import { gitRootByStat } from '../../../src/extensions/host/server/index-root';
 import { notARepositoryAnswer } from '../../../src/extensions/host/server/notARepository';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { requireGitWorktreeRoot } from '../../../src/extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
 
@@ -13,7 +14,8 @@ describe('requireGitWorktreeRoot', () => {
   let repo: string;
 
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync('/tmp/cg-required-git-root-'));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-required-git-root-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     repo = path.join(workspace, 'repo');
     fs.mkdirSync(repo);
@@ -52,7 +54,8 @@ describe('requireGitWorktreeRoot', () => {
     const sub = path.join(repo, 'src');
     const link = path.join(workspace, 'alias');
     fs.mkdirSync(sub);
-    fs.symlinkSync(sub, link);
+    // A junction needs no symlink privilege on Windows; the type is ignored elsewhere.
+    fs.symlinkSync(sub, link, 'junction');
     expect(requireGitWorktreeRoot(link)).toEqual({ root: repo });
   });
 
@@ -71,7 +74,7 @@ describe('requireGitWorktreeRoot', () => {
     const child = path.join(root, 'sub');
     const alias = path.join(workspace, 'alias');
     fs.mkdirSync(child, { recursive: true });
-    fs.symlinkSync(root, alias);
+    fs.symlinkSync(root, alias, 'junction');
     const optIn = { noGit: true, seeded: false };
     registerProject(root, optIn);
     expect(requireGitWorktreeRoot(path.join(alias, 'sub'))).toEqual({ root });

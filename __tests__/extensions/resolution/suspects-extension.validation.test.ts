@@ -25,6 +25,7 @@ import { ToolHandler, getStaticTools } from '../../../src/mcp/tools';
 import { __resetExtensionsForTests, registerExtension } from '../../../src/extensions/host/registry';
 import { findSuspects, formatSuspects, suspectsToJson } from '../../../src/extensions/resolution/suspects';
 import resolutionExtension, { suspectsTool } from '../../../src/extensions/resolution/extension';
+import { gitInitTempRoot } from '../../helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 const HEADER = /^\d+ suspect targets \(\d+ call edges\)$/;
@@ -38,7 +39,9 @@ let project = '';
 let unindexed = '';
 
 beforeAll(async () => {
-  project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-suspects-ext-')));
+  // Git repositories, as the CLI expects of a project (see gitInitTempRoot); `suspects`
+  // refuses an index whose root is in no git worktree (requireGitWorktreeRoot).
+  project = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-suspects-ext-')));
   const files: Record<string, string> = {
     'Cargo.toml': '[package]\nname = "app"\nversion = "0.1.0"\n',
     'src/main.rs': 'mod stack;\n\nfn run() {\n    let mut stack = build();\n    stack.push(1);\n    stack.clear();\n}\n',
@@ -53,7 +56,7 @@ beforeAll(async () => {
   // The fixture must give at least two targets, or the limit vectors prove nothing.
   expect(findSuspects(project).length).toBeGreaterThanOrEqual(2);
 
-  unindexed = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-suspects-ext-none-')));
+  unindexed = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-suspects-ext-none-')));
 }, 30_000);
 
 afterAll(() => {

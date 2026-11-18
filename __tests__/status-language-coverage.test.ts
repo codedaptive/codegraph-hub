@@ -17,6 +17,7 @@ import CodeGraph from '../src/index';
 import { MAX_SOURCE_FILE_SIZE_BYTES } from '../src/file-limits';
 import { ToolHandler } from '../src/mcp/tools';
 import { endFreshnessMeasurements } from '../src/mcp/index-freshness';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -30,7 +31,7 @@ describe('status language coverage', () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-language-coverage-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-language-coverage-')));
   });
 
   afterEach(() => {

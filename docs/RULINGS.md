@@ -754,6 +754,11 @@ General as a RULING line. Decisions already settled by a document live in `team/
   install follows only a release gate that passes.
 - Work implied: Orc-Codegraph releases and installs sm.16 when the incident set is on ours, and reports the release
   record; the queue then goes on to the docs/SPEC-upstream.md §7 merge, R-51 and R-49.
+- Done: 2026-11-17 ~22:45 CST, Orc-Codegraph (#4126; design/Orc-Codegraph/ledger/reports/release-gate-sm16.md):
+  1.6.2-sm.16 released from ours 3d65edec on a passing Stage 6, its tarball check as sm.15's, installed globally;
+  the server runs v1.6.2-sm.16, 61 sessions reconnected, and every team answered verify-teams. That Stage 6 ran
+  before it took in the integration group (S-83; Orc's correction #4216); the first run with the group, at the next
+  landing, failed 39 tests in 11 host-owned files (validation#3, routed to host #4214).
 
 ## R-53. One builder lane per git repository, plus two bypass lanes below load 95
 - Date: 2026-11-17 / Bob, direct ("it should be 1 lane per repo; and the repo queues in it's lane; there should be

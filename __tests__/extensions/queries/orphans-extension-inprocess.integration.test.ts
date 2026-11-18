@@ -6,7 +6,7 @@
  * In-process (src), as blast-extension-inprocess.integration.test.ts: the zone's default export
  * registered with `registerExtension`, then listed and executed through
  * `ToolHandler`.
- * Spawned-process tests are in orphans-extension.integration.test.ts.
+ * Spawned-process tests are in orphans-extension.validation.test.ts.
  *
  * Fixture: C1 (tagged) holds src/util.ts with `helper`, called from src/a.ts;
  * C2 appends the uncalled `lonelyNew` to src/util.ts, so the report has one
