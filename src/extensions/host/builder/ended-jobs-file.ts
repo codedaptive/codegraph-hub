@@ -15,7 +15,7 @@ import type { JobKind } from './queue';
 /** Every job kind, so a line naming any other kind is rejected. The Record makes the compiler keep it whole. */
 const KINDS: Record<JobKind, true> = {
   sync: true, 'catch-up': true, 'watch-sync': true, seed: true, 'cold-build': true,
-  init: true, index: true, recover: true, open: true,
+  init: true, index: true, recover: true, open: true, vacuum: true,
 };
 
 function isJobKind(kind: unknown): kind is JobKind {

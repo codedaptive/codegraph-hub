@@ -57,10 +57,15 @@ describe('FileWatcher symlink root boundary', () => {
     return paths.some(dir => dir === link || dir.startsWith(link + path.sep));
   }
 
+  // Junctions exercise Windows directory links without requiring symlink privileges (as watcher.test.ts does).
+  function linkDir(target: string, name: string): void {
+    fs.symlinkSync(target, name, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+
   it('does not watch a link to an outside directory', () => {
     fs.mkdirSync(path.join(root, 'data'));
     const link = path.join(root, 'data/runs');
-    fs.symlinkSync(outside, link, 'dir');
+    linkDir(outside, link);
 
     startWatcher();
     expect(watched(link)).toBe(false);
@@ -73,8 +78,8 @@ describe('FileWatcher symlink root boundary', () => {
     fs.mkdirSync(path.join(outside, 'other'));
     const runs = path.join(root, 'data/runs');
     const other = path.join(root, 'data/other');
-    fs.symlinkSync(path.join(outside, 'runs'), runs, 'dir');
-    fs.symlinkSync(path.join(outside, 'other'), other, 'dir');
+    linkDir(path.join(outside, 'runs'), runs);
+    linkDir(path.join(outside, 'other'), other);
 
     startWatcher();
     expect(watched(runs)).toBe(true);
@@ -84,7 +89,7 @@ describe('FileWatcher symlink root boundary', () => {
   it('watches a link to a directory inside the root', () => {
     fs.mkdirSync(path.join(root, 'vendor-real'));
     const link = path.join(root, 'lib');
-    fs.symlinkSync(path.join(root, 'vendor-real'), link, 'dir');
+    linkDir(path.join(root, 'vendor-real'), link);
 
     startWatcher();
     expect(watched(link)).toBe(true);
@@ -95,7 +100,7 @@ describe('FileWatcher symlink root boundary', () => {
     fs.writeFileSync(path.join(root, '.codegraphignore'), '!data/runs\n');
     fs.mkdirSync(path.join(root, 'data'));
     const link = path.join(root, 'data/runs');
-    fs.symlinkSync(outside, link, 'dir');
+    linkDir(outside, link);
 
     startWatcher();
     expect(watched(link)).toBe(true);
