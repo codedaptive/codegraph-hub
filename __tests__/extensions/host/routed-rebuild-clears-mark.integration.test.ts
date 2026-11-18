@@ -6,6 +6,7 @@ import { execFileSync } from 'child_process';
 import CodeGraph from '../../../src/index';
 import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
 import type { BuilderToServer } from '../../../src/extensions/host/builder/protocol';
+import type { JobRunner } from '../../../src/extensions/host/builder/job-runner-type';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
 import { inProcessJobRunner } from './helpers/in-process-job-runner';
 
@@ -63,5 +64,45 @@ describe('a routed rebuild of a stopped root', { timeout: 60_000 }, () => {
     });
     expect(endedJobs.find(root, 'sync')).toBeUndefined();
     expect(endedJobs.find(other, 'sync')).toEqual(otherStopped);
+  });
+
+  it.each([
+    { mode: 'rebuild', kind: 'index', open: 'recreate' },
+    { mode: 'init', kind: 'init', open: 'init' },
+  ] as const)('keeps the stopped sync mark when routed $mode resolves with a failed index result', async ({ mode, kind, open }) => {
+    const root = path.join(workspace, 'root');
+    fs.mkdirSync(root);
+    execFileSync('git', ['init', '-q'], { cwd: root });
+    const stopped = { root, kind: 'sync' as const, limit: 'time' as const, at: '2026-01-01T00:00:00.000Z' };
+    endedJobs.add(stopped);
+    expect(endedJobs.find(root, 'sync')).toEqual(stopped);
+
+    const runJob = vi.fn<JobRunner>().mockResolvedValue({
+      success: false, filesIndexed: 0, filesSkipped: 0, filesErrored: 0,
+      nodesCreated: 0, edgesCreated: 0,
+      errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' }],
+      durationMs: 0,
+    });
+    const sent: BuilderToServer[] = [];
+    service = new BuilderService({
+      runJob,
+      send: (message) => { sent.push(message); },
+      log: () => {},
+      jobLog: () => {},
+      watchOptions: () => ({}),
+      housekeeping: false,
+    });
+    if (mode === 'rebuild') {
+      await service.handle({ id: 1, op: 'fence', root, kind: 'index' });
+      expect(sent.find((message) => 'id' in message && message.id === 1)).toMatchObject({ id: 1, ok: true });
+    }
+
+    await service.handle({ id: 2, op: 'cliIndex', root, mode });
+
+    expect(runJob).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ kind, root, args: expect.objectContaining({ open }) }), expect.any(Function));
+    expect(sent.find((message) => 'id' in message && message.id === 2)).toMatchObject({
+      id: 2, ok: true, result: { success: false, errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' }] },
+    });
+    expect(endedJobs.find(root, 'sync')).toEqual(stopped);
   });
 });
