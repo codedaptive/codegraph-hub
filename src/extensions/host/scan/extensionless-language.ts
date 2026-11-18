@@ -21,7 +21,7 @@ function readHead(absolutePath: string): string | null {
     try {
       if (!fs.fstatSync(fd).isFile()) return null;
       const buffer = Buffer.alloc(HEAD_BYTES);
-      return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, HEAD_BYTES, 0));
+      return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, HEAD_BYTES, null));
     } finally {
       fs.closeSync(fd);
     }
@@ -33,7 +33,7 @@ function readHead(absolutePath: string): string | null {
 /**
  * The language of `filePath` when its last segment has no dot and its `#!` line names an interpreter
  * CodeGraph parses. `source` is used instead of reading the file when given; a relative path is resolved
- * against `rootDir`, and with neither a root nor source it is not read and yields null.
+ * against `rootDir`, and a relative path with neither a root nor source is not read and yields null.
  */
 export function extensionlessLanguage(filePath: string, rootDir?: string, source?: string): Language | null {
   const lastSegment = filePath.slice(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1);

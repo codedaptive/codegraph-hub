@@ -33,6 +33,8 @@ describe('shebangLanguage', () => {
     ['#!/bin/sh'], ['#!/bin/bash'], ['#!/usr/bin/env bash'],
     ['#!/bin/zsh'], ['#!/bin/dash'], ['#!/usr/bin/perl'],
     ['#!/usr/bin/env frobnicate'], ['print("hello")'],
+    ['#!/usr/bin/env constructor'], ['#!/usr/bin/toString'],
+    ['#!/usr/bin/env __proto__'], ['#!/usr/bin/hasOwnProperty'],
     ['﻿#!/usr/bin/python3'], [' #!/usr/bin/python3'],
     ['#!'], ['#! \t'], ['#!/usr/bin/env -S NAME=x'],
     ['#!/usr/bin/env\npython3'],

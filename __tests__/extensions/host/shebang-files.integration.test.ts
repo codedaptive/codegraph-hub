@@ -1,5 +1,5 @@
 // R-49: these tests remain red until Orc's extraction hook-in lands;
-// see /Users/bob/devlop/team-codegraph/workcrews/host/ledger/reports/r49-shebang-hookin-lines.md.
+// red until Orc's R-49(a) hook-in in src/extraction/grammars.ts lands (isSourceFile, detectLanguage); remove this note in that work order.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -21,7 +21,10 @@ describe.each(['plain folder', 'git repository'])('extensionless scripts in a %s
     fs.writeFileSync(path.join(root, 'bin/serve'), '#!/usr/bin/env node\nfunction serve() { return 1; }\n');
     fs.writeFileSync(path.join(root, 'bin/plain'), 'def plain():\n    return 1\n');
     fs.writeFileSync(path.join(root, 'bin/shell'), '#!/bin/sh\necho hi\n');
-    fs.writeFileSync(path.join(root, 'bin/blob'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2]));
+    fs.writeFileSync(path.join(root, 'bin/blob'), Buffer.concat([
+      Buffer.from('#!/usr/bin/env python3\n'),
+      Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 1, 2]),
+    ]));
     if (kind === 'git repository') {
       execFileSync('git', ['init', '-q'], { cwd: root });
       execFileSync('git', ['add', '-A'], { cwd: root });

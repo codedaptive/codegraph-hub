@@ -1,29 +1,31 @@
 /**
  * Maps a file's `#!` line to a CodeGraph language (R-49(a)), so an extensionless script such as `bin/tool`
- * is indexed with the grammar of its interpreter. Pure: it reads only the text it is given.
+ * can be indexed with its interpreter's grammar; the extraction hook-in calls it. Pure: it reads only the text
+ * it is given.
  * Shells and perl map to nothing because CodeGraph has no grammar for them.
  */
 import type { Language } from '../../../types';
 
-/** Only this much of a file is looked at; a NUL within it marks the file as binary. */
+/** Only this much is looked at; a NUL anywhere in it (not just line 1, e.g. a zipapp) marks the file binary. */
 const HEAD_LIMIT = 256;
 
-const INTERPRETERS: Record<string, Language> = {
-  python: 'python',
-  pypy: 'python',
-  node: 'javascript',
-  nodejs: 'javascript',
-  bun: 'javascript',
-  deno: 'typescript',
-  'ts-node': 'typescript',
-  tsx: 'typescript',
-  ruby: 'ruby',
-  php: 'php',
-  lua: 'lua',
-  luajit: 'lua',
-  rscript: 'r',
-  swift: 'swift',
-};
+/** A Map, not an object literal, so names such as `toString` or `__proto__` find no inherited member. */
+const INTERPRETERS = new Map<string, Language>([
+  ['python', 'python'],
+  ['pypy', 'python'],
+  ['node', 'javascript'],
+  ['nodejs', 'javascript'],
+  ['bun', 'javascript'],
+  ['deno', 'typescript'],
+  ['ts-node', 'typescript'],
+  ['tsx', 'typescript'],
+  ['ruby', 'ruby'],
+  ['php', 'php'],
+  ['lua', 'lua'],
+  ['luajit', 'lua'],
+  ['rscript', 'r'],
+  ['swift', 'swift'],
+]);
 
 function basename(token: string): string {
   return token.slice(token.lastIndexOf('/') + 1).toLowerCase();
@@ -45,5 +47,5 @@ export function shebangLanguage(head: string): Language | null {
   const line = (newline === -1 ? window : window.slice(0, newline)).replace(/\r$/, '');
   const tokens = line.slice(2).split(/[ \t]+/).filter((token) => token !== '');
   const name = interpreterName(tokens)?.replace(/[\d.]+$/, '');
-  return name === undefined ? null : (INTERPRETERS[name] ?? null);
+  return name === undefined ? null : (INTERPRETERS.get(name) ?? null);
 }

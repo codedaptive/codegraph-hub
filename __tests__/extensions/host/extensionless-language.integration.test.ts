@@ -44,6 +44,26 @@ describe('extensionlessLanguage reading files', () => {
     expect(extensionlessLanguage('bin/pipe', root)).toBeNull();
   }, 5000);
 
+  it.skipIf(process.platform === 'win32')('returns null for a named pipe containing a shebang', () => {
+    const pipe = path.join(root, 'bin/pipe2');
+    execFileSync('mkfifo', [pipe]);
+    const fd = fs.openSync(pipe, fs.constants.O_RDWR);
+    try {
+      fs.writeSync(fd, '#!/usr/bin/env python3\n');
+      expect(extensionlessLanguage('bin/pipe2', root)).toBeNull();
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  it('returns null for a Python zipapp with binary data after its shebang', () => {
+    fs.writeFileSync(path.join(root, 'bin/zipapp'), Buffer.concat([
+      Buffer.from('#!/usr/bin/env python3\n'),
+      Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 1, 2]),
+    ]));
+    expect(extensionlessLanguage('bin/zipapp', root)).toBeNull();
+  });
+
   it('returns null for a binary file', () => {
     fs.writeFileSync(path.join(root, 'bin/blob'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2]));
     expect(extensionlessLanguage('bin/blob', root)).toBeNull();
