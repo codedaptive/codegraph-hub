@@ -1,7 +1,7 @@
 // Loads .ts files through ts.transpileModule and caches the output in the OS temp dir, shared by every process.
 // The key is the source content, so an edit that keeps the timestamp still misses. Parallel processes fill the
 // cache at once, so an entry is written to a unique temp name and renamed into place: a reader sees it whole or
-// not at all. A failed cache write only costs the cache; the module still loads.
+// not at all. A failed write of a cache entry only costs that entry; the module still loads.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -17,7 +17,7 @@ function store(cached, output) {
     fs.writeFileSync(temp, output);
     fs.renameSync(temp, cached);
   } catch {
-    // Leave no stray temp file in the shared dir.
+    // Remove the temp file from the shared dir; a failed removal is ignored.
     try {
       fs.unlinkSync(temp);
     } catch {}
