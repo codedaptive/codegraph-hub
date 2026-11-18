@@ -158,7 +158,8 @@ export class BuilderService {
    * the hold could not open it (another live writer, an open failure). The server then opens read-only
    * whatever is on disk: the migrations are guaranteed only in the first case.
    *
-   * A `projectPath` in no git worktree answers `none`: nothing is seeded, built or held for it.
+   * A `projectPath` in no git worktree and no opted-in folder (R-50) answers `none`: nothing is seeded, built
+   * or held for it.
    */
   async ensure(projectPath: string): Promise<EnsureOutcome> {
     const decision = await ensureWorktreeIndex(projectPath, this.seedHost);
@@ -171,9 +172,10 @@ export class BuilderService {
     // Nothing to seed or build: the call is answered from the index selectOwnIndexRoot names, if there is one.
     // That is never an index above a git repository nested around the path (another repository's), nor one
     // git could not vouch for (ownIndexRootFor fails closed): with seeding off, such a path holds nothing.
-    // Nor is an index in no git worktree, whatever `.codegraph/` it holds (SPEC §3; R-50's opt-in for such a
-    // folder is not built, so none is held): a sub-project's index inside a worktree is held, a non-git
-    // ancestor's never. A git worktree's index a killed build left half-made is no index
+    // Nor is an index in no git worktree unless its folder was opted in with `codegraph init <dir> --no-git`
+    // (R-50, S-82): gitRootByStat answers an opted-in folder as a root, so its index is held, and a folder
+    // outside git without the opt-in is not, whatever `.codegraph/` it holds. A sub-project's index inside a
+    // worktree is held, a non-git ancestor's that was not opted in never. A git worktree's index a killed build left half-made is no index
     // (isAbandonedIndex, seed.ts). The call may be answered before the catch-up is queued or finishes.
     const root = selectOwnIndexRoot(projectPath);
     if (root === null || gitRootByStat(root) === null) return { kind: 'none' };
