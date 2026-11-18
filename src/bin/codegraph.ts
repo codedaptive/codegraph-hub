@@ -80,6 +80,7 @@ import { isTestPath } from '../search/query-utils';
 import { registerExtensionCommands } from '../extensions/host/registry';
 import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
 import { refuseReadOutsideRepository } from '../extensions/host/worktree-lifecycle/refuseReadOutsideRepository';
+import { dropStrayFrontloadRoots } from '../extensions/host/worktree-lifecycle/dropStrayFrontloadRoots';
 import { gitRootByStat } from '../extensions/host/server/index-root';
 // Static: .option() needs the --fresh / --checkpoint help text when the program is built.
 import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
@@ -1838,8 +1839,9 @@ program
       // the sub-project the prompt points at, plus a `projectPath` nudge for any
       // others. Without the down-scan the hook injected nothing at a monorepo
       // root (it only walked up), so the validated adoption lever never fired
-      // exactly where the agent most needs it.
-      const plan = planFrontload(String(input.cwd || process.cwd()), prompt);
+      // exactly where the agent most needs it. A root in no git worktree and not
+      // opted in is dropped from the plan: the hook serves nothing for it.
+      const plan = dropStrayFrontloadRoots(planFrontload(String(input.cwd || process.cwd()), prompt));
       if (!plan.exploreRoot && plan.nudgeProjects.length === 0) { gate('noop-no-index'); return; } // nothing reachable — the agent's normal tools apply
 
       // A "pass projectPath" line for indexed sub-projects we did NOT front-load.

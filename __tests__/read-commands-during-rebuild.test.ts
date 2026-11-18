@@ -339,7 +339,7 @@ describe('the prompt hook fills an empty segment vocabulary under the index lock
   const segmentTier = READ_COMMANDS.find((c) => c.name === 'prompt-hook, segment tier')!;
 
   beforeAll(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-vocab-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-read-vocab-')));
     writeProject(dir);
     const cg = CodeGraph.initSync(dir);
     await cg.indexAll();

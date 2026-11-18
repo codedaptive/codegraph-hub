@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../../../src/index';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
@@ -11,7 +12,8 @@ describe('builder ensure on an indexed non-git folder', { timeout: 60_000 }, () 
   let service: BuilderService;
 
   beforeEach(async () => {
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'cg-opted-ensure-')));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-opted-ensure-')));
     vi.stubEnv('HOME', workspace);
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     root = path.join(workspace, 'root');

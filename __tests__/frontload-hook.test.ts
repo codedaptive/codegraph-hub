@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'node:child_process';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 import { planFrontload, isTaskNotification, isAgentMessage, isCrossSessionMessage, stripSystemReminders, findIndexedSubprojectRoots, unsafeIndexRootReason, isStructuralPrompt, hasStructuralKeyword, extractCodeTokens, PROMPT_HOOK_INJECTION_MAX, CLAUDE_CODE_INLINE_HOOK_OUTPUT_LIMIT, capPromptHookInjection } from '../src/directory';
 
 // Make the built-in exports configurable so HOME can point at a real temp
@@ -341,7 +342,7 @@ describe('prompt-hook ambiguous words need corroboration (#1654)', () => {
   let tmp: string;
 
   beforeEach(async () => {
-    tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hook-ambiguous-')));
+    tmp = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hook-ambiguous-')));
     fs.writeFileSync(path.join(tmp, 'orders.ts'), `
 export class OrderStateMachine {
   submitOrder() { return true; }
@@ -415,7 +416,7 @@ describe('prompt-hook reads past the desktop app\'s system reminders (#2635)', (
   let tmp: string;
 
   beforeAll(async () => {
-    tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hook-reminders-')));
+    tmp = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hook-reminders-')));
     fs.writeFileSync(path.join(tmp, 'orders.ts'), `
 export class OrderStateMachine {
   submitOrder() { return this.transition('submitted'); }

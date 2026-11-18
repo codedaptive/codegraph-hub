@@ -1,5 +1,5 @@
 /**
- * The CLI read commands' gate (S-82): a command that answers from an index (status, query, explore, context,
+ * The CLI read commands' gate: a command that answers from an index (status, query, explore, context,
  * node, files, callers, callees, impact, implementations, affected, cycles, ui, checkpoint) answers only for a
  * git worktree or a folder opted in with `codegraph init <dir> --no-git` (SPEC §3; R-50). Any other path gets
  * requireGitWorktreeRoot's refusal and exit status 1, even when a `.codegraph/` index sits there.

@@ -1,6 +1,7 @@
 /**
- * The one rule applied first by every index write (init, index, sync), every CLI read command (through
- * ./refuseReadOutsideRepository) and every builder-backed read: codegraph indexes only git
+ * The one rule applied first by every index write (init, index, sync), every CLI read command (refused
+ * through ./refuseReadOutsideRepository), the prompt hook (such roots dropped through ./dropStrayFrontloadRoots,
+ * so it serves nothing for them) and every builder-backed read: codegraph indexes only git
  * worktrees and the folders outside git a person opted in with `codegraph init <dir> --no-git` (SPEC §3,
  * "Only a git worktree root is indexed, unless a folder is opted in"; R-50). A path below such a root belongs
  * to that root; any other path is refused, whatever index may sit around it.

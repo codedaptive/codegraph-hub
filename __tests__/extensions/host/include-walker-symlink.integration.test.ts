@@ -5,21 +5,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { scanDirectory, scanDirectoryAsync } from '../../../src/extraction/index';
 import { clearProjectConfigCache } from '../../../src/project-config';
+import { canLinkDirs } from '../../helpers/can-link-dirs';
 
-// Windows refuses a directory symlink with EPERM without Developer Mode or admin rights. A junction would get past
-// that, but git lists a symlink as one entry and these cases test exactly that, so the cases skip instead.
-const canLinkDirs = (() => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-link-probe-'));
-  try {
-    fs.symlinkSync(dir, path.join(dir, 'link'), 'dir');
-    return true;
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'EPERM') return false;
-    throw error;
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-})();
 const linkIt = it.skipIf(!canLinkDirs);
 
 describe('include walker symlink boundaries on a git root', () => {
@@ -81,7 +68,12 @@ describe('include walker symlink boundaries on a git root', () => {
   });
 
   linkIt('follows an in-root link below an include root', () => {
-    fs.writeFileSync(path.join(root, 'codegraph.json'), JSON.stringify({ include: ['**/*.ts'] }));
+    // The include walk visits each real folder once, so if it reached vendor-real/ first it would skip lib/.
+    // Excluding vendor-real/ keeps the walk out of it, leaving the link as the only way in.
+    fs.writeFileSync(
+      path.join(root, 'codegraph.json'),
+      JSON.stringify({ include: ['**/*.ts'], exclude: ['vendor-real/'] }),
+    );
     fs.mkdirSync(path.join(root, 'vendor-real'));
     fs.writeFileSync(path.join(root, 'vendor-real/a.ts'), 'export const a = 1;\n');
     fs.symlinkSync(path.join(root, 'vendor-real'), path.join(root, 'lib'), 'dir');

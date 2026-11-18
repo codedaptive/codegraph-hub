@@ -24,8 +24,24 @@ describe('CLI read opt-in', { timeout: 180_000 }, () => {
       env: {
         ...process.env,
         CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_WASM_RELAUNCHED: '1',
+        CODEGRAPH_UI: '1', CODEGRAPH_BROWSER: 'none',
         CODEGRAPH_NO_PROMPT_HOOK: '1', CODEGRAPH_TELEMETRY: '0',
         DO_NOT_TRACK: '1', NO_COLOR: '1', NODE_NO_WARNINGS: '1',
+      },
+    });
+  }
+
+  function runPromptHook(root: string) {
+    return spawnSync(process.execPath, [BIN, 'prompt-hook'], {
+      cwd: root,
+      input: JSON.stringify({ cwd: root, prompt: `how does ${SYMBOL} work?` }),
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        CODEGRAPH_NO_DAEMON: '1', CODEGRAPH_NO_RELAUNCH: '1', CODEGRAPH_WASM_RELAUNCHED: '1',
+        CODEGRAPH_NO_PROMPT_HOOK: '0', CODEGRAPH_PROMPT_HOOK: '1',
+        CODEGRAPH_TELEMETRY: '0', DO_NOT_TRACK: '1', NO_COLOR: '1', NODE_NO_WARNINGS: '1',
       },
     });
   }
@@ -70,6 +86,7 @@ describe('CLI read opt-in', { timeout: 180_000 }, () => {
     ['cycles', root => ['cycles', root]],
     ['status', root => ['status', root]],
     ['checkpoint', root => ['checkpoint', root]],
+    ['ui', root => ['ui', '--no-open', root]],
   ];
 
   it.each(reads)('refuses %s on an initialized non-git folder without opt-in', (_name, args) => {
@@ -79,6 +96,20 @@ describe('CLI read opt-in', { timeout: 180_000 }, () => {
     expect(result.stdout + result.stderr).toContain('is not in a git repository');
     expect(result.stdout + result.stderr).toContain('--no-git');
     expect(result.stdout).not.toContain(FILE);
+  });
+
+  it('prompt-hook stays silent for an indexed stray root', () => {
+    const result = runPromptHook(stray);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+
+  it('prompt-hook injects the known symbol for an indexed git root', () => {
+    const result = runPromptHook(gitRoot);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(SYMBOL);
   });
 
   it('serves a non-git folder opted in through init --no-git', () => {
