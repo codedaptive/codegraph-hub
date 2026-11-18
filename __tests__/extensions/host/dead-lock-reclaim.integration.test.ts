@@ -2,7 +2,7 @@
  * Dead-lock reclaim, unit level: the lock records a holder leaves when it is
  * SIGKILL'd holding them do not block the next taker. The holder here is a
  * victim fixture that takes the locks through the real code, not a server;
- * dead-lock-reclaim.gate.test.ts kills real servers mid-write.
+ * dead-lock-reclaim.validation.test.ts kills real servers mid-write.
  *
  * A lock whose pid is dead is reclaimed by pid liveness. The case these tests
  * cover is pid reuse: the killed holder's pid now names an unrelated live

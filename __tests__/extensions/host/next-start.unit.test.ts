@@ -1,94 +1,72 @@
 import { describe, expect, it } from 'vitest';
-import { nextStart } from '../../../src/extensions/host/builder/next-start';
 import type { JobLane } from '../../../src/extensions/host/builder/job-lane-type';
+import { nextStart } from '../../../src/extensions/host/builder/next-start';
+import type { JobKind } from '../../../src/extensions/host/builder/queue';
 
-type Entry = { rootKeys: readonly string[] };
-const entry = (...rootKeys: string[]): Entry => ({ rootKeys });
+interface Job { kind: JobKind; repo: string; rootKeys: readonly string[] }
+
+const job = (kind: JobKind, repo: string, ...rootKeys: string[]): Job => ({ kind, repo, rootKeys });
+const run = (lane: JobLane, entry: Job) => ({ job: entry, lane });
+const below = () => 94.9;
+const at = () => 95;
 
 describe('nextStart', () => {
-  it('returns null for empty queues', () => {
-    expect(nextStart({ syncJobs: [], coldJobs: [], running: new Map() })).toBeNull();
+  it('starts nothing when nothing waits', () => {
+    expect(nextStart([], [], below)).toBeNull();
   });
 
-  it('chooses the first startable sync before a cold job', () => {
-    expect(nextStart({ syncJobs: [entry('a'), entry('b')], coldJobs: [entry('c')], running: new Map() }))
-      .toEqual({ lane: 'sync', index: 0 });
+  it('starts a waiting job in its repository slot when that slot is free', () => {
+    expect(nextStart([job('sync', 'a', '/a1')], [], at)).toEqual({ index: 0, lane: 'repo' });
   });
 
-  it('considers cold when the sync lane is running', () => {
-    const running = new Map<JobLane, Entry>([['sync', entry('a')]]);
-    expect(nextStart({ syncJobs: [entry('b')], coldJobs: [entry('c')], running }))
-      .toEqual({ lane: 'cold', index: 0 });
+  it('starts a job of another repository in its own slot beside a busy one, whatever the load', () => {
+    expect(nextStart([job('cold-build', 'b', '/b1')], [run('repo', job('cold-build', 'a', '/a1'))], at))
+      .toEqual({ index: 0, lane: 'repo' });
   });
 
-  it('skips sync entries whose roots are busy', () => {
-    const running = new Map<JobLane, Entry>([['cold', entry('a')]]);
-    expect(nextStart({ syncJobs: [entry('a'), entry('b'), entry('c')], coldJobs: [], running }))
-      .toEqual({ lane: 'sync', index: 1 });
+  it('starts a repository\'s first waiting short job ahead of its older whole-repository job', () => {
+    expect(nextStart([job('vacuum', 'a', '/a1'), job('seed', 'a', '/a2')], [], at)).toEqual({ index: 1, lane: 'repo' });
   });
 
-  it('blocks the cold head on a running root', () => {
-    const running = new Map<JobLane, Entry>([['sync', entry('a')]]);
-    expect(nextStart({ syncJobs: [], coldJobs: [entry('a')], running })).toBeNull();
+  it('skips a short job whose root a running job holds for the next short job of that repository', () => {
+    const waiting = [job('sync', 'a', '/a1'), job('sync', 'a', '/a2')];
+    expect(nextStart(waiting, [run('repo', job('index', 'b', '/b1', '/a1'))], at)).toEqual({ index: 1, lane: 'repo' });
   });
 
-  it('blocks the cold head on a waiting sync root', () => {
-    const running = new Map<JobLane, Entry>([['sync', entry('other')]]);
-    expect(nextStart({ syncJobs: [entry('a')], coldJobs: [entry('a')], running })).toBeNull();
+  it('holds a whole-repository job whose root a waiting short job of its repository names', () => {
+    const waiting = [job('index', 'a', '/a1'), job('seed', 'a', '/a2', '/a1')];
+    expect(nextStart(waiting, [run('repo', job('sync', 'b', '/b1', '/a2'))], below)).toBeNull();
   });
 
-  it('blocks cold work while the cold lane is occupied', () => {
-    const running = new Map<JobLane, Entry>([['cold', entry('a')]]);
-    expect(nextStart({ syncJobs: [], coldJobs: [entry('b')], running })).toBeNull();
+  it('does not hold a whole-repository job for a waiting short job of another repository naming its root', () => {
+    const waiting = [job('seed', 'b', '/b2', '/a1'), job('index', 'a', '/a1')];
+    expect(nextStart(waiting, [run('repo', job('sync', 'b', '/b1', '/b2'))], at)).toEqual({ index: 1, lane: 'repo' });
   });
 
-  it('never skips a blocked cold head for a later cold job', () => {
-    const running = new Map<JobLane, Entry>([['sync', entry('a')]]);
-    expect(nextStart({ syncJobs: [], coldJobs: [entry('a'), entry('b')], running })).toBeNull();
+  it('never starts a later whole-repository job around the repository\'s oldest one', () => {
+    const waiting = [job('index', 'a', '/a1'), job('init', 'a', '/a2')];
+    expect(nextStart(waiting, [run('repo', job('sync', 'b', '/b1', '/a1'))], below)).toBeNull();
   });
 
-  it('compares every key of running, waiting, and candidate entries', () => {
-    const running = new Map<JobLane, Entry>([['cold', entry('build', 'shared')]]);
-    expect(nextStart({ syncJobs: [entry('target', 'shared'), entry('free', 'source')], coldJobs: [], running }))
-      .toEqual({ lane: 'sync', index: 1 });
-    const occupied = new Map<JobLane, Entry>([['sync', entry('running')]]);
-    expect(nextStart({ syncJobs: [entry('target', 'source')], coldJobs: [entry('other', 'source')], running: occupied }))
-      .toBeNull();
+  it('starts a busy repository\'s next job in a bypass slot only below load 95', () => {
+    const running = [run('repo', job('cold-build', 'a', '/a1'))];
+    expect(nextStart([job('sync', 'a', '/a2')], running, below)).toEqual({ index: 0, lane: 'bypass' });
+    expect(nextStart([job('sync', 'a', '/a2')], running, at)).toBeNull();
   });
 
-  it('preserves lane and root exclusion when repeatedly starting generated jobs', () => {
-    let random = 0x12345678;
-    const next = () => {
-      random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
-      return random;
-    };
-    const roots = ['a', 'b', 'c', 'd'];
-    for (let trial = 0; trial < 500; trial++) {
-      const makeEntry = (): Entry => {
-        const mask = next() >>> 28;
-        return { rootKeys: roots.filter((_, index) => (mask & (1 << index)) !== 0) };
-      };
-      const syncJobs = Array.from({ length: next() % 4 }, makeEntry);
-      const coldJobs = Array.from({ length: next() % 4 }, makeEntry);
-      const running = new Map<JobLane, Entry>();
-      if (trial % 3 === 1) running.set('sync', entry('a'));
-      if (trial % 3 === 2) running.set('cold', entry('b'));
-      for (let step = 0; step < 3; step++) {
-        const choice = nextStart({ syncJobs, coldJobs, running });
-        if (choice === null) break;
-        expect(running.has(choice.lane)).toBe(false);
-        const waiting = choice.lane === 'sync' ? syncJobs : coldJobs;
-        expect(choice.index).toBeGreaterThanOrEqual(0);
-        expect(choice.index).toBeLessThan(waiting.length);
-        const started = waiting.splice(choice.index, 1)[0];
-        expect(started).toBeDefined();
-        if (started === undefined) throw new Error('nextStart chose a missing entry');
-        for (const active of running.values()) {
-          expect(started.rootKeys.some((key) => active.rootKeys.includes(key))).toBe(false);
-        }
-        running.set(choice.lane, started);
-        expect(running.size).toBeLessThanOrEqual(2);
-      }
-    }
+  it('starts nothing in bypass when both bypass slots are busy', () => {
+    const running = [run('repo', job('cold-build', 'a', '/a1')), run('bypass', job('sync', 'a', '/a2')), run('bypass', job('sync', 'b', '/b1'))];
+    expect(nextStart([job('sync', 'a', '/a3')], running, () => 0)).toBeNull();
+  });
+
+  it('gives a bypass slot to the earliest queued next job among busy repositories', () => {
+    const running = [run('repo', job('sync', 'a', '/a1')), run('repo', job('sync', 'b', '/b1'))];
+    expect(nextStart([job('sync', 'b', '/b2'), job('sync', 'a', '/a2')], running, below)).toEqual({ index: 0, lane: 'bypass' });
+    expect(nextStart([job('sync', 'a', '/a2'), job('sync', 'b', '/b2')], running, below)).toEqual({ index: 0, lane: 'bypass' });
+  });
+
+  it('never starts a job whose root a bypass job holds', () => {
+    const running = [run('bypass', job('sync', 'a', '/shared'))];
+    expect(nextStart([job('sync', 'b', '/b1', '/shared')], running, below)).toBeNull();
   });
 });

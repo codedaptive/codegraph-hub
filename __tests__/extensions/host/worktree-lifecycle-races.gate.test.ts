@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 /**
  * Race and robustness gates of the worktree lifecycle. Each case drives the
  * shipped entry point and asserts what is left on disk, in the registry, or
@@ -96,9 +97,9 @@ function real(p: string): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** The builder's seed host over a fresh queue: seeds and cold builds run as queued jobs, as in the builder process. */
+/** The builder's seed host over a fresh queue: seeds and cold builds run as queued jobs, as in the builder, with their bodies run in this process. */
 function seedHost(): BuilderSeedHost {
-  return new BuilderSeedHost(new JobQueue());
+  return new BuilderSeedHost(new JobQueue(), { runJob: inProcessJobRunner().runJob });
 }
 
 /** A one-commit repository holding `app.ts`. */

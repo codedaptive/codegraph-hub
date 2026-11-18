@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 /**
  * Ownership and lifetime gates. Each case drives the shipped entry point and asserts what is
  * left on disk or which handles are still held, not names or return values.
@@ -214,7 +215,7 @@ describe('O2: teardown never deletes an index the user built at a seeded root', 
     // dir and the nonce the installed index carries. Without a recorded
     // nonce teardown would spare any index, so the cases below would prove
     // nothing: assert it is there and matches.
-    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue()));
+    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue(), { runJob: inProcessJobRunner().runJob }));
     expect(outcome.kind).toBe('seeded');
     const rec = getRegisteredProject(wt);
     expect(rec?.seedNonce).toMatch(/^[0-9a-f]{32}$/);

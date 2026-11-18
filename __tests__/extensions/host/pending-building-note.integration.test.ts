@@ -12,6 +12,7 @@ import { JobQueue } from '../../../src/extensions/host/builder/queue';
 import { buildingNote, ensureWorktreeIndex, unseededWorktreeNote } from '../../../src/extensions/host/worktree-lifecycle/seed';
 import { listGitWorktrees } from '../../../src/extensions/host/worktree-lifecycle/git';
 import { ADMIT_ALL } from '../../helpers/admit-all';
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 
 const gitFailure = vi.hoisted(() => ({ timeout: false }));
 vi.mock('child_process', async (importOriginal) => {
@@ -114,7 +115,7 @@ describe('pending index preparation', () => {
     const root = path.join(workspace, 'repo');
     fs.mkdirSync(path.join(root, '.git'), { recursive: true });
     gitFailure.timeout = true;
-    const host = new BuilderSeedHost(new JobQueue(), { seedWaitMs: 0 });
+    const host = new BuilderSeedHost(new JobQueue(), { seedWaitMs: 0, runJob: inProcessJobRunner().runJob });
     expect(await ensureWorktreeIndex(root, host)).toEqual({ kind: 'none', pending: true });
   });
 
@@ -124,7 +125,7 @@ describe('pending index preparation', () => {
     expect(await listGitWorktrees(plain)).toBeNull();
     const invalidRepo = path.join(workspace, 'invalid');
     fs.mkdirSync(path.join(invalidRepo, '.git'), { recursive: true });
-    const host = new BuilderSeedHost(new JobQueue(), { seedWaitMs: 0 });
+    const host = new BuilderSeedHost(new JobQueue(), { seedWaitMs: 0, runJob: inProcessJobRunner().runJob });
     expect(await ensureWorktreeIndex(invalidRepo, host)).toEqual({ kind: 'none' });
   });
 });
