@@ -13,8 +13,10 @@
  * trust pythonTrust gives, both read from the occurrences pythonNameBindings counts as
  * possible bindings. A name is known only when its one possible binding is a one-line
  * `NAME = value` and the file reaches no namespace dynamically, so its value is the same
- * at every call, in any scope; anything else leaves it unknown. A path built from an
- * unknown name or an untrusted callee is skipped.
+ * at every call, in any scope; anything else leaves it unknown. A local bound once in a
+ * function is read like a module name; a parameter is a possible binding of its name, so
+ * a path through it links nothing. A path built from an unknown name or an untrusted
+ * callee is skipped.
  */
 import { stripCommentsForRegex } from '../../resolution/strip-comments';
 import { pythonModuleNames } from './python-module-names';

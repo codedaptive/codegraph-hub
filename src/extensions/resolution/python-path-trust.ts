@@ -7,6 +7,8 @@
 export interface PathTrust {
   /** True when nothing in the file may rebind `__file__`. */
   file: boolean;
-  /** The bare callees (Path, join, …) and dotted-callee modules (os, pathlib, …) it may call through. */
+  /** The bare callees (Path, join, …) it may call through. */
   names: ReadonlySet<string>;
+  /** The words (os, path, join, …) a dotted callee it may call through can be made of. */
+  dotted: ReadonlySet<string>;
 }

@@ -3,8 +3,9 @@
  * a `__file__`-anchored chain comes back root-relative with a leading '/', a literal
  * relative as written (with './' when it has no '/'), a module name is read from the
  * names map, and a name cycle, an out-of-range parents index, a climb above the root
- * or a computed value gives null; untrusted dotted callees are rejected. Unless a case says
- * otherwise, its file imports Path from pathlib and os, and leaves `__file__` alone.
+ * or a computed value gives null; untrusted bare callees and dotted callees with any
+ * untrusted word are rejected. Unless a case says otherwise, its file imports Path from
+ * pathlib and os, and leaves `__file__` alone.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonPathExpression } from '../../../src/extensions/resolution/python-path-expression';
@@ -12,7 +13,9 @@ import type { PathTrust } from '../../../src/extensions/resolution/python-path-t
 
 const file = 'tests/unit/test_a.py';
 const none = new Map<string, string>();
-const trusted: PathTrust = { file: true, names: new Set(['Path', 'os']) };
+const trusted: PathTrust = { file: true, names: new Set(['Path']), dotted: new Set(['os', 'path', 'join', 'dirname']) };
+const bare = (file: boolean, names: string[]): PathTrust => ({ file, names: new Set(names), dotted: new Set() });
+const dotted = (words: string[]): PathTrust => ({ file: true, names: new Set(), dotted: new Set(words) });
 
 describe('pythonPathExpression', () => {
   it('evaluates an anchored chain to a root-relative path', () => {
@@ -25,19 +28,21 @@ describe('pythonPathExpression', () => {
   });
 
   it('gives null for __file__ the file may rebind', () => {
-    expect(pythonPathExpression('Path(__file__).parent / "x.py"', file, none, { file: false, names: new Set(['Path']) })).toBeNull();
+    expect(pythonPathExpression('Path(__file__).parent / "x.py"', file, none, bare(false, ['Path']))).toBeNull();
   });
 
   it('gives null for a bare callee the file does not import from a path module', () => {
-    expect(pythonPathExpression('Path(__file__).parent / "x.py"', file, none, { file: true, names: new Set(['os']) })).toBeNull();
-    expect(pythonPathExpression('str("x.py")', file, none, { file: true, names: new Set() })).toBeNull();
-    expect(pythonPathExpression('str("x.py")', file, none, { file: true, names: new Set(['str']) })).toBe('./x.py');
+    expect(pythonPathExpression('Path(__file__).parent / "x.py"', file, none, { file: true, names: new Set(), dotted: new Set(['Path']) })).toBeNull();
+    expect(pythonPathExpression('str("x.py")', file, none, bare(true, []))).toBeNull();
+    expect(pythonPathExpression('str("x.py")', file, none, bare(true, ['str']))).toBe('./x.py');
   });
 
-  it('gives null for a dotted callee whose module is untrusted or not a path module', () => {
-    expect(pythonPathExpression('os.path.dirname(__file__)', file, none, { file: true, names: new Set(['Path']) })).toBeNull();
-    expect(pythonPathExpression('mylib.dirname(__file__)', file, none, { file: true, names: new Set(['mylib']) })).toBeNull();
-    expect(pythonPathExpression('pathlib.Path(__file__).parent', file, none, { file: true, names: new Set(['pathlib']) })).toBe('/tests/unit');
+  it('gives null for a dotted callee with any untrusted word or not a path module', () => {
+    expect(pythonPathExpression('os.path.dirname(__file__)', file, none, dotted(['path', 'dirname']))).toBeNull();
+    expect(pythonPathExpression('os.path.dirname(__file__)', file, none, dotted(['os', 'dirname']))).toBeNull();
+    expect(pythonPathExpression('os.path.dirname(__file__)', file, none, dotted(['os', 'path']))).toBeNull();
+    expect(pythonPathExpression('mylib.dirname(__file__)', file, none, dotted(['mylib', 'dirname']))).toBeNull();
+    expect(pythonPathExpression('pathlib.Path(__file__).parent', file, none, dotted(['pathlib', 'Path']))).toBe('/tests/unit');
   });
 
   it('keeps a literal relative, normalized, with ./ when it has no slash', () => {

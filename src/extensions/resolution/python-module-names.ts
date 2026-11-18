@@ -6,8 +6,10 @@
  * any indent, with the value on that one physical line. Any second possible binding (a
  * rebinding in a block, a class body, a parameter, a `global` declaration, an import, a
  * name in a string) leaves it unknown. Why: with one textual binding and no dynamic
- * namespace access, every lookup of the name, in any scope, reads that value or none, so
- * pythonLoaderPaths can evaluate a loader path through it without making a false edge.
+ * namespace access, every lookup of the name, in any scope, reads that value or none.
+ * A name bound once may also be read where Python would raise NameError (before its
+ * binding or outside its scope); the edge is still emitted, and it can only point at the
+ * file's one bound value, which `affected` accepts as over-inclusion.
  */
 
 const BINDING = /^([A-Za-z_]\w*)[ \t]*=(?!=)([^\n]*)$/;

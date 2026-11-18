@@ -3,7 +3,8 @@
  * chains, string literals, module-level names) and the lines it reports, multiline and
  * keyword calls, calls in comments and docstrings; the refusals of dynamic, absolute and
  * escaping expressions, ambiguous name bindings, dynamic namespace access, untrusted
- * callees and keywords on continuation lines; plus production-style loader calls.
+ * callees (including their dotted components) and keywords on continuation lines; plus
+ * production-style loader calls.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonLoaderPaths } from '../../../src/extensions/resolution/python-loader-paths';
@@ -239,6 +240,35 @@ import os
 ROOT = Path(__file__).parent
 SourceFileLoader("m", join(os.path.dirname(__file__), "x.py"))`;
     expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a dotted callee whose final name appears in a patch string', () => {
+    const source = `import os
+from unittest import mock
+with mock.patch.object(os.path, "join", return_value="x"):
+    SourceFileLoader("m", os.path.join(os.path.dirname(__file__), "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a dotted callee whose middle name is assigned on an alias', () => {
+    const source = `import os
+mod = os
+mod.path = fake
+SourceFileLoader("m", os.path.join(os.path.dirname(__file__), "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a dotted callee whose middle name is assigned on its module', () => {
+    const source = `import os
+os.path = x
+SourceFileLoader("m", os.path.join(os.path.dirname(__file__), "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('resolves an unmodified dotted os.path callee', () => {
+    const source = `import os
+SourceFileLoader("m", os.path.join(os.path.dirname(__file__), "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([{ line: 2, name: '/tests/unit/x.py' }]);
   });
 
   it('rejects an anchored path after __file__ is rebound', () => {

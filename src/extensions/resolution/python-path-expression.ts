@@ -6,8 +6,9 @@
  * the module's single-binding `names`, to a bounded depth so `A = B` / `B = A` ends.
  *
  * `trust` (pythonTrust) says what the expression's file leaves alone: `__file__` gives null
- * unless trusted, a bare call needs its name trusted, and a dotted call needs the prefix
- * os.path, os, posixpath or pathlib with its first word trusted (`x.join` gives null).
+ * unless trusted, a bare call needs its name in `trust.names`, and a dotted call needs the
+ * prefix os.path, os, posixpath or pathlib with every word of the dotted name in
+ * `trust.dotted` (`x.join` gives null).
  * Anything else is computed at run time and gives null: a guessed path is a false edge.
  * A path anchored on `__file__` comes back root-relative with a leading '/' (null when it
  * climbs above the root); any other is relative as written, normalized, with './'
@@ -107,8 +108,9 @@ class Parser {
 
   /** The function a dotted callee names when the file's trust covers it; '' when it does not. */
   private trusted(callee: string[]): string {
+    const { names, dotted } = this.context.trust;
     const prefix = callee.slice(0, -1).join('.');
-    const trusted = (prefix === '' || MODULES.has(prefix)) && this.context.trust.names.has(callee[0] ?? '');
+    const trusted = prefix === '' ? names.has(callee[0] ?? '') : MODULES.has(prefix) && callee.every((word) => dotted.has(word));
     return trusted ? callee[callee.length - 1] ?? '' : '';
   }
 
