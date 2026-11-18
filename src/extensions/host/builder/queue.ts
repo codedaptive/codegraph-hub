@@ -225,7 +225,7 @@ export class JobQueue {
         void (async () => entry.run({ id: entry.id }))().then(
           (value) => {
             // An `init` or `index` clears its root's ended marks unless it resolved with a failed result
-            // (`success: false`, ./is-failed-result.ts): only a successful explicit index retries the root.
+            // (`success: false`, ./is-failed-result.ts), so a failed explicit init or index leaves the root stopped.
             if ((entry.kind === 'init' || entry.kind === 'index') && !isFailedResult(value)) endedJobs.clearRoot(entry.root);
             this.emit({ edge: 'end', kind: entry.kind, root: entry.root, ok: true });
             this.running.splice(this.running.indexOf(slot), 1);
