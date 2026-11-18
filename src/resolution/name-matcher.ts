@@ -29,6 +29,7 @@ import { leavesWorkspaceRoot } from './workspace-packages';
 import { isMinifiedContent } from '../extraction/generated-detection';
 import { getCargoWorkspaceCrateMap, parsePackageName, parseTargetPaths, parseWorkspaceMembers } from './frameworks/cargo-workspace';
 import { rustHeadUse } from '../extensions/resolution/rust-head-use';
+import { rustPathItemsOr2015 } from '../extensions/resolution/rust-path-items-or-2015';
 import { blankRustCode, readRustScopes, rustBindingAt, rustInnerBlockAt, rustBoundsOf, rustFnAt, rustImplAt, splitRustTopLevel, type RustBinding, type RustPatternSite, type RustScopes } from './rust-scopes';
 /**
  * Ceiling on how many same-named definitions a FUZZY name-match strategy will
@@ -12476,21 +12477,6 @@ const RUST_PATH_ITEM_KINDS: ReadonlySet<string> = new Set(['function', 'struct',
 const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | null>>();
 
 /**
- * The items `path` names walked from `module`, else, when its head is not
- * `crate`, `self` or `super`, from the crate's root of `filePath`: a 2015 path
- * is crate-relative. Not when the module declares a module of the head's name
- * itself (`pathMods`): where its `#[path]` puts it is the module's own choice
- * (a cfg's), and another module of that name at the root is not it.
- */
-function rustPathItemsOr2015(path: readonly string[], module: RustModule, filePath: string, pathMods: ReadonlySet<string>, context: ResolutionContext): Node[] | null {
-  const items = rustUsePathItems(path, module, context, new Set());
-  const head = path[0] ?? '';
-  if (items !== null || head === 'crate' || head === 'self' || head === 'super' || pathMods.has(head)) return items;
-  const root = rustCrateRootModule(filePath, context);
-  return root ? rustUsePathItems(path, root, context, new Set()) : null;
-}
-
-/**
  * The item a Rust path written in `ref`'s file names — `crate::util::take`,
  * `super::Item` (from an inline `mod tests { }` too), `util::take` through a
  * module a `use` binds (one in the function first) or a glob brings in
@@ -12542,6 +12528,8 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
   const key = `${ref.filePath}\0${from.block?.open ?? -1}\0${variants ? 1 : 0}\0${scope}\0${headScope}\0${segs.join('::')}`;
   const hit = memo.get(key);
   if (hit !== undefined) return hit === null ? null : context.getNodeById?.(hit) ?? null;
+  const walk = (p: readonly string[], m: RustModule): Node[] | null => rustUsePathItems(p, m, context, new Set());
+  const crateRoot = (): RustModule | null => rustCrateRootModule(ref.filePath, context);
   // The items the path's segments name — up to its type's, for a typed one.
   const named = (path: readonly string[]): Node[] | null => {
     // A type a `use` binds, written alone: the item that `use` names.
@@ -12554,13 +12542,13 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
     if (headUse) {
       const found: Node[] = [];
       for (const p of headUse.paths) {
-        const items = rustPathItemsOr2015([...p.segs, ...path.slice(1)], rustModuleAt(ref.filePath, p.at, context), ref.filePath, pathMods, context);
+        const items = rustPathItemsOr2015([...p.segs, ...path.slice(1)], rustModuleAt(ref.filePath, p.at, context), pathMods, walk, crateRoot);
         if (items === null) return null;
         found.push(...items);
       }
       return found;
     }
-    return rustPathItemsOr2015(path, from, ref.filePath, pathMods, context);
+    return rustPathItemsOr2015(path, from, pathMods, walk, crateRoot);
   };
   let target: Node | null = null;
   if (typed) {
