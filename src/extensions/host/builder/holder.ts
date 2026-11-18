@@ -8,8 +8,8 @@
  * are owned, so the server only reads (a CLI command's one-shot index writes on a root, which need no hold,
  * are ./cli-jobs.ts's):
  *   - the writable open is a job: taking `writer.pid` and opening the database (which can run migrations,
- *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, SYNC class, so it
- *     never runs beside a cold build or another root's sync;
+ *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, in the sync lane, so it
+ *     can run beside another root's cold build but never beside another job of its own root;
  *   - one writer per root: `writer.pid` is taken with mode `builder`; when another live process owns it (a
  *     `codegraph watch`, a server of another state dir) the hold serves no writes and tries again every
  *     {@link HolderDeps.ownRetryMs};
@@ -273,7 +273,7 @@ export class HolderSet {
   }
 
   /**
-   * Sync a held `root` at sync priority (the server's `sync` request). Concurrent calls for one root share the
+   * Sync a held `root` in the sync lane (the server's `sync` request). Concurrent calls for one root share the
    * job while it waits. Resolves with the number of files changed; rejects when the root is not held or the
    * sync fails. A root another process owns resolves with 0: that process syncs it. The codegraph CLI's sync
    * of any root, held or not, answers a whole SyncResult and is `cliSync` (./cli-jobs.ts).
@@ -551,7 +551,7 @@ export class HolderSet {
     if (hold.ownTimer) clearTimeout(hold.ownTimer);
     hold.ownTimer = null;
     // An open that has started finishes first, so what it acquired is what is released. One still waiting in
-    // the queue (behind a cold build, say) is not waited for: it finds the hold closed and opens nothing.
+    // the queue (behind a running job of its root, say) is not waited for: it finds the hold closed and opens nothing.
     if (!hold.openJobPending) await hold.opening;
     hold.watcher?.stop();
     hold.watcher = null;
