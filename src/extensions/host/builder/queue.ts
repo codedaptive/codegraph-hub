@@ -13,9 +13,9 @@
  * One writer per root: a job starts only when none of its roots (its own and its `alsoRoots`) is a root of a
  * running job in any slot. The pick is first-eligible (./first-startable.ts): a later job of a root can start
  * before an earlier waiting job that names it among other roots, and a root's short jobs go before its
- * whole-repository job only while that job still waits. A running job is never preempted: the queue cannot
- * interrupt an index run halfway (a job over its limit ends the whole builder process instead,
- * ./job-limit-guard.ts).
+ * whole-repository job only while that job still waits. The queue never preempts a running job. A job over its
+ * limit is ended by ./job-limit-guard.ts: one in its own child process (./job-supervisor.ts) is ended alone, and
+ * one still running in the builder's process ends the builder.
  *
  * {@link JobQueue.whenRootIdle} tells when no job of one root runs or waits (the release of an index being
  * removed waits on it, ./cli-relay.ts); the jobs are keyed by the root's canonical spelling.
@@ -95,7 +95,7 @@ interface Entry {
   /** `root` and its {@link EnqueueOptions.alsoRoots} in their canonical spelling, taken when the job was queued; what {@link JobQueue.whenRootIdle} matches. */
   rootKeys: readonly string[];
   coalesceKey: string | undefined;
-  run: () => Promise<unknown>;
+  run: (job: { id: number }) => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   promise: Promise<unknown>;
@@ -133,9 +133,9 @@ export class JobQueue {
    * Queue a job. Resolves with `run`'s value, rejects with its error (the failure is logged as well). A
    * closed queue rejects at once, and so does a root and kind ended over a limit (a {@link JobEndedError},
    * with no run and no log line), except the {@link NEVER_REFUSED} kinds. An `init` or `index` that ends ok
-   * clears its root's ended marks.
+   * clears its root's ended marks. `run` is called with the job's {@link RunningJob} id.
    */
-  enqueue<T>(kind: JobKind, root: string, run: () => Promise<T>, opts: EnqueueOptions = {}): Promise<T> {
+  enqueue<T>(kind: JobKind, root: string, run: (job: { id: number }) => Promise<T>, opts: EnqueueOptions = {}): Promise<T> {
     if (this.closed) return Promise.reject(new Error('the index builder is stopping'));
     const ended = NEVER_REFUSED.has(kind) ? undefined : endedJobs.find(root, kind);
     if (ended) return Promise.reject(new JobEndedError(root, kind, ended.limit));
@@ -221,7 +221,7 @@ export class JobQueue {
         this.running.push(slot);
         this.emit({ edge: 'start', kind: entry.kind, root: entry.root });
         // `run` may throw before its first await; the async wrapper turns that into a rejection too.
-        void (async () => entry.run())().then(
+        void (async () => entry.run({ id: entry.id }))().then(
           (value) => {
             if (entry.kind === 'init' || entry.kind === 'index') endedJobs.clearRoot(entry.root);
             this.emit({ edge: 'end', kind: entry.kind, root: entry.root, ok: true });

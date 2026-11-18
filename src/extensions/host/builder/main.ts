@@ -27,25 +27,28 @@
  *                 process (./clear-ended-root.ts).
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
- * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the running jobs get
+ * already closed: the server may be gone before the first `ready`), every job child (./job-supervisor.ts) is killed
+ * and waited for, then the jobs still queued are dropped and the jobs running in this process get
  * CODEGRAPH_BUILDER_EXIT_GRACE_MS (default 30 s) to finish before the holds are released and the process
  * exits. SIGTERM and SIGINT drop the running jobs' grace and exit after at most 2 s of hold teardown. A
  * killed builder leaves locks that name a dead pid (a CLI index's rebuild lease among them); the next builder
  * reclaims them (writer-lock.ts) and the server's client restarts it. A clean exit releases every rebuild
  * lease (./fences.ts) after the holds.
  *
- * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) cannot be
- * interrupted inside this process, so the builder ends itself: it writes the `job limit` line and the job's mark,
- * rolls back a partial cold build, releases this pid's rebuild.pid and writer.pid at that job's root, removes
- * builder.pid and exits with code 75 (./job-limit-guard.ts), with no grace for any other job. Every job runs in
- * this one process, so the exit also ends each job running beside it, in any repository's lane or bypass slot:
- * each gets a failed `job end` line naming the over-limit job, no mark, the same rollback of a partial cold build
- * and release of this pid's locks at its root, and runs again only when something asks for it. Only the
- * over-limit job is marked, so nothing retries it automatically. The server's client restarts the builder. Other
- * held roots' writer.pid still name the dead pid, for the next builder to reclaim. The watchdog
- * (./job-watchdog.ts) samples every running job every 5 s on the main thread, so a job that blocks the event loop
- * is caught only when the loop turns; the process's RSS is charged to the oldest running whole-repository job
- * when one runs (./rss-owner.ts).
+ * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) is ended
+ * by ./job-limit-guard.ts, which writes the `job limit` line and the job's mark, so nothing retries it
+ * automatically. A job that runs in its own child process (./job-supervisor.ts) is ended alone: its child is
+ * killed, a partial cold build it reported creating is rolled back, the locks and seed staging naming the child's
+ * pid are removed, and the builder and every other job go on. A job that runs in this process cannot be
+ * interrupted inside it, so the builder ends itself: every job child is killed, the job's partial cold build is
+ * rolled back, this pid's rebuild.pid and writer.pid at its root are released, builder.pid is removed and the
+ * process exits with code 75, with no grace for any other job. Each job running beside it in this process gets
+ * a failed `job end` line naming the over-limit job, no mark, the same rollback and release at its root, and runs
+ * again only when something asks for it. The server's client restarts the builder. Other held roots' writer.pid
+ * still name the dead pid, for the next builder to reclaim. The watchdog (./job-watchdog.ts) samples every running
+ * job every 5 s on the main thread, so it is late while the event loop is blocked. A job's child is charged its
+ * own resident size (./read-process-rss.ts); this process's is charged to the oldest whole-repository job running
+ * in it, when one runs (./rss-owner.ts).
  *
  * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
  * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.
@@ -59,8 +62,10 @@ import { endedJobs } from './ended-jobs';
 import { EndedJobsFile } from './ended-jobs-file';
 import { endOverLimit } from './job-limit-guard';
 import { resolveJobLimits } from './job-limits';
+import { JobSupervisor } from './job-supervisor';
 import { JobWatchdog } from './job-watchdog';
 import type { BuilderRequest, BuilderToServer } from './protocol';
+import { readProcessRssBytes } from './read-process-rss';
 import { BuilderService } from './service';
 
 /** Past this size the job log moves to `builder.log.1`. */
@@ -175,11 +180,13 @@ export function runBuilder(): void {
     }),
   });
 
+  const supervisor = new JobSupervisor();
   let stopping = false;
   const shutdown = (graceMs: number): void => {
     if (stopping) return;
     stopping = true;
-    void service.stop(graceMs).finally(() => {
+    // The job children are gone before any hold is released, so none writes to a root after its release.
+    void supervisor.killAll().then(() => service.stop(graceMs)).finally(() => {
       removePidFile(pidFile);
       // No worker thread should be marking its heap when the process ends (worker-teardown.ts).
       collectBeforeExit();
@@ -205,10 +212,15 @@ export function runBuilder(): void {
   const { limits, warnings } = resolveJobLimits();
   for (const warning of warnings) log(warning);
   new JobWatchdog(service.queue, limits, {
-    onBreach: (job, breach) => endOverLimit(job, breach, {
+    childPid: (jobId) => supervisor.childPid(jobId),
+    readChildRssBytes: readProcessRssBytes,
+    onBreach: (job, breach, childPid) => void endOverLimit(job, breach, {
       jobLog: (line) => logFile.append(line), endedFile, beforeExit: () => removePidFile(pidFile),
       exit: (code) => { collectBeforeExit(); process.exit(code); },
-      alongside: service.queue.runningJobs().filter((j) => j.id !== job.id),
+      alongside: service.queue.runningJobs().filter((j) => j.id !== job.id && supervisor.childPid(j.id) === null),
+      child: childPid === null ? undefined
+        : { pid: childPid, createdDatabase: supervisor.createdDatabase(job.id), kill: () => supervisor.kill(job.id) },
+      killAll: () => supervisor.killAll(),
     }),
   }).start();
   service.start();

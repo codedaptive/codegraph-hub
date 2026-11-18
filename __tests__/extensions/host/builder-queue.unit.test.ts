@@ -35,6 +35,20 @@ function recordingQueue(repoOf: (root: string) => string = (root) => root, loadA
 }
 
 describe('JobQueue', () => {
+  it('passes the running job id to its body', async () => {
+    const { queue } = recordingQueue();
+    const gate = held();
+    let received: unknown;
+    const job = queue.enqueue('sync', '/work', (context?: { id: number }) => {
+      received = context;
+      return gate.run();
+    });
+    expect(queue.runningJobs()).toEqual([{ id: 1, kind: 'sync', root: '/work', repo: '/work', lane: 'repo' }]);
+    gate.finish();
+    await job;
+    expect(received).toEqual({ id: 1 });
+  });
+
   it('reads load only when deciding a start in an available bypass slot', async () => {
     const loadAverage = vi.fn(() => 0);
     const { queue } = recordingQueue(() => 'repo', loadAverage);
