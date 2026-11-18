@@ -156,8 +156,9 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   session). The server only reads: it opens every index read-only and never syncs, watches, seeds,
   builds, recovers an index or takes `writer.pid`, `rebuild.pid` or `codegraph.lock`. Every index
   write is a job on the builder, a child process of the server (`BuilderClient`, `builder/client.ts`),
-  in two lanes, one job at a time in each: cold builds, `init`, `index` and `vacuum` in the cold lane, every
-  other job in the sync lane beside it, and never two jobs of one root together (the one exception: the
+  in one lane per git repository (one job at a time in each) plus two shared bypass slots that start a busy
+  repository's next job while the 1-minute load is under 95 (R-53); a repository's cold builds, `init`, `index`
+  and `vacuum` go after its short jobs, and never two jobs of one root together (the one exception: the
   oversized-WAL checkpoint a writable open starts, which its job does not await). A job that leaves its root's
   freelist over a quarter of the file and at least 256 MiB queues a `vacuum` of that root, run only when free
   disk exceeds twice the database (`builder/vacuum-after-job.ts`; R-45). The builder holds each root a call

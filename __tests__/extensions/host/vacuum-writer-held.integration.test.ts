@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -59,9 +60,9 @@ describe('vacuum after a no-op open with a writer', () => {
     const record = JSON.stringify({ pid, mode: 'watch', startedAt: Date.now() }) + '\n';
     fs.writeFileSync(getWriterPidPath(root), record);
     const lines: string[] = [];
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => {}, jobLog: (line) => { lines.push(line); }, log: () => {}, housekeeping: false,
-      vacuum: { minFreelistBytes: 65536, freeDiskBytes: () => 1_000_000_000 },
+      vacuum: { minFreelistBytes: 65536 },
     });
     const beforeSize = fs.statSync(dbPath).size;
     const beforeFree = freelist();
@@ -80,9 +81,9 @@ describe('vacuum after a no-op open with a writer', () => {
     expect(tryAcquireWriterLock(root, 'builder').kind).toBe('acquired');
     const record = fs.readFileSync(getWriterPidPath(root), 'utf8');
     const lines: string[] = [];
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => {}, jobLog: (line) => { lines.push(line); }, log: () => {}, housekeeping: false,
-      vacuum: { minFreelistBytes: 65536, freeDiskBytes: () => 1_000_000_000 },
+      vacuum: { minFreelistBytes: 65536 },
     });
     const beforeSize = fs.statSync(dbPath).size;
     expect(freelist()).toBeGreaterThan(16);

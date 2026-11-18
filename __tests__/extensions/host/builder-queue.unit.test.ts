@@ -1,14 +1,16 @@
 /**
- * The index builder's job queue: two lanes, root exclusion, FIFO cold jobs, and the job log's line format.
+ * The index builder's per-repository queue, bypass slots, root exclusion, and job log.
  *
  * The jobs are hand-held promises, so each case controls exactly when a job ends; nothing here touches disk.
+ * The process-wide ended-jobs marks are a stub that never refuses; the queue against the real marks is
+ * builder-queue-ended-jobs.integration.test.ts.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../src/directory', () => ({ canonicalProjectRoot: (root: string) => root }));
-import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
-import { JobEndedError } from '../../../src/extensions/host/builder/job-ended-error';
-import { JobQueue, formatJobLine, type JobEvent, type JobKind } from '../../../src/extensions/host/builder/queue';
+vi.mock('../../../src/extensions/host/builder/ended-jobs', () => ({ endedJobs: { find: vi.fn(() => undefined), clearRoot: vi.fn() } }));
+import { formatJobLine, type JobKind } from '../../../src/extensions/host/builder/queue';
+import { recordingQueue } from './helpers/recording-queue';
 
 /** A job body the test finishes by hand. */
 function held<T = void>(): { run: () => Promise<T>; started: Promise<void>; finish: (value: T) => void; fail: (err: Error) => void } {
@@ -20,33 +22,335 @@ function held<T = void>(): { run: () => Promise<T>; started: Promise<void>; fini
   return { run: () => { markStarted(); return done; }, started, finish: resolve, fail: reject };
 }
 
-/** A queue that records its events as `start kind root` / `end kind root`. */
-function recordingQueue(): { queue: JobQueue; events: string[]; raw: JobEvent[] } {
-  const events: string[] = [];
-  const raw: JobEvent[] = [];
-  const queue = new JobQueue({
-    onEvent: (e) => {
-      raw.push(e);
-      events.push(`${e.edge} ${e.kind} ${e.root}`);
-    },
-  });
-  return { queue, events, raw };
-}
-
-const tick = () => new Promise<void>((r) => setImmediate(r));
-
 describe('JobQueue', () => {
-  it('runs a sync of a root queued after that root\'s waiting vacuum before the vacuum', async () => {
+  it('passes the running job id to its body', async () => {
+    const { queue } = recordingQueue();
+    const gate = held();
+    let received: unknown;
+    const job = queue.enqueue('sync', '/work', (context?: { id: number }) => {
+      received = context;
+      return gate.run();
+    });
+    expect(queue.runningJobs()).toEqual([{ id: 1, kind: 'sync', root: '/work', repo: '/work', lane: 'repo' }]);
+    gate.finish();
+    await job;
+    expect(received).toEqual({ id: 1 });
+  });
+
+  it('reads load only when deciding a start in an available bypass slot', async () => {
+    const loadAverage = vi.fn(() => 0);
+    const { queue } = recordingQueue(() => 'repo', loadAverage);
+    const own = held(); const firstBypass = held(); const secondBypass = held(); const waiting = held();
+    const jobs: Array<Promise<void>> = [];
+    try {
+      jobs.push(queue.enqueue('sync', '/own', own.run));
+      expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo']);
+      expect(loadAverage).toHaveBeenCalledTimes(0);
+
+      jobs.push(queue.enqueue('sync', '/first', firstBypass.run));
+      expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo', 'bypass']);
+      expect(loadAverage).toHaveBeenCalledTimes(1);
+
+      jobs.push(queue.enqueue('sync', '/second', secondBypass.run));
+      expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo', 'bypass', 'bypass']);
+      expect(loadAverage).toHaveBeenCalledTimes(2);
+
+      jobs.push(queue.enqueue('sync', '/waiting', waiting.run));
+      expect(queue.waiting()).toBe(1);
+      expect(loadAverage).toHaveBeenCalledTimes(2);
+
+      firstBypass.finish();
+      await jobs[1];
+      expect(queue.runningJobs().find((job) => job.root === '/waiting')?.lane).toBe('bypass');
+      expect(loadAverage).toHaveBeenCalledTimes(3);
+    } finally {
+      own.finish(); firstBypass.finish(); secondBypass.finish(); waiting.finish();
+      await Promise.all(jobs);
+    }
+  });
+
+  it('captures the repository key once at enqueue rather than looking it up at each pick', async () => {
+    let key = 'original';
+    const repoOf = vi.fn(() => key);
+    const { queue } = recordingQueue(repoOf, () => 95);
+    const first = held(); const next = held();
+    const a = queue.enqueue('sync', '/worktree-a', first.run);
+    const b = queue.enqueue('sync', '/worktree-b', next.run);
+    expect(repoOf).toHaveBeenCalledTimes(2);
+    expect(queue.runningJobs()).toEqual([{ id: 1, kind: 'sync', root: '/worktree-a', repo: 'original', lane: 'repo' }]);
+    key = 'changed';
+    first.finish();
+    await a;
+    expect(repoOf).toHaveBeenCalledTimes(2);
+    expect(queue.runningJobs()).toEqual([{ id: 2, kind: 'sync', root: '/worktree-b', repo: 'original', lane: 'repo' }]);
+    next.finish();
+    await b;
+  });
+
+  it('keeps repo and root exclusion when a job enqueues synchronously before its first await', async () => {
+    const { queue } = recordingQueue(() => 'shared', () => 94.9);
+    const parent = held(); const child = held();
+    const nested: Array<Promise<void>> = [];
+    const first = queue.enqueue('index', '/a', () => {
+      nested.push(queue.enqueue('sync', '/b', child.run));
+      nested.push(queue.enqueue('sync', '/a', async () => undefined));
+      return parent.run();
+    });
+    expect(queue.runningJobs()).toEqual([
+      { id: 1, kind: 'index', root: '/a', repo: 'shared', lane: 'repo' },
+      { id: 2, kind: 'sync', root: '/b', repo: 'shared', lane: 'bypass' },
+    ]);
+    expect(queue.waiting()).toBe(1);
+    parent.finish(); child.finish();
+    await Promise.all([first, ...nested]);
+  });
+
+  it('whenIdle waits for several repository lanes and a bypass slot', async () => {
+    const { queue } = recordingQueue((root) => root.slice(0, 2), () => 0);
+    const a = held(); const b = held(); const c = held();
+    const first = queue.enqueue('sync', '/a1', a.run);
+    const second = queue.enqueue('sync', '/a2', b.run);
+    const third = queue.enqueue('sync', '/b1', c.run);
+    expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo', 'bypass', 'repo']);
+    let idle = false;
+    const done = queue.whenIdle().then(() => { idle = true; });
+    a.finish(); await first;
+    expect(idle).toBe(false);
+    b.finish(); await second;
+    expect(idle).toBe(false);
+    c.finish(); await third;
+    await done;
+    expect(idle).toBe(true);
+  });
+
+  it('close rejects waiting jobs across repositories and waits for repo and bypass jobs', async () => {
+    const { queue } = recordingQueue((root) => root.slice(0, 2), () => 0);
+    const a = held(); const b = held(); const c = held();
+    const running = [queue.enqueue('sync', '/a1', a.run), queue.enqueue('sync', '/a2', b.run), queue.enqueue('sync', '/b1', c.run)];
+    const waitingA = queue.enqueue('index', '/a1', async () => undefined);
+    const waitingB = queue.enqueue('index', '/b1', async () => undefined);
+    const rejectedA = expect(waitingA).rejects.toThrow(/stopping/);
+    const rejectedB = expect(waitingB).rejects.toThrow(/stopping/);
+    expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo', 'bypass', 'repo']);
+    expect(queue.waiting()).toBe(2);
+    let closed = false;
+    const closing = queue.close().then(() => { closed = true; });
+    await Promise.all([rejectedA, rejectedB]);
+    expect(closed).toBe(false);
+    a.finish(); b.finish();
+    await Promise.all(running.slice(0, 2));
+    expect(closed).toBe(false);
+    c.finish();
+    await Promise.all([...running, closing]);
+    expect(closed).toBe(true);
+  });
+
+  it('preserves slot, load and root invariants for a generated mix at every start', async () => {
+    let seed = 0x89123456;
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed >>> 8; };
+    let load = 95;
+    const { queue } = recordingQueue((root) => root.split('/')[1], () => load);
+    const roots = Array.from({ length: 12 }, (_, i) => `/r${Math.floor(i / 4)}/w${i % 4}`);
+    const kinds: JobKind[] = ['sync', 'catch-up', 'seed', 'open', 'cold-build', 'init', 'index', 'vacuum'];
+    const active = new Map<string, ReadonlySet<string>>();
+    const started = new Map<string, number>();
+    const failures: string[] = [];
+    const loadsAtStart = new Set<number>();
+    const gates: Array<{ finish: () => void }> = [];
+    const jobs: Array<Promise<void>> = [];
+    for (let i = 0; i < 48; i++) {
+      const root = i === 0 ? roots[0] : i === 1 ? roots[4] : roots[random() % roots.length];
+      const extra = i < 2 || random() % 2 === 0 ? [] : [roots[random() % roots.length]];
+      const kind = kinds[random() % kinds.length];
+      const gate = held();
+      gates.push(gate);
+      load = i % 2 === 0 ? 95 : 94.9;
+      jobs.push(queue.enqueue(kind, root, async () => {
+        started.set(root, i);
+        try {
+          expect(active.has(root)).toBe(false);
+          active.set(root, new Set([root, ...extra]));
+          const running = queue.runningJobs();
+          const self = running.find((job) => job.root === root);
+          expect(self).toMatchObject({ root, kind, repo: root.split('/')[1] });
+          expect(running.every((job) => job.lane === 'repo' || job.lane === 'bypass')).toBe(true);
+          const repoJobs = running.filter((job) => job.lane === 'repo');
+          expect(new Set(repoJobs.map((job) => job.repo)).size).toBe(repoJobs.length);
+          expect(running.filter((job) => job.lane === 'bypass').length).toBeLessThanOrEqual(2);
+          if (self?.lane === 'bypass') expect(load).toBeLessThan(95);
+          const named = new Set<string>();
+          for (const job of running) {
+            const jobRoots = active.get(job.root);
+            expect(jobRoots).toBeDefined();
+            for (const key of jobRoots ?? []) {
+              expect(named.has(key)).toBe(false);
+              named.add(key);
+            }
+          }
+          loadsAtStart.add(load);
+        } catch (error) {
+          if (failures.length === 0) failures.push(String(error));
+          active.set(root, new Set([root, ...extra]));
+        }
+        await gate.run();
+        active.delete(root);
+        started.delete(root);
+      }, { alsoRoots: extra }));
+    }
+    load = 94.9;
+    for (let completed = 0; completed < jobs.length; completed++) {
+      expect(failures).toEqual([]);
+      const running = queue.runningJobs()[0];
+      expect(running).toBeDefined();
+      if (running === undefined) throw new Error('waiting jobs have no running job to release');
+      const index = started.get(running.root);
+      expect(index).toBeDefined();
+      if (index === undefined) throw new Error(`no gate for running root ${running.root}`);
+      gates[index].finish();
+      await jobs[index];
+    }
+    expect(failures).toEqual([]);
+    expect(loadsAtStart).toEqual(new Set([95, 94.9]));
+    expect(active.size).toBe(0);
+  });
+
+  it('starts cold builds of different repositories together', async () => {
     const { queue, events } = recordingQueue();
-    const blocker = held();
-    const first = queue.enqueue('cold-build', '/blocker', blocker.run);
-    const vacuum = queue.enqueue('vacuum', '/project', async () => undefined);
-    const sync = queue.enqueue('sync', '/project', async () => undefined);
-    await sync;
-    expect(events).toEqual(['start cold-build /blocker', 'start sync /project', 'end sync /project']);
-    blocker.finish();
-    await Promise.all([first, vacuum]);
-    expect(events.slice(3)).toEqual(['end cold-build /blocker', 'start vacuum /project', 'end vacuum /project']);
+    const a = held();
+    const b = held();
+    const first = queue.enqueue('cold-build', '/a', a.run);
+    const second = queue.enqueue('cold-build', '/b', b.run);
+    expect(events).toEqual(['start cold-build /a', 'start cold-build /b']);
+    a.finish(); b.finish();
+    await Promise.all([first, second]);
+  });
+
+  it('runs two worktrees of one repository one at a time when bypass is closed', async () => {
+    const { queue, events } = recordingQueue(() => 'repo');
+    const a = held();
+    const first = queue.enqueue('index', '/a', a.run);
+    const second = queue.enqueue('init', '/b', async () => undefined);
+    expect(events).toEqual(['start index /a']);
+    expect(queue.waiting()).toBe(1);
+    a.finish();
+    await Promise.all([first, second]);
+    expect(events).toEqual(['start index /a', 'end index /a', 'start init /b', 'end init /b']);
+  });
+
+  it.each([94.9, 95])('allows bypass below 95 but not at 95 (load %s)', async (load) => {
+    const { queue, events } = recordingQueue(() => 'repo', () => load);
+    const a = held();
+    const b = held();
+    const first = queue.enqueue('sync', '/a', a.run);
+    const second = queue.enqueue('sync', '/b', b.run);
+    expect(events.includes('start sync /b')).toBe(load < 95);
+    expect(queue.waiting()).toBe(load < 95 ? 0 : 1);
+    a.finish();
+    await first;
+    b.finish();
+    await second;
+  });
+
+  it('limits bypass jobs to two across all repositories', async () => {
+    const { queue } = recordingQueue((root) => root.startsWith('/a') ? 'a' : 'b', () => 94.9);
+    const jobs = Array.from({ length: 6 }, () => held());
+    const promises = jobs.map((job, i) => queue.enqueue('sync', i < 3 ? `/a${i}` : `/b${i}`, job.run));
+    expect(queue.runningJobs().filter((job) => job.lane === 'repo')).toHaveLength(2);
+    expect(queue.runningJobs().filter((job) => job.lane === 'bypass')).toHaveLength(2);
+    expect(queue.waiting()).toBe(2);
+    jobs.forEach((job) => job.finish());
+    await Promise.all(promises);
+  });
+
+  it('awards a freed bypass to the earliest queued eligible repository', async () => {
+    let load = 94.9;
+    const { queue } = recordingQueue((root) => root.slice(0, 2), () => load);
+    const a = held(); const b = held(); const bypassA = held(); const bypassB = held();
+    const older = held(); const newer = held();
+    const jobs = [
+      queue.enqueue('sync', '/a1', a.run),
+      queue.enqueue('sync', '/b1', b.run),
+      queue.enqueue('sync', '/a2', bypassA.run),
+      queue.enqueue('sync', '/b2', bypassB.run),
+    ];
+    load = 95;
+    jobs.push(queue.enqueue('sync', '/b3', older.run));
+    jobs.push(queue.enqueue('sync', '/a3', newer.run));
+    expect(queue.waiting()).toBe(2);
+    load = 94.9;
+    bypassA.finish();
+    await jobs[2];
+    expect(queue.runningJobs().find((job) => job.root === '/b3')?.lane).toBe('bypass');
+    expect(queue.runningJobs().some((job) => job.root === '/a3')).toBe(false);
+    a.finish(); b.finish(); bypassB.finish(); older.finish(); newer.finish();
+    await Promise.all(jobs);
+  });
+
+  it('excludes alsoRoots across repository and bypass slots', async () => {
+    const { queue, events } = recordingQueue((root) => root.slice(0, 2), () => 0);
+    const a = held(); const b = held();
+    const first = queue.enqueue('seed', '/a1', a.run, { alsoRoots: ['/shared'] });
+    const bypass = queue.enqueue('sync', '/a2', b.run);
+    const conflicting = queue.enqueue('index', '/b1', async () => undefined, { alsoRoots: ['/shared'] });
+    expect(events).toEqual(['start seed /a1', 'start sync /a2']);
+    expect(queue.waiting()).toBe(1);
+    a.finish();
+    await first;
+    await conflicting;
+    b.finish();
+    await bypass;
+    expect(events.indexOf('end seed /a1')).toBeLessThan(events.indexOf('start index /b1'));
+  });
+
+  it('starts load-blocked work in its repository slot when that slot frees', async () => {
+    const { queue } = recordingQueue(() => 'repo', () => 95);
+    const a = held(); const b = held();
+    const first = queue.enqueue('sync', '/a', a.run);
+    const second = queue.enqueue('sync', '/b', b.run);
+    expect(queue.waiting()).toBe(1);
+    a.finish();
+    await first;
+    expect(queue.runningJobs()).toEqual([{ id: 2, kind: 'sync', root: '/b', repo: 'repo', lane: 'repo' }]);
+    b.finish(); await second;
+  });
+
+  it('reports running jobs in id order with their repository and assigned lane', async () => {
+    const { queue } = recordingQueue((root) => root.slice(0, 2), () => 0);
+    const a = held(); const b = held(); const c = held();
+    const first = queue.enqueue('index', '/a1', a.run);
+    const second = queue.enqueue('open', '/a2', b.run);
+    const third = queue.enqueue('cold-build', '/b1', c.run);
+    expect(queue.runningJobs()).toEqual([
+      { id: 1, kind: 'index', root: '/a1', repo: '/a', lane: 'repo' },
+      { id: 2, kind: 'open', root: '/a2', repo: '/a', lane: 'bypass' },
+      { id: 3, kind: 'cold-build', root: '/b1', repo: '/b', lane: 'repo' },
+    ]);
+    a.finish(); b.finish(); c.finish();
+    await Promise.all([first, second, third]);
+    expect(queue.runningJobs()).toEqual([]);
+  });
+
+  it('prioritizes a waiting short job over a whole-repository job sharing its root', async () => {
+    const { queue, events } = recordingQueue(() => 'repo', () => 95);
+    const a = held();
+    const first = queue.enqueue('index', '/blocker', a.run);
+    const whole = queue.enqueue('vacuum', '/project', async () => undefined);
+    const short = queue.enqueue('sync', '/project', async () => undefined);
+    a.finish();
+    await Promise.all([first, whole, short]);
+    expect(events.indexOf('end sync /project')).toBeLessThan(events.indexOf('start vacuum /project'));
+  });
+
+  it('does not skip a blocked whole-repository head for a later whole job in that repository', async () => {
+    const { queue, events } = recordingQueue(() => 'repo', () => 0);
+    const a = held();
+    const first = queue.enqueue('sync', '/a', a.run);
+    const head = queue.enqueue('index', '/a', async () => undefined);
+    const later = queue.enqueue('index', '/b', async () => undefined);
+    expect(events).toEqual(['start sync /a']);
+    a.finish();
+    await Promise.all([first, head, later]);
+    expect(events.indexOf('start index /a')).toBeLessThan(events.indexOf('start index /b'));
   });
 
   it('starts a sync of another root beside a running vacuum', async () => {
@@ -73,86 +377,6 @@ describe('JobQueue', () => {
     await Promise.all([a, b]);
   });
 
-  it('keeps lane and root exclusion when a job synchronously enqueues more work', async () => {
-    const { queue, events } = recordingQueue();
-    const snapshots: Array<ReturnType<JobQueue['runningJobs']>> = [];
-    const record = () => { snapshots.push(queue.runningJobs()); };
-    const coldBlocker = held();
-    const syncBlocker = held();
-    const syncA = held();
-    const syncC = held();
-    const coldC = held();
-    const coldD = held();
-    const nested: Array<Promise<void>> = [];
-    const first = queue.enqueue('cold-build', '/block-cold', () => { record(); return coldBlocker.run(); });
-    const second = queue.enqueue('sync', '/block-sync', () => { record(); return syncBlocker.run(); });
-    const third = queue.enqueue('cold-build', '/c', () => { record(); return coldC.run(); });
-    const fourth = queue.enqueue('sync', '/a', () => {
-      record();
-      nested.push(queue.enqueue('sync', '/c', () => { record(); return syncC.run(); }));
-      nested.push(queue.enqueue('cold-build', '/d', () => { record(); return coldD.run(); }));
-      return syncA.run();
-    });
-    try {
-      syncBlocker.finish();
-      await second;
-      expect(events).toEqual([
-        'start cold-build /block-cold', 'start sync /block-sync', 'end sync /block-sync', 'start sync /a',
-      ]);
-      coldBlocker.finish();
-      await first;
-      expect(events).not.toContain('start cold-build /c');
-      syncA.finish();
-      await fourth;
-      expect(events).toContain('start sync /c');
-      expect(events).not.toContain('start cold-build /c');
-      syncC.finish();
-      await nested[0];
-      expect(events).toContain('start cold-build /c');
-      coldC.finish();
-      await third;
-      coldD.finish();
-      await Promise.all(nested);
-      expect(events).toEqual([
-        'start cold-build /block-cold', 'start sync /block-sync', 'end sync /block-sync', 'start sync /a',
-        'end cold-build /block-cold', 'end sync /a', 'start sync /c', 'end sync /c',
-        'start cold-build /c', 'end cold-build /c', 'start cold-build /d', 'end cold-build /d',
-      ]);
-      expect(snapshots).toEqual([
-        [{ id: 1, kind: 'cold-build', root: '/block-cold', lane: 'cold' }],
-        [{ id: 1, kind: 'cold-build', root: '/block-cold', lane: 'cold' }, { id: 2, kind: 'sync', root: '/block-sync', lane: 'sync' }],
-        [{ id: 1, kind: 'cold-build', root: '/block-cold', lane: 'cold' }, { id: 3, kind: 'sync', root: '/a', lane: 'sync' }],
-        [{ id: 4, kind: 'sync', root: '/c', lane: 'sync' }],
-        [{ id: 5, kind: 'cold-build', root: '/c', lane: 'cold' }],
-        [{ id: 6, kind: 'cold-build', root: '/d', lane: 'cold' }],
-      ]);
-    } finally {
-      coldBlocker.finish();
-      syncBlocker.finish();
-      syncA.finish();
-      syncC.finish();
-      coldC.finish();
-      coldD.finish();
-      await queue.whenIdle();
-    }
-  });
-
-  it('starts cold jobs in FIFO order and never overlaps them', async () => {
-    const { queue, events } = recordingQueue();
-    const first = held();
-    const second = held();
-    const a = queue.enqueue('index', '/a', first.run);
-    const b = queue.enqueue('init', '/b', second.run);
-    const c = queue.enqueue('cold-build', '/c', async () => undefined);
-    expect(events).toEqual(['start index /a']);
-    first.finish();
-    await a;
-    expect(events).toEqual(['start index /a', 'end index /a', 'start init /b']);
-    second.finish();
-    await Promise.all([b, c]);
-    expect(events).toEqual(['start index /a', 'end index /a', 'start init /b', 'end init /b', 'start cold-build /c', 'end cold-build /c']);
-  });
-
   it('blocks a sync of the same root as a running cold job', async () => {
     const { queue, events } = recordingQueue();
     const cold = held();
@@ -164,58 +388,7 @@ describe('JobQueue', () => {
     expect(events).toEqual(['start cold-build /a', 'end cold-build /a', 'start sync /a', 'end sync /a']);
   });
 
-  it('gives a waiting sync of the cold head root priority', async () => {
-    const { queue, events } = recordingQueue();
-    const cold = held();
-    const sync = held();
-    const blocker = held();
-    const first = queue.enqueue('index', '/a', cold.run);
-    const occupied = queue.enqueue('sync', '/c', blocker.run);
-    const next = queue.enqueue('index', '/b', async () => undefined);
-    const waiting = queue.enqueue('sync', '/b', sync.run);
-    expect(events).toEqual(['start index /a', 'start sync /c']);
-    cold.finish();
-    await first;
-    expect(events).not.toContain('start index /b');
-    blocker.finish();
-    await occupied;
-    expect(events).toContain('start sync /b');
-    expect(events).not.toContain('start index /b');
-    sync.finish();
-    await Promise.all([waiting, next]);
-    expect(events.indexOf('end sync /b')).toBeLessThan(events.indexOf('start index /b'));
-  });
-
-  it('skips busy sync roots while preserving same-root order', async () => {
-    const { queue, events } = recordingQueue();
-    const cold = held();
-    const other = held();
-    const first = queue.enqueue('index', '/a', cold.run);
-    const a1 = queue.enqueue('sync', '/a', async () => undefined);
-    const a2 = queue.enqueue('watch-sync', '/a', async () => undefined);
-    const b = queue.enqueue('sync', '/b', other.run);
-    expect(events).toEqual(['start index /a', 'start sync /b']);
-    cold.finish();
-    await first;
-    expect(events).not.toContain('start sync /a');
-    other.finish();
-    await Promise.all([a1, a2, b]);
-    expect(events.indexOf('start sync /a')).toBeLessThan(events.indexOf('start watch-sync /a'));
-  });
-
-  it('does not skip a blocked cold head for a later cold job', async () => {
-    const { queue, events } = recordingQueue();
-    const sync = held();
-    const first = queue.enqueue('sync', '/a', sync.run);
-    const head = queue.enqueue('index', '/a', async () => undefined);
-    const later = queue.enqueue('index', '/b', async () => undefined);
-    expect(events).toEqual(['start sync /a']);
-    sync.finish();
-    await Promise.all([first, head, later]);
-    expect(events.indexOf('start index /a')).toBeLessThan(events.indexOf('start index /b'));
-  });
-
-  it('blocks a cold job whose additional root is running in the sync lane', async () => {
+  it('blocks a whole-repository job whose additional root a running job holds', async () => {
     const { queue, events } = recordingQueue();
     const sync = held();
     const a = queue.enqueue('seed', '/work', sync.run, { alsoRoots: ['/source'] });
@@ -224,60 +397,6 @@ describe('JobQueue', () => {
     sync.finish();
     await Promise.all([a, b]);
     expect(events.indexOf('end seed /work')).toBeLessThan(events.indexOf('start index /other'));
-  });
-
-  it('whenIdle and close wait for both running lanes', async () => {
-    const queue = new JobQueue();
-    const cold = held();
-    const sync = held();
-    const a = queue.enqueue('index', '/a', cold.run);
-    const b = queue.enqueue('sync', '/b', sync.run);
-    const waiting = queue.enqueue('index', '/c', async () => undefined);
-    const rejected = expect(waiting).rejects.toThrow(/stopping/);
-    let idle = false;
-    let closed = false;
-    void queue.whenIdle().then(() => { idle = true; });
-    const closing = queue.close().then(() => { closed = true; });
-    await rejected;
-    cold.finish();
-    await a;
-    await tick();
-    expect(idle).toBe(false);
-    expect(closed).toBe(false);
-    sync.finish();
-    await b;
-    await closing;
-    await tick();
-    expect(idle).toBe(true);
-    expect(closed).toBe(true);
-  });
-
-  it('respects root and lane limits across a generated mix', async () => {
-    const { queue } = recordingQueue();
-    const live = new Map<string, number>();
-    let coldLive = 0;
-    let total = 0;
-    let peak = 0;
-    const jobs: Array<Promise<void>> = [];
-    for (let i = 0; i < 36; i++) {
-      const root = `/r${i % 3}`;
-      const kind: JobKind = i % 2 === 0 ? 'index' : 'sync';
-      jobs.push(queue.enqueue(kind, root, async () => {
-        live.set(root, (live.get(root) ?? 0) + 1);
-        if (kind === 'index') coldLive++;
-        total++;
-        peak = Math.max(peak, total);
-        expect(live.get(root)).toBe(1);
-        expect(coldLive).toBeLessThanOrEqual(1);
-        expect(total).toBeLessThanOrEqual(2);
-        await Promise.resolve();
-        live.set(root, (live.get(root) ?? 0) - 1);
-        if (kind === 'index') coldLive--;
-        total--;
-      }));
-    }
-    await Promise.all(jobs);
-    expect(peak).toBe(2);
   });
 
   it('a failed job rejects its caller, logs the failure on one line, and the next job still runs', async () => {
@@ -349,11 +468,11 @@ describe('JobQueue', () => {
     let idle = false;
     void queue.whenIdle().then(() => { idle = true; });
     await job.started;
-    await tick();
+    await Promise.resolve();
     expect(idle).toBe(false);
     job.finish();
     await done;
-    await tick();
+    await Promise.resolve();
     expect(idle).toBe(true);
   });
 
@@ -366,86 +485,13 @@ describe('JobQueue', () => {
     let other = false;
     void queue.whenRootIdle('/source').then(() => { source = true; });
     void queue.whenRootIdle('/other').then(() => { other = true; });
-    await tick();
+    await Promise.resolve();
     expect(other, 'a root the job does not name is idle at once').toBe(true);
     expect(source, 'the source the seed reads is not idle while the seed runs').toBe(false);
     job.finish();
     await done;
-    await tick();
+    await Promise.resolve();
     expect(source, 'the source is idle once the seed ended').toBe(true);
-  });
-});
-
-describe('JobQueue job limits', () => {
-  const mark = { root: '/ended', kind: 'sync' as const, limit: 'time' as const, at: '2026-11-16T10:00:00.000Z' };
-  beforeEach(() => endedJobs.replaceAll([]));
-  afterEach(() => endedJobs.replaceAll([]));
-
-  it('reports both running jobs in ascending id order with lanes and one counter', async () => {
-    const queue = new JobQueue();
-    expect(queue.runningJobs()).toEqual([]);
-    const first = held();
-    const second = held();
-    const a = queue.enqueue('index', '/first', first.run);
-    const b = queue.enqueue('open', '/second', second.run);
-    expect(queue.runningJobs()).toEqual([
-      { id: 1, kind: 'index', root: '/first', lane: 'cold' },
-      { id: 2, kind: 'open', root: '/second', lane: 'sync' },
-    ]);
-    first.finish();
-    await a;
-    const third = held();
-    const c = queue.enqueue('cold-build', '/third', third.run);
-    expect(queue.runningJobs()).toEqual([
-      { id: 2, kind: 'open', root: '/second', lane: 'sync' },
-      { id: 3, kind: 'cold-build', root: '/third', lane: 'cold' },
-    ]);
-    second.finish();
-    third.finish();
-    await Promise.all([b, c]);
-    expect(queue.runningJobs()).toEqual([]);
-  });
-
-  it('rejects an ended job without running it or emitting events', async () => {
-    endedJobs.add(mark);
-    const { queue, events } = recordingQueue();
-    const run = vi.fn(async () => 42);
-    const result = queue.enqueue('sync', '/ended', run);
-    await expect(result).rejects.toBeInstanceOf(JobEndedError);
-    await expect(result).rejects.toMatchObject({ root: '/ended', kind: 'sync', limit: 'time' });
-    expect(run).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
-  });
-
-  it('refuses a vacuum of a root whose vacuum was ended, until an index of that root ends ok', async () => {
-    endedJobs.add({ ...mark, kind: 'vacuum' });
-    const run = vi.fn(async () => 42);
-    await expect(new JobQueue().enqueue('vacuum', '/ended', run)).rejects.toBeInstanceOf(JobEndedError);
-    expect(run).not.toHaveBeenCalled();
-    await new JobQueue().enqueue('index', '/ended', async () => undefined);
-    await expect(new JobQueue().enqueue('vacuum', '/ended', run)).resolves.toBe(42);
-    expect(run).toHaveBeenCalledOnce();
-  });
-
-  it.each(['cold-build', 'init', 'index'] as const)('does not refuse an ended %s job', async (kind) => {
-    endedJobs.add({ ...mark, kind });
-    const run = vi.fn(async () => 42);
-    await expect(new JobQueue().enqueue(kind, '/ended', run)).resolves.toBe(42);
-    expect(run).toHaveBeenCalledOnce();
-  });
-
-  it.each(['init', 'index'] as const)('clears only its root after successful %s', async (kind) => {
-    endedJobs.add(mark);
-    endedJobs.add({ ...mark, root: '/other' });
-    await new JobQueue().enqueue(kind, '/ended', async () => undefined);
-    expect(endedJobs.has('/ended', 'sync')).toBe(false);
-    expect(endedJobs.has('/other', 'sync')).toBe(true);
-  });
-
-  it.each(['init', 'index'] as const)('keeps marks after failed %s', async (kind) => {
-    endedJobs.add(mark);
-    await expect(new JobQueue().enqueue(kind, '/ended', async () => { throw new Error('failed'); })).rejects.toThrow('failed');
-    expect(endedJobs.has('/ended', 'sync')).toBe(true);
   });
 });
 

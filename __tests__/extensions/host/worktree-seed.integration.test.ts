@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 /**
  * Worktree seeding, unit level.
  *
@@ -209,8 +210,8 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
     addWorktree(main, wt1, 'one');
     addWorktree(main, wt2, 'two');
 
-    // The builder's host: the copies run as jobs on a queue, as they do in the builder process.
-    const host = new BuilderSeedHost(new JobQueue());
+    // The builder's host: the copies run as jobs on a queue, as they do in the builder, with their bodies run in this process.
+    const host = new BuilderSeedHost(new JobQueue(), { runJob: inProcessJobRunner().runJob });
     const first = await ensureWorktreeIndex(wt1, host);
     const second = await ensureWorktreeIndex(wt2, host);
     expect(first).toMatchObject({ kind: 'seeded', root: real(wt1), source: real(main) });

@@ -11,7 +11,26 @@ const file = '/project/.codegraph/codegraph.db';
 
 describe('coldBuildDatabases', () => {
   beforeEach(() => { coldBuildDatabases.clear(root); vi.resetAllMocks(); });
-  afterEach(() => { coldBuildDatabases.clear(root); vi.unstubAllGlobals(); });
+  afterEach(() => { coldBuildDatabases.clear(root); coldBuildDatabases.onSet(() => {}); vi.unstubAllGlobals(); });
+
+  it('tells the set listener each registered root and identity', () => {
+    const listener = vi.fn();
+    coldBuildDatabases.onSet(listener);
+    coldBuildDatabases.set(root, '1:2');
+    coldBuildDatabases.set('/other', null);
+    expect(listener.mock.calls).toEqual([['/project', '1:2'], ['/other', null]]);
+    coldBuildDatabases.clear('/other');
+  });
+
+  it('tells only the listener set last', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    coldBuildDatabases.onSet(first);
+    coldBuildDatabases.onSet(second);
+    coldBuildDatabases.set(root, '1:2');
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledExactlyOnceWith('/project', '1:2');
+  });
 
   it('does not own an unregistered root', () => {
     expect(coldBuildDatabases.isOurs(root, file)).toBe(false);

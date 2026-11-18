@@ -15,12 +15,14 @@
  * the record ready leaves the retry eligible; the normal path publishes once; a catch-up that waited out lock
  * contention and then failed to publish raises no unhandled rejection.
  */
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import CodeGraph from '../../../src/index';
-import { HolderSet, isIndexedFileStateCurrent } from '../../../src/extensions/host/builder/holder';
+import { HolderSet } from '../../../src/extensions/host/builder/holder';
+import { isIndexedFileStateCurrent } from '../../../src/extensions/host/builder/is-indexed-file-state-current';
 import { RebuildFences } from '../../../src/extensions/host/builder/fences';
 import { JobQueue } from '../../../src/extensions/host/builder/queue';
 import * as writerLock from '../../../src/mcp/writer-lock';
@@ -129,9 +131,9 @@ describe('HolderSet catch-up readiness publication', { timeout: 60_000 }, () => 
     vi.mocked(writerLock.markWriterReady).mockClear();
     logLines = [];
     const queue = new JobQueue();
-    holders = new HolderSet({
+    holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
       queue,
-      fences: new RebuildFences(queue, (line) => logLines.push(line)),
+      fences: new RebuildFences((line) => logLines.push(line)),
       onFreshness: () => undefined,
       log: (line) => logLines.push(line),
       watchOptions: () => ({}),

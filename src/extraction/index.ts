@@ -36,6 +36,7 @@ import type { ResolutionContext } from '../resolution/types';
 import { createYielder, type MaybeYield } from '../resolution/cooperative-yield';
 import { resurrectRefFromDroppedEdge } from '../resolution/resurrect-ref';
 import { createImportReader, reopenReferencesThroughRemovedFiles } from '../resolution/module-importers';
+import { manifestEvidence, type ManifestEvidence } from '../resolution/workspace-packages';
 import { MAX_SOURCE_FILE_SIZE_BYTES, oversizeStamp, readBoundedSource, readBoundedSourceSync } from '../file-limits';
 export { oversizeStamp };
 import { followSymlinkedDir } from '../extensions/host/scan/follow-symlinked-dir';
@@ -130,6 +131,13 @@ export interface IndexResult {
 
 /** The languages whose modules pass bindings on with `export … from` (#2978). */
 const RE_EXPORTING_LANGUAGES = new Set<string>(['typescript', 'tsx', 'javascript', 'jsx']);
+
+/**
+ * Files a resolution answer's receiver type can be read from (`typeFrom`):
+ * python modules and stubs, and TS/JS modules, whose signatures type the
+ * callbacks other files pass them.
+ */
+const TYPE_FROM_FILE = /\.(?:pyi?|[mc]?[jt]sx?)$/;
 
 /**
  * Result of a sync operation
@@ -607,7 +615,7 @@ function readGitExcludeExtraPatterns(rootDir: string): string {
  * same way the indexer skips them (#1728). Each one is a path, not a pattern:
  * see {@link ScopeIgnore}.
  */
-function listGitIgnoredDirectories(rootDir: string): string[] {
+function listGitIgnoredDirectories(rootDir: string, sink?: string[]): string[] {
   try {
     const out = execFileSync(
       'git',
@@ -627,6 +635,8 @@ function listGitIgnoredDirectories(rootDir: string): string[] {
       if (isWholeCwdEntry(raw)) continue;
       const entry = normalizePath(raw);
       dirs.push(entry.endsWith('/') ? entry : `${entry}/`);
+      // As git gave it: a folder with its trailing slash, a file without.
+      sink?.push(entry);
     }
     return dirs;
   } catch {
@@ -764,6 +774,22 @@ function includeStaticRoots(patterns: string[]): string[] {
 }
 
 /**
+ * A folder's real path, for the include walk's cycle guard. The OS's realpath
+ * is one call a folder, where the JS one stats every part of the path, which
+ * made the walk the bulk of a `status` on a project that includes a large
+ * ignored tree (#3086). Some volumes refuse the OS call where the JS one works
+ * (a RAM disk, some `subst` and network drives answer EISDIR or the like), so
+ * the JS one answers there; throws only when both do.
+ */
+function walkRealpath(dir: string): string {
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return fs.realpathSync(dir);
+  }
+}
+
+/**
  * Actively discover the source files an `include` whitelist forces in. `git
  * ls-files` never lists gitignored files, so a filtered filesystem walk of just
  * the opted-in subtrees (`includeStaticRoots`) is the only way to find them.
@@ -811,7 +837,7 @@ function collectIncludedFiles(
   function walk(absDir: string): void {
     let realDir: string;
     try {
-      realDir = fs.realpathSync(absDir);
+      realDir = walkRealpath(absDir);
     } catch {
       return;
     }
@@ -1119,7 +1145,7 @@ export class ScopeIgnore {
  * embedded roots (the scanner discovers them during collection), pass them to
  * skip rediscovery; otherwise they're discovered here (the watcher path).
  */
-export function buildScopeIgnore(rootDir: string, embeddedRoots?: Iterable<string>): ScopeIgnore {
+export function buildScopeIgnore(rootDir: string, embeddedRoots?: Iterable<string>, ignoredEntries?: string[]): ScopeIgnore {
   const roots = embeddedRoots ? [...embeddedRoots] : discoverEmbeddedRepoRoots(rootDir);
   const include = loadIncludeMatcher(rootDir);
   // The root matcher has defaults + root `.gitignore` + info/exclude +
@@ -1132,7 +1158,7 @@ export function buildScopeIgnore(rootDir: string, embeddedRoots?: Iterable<strin
     loadExcludeMatcher(rootDir),
     include,
     include ? includeStaticRoots(loadIncludePatterns(rootDir)) : [],
-    new Set(listGitIgnoredDirectories(rootDir)),
+    new Set(listGitIgnoredDirectories(rootDir, ignoredEntries)),
   );
 }
 
@@ -1381,7 +1407,7 @@ function isGitlinkEntry(entry: string): boolean {
  * found) is recorded in `embeddedRoots` so callers can exempt its files from the
  * parent's own gitignore rules.
  */
-function collectGitFiles(repoDir: string, prefix: string, files: Set<string>, embeddedRoots?: Set<string>, includeIgnored: Ignore | null = null): void {
+function collectGitFiles(repoDir: string, prefix: string, files: Set<string>, embeddedRoots?: Set<string>, includeIgnored: Ignore | null = null, gitlinks?: string[]): void {
   const gitOpts = { cwd: repoDir, encoding: 'utf-8' as const, timeout: 30000, maxBuffer: 50 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'], windowsHide: true };
 
   // Tracked files. --recurse-submodules pulls in files from active submodules,
@@ -1423,6 +1449,7 @@ function collectGitFiles(repoDir: string, prefix: string, files: Set<string>, em
     const rel = entry.slice(tab + 1);
     if (isGitlinkEntry(entry)) {
       gitlinkRels.push(rel); // an unexpanded gitlink — recursed into below, not a source file itself
+      gitlinks?.push(normalizePath(prefix + rel));
       continue;
     }
     if (entry[0] === 'S' && !fs.existsSync(path.join(repoDir, rel))) continue;
@@ -1544,7 +1571,7 @@ function gitRepoPrefix(dir: string): string {
  * ignore re-includes it (fork R-44, S-76). Returns null on failure
  * (non-git project) so callers can fall back to a filesystem walk.
  */
-function getGitVisibleFiles(rootDir: string): Set<string> | null {
+function getGitVisibleFiles(rootDir: string, onManifestEvidence?: (evidence: ManifestEvidence) => void): Set<string> | null {
   try {
     // Check if the project directory is gitignored by a parent repo.
     // When rootDir lives inside a parent git repo that ignores it,
@@ -1566,14 +1593,24 @@ function getGitVisibleFiles(rootDir: string): Set<string> | null {
 
     const files = new Set<string>();
     const embeddedRoots = new Set<string>();
-    collectGitFiles(rootDir, '', files, embeddedRoots, loadIncludeIgnoredMatcher(rootDir));
+    const gitlinks: string[] = [];
+    collectGitFiles(rootDir, '', files, embeddedRoots, loadIncludeIgnoredMatcher(rootDir), gitlinks);
     // Apply built-in default ignores uniformly — to tracked files too, since
     // committing a dependency/build dir doesn't make it project code. A
     // `.gitignore` (or fork `.codegraphignore`) negation (e.g. `!vendor/`) is the explicit opt-in. (issue #407)
     // Files inside an EMBEDDED repo are matched against that repo's own rules,
     // not the parent's: the parent's .gitignore hides the child repo from git,
     // not from the index. (#514)
-    const ig = buildScopeIgnore(rootDir, embeddedRoots);
+    const ignoredEntries: string[] | undefined = onManifestEvidence ? [] : undefined;
+    const ig = buildScopeIgnore(rootDir, embeddedRoots, ignoredEntries);
+    // What git's listings say about the package manifests the workspace walk
+    // reads, taken from the lists this scan made anyway: every file git
+    // lists, before any scope rule, and what it ignores. A full sync compares
+    // it with what the last walk found (see trustedManifestList).
+    if (onManifestEvidence) {
+      onManifestEvidence(manifestEvidence(rootDir, files, ignoredEntries!,
+        embeddedRoots.size === 0 && gitlinks.length === 0 && !fs.existsSync(path.join(gitRoot, '.gitmodules'))));
+    }
     const visible = new Set([...files].filter((f) => !ig.ignores(f)));
     // A directory link in git's list whose real path leaves the root is walked only when the
     // root ignore re-includes it (fork R-44, S-76); in-root aliases are not followed.
@@ -1686,6 +1723,25 @@ export function getGitHeadSha(rootDir: string): string | null {
 }
 
 /**
+ * The environment for the git commands change detection runs, which only read.
+ *
+ * With git's "optional locks" on, `git status` writes the stat info it
+ * refreshed back to the index, and to do that it takes `.git/index.lock` right
+ * after the refresh and holds it through the diff and the whole untracked scan.
+ * Change detection runs on every sync — the watcher's, `codegraph sync` and
+ * `codegraph status`, and the MCP tools' freshness checks — and the watcher
+ * wakes exactly when a commit, a checkout or a hook churns files, so the user's
+ * `git add` or `git checkout` started inside that window failed at once with
+ * "index.lock: File exists" (#3295). `GIT_OPTIONAL_LOCKS=0` skips only that
+ * write-back: the output is the same, and the user's next git command refreshes
+ * the index itself. An environment variable rather than `--no-optional-locks`,
+ * which a git older than 2.15 would reject.
+ */
+function readOnlyGitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+}
+
+/**
  * NUL-delimited status/path pairs for every path committed
  * between `sinceCommit` and HEAD. Empty when the stamp IS HEAD, which is the
  * common case — one cheap git call on the hot path.
@@ -1695,6 +1751,7 @@ function gitCommittedChangesSince(repoDir: string, sinceCommit: string): string[
   // Let command failures reach getGitChangedFiles: [] would falsely mean clean.
   const out = execFileSync('git', ['diff', '--relative', '--name-status', '--no-renames', '-z', sinceCommit, 'HEAD', '--', '.'], {
     cwd: repoDir, encoding: 'utf-8', timeout: 10000, maxBuffer: 50 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    env: readOnlyGitEnv(),
   });
   return out.split('\0');
 }
@@ -1751,7 +1808,8 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges, isSo
     repoPrefix
       ? ['status', '--porcelain', '--no-renames', '-z', '-uall', '--', '.']
       : ['status', '--porcelain', '--no-renames', '-z', '-uall'],
-    { cwd: repoDir, encoding: 'utf-8', timeout: 10000, maxBuffer: 50 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
+    // Read-only: never take `.git/index.lock` from under the user's git (#3295).
+    { cwd: repoDir, encoding: 'utf-8', timeout: 10000, maxBuffer: 50 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: readOnlyGitEnv() }
   );
 
   // This repo's own ignore rules — built-in defaults (#407) plus its .gitignore.
@@ -1909,12 +1967,14 @@ function tallySkip(stats: ScanSkipStats | undefined, rel: string): void {
 export async function scanDirectoryAsync(
   rootDir: string,
   onProgress?: (current: number, file: string) => void,
-  stats?: ScanSkipStats
+  stats?: ScanSkipStats,
+  /** Given what git's listings say about the package manifests (git repositories only; see ManifestEvidence). */
+  onManifestEvidence?: (evidence: ManifestEvidence) => void
 ): Promise<string[]> {
   // Custom extension → language overrides from the project's codegraph.json.
   const overrides = loadExtensionOverrides(rootDir);
 
-  const gitFiles = getGitVisibleFiles(rootDir);
+  const gitFiles = getGitVisibleFiles(rootDir, onManifestEvidence);
   if (gitFiles) {
     const files: string[] = [];
     let count = 0;
@@ -2179,12 +2239,28 @@ export class ExtractionOrchestrator {
   /** Files were added or removed since the last detection: the file list it read is out of date. */
   private detectionFileListChanged = false;
   /**
+   * What the last full scan's git listings said about the package manifests
+   * (see ManifestEvidence): null when it listed no git repository, or before
+   * a full index or full sync has scanned. Taken once by the caller.
+   */
+  private manifestEvidence: ManifestEvidence | null = null;
+  /**
    * What detection read, by project-relative path, kept between detections: a
    * source file until a sync changes it, any other path while its signature
    * holds. Detecting again then reads only what changed, not the couple of
    * hundred files some detectors sample (react-native-bridge reads up to 200).
+   * The contents are kept only while {@link keepDetectionContents} says so.
    */
   private detectionReads = new Map<string, { full: string; signature: string; content?: string | null }>();
+  /**
+   * Whether detection keeps what it read for the next detection: in a graph
+   * that watches the project, which detects again as files change. A one-off
+   * sync detects once, and what Spring's detector reads (every `.java` file of
+   * a project without Spring, 50 MB on elasticsearch) would only sit in memory
+   * through the rest of the sync, raising its peak. The signatures are kept
+   * either way; they are what tells a later sync whether to detect again.
+   */
+  private keepDetectionContents = false;
   /**
    * Scope matcher for SCOPED syncs, memoized on the mtimes of the two root
    * files it is derived from (`codegraph.json`, `.gitignore`). See
@@ -2333,9 +2409,11 @@ export class ExtractionOrchestrator {
     this.detectionFileListChanged = false;
     this.detectedFrameworkNames = detectFrameworks(context).map((r) => r.name);
     const declared = declaredDependencies(context);
-    // Keep only what this detection read.
-    for (const rel of this.detectionReads.keys()) {
+    // Keep only what this detection read, and its contents only for a graph
+    // that will detect again (see keepDetectionContents).
+    for (const [rel, known] of this.detectionReads) {
       if (!inputs.sourceFiles.has(rel) && !inputs.diskPaths.has(rel)) this.detectionReads.delete(rel);
+      else if (!this.keepDetectionContents) known.content = undefined;
     }
     this.gatedFrameworks = new Map();
     for (const name of this.detectedFrameworkNames) {
@@ -2410,6 +2488,16 @@ export class ExtractionOrchestrator {
     } catch { /* no or unreadable manifest */ }
     this.manifestDependencies.set(dir, declared);
     return declared;
+  }
+
+  /**
+   * Keep what framework detection reads for the next detection (a graph that
+   * watches the project), or stop keeping it and let it go (see
+   * keepDetectionContents).
+   */
+  setKeepDetectionContents(keep: boolean): void {
+    this.keepDetectionContents = keep;
+    if (!keep) for (const known of this.detectionReads.values()) known.content = undefined;
   }
 
   /** The frameworks extraction last detected, or null before any detection. */
@@ -2500,6 +2588,7 @@ export class ExtractionOrchestrator {
     // attributed — these labels settle scan vs framework-detect vs grammars.
     const tScan = Date.now();
     const skipStats: ScanSkipStats = { unsupportedByExtension: new Map() };
+    this.manifestEvidence = null;
     const files = await scanDirectoryAsync(this.rootDir, (current, file) => {
       onProgress?.({
         phase: 'scanning',
@@ -2507,7 +2596,7 @@ export class ExtractionOrchestrator {
         total: 0,
         currentFile: file,
       });
-    }, skipStats);
+    }, skipStats, (evidence) => { this.manifestEvidence = evidence; });
     if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] scan: ${Date.now() - tScan}ms (${files.length} files)`);
     /** Only meaningful when nothing was indexable — see IndexResult (#1502). */
     const skipSummary = (): Pick<IndexResult, 'filesSkippedUnsupported' | 'topUnsupportedExtensions'> => {
@@ -3680,14 +3769,16 @@ export class ExtractionOrchestrator {
    * Re-open resolution edges whose answer was READ from a file this sync
    * touched, although neither end of the edge changed: a python attribute typed
    * through a factory or a base class in another file records those files as
-   * `metadata.typeFrom`. The definition delta cannot see these — editing what a
-   * factory returns, or what a base `__init__` assigns, adds or removes no
+   * `metadata.typeFrom`, as does a TS/JS receiver typed by the signature of a
+   * function in another file (a callback's parameter). The definition delta
+   * cannot see these — editing what a factory returns, what a base `__init__`
+   * assigns or the type a callee gives its callback adds or removes no
    * definition — so without this a synced index keeps the old type forever.
    * The edges go back to pending refs; returns the files they come from, whose
    * pending rows the caller resolves.
    */
   resurrectTypeDependentEdges(touchedPaths: string[], changedFilePaths: string[]): string[] {
-    const touched = new Set(touchedPaths.filter((p) => /\.pyi?$/.test(p)));
+    const touched = new Set(touchedPaths.filter((p) => TYPE_FROM_FILE.test(p)));
     if (touched.size === 0) return [];
     const alreadyFresh = new Set(changedFilePaths);
 
@@ -3907,7 +3998,8 @@ export class ExtractionOrchestrator {
       // `.gitignore` / exclude-standard change that forced this full sync is
       // visible to the next scoped sync (#1728).
       this.scopedMatcher = null;
-      currentFiles = await scanDirectoryAsync(this.rootDir);
+      this.manifestEvidence = null;
+      currentFiles = await scanDirectoryAsync(this.rootDir, undefined, undefined, (evidence) => { this.manifestEvidence = evidence; });
       if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-scan: ${Date.now() - tSyncScan}ms (${currentFiles.length} files)`);
       filesChecked = currentFiles.length;
 
@@ -4170,6 +4262,13 @@ export class ExtractionOrchestrator {
     };
   }
 
+  /** What the last full scan's git listings said about the package manifests, once (see manifestEvidence). */
+  takeManifestEvidence(): ManifestEvidence | null {
+    const evidence = this.manifestEvidence;
+    this.manifestEvidence = null;
+    return evidence;
+  }
+
   private indexedDirtyPaths(stamp: string | null): string[] | null {
     try {
       const state = JSON.parse(this.queries.getMetadata('indexed_dirty_paths') ?? 'null');
@@ -4215,6 +4314,40 @@ export class ExtractionOrchestrator {
   }
 
   /**
+   * The files `codegraph.json` `include` brings in that may have changed since
+   * they were indexed. They are gitignored, and `git status` never reports an
+   * ignored file, so the git fast path below saw no edit, addition or deletion
+   * among them (#3086). The test is sync's own: an included file on disk is a
+   * candidate when the index doesn't hold it or holds another size or mtime,
+   * and an indexed file `include` covers is one when it's gone. So status
+   * calls pending exactly what a sync would pick up, and the caller's hash
+   * check decides as for any other candidate.
+   */
+  private includedFileChanges(): string[] {
+    const include = loadIncludeMatcher(this.rootDir);
+    if (!include) return [];
+    const out: string[] = [];
+    const onDisk = collectIncludedFilesForRoot(this.rootDir);
+    for (const filePath of onDisk) {
+      const tracked = this.queries.getFileByPath(filePath);
+      if (!tracked) {
+        out.push(filePath);
+        continue;
+      }
+      try {
+        const stats = fs.statSync(path.join(this.rootDir, filePath));
+        if (stats.size !== tracked.size || Math.floor(stats.mtimeMs) !== Math.floor(tracked.modifiedAt)) out.push(filePath);
+      } catch {
+        out.push(filePath);
+      }
+    }
+    for (const filePath of this.queries.getAllFilePaths()) {
+      if (!onDisk.has(filePath) && include.ignores(filePath) && !fs.existsSync(path.join(this.rootDir, filePath))) out.push(filePath);
+    }
+    return out;
+  }
+
+  /**
    * The files a change of the sparse checkout brought in or took away since the
    * last full index or sync: where the scan and the index disagree. Nothing git
    * reports can supply them, so this runs on a clean tree too. It costs a scan
@@ -4254,7 +4387,7 @@ export class ExtractionOrchestrator {
       // Git supplies candidates, never the verdict. A committed deletion may
       // have been recreated locally; a previously indexed dirty path may have
       // vanished from git status after restore. Classify current disk vs DB once.
-      const candidates = new Set([...gitChanges.deleted, ...gitChanges.modified, ...gitChanges.added, ...dirtyPaths!, ...this.sparseCheckoutChanges()]);
+      const candidates = new Set([...gitChanges.deleted, ...gitChanges.modified, ...gitChanges.added, ...dirtyPaths!, ...this.sparseCheckoutChanges(), ...this.includedFileChanges()]);
       const scope = this.scopedSyncMatcher();
       const overrides = loadExtensionOverrides(this.rootDir);
       for (const filePath of candidates) {
