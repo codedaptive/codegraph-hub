@@ -35,6 +35,38 @@ function recordingQueue(repoOf: (root: string) => string = (root) => root, loadA
 }
 
 describe('JobQueue', () => {
+  it('reads load only when deciding a start in an available bypass slot', async () => {
+    const loadAverage = vi.fn(() => 0);
+    const { queue } = recordingQueue(() => 'repo', loadAverage);
+    const own = held(); const firstBypass = held(); const secondBypass = held(); const waiting = held();
+    const jobs: Array<Promise<void>> = [];
+    try {
+      jobs.push(queue.enqueue('sync', '/own', own.run));
+      expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo']);
+      expect(loadAverage).toHaveBeenCalledTimes(0);
+
+      jobs.push(queue.enqueue('sync', '/first', firstBypass.run));
+      expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo', 'bypass']);
+      expect(loadAverage).toHaveBeenCalledTimes(1);
+
+      jobs.push(queue.enqueue('sync', '/second', secondBypass.run));
+      expect(queue.runningJobs().map((job) => job.lane)).toEqual(['repo', 'bypass', 'bypass']);
+      expect(loadAverage).toHaveBeenCalledTimes(2);
+
+      jobs.push(queue.enqueue('sync', '/waiting', waiting.run));
+      expect(queue.waiting()).toBe(1);
+      expect(loadAverage).toHaveBeenCalledTimes(2);
+
+      firstBypass.finish();
+      await jobs[1];
+      expect(queue.runningJobs().find((job) => job.root === '/waiting')?.lane).toBe('bypass');
+      expect(loadAverage).toHaveBeenCalledTimes(3);
+    } finally {
+      own.finish(); firstBypass.finish(); secondBypass.finish(); waiting.finish();
+      await Promise.all(jobs);
+    }
+  });
+
   it('captures the repository key once at enqueue rather than looking it up at each pick', async () => {
     let key = 'original';
     const repoOf = vi.fn(() => key);

@@ -9,7 +9,9 @@
  * processes: the builders of two state dirs (a development build beside the
  * live one), or of a server and a `CODEGRAPH_NO_DAEMON=1` session, would each
  * start a watcher, contend on `codegraph.lock`, and degrade auto-sync. The builder
- * takes it per held project, with mode `builder`; the cold build and the seed
+ * takes it per held project, with mode `builder`, and keeps it when the hold is
+ * released until no job of that project is queued or running (holder.ts
+ * teardown); the cold build and the seed
  * take `rebuild.pid` with their own modes, and the lease a routed `codegraph index` holds takes
  * `rebuild.pid` and `writer.pid`, each with mode `rebuild`.
  *
