@@ -4,7 +4,7 @@
  * grep-by-symbol through the host's extension hook.
  *
  * In-process tests register the extension from src.
- * Spawned-process tests are in grep-extension.integration.test.ts.
+ * Spawned-process tests are in grep-extension-cli.validation.test.ts.
  *
  * One fixture project is indexed once in beforeAll and shared, read-only.
  */
@@ -24,6 +24,7 @@ import {
 } from '../../../src/extensions/host/registry';
 import queriesExtension from '../../../src/extensions/queries/extension';
 import { GREP_TOOL, formatGrepResult, grepIndex, zeroHitNote } from '../../../src/extensions/queries/grep';
+import { gitInitTempRoot } from '../../helpers/git-init-temp-root';
 
 const FILES: Record<string, string> = {
   'src/app.ts': [
@@ -46,6 +47,7 @@ let unindexed: string;
 
 beforeAll(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-grep-ext-')));
+  gitInitTempRoot(root);
   for (const [rel, content] of Object.entries(FILES)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), content);

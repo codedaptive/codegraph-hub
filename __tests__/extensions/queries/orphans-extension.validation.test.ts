@@ -8,7 +8,7 @@
  *     alone in a child `node`): the registration loads none of the report's
  *     code, so `require.cache` holds no dist/index.js, nothing under dist/db/
  *     and no web-tree-sitter;
- *   - built binary (dist/bin/codegraph.js), as blast-extension.integration.test.ts: the
+ *   - built binary (dist/bin/codegraph.js), as blast-extension.validation.test.ts: the
  *     zone module found by the hook's discovery under dist/extensions/, with
  *     CODEGRAPH_EXTENSION_MODULES removed from the child's env so nothing else
  *     can supply it.
