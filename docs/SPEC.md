@@ -145,7 +145,7 @@ the same line on stderr and answer as before (S-71, team/settled.md). Only an ex
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
 queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
-database size.
+database size and no process other than the builder holds the root's writer slot; otherwise it logs the skip.
 
 ## 4. Session launch settings (`serve --mcp …`)
 
