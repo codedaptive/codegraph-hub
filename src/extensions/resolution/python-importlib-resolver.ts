@@ -11,9 +11,10 @@
  * leading '/' is anchored on `__file__` and is root-relative; any other name is tried
  * root-relative first, then relative to the loading file's directory.
  *
- * resolve() runs for every Python reference, so one that is not ours returns null
- * after a test of the reference's own fields and no context call. ownsReference keeps the import and name
- * strategies from guessing a module for a path no file answers.
+ * resolve() runs for each Python reference that reaches framework resolution (after the
+ * name pre-filter); one that is not a loader's returns null after a test of its own
+ * fields and no context call. ownsReference keeps the import and name strategies from
+ * guessing a module for a path no file answers.
  */
 import * as path from 'path';
 import type { FrameworkResolver, ResolutionContext, UnresolvedRef } from '../../resolution/types';

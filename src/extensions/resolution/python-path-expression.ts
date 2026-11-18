@@ -10,7 +10,8 @@
  * climbs above the root); any other is relative as written, normalized, with './'
  * prepended when it has no '/'. An absolute literal gives null.
  */
-import { pythonPathTokens, type PathToken } from './python-path-tokens';
+import type { PathToken } from './python-path-token';
+import { pythonPathTokens } from './python-path-tokens';
 
 interface PathValue {
   anchored: boolean;

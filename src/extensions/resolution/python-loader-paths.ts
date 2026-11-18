@@ -16,7 +16,7 @@
 import { stripCommentsForRegex } from '../../resolution/strip-comments';
 import { pythonPathExpression } from './python-path-expression';
 
-export interface LoaderPath {
+interface LoaderPath {
   line: number;
   name: string;
 }
@@ -71,21 +71,30 @@ function pathArgument(args: string[] | null): string | undefined {
  */
 function callArguments(source: string, from: number): string[] | null {
   const args: string[] = [];
-  let depth = 0;
   let start = from;
-  for (let i = from; i < source.length; i++) {
+  for (let i = from; i < source.length; i = skipToken(source, i)) {
     const c = source[i];
-    if (c === '"' || c === "'") i = closingQuote(source, i);
-    else if (c === '(' || c === '[' || c === '{') depth++;
-    else if (depth > 0 && (c === ')' || c === ']' || c === '}')) depth--;
-    else if (depth === 0 && (c === ',' || c === ')')) {
-      const arg = source.slice(start, i).trim();
-      if (arg !== '' || c === ',') args.push(arg);
-      if (c === ')') return args;
-      start = i + 1;
-    }
+    if (c !== ',' && c !== ')') continue;
+    const arg = source.slice(start, i).trim();
+    if (arg !== '' || c === ',') args.push(arg);
+    if (c === ')') return args;
+    start = i + 1;
   }
   return null;
+}
+
+/**
+ * Index just past the token at `i`: a whole string, a whole bracketed group (nested
+ * groups and strings inside it skipped too, so their commas and ')' are not the call's),
+ * or one character. Past the end when a group never closes.
+ */
+function skipToken(source: string, i: number): number {
+  const c = source[i];
+  if (c === '"' || c === "'") return closingQuote(source, i) + 1;
+  if (c !== '(' && c !== '[' && c !== '{') return i + 1;
+  let j = i + 1;
+  while (j < source.length && !')]}'.includes(source[j] ?? '')) j = skipToken(source, j);
+  return j + 1;
 }
 
 /** Index of the quote closing the single-line string opened at `open`. */

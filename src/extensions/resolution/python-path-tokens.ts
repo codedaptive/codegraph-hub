@@ -4,17 +4,13 @@
  * Only what a static file path is written with: plain, raw or unicode string literals,
  * identifiers, integers and the punctuation `( ) [ ] . , / =`. Any other character
  * (`+`, `%`, `{`) means the path is computed, so the whole expression is refused with
- * null. An f-string's `f` reads as a name followed by a string, which the evaluator
- * accepts nowhere. A string holding a backslash is refused: its escapes or Windows
- * separators are not a POSIX path written as is.
+ * null. A name directly followed by a quote is a string prefix other than `r`/`u`
+ * (an f-string, a bytes literal), and is refused too. A string holding a backslash is
+ * refused: its escapes or Windows separators are not a POSIX path written as is.
  */
+import type { PathToken } from './python-path-token';
 
-export interface PathToken {
-  kind: 'string' | 'name' | 'number' | 'punct';
-  text: string;
-}
-
-const TOKEN = /\s+|[rRuU]?(["'])((?:(?!\1)[^\\\n])*)\1|([A-Za-z_]\w*)|(\d+)|([()[\].,/=])/y;
+const TOKEN = /\s+|[rRuU]?(["'])((?:(?!\1)[^\\\n])*)\1|([A-Za-z_]\w*)(?!["'])|(\d+)|([()[\].,/=])/y;
 
 export function pythonPathTokens(expression: string): PathToken[] | null {
   const tokens: PathToken[] = [];
