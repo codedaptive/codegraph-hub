@@ -34,7 +34,7 @@ import {
 
 /** How long a builder may take to appear in builder.pid after the server starts. */
 const BUILDER_APPEAR_MS = 180_000;
-/** The lock sampler's period, as in index-builder.gate.test.ts. */
+/** The lock sampler's period, as in index-builder.validation.test.ts. */
 const SAMPLE_MS = 20;
 /**
  * How long a routed command's job may take to write its end line after the CLI exited. The end line is the

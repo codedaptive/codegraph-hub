@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jobEventListener } from '../../../src/extensions/host/builder/job-event-listener';
 import { vacuumAfterJob } from '../../../src/extensions/host/builder/vacuum-after-job';
 
@@ -8,7 +8,13 @@ const start = { edge: 'start', kind: 'sync', root: '/project' } as const;
 const success = { edge: 'end', kind: 'sync', root: '/project', ok: true } as const;
 const failed = { edge: 'end', kind: 'sync', root: '/project', ok: false, error: 'write failed' } as const;
 
-beforeEach(() => vi.clearAllMocks());
+// formatJobLine stamps each line with the current time; a fixed fake clock keeps the real one out of this test.
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-01-02T03:04:05.678Z'));
+});
+afterEach(() => vi.useRealTimers());
 
 describe('jobEventListener', () => {
   it('logs exactly the start line without reading the queue', () => {

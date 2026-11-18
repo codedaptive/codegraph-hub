@@ -13,7 +13,7 @@
  *    from the server's own handles, which never watch.
  *
  * The builder here is a stub that records what it is asked: its real behavior has its own tests and the
- * gates (index-builder.gate.test.ts). The exception is the symlink-into-a-nested-repository case, which runs a
+ * gates (index-builder.validation.test.ts). The exception is the symlink-into-a-nested-repository case, which runs a
  * real BuilderService and a real cold build. Real git worktrees and real SQLite in a temp dir.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
