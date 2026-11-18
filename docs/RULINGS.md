@@ -785,3 +785,5 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-43's two-lane design (a sync lane beside one serial cold-build lane) and its "Cold builds stay
   serial among themselves (S-6, S-33)"; S-79 once each job runs in its own process.
 - Owner: host (src/extensions/host/builder).
+- Built: sm.17 (2026-11-18), host's builder-job-process and builder-repo-lanes with the r53-watchdog-pid fix-forwards; an
+  ended cold build's rollback as S-90 settles it.
