@@ -1,8 +1,7 @@
 /**
  * Ends a job that went past a limit (./job-watchdog.ts finds it). The job runs in its own child process
  * (./job-supervisor.ts): the child the limit was measured on is killed. When the job runs in another child by then
- * (the kill resolves false), nothing more is done: no line, no mark, no cleanup, and the watchdog judges the new
- * child on its own. Otherwise, once the child has closed, the `job limit` line and the job's mark
+ * (the kill resolves false), nothing more is done: no line, no mark, no cleanup. Otherwise, once the child has closed, the `job limit` line and the job's mark
  * (./ended-jobs-file.ts) are written, so no builder runs that job again until an explicit `codegraph index` or
  * `init`, and the job is cleaned up by the child's pid (./clean-up-ended-job.ts): a seed's staging copy removed,
  * a cold build's partial database removed when its identity is the one the child reported creating (or, when the

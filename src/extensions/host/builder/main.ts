@@ -39,7 +39,7 @@
  * lease (./fences.ts) after the holds.
  *
  * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) is ended
- * alone by ./job-limit-guard.ts: its child is killed, the `job limit` line and the job's mark are written, so
+ * alone by ./job-limit-guard.ts: the child it was measured in is killed, the `job limit` line and the job's mark are written, so
  * nothing retries it automatically, a partial cold build it reported creating is rolled back, the locks and seed
  * staging naming the child's pid are removed, and the builder and every other job go on. The watchdog
  * (./job-watchdog.ts) samples every running job every 5 s on the main thread, so it is late while the event loop
