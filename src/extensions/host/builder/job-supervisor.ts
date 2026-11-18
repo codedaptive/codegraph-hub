@@ -15,11 +15,12 @@ import type { JobSpecMessage } from './job-spec-message-type';
 import type { JobSpec } from './job-spec-type';
 
 export class JobSupervisor {
-  /** The running children by job id, each with the promise of its 'close'. */
-  private readonly children = new Map<number, { child: ChildProcess; closed: Promise<void> }>();
+  /** The running children by job id, each with the promise of its 'close' and whether {@link kill} ended it. */
+  private readonly children = new Map<number, { child: ChildProcess; closed: Promise<void>; killed: boolean }>();
   /**
-   * The database identity each job's child reported, by job id. It outlives the run, since the guard cleans up
-   * after the kill has ended the child; it is cleared when the next run of the same id starts.
+   * The database identity each job's child reported, by job id. A child that closes without a kill drops its
+   * entry then, so identities do not pile up for the builder's life. A killed job's entry outlives its child,
+   * since the guard cleans up after the kill has closed it: the first read after the close drops it.
    */
   private readonly databases = new Map<number, string | null>();
   private readonly entry: string;
@@ -43,13 +44,14 @@ export class JobSupervisor {
       let settle: () => void = () => undefined;
       const closed = new Promise<void>((done) => { settle = done; });
       const finish = (ended: Error): void => {
+        if (!this.children.get(jobId)?.killed) this.databases.delete(jobId);
         this.children.delete(jobId);
         settle();
         if (outcome === null) reject(ended);
         else if (outcome.ok) resolve(outcome.value);
         else reject(outcome.error);
       };
-      this.children.set(jobId, { child, closed });
+      this.children.set(jobId, { child, closed, killed: false });
       child.on('close', (code, signal) => {
         finish(new Error(`job child ended without a result (${signal ? `signal ${signal}` : `exit code ${code}`})`));
       });
@@ -73,15 +75,21 @@ export class JobSupervisor {
     return this.children.get(jobId)?.child.pid ?? null;
   }
 
-  /** The database identity job `jobId`'s child last reported; null when it reported none. */
+  /**
+   * The database identity job `jobId`'s child last reported; null when it reported none, or when its child closed
+   * without a kill. A read after a killed child closed drops the entry.
+   */
   createdDatabase(jobId: number): string | null {
-    return this.databases.get(jobId) ?? null;
+    const identity = this.databases.get(jobId) ?? null;
+    if (!this.children.has(jobId)) this.databases.delete(jobId);
+    return identity;
   }
 
   /** SIGKILL job `jobId`'s child; resolves once it has closed, at once when no child runs for that id. */
   async kill(jobId: number): Promise<void> {
     const running = this.children.get(jobId);
     if (!running) return;
+    running.killed = true;
     running.child.kill('SIGKILL');
     await running.closed;
   }

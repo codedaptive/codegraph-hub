@@ -208,18 +208,24 @@ export class BuilderService {
   }
 
   /**
-   * Stop. The jobs still queued are dropped and the running jobs get `graceMs` to finish, so a cold build the
-   * server's exit interrupted is not thrown away at once; then every hold is released (bounded: a job still
-   * running past the grace leaves its root's lock for the next builder to reclaim, its pid being dead).
-   * Last, whatever the earlier steps did, every rebuild fence is released (`rebuild.pid`, and `writer.pid` where
-   * a lease took it), so a bounded stop never leaves a root fenced.
+   * Stop. The queue is closed, so no job starts after this: the jobs still queued are dropped and the running
+   * jobs get `graceMs` to finish, so a cold build the server's exit interrupted is not thrown away at once.
+   * Then `afterGrace` is awaited (the builder kills its job children still running there), and then every hold
+   * is released, even when `afterGrace` throws (bounded: a job still running past the grace leaves its root's
+   * lock for the next builder to reclaim, its pid being dead). Last, whatever the earlier steps did, every
+   * rebuild fence is released (`rebuild.pid`, and `writer.pid` where a lease took it), so a bounded stop never
+   * leaves a root fenced.
    */
-  async stop(graceMs: number): Promise<void> {
+  async stop(graceMs: number, afterGrace?: () => Promise<void>): Promise<void> {
     try {
       this.housekeeping?.stop();
       await Promise.race([this.queue.close(), new Promise<void>((resolve) => setTimeout(resolve, graceMs).unref())]);
-      // 2 s bounds the hold teardown so a stopping builder exits promptly even when a hold will not close.
-      await Promise.race([this.holders.closeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref())]);
+      try {
+        await afterGrace?.();
+      } finally {
+        // 2 s bounds the hold teardown so a stopping builder exits promptly even when a hold will not close.
+        await Promise.race([this.holders.closeAll(), new Promise<void>((resolve) => setTimeout(resolve, 2_000).unref())]);
+      }
     } finally {
       this.fences.releaseAll();
     }

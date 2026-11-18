@@ -27,10 +27,11 @@
  *                 process (./clear-ended-root.ts).
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
- * already closed: the server may be gone before the first `ready`), every job child (./job-supervisor.ts) is killed
- * and waited for, then the jobs still queued are dropped and the jobs running in this process get
- * CODEGRAPH_BUILDER_EXIT_GRACE_MS (default 30 s) to finish before the holds are released and the process
- * exits. SIGTERM and SIGINT drop the running jobs' grace and exit after at most 2 s of hold teardown. A
+ * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and a
+ * running job, in this process or in its own child (./job-supervisor.ts), gets CODEGRAPH_BUILDER_EXIT_GRACE_MS
+ * (default 30 s) to finish; a child still running after it is killed and waited for before the holds are
+ * released and the process exits. SIGTERM and SIGINT give no grace: the job children are killed at once, and
+ * the process exits after at most 2 s of hold teardown. A
  * killed builder leaves locks that name a dead pid (a CLI index's rebuild lease among them); the next builder
  * reclaims them (writer-lock.ts) and the server's client restarts it. A clean exit releases every rebuild
  * lease (./fences.ts) after the holds.
@@ -47,8 +48,8 @@
  * again only when something asks for it. The server's client restarts the builder. Other held roots' writer.pid
  * still name the dead pid, for the next builder to reclaim. The watchdog (./job-watchdog.ts) samples every running
  * job every 5 s on the main thread, so it is late while the event loop is blocked. A job's child is charged its
- * own resident size (./read-process-rss.ts); this process's is charged to the oldest whole-repository job running
- * in it, when one runs (./rss-owner.ts).
+ * own resident size (./read-process-rss.ts); this process's is charged to one of the jobs running in it
+ * (./rss-owner.ts): the oldest whole-repository job when one runs, else the oldest job.
  *
  * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
  * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.
@@ -185,8 +186,9 @@ export function runBuilder(): void {
   const shutdown = (graceMs: number): void => {
     if (stopping) return;
     stopping = true;
-    // The job children are gone before any hold is released, so none writes to a root after its release.
-    void supervisor.killAll().then(() => service.stop(graceMs)).finally(() => {
+    // Every job, in this process or in a child, gets the grace; a child still running after it is killed before
+    // any hold is released, so none writes to a root after its release.
+    void service.stop(graceMs, () => supervisor.killAll()).finally(() => {
       removePidFile(pidFile);
       // No worker thread should be marking its heap when the process ends (worker-teardown.ts).
       collectBeforeExit();
@@ -219,7 +221,9 @@ export function runBuilder(): void {
       exit: (code) => { collectBeforeExit(); process.exit(code); },
       alongside: service.queue.runningJobs().filter((j) => j.id !== job.id && supervisor.childPid(j.id) === null),
       child: childPid === null ? undefined
-        : { pid: childPid, createdDatabase: supervisor.createdDatabase(job.id), kill: () => supervisor.kill(job.id) },
+        // A getter: the guard reads the identity after the kill has closed the child, so a report the child sent
+        // just before the kill is not missed, and the read drops the killed job's entry (./job-supervisor.ts).
+        : { pid: childPid, get createdDatabase() { return supervisor.createdDatabase(job.id); }, kill: () => supervisor.kill(job.id) },
       killAll: () => supervisor.killAll(),
     }),
   }).start();

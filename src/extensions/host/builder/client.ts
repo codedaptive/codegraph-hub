@@ -16,9 +16,9 @@
  * is dropped. Stop prevents retries. A builder exit rejects in-flight RPCs; a rebuild lease does not outlive
  * its builder (its locks name a dead pid).
  *
- * The builder exits once this process goes away (its IPC channel closes): a job already running in the builder's
- * process gets the exit grace to finish first (a job in its own child process is killed), so the builder does not
- * outlive its server for long.
+ * The builder exits once this process goes away (its IPC channel closes): a running job, in the builder's process
+ * or in its own child, gets the exit grace to finish first, and a child still running after it is killed before
+ * the holds close, so the builder does not outlive its server for long.
  */
 import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'child_process';
 import * as fs from 'fs';
