@@ -4,9 +4,9 @@
  * Only what a static file path is written with: plain, raw or unicode string literals,
  * identifiers, integers and the punctuation `( ) [ ] . , / =`. Any other character
  * (`+`, `%`, `{`) means the path is computed, so the whole expression is refused with
- * null. A one-letter name directly followed by a quote (`f"…"`, `b"…"`) is refused
- * here too; a longer prefix (`fr"…"`) tokenizes as a name and a string, which
- * pythonPathExpression refuses. A string holding a backslash is
+ * null. A one-letter prefix other than `r`/`u` directly followed by a quote (`f"…"`,
+ * `b"…"`) is refused here; a longer prefix is refused either here or by
+ * pythonPathExpression. A string holding a backslash is
  * refused: its escapes or Windows separators are not a POSIX path written as is.
  */
 import type { PathToken } from './python-path-token';
