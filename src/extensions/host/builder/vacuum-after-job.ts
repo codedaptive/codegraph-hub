@@ -31,15 +31,14 @@ export function vacuumAfterJob(event: JobEvent, deps: VacuumAfterJobDeps): void 
     const dbPath = path.join(getCodeGraphDir(root), 'codegraph.db');
     const stats = (deps.readStats ?? readDbPageStats)(dbPath);
     if (stats === null || !freelistOverLimit(stats, minFreelistBytes)) return;
-    const body = async ({ id }: { id: number }): Promise<unknown> => {
+    // A rejection is the queue's to log (a failed end); a closed queue or an ended vacuum means no VACUUM.
+    deps.queue.enqueue('vacuum', root, async ({ id }: { id: number }): Promise<unknown> => {
       if (deps.rebuildHeld(root)) return 'fenced';
       return deps.runJob(id, jobBodySpec('vacuum', root, 'vacuum-job', 'vacuumJob', { root, dbPath, minFreelistBytes }), (payload) => {
         const line = progressLogLine(payload);
         if (line !== null) deps.jobLog(line);
       });
-    };
-    // A rejection is the queue's to log (a failed end); a closed queue or an ended vacuum means no VACUUM.
-    deps.queue.enqueue('vacuum', root, body, { coalesceKey: `vacuum:${canonicalProjectRoot(root)}` }).catch(() => {});
+    }, { coalesceKey: `vacuum:${canonicalProjectRoot(root)}` }).catch(() => {});
   } catch {
     // No VACUUM: the next job's end asks again.
   }

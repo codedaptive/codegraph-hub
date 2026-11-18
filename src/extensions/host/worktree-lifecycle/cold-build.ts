@@ -26,11 +26,12 @@
  * with no database file at dbFile. On 1 or 4, removal of this build's database
  * is best-effort and only if its identity still matches; see runColdBuild.
  * The builder runs each attempt in its own child process (builder/cold-build-body.ts). A child the builder
- * ends at a job limit or after its stop's grace is killed. When the child had reported its database (init
- * returned), the builder removes the `rebuild.pid` naming that child, and the partial database only when it is
- * this build's by that identity (builder/clean-up-ended-job.ts). When it had reported none (killed during
- * init), the builder leaves both: the `rebuild.pid` names a dead pid with mode `cold-build`, as it does after a
- * build killed with its builder. Such a leftover is discarded thus:
+ * ends at a job limit or after its stop's grace is killed, and its partial work is rolled back at once
+ * (builder/clean-up-ended-job.ts): when the child had reported its database (init returned), the database is
+ * removed only when it is this build's by that identity; when it had reported none (killed during init), it is
+ * discarded as ./discardDeadColdBuildLeftover.ts does, unless another live process holds `writer.pid`; either
+ * way the `rebuild.pid` naming the child is released. A build killed with its builder leaves its `rebuild.pid`
+ * naming a dead pid with mode `cold-build`. Such a leftover is discarded thus:
  *   - the next cold build of that root reads the dead cold build's record
  *     (./deadColdBuildHolder.ts) before it takes the lock over, and then
  *     discards whatever database is at the path (./discardDeadColdBuildLeftover.ts),

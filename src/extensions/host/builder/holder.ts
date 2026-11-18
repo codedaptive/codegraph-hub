@@ -30,7 +30,7 @@
  *
  * The watcher is a FileWatcher whose sync function QUEUES a `watch-sync` job, not `CodeGraph.watch()`, whose
  * syncs would run outside the queue and so outside its priorities. On Windows the watcher gets the same filter
- * `CodeGraph.watch()` gives its own: {@link isIndexedFileStateCurrent}, on a read-only open of the root for
+ * `CodeGraph.watch()` gives its own: ./is-indexed-file-state-current.ts, on a read-only open of the root for
  * each notification, drops the NTFS last-access notifications (#1451) of files whose indexed size and mtime
  * still match. It is a copy of `CodeGraph`'s private check, built on the public `getFile`; only its
  * POSIX-runnable behavior is tested here, never a Windows run.
@@ -41,7 +41,6 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import CodeGraph from '../../../index';
 import { canonicalProjectRoot, isInitialized } from '../../../directory';
 import { FileWatcher, LockUnavailableError, type WatchOptions } from '../../../sync/watcher';
 import { watchDisabledReason } from '../../../sync/watch-policy';
@@ -130,37 +129,6 @@ interface Hold {
   jobOfRootReleasing: () => void;
   /** JSON of the last freshness pushed. */
   lastPushed: string;
-}
-
-/**
- * Whether the index's record for `relPath` (project-relative, POSIX) still matches the file on disk: tracked,
- * a regular file, and the same size and whole-millisecond mtime. False for an untracked file, a missing or
- * unreadable one (a removal or a transient failure must reach the sync), or when `cg` is null or unreadable.
- *
- * The same comparison as `CodeGraph.isIndexedFileStateCurrent` (src/index.ts, private; `CodeGraph.watch()`
- * passes it to its watcher on Windows only, to discard NTFS last-access notifications, #1451), built on the
- * public `getFile` because the builder's watcher queues its syncs and so cannot use `CodeGraph.watch()`.
- */
-export function isIndexedFileStateCurrent(
-  cg: Pick<CodeGraph, 'getFile'> | null,
-  projectRoot: string,
-  relPath: string,
-): boolean {
-  if (cg === null) return false;
-  try {
-    const tracked = cg.getFile(relPath);
-    if (!tracked) return false;
-    const stat = fs.statSync(path.join(projectRoot, relPath));
-    return (
-      stat.isFile() &&
-      Number.isFinite(stat.mtimeMs) &&
-      Number.isFinite(tracked.modifiedAt) &&
-      stat.size === tracked.size &&
-      Math.floor(stat.mtimeMs) === Math.floor(tracked.modifiedAt)
-    );
-  } catch {
-    return false;
-  }
 }
 
 /** True when a process with this pid exists (EPERM: it exists, we may not signal it). */

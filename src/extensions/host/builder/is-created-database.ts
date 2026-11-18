@@ -1,7 +1,8 @@
 /**
  * The test ./clean-up-ended-job.ts applies before it removes an ended cold build's database: whether the file at
  * `dbFile` is the one the job's child reported creating, by its identity (`dev:ino`). A child that reported none
- * (null) proves nothing, so its database is kept, and the test says so (`identityReported: false`).
+ * (null) proves nothing by identity, so the test answers false and says so (`identityReported: false`): the
+ * clean-up then discards the file by the killed cold build's leftover rule.
  */
 import { statInode } from '../../../directory';
 import type { BuildDatabaseTest } from './build-database-test-type';

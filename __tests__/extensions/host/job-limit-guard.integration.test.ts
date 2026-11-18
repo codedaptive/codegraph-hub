@@ -52,8 +52,8 @@ describe('endOverLimit with a child', () => {
     lock('rebuild.pid', 123);
     const createdDatabase = identity === 'match' ? statInode(path.join(dir, 'codegraph.db')) : identity === 'mismatch' ? 'different' : null;
     await endOverLimit({ kind: 'cold-build', root }, breach, deps(123, createdDatabase, async () => {}));
-    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(identity === 'null');
-    for (const name of dbNames) expect(fs.existsSync(path.join(dir, name))).toBe(identity !== 'match');
+    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(false);
+    for (const name of dbNames) expect(fs.existsSync(path.join(dir, name))).toBe(identity === 'mismatch');
   });
   it.each(['init', 'index'] as const)('keeps a user database when a %s child reports its identity', async (kind) => {
     for (const name of dbNames) fs.writeFileSync(path.join(dir, name), 'user data');

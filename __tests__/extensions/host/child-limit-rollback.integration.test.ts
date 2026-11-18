@@ -45,14 +45,18 @@ async function end(kind: 'seed' | 'cold-build', pid: number) {
 }
 
 describe('child limit rollback', { timeout: 90_000 }, () => {
-  it('rebuilds a schema-less database left by a killed child before identity reporting', async () => {
+  it('discards the unreported database at job end and builds a schema on the next cold build', async () => {
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(root, 'state'));
     execFileSync('git', ['init', '-q', root]);
     fs.writeFileSync(path.join(root, 'alpha.ts'), 'export function alpha() {}\n');
     const { pid, rejected } = await start('cold-build', 'coldBuildWithoutIdentity');
     expect(supervisor.createdDatabase(1)).toBeNull();
+    expect(fs.existsSync(path.join(root, '.codegraph', 'codegraph.db'))).toBe(true);
+    expect(fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid'))).toBe(true);
     await end('cold-build', pid);
     await rejected;
+    expect(fs.existsSync(path.join(root, '.codegraph', 'codegraph.db'))).toBe(false);
+    expect(fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid'))).toBe(false);
     expect(await runColdBuild(root)).toBe(0);
     const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'), { readOnly: true });
     try {

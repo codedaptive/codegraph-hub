@@ -6,14 +6,17 @@
  * the builder (its hold on the root) stays, and a staging copy only where its name carries it. An `index` or
  * `init` keeps its database: it may be a user's.
  *
- * A cold build whose child reported no database (killed before CodeGraph.init returned) keeps both its partial
- * database and the `rebuild.pid` naming its dead child: that record is what tells the next cold build of the
- * root, which takes the lock over, to discard the leftover first (../worktree-lifecycle/cold-build.ts).
+ * A cold build's database is rolled back at the job's end, while its `rebuild.pid` still names `pid`. When the
+ * child reported the database's identity, only a file with that identity is removed. When it reported none
+ * (killed before CodeGraph.init returned), the file is discarded by the rule for a killed cold build's leftover
+ * (../worktree-lifecycle/discardDeadColdBuildLeftover.ts): kept while another live process holds `writer.pid`.
+ * Either way the `rebuild.pid` naming `pid` is then released.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { getCodeGraphDir } from '../../../directory';
 import { getWriterPidPath, readWriterLock } from '../../../mcp/writer-lock';
+import { discardDeadColdBuildLeftover } from '../worktree-lifecycle/discardDeadColdBuildLeftover';
 import { seedStagingPid } from '../worktree-lifecycle/seed-staging-pid';
 import { attempt } from './attempt';
 import type { BuildDatabaseTest } from './build-database-test-type';
@@ -24,13 +27,18 @@ function lockNamesPid(root: string, lockName: 'rebuild.pid' | 'writer.pid', pid:
 }
 
 /**
- * Removes the cold build's partial database, only while `rebuild.pid` names `pid` (no reader has opened it) and
- * `isBuildDatabase` says the file is the one the build created. A database a user's `codegraph init` made (it
- * takes no `rebuild.pid`), or a breach before the build's init returned, keeps it.
+ * Removes the cold build's partial database, only while `rebuild.pid` names `pid` (no reader has opened it): by
+ * `isBuildDatabase` when the child reported an identity, else by the leftover rule (see the header). A database a
+ * user's `codegraph init` made (it takes no `rebuild.pid`) is kept.
  */
-function rollBackColdBuild(root: string, pid: number, isBuildDatabase: (root: string, dbFile: string) => boolean): void {
+function rollBackColdBuild(root: string, pid: number, isBuildDatabase: BuildDatabaseTest): void {
+  if (!lockNamesPid(root, 'rebuild.pid', pid)) return;
+  if (isBuildDatabase.identityReported === false) {
+    discardDeadColdBuildLeftover(root, pid);
+    return;
+  }
   const dbFile = path.join(getCodeGraphDir(root), 'codegraph.db');
-  if (!lockNamesPid(root, 'rebuild.pid', pid) || !isBuildDatabase(root, dbFile)) return;
+  if (!isBuildDatabase(root, dbFile)) return;
   for (const suffix of ['', '-wal', '-shm', '-journal']) {
     attempt(() => fs.rmSync(`${dbFile}${suffix}`, { force: true }));
   }
@@ -51,8 +59,7 @@ function removeSeedStaging(root: string, pid: number): void {
 export function cleanUpEndedJob(kind: JobKind, root: string, pid: number, isBuildDatabase: BuildDatabaseTest): void {
   if (kind === 'cold-build') attempt(() => rollBackColdBuild(root, pid, isBuildDatabase));
   if (kind === 'seed') attempt(() => removeSeedStaging(root, pid));
-  const keepRebuildLock = kind === 'cold-build' && isBuildDatabase.identityReported === false;
-  for (const lockName of keepRebuildLock ? ['writer.pid'] as const : ['rebuild.pid', 'writer.pid'] as const) {
+  for (const lockName of ['rebuild.pid', 'writer.pid'] as const) {
     attempt(() => {
       if (lockNamesPid(root, lockName, pid)) fs.unlinkSync(getWriterPidPath(root, lockName));
     });

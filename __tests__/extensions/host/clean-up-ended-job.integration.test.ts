@@ -38,15 +38,27 @@ describe('cleanUpEndedJob', () => {
     for (const name of names) expect(fs.existsSync(path.join(dir, name))).toBe(remains);
   });
 
-  it('keeps the dead child rebuild lock and schema-less database when no identity was reported', () => {
+  it('discards the database and releases rebuild.pid when the killed cold build reported no identity', () => {
     const dbPath = path.join(dir, 'codegraph.db');
     const db = new DatabaseSync(dbPath);
     db.exec('CREATE TABLE schema_versions (version INTEGER)');
     db.close();
+    for (const suffix of ['-wal', '-shm', '-journal']) fs.writeFileSync(dbPath + suffix, 'partial');
     lock('rebuild.pid', 999999);
     cleanUpEndedJob('cold-build', root, 999999, isCreatedDatabase(null));
-    expect(fs.existsSync(dbPath)).toBe(true);
-    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(true);
+    for (const suffix of ['', '-wal', '-shm', '-journal']) expect(fs.existsSync(dbPath + suffix)).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(false);
+  });
+
+  it('keeps the database for another live writer and releases the killed child rebuild lock', () => {
+    const dbPath = path.join(dir, 'codegraph.db');
+    for (const suffix of ['', '-wal', '-shm', '-journal']) fs.writeFileSync(dbPath + suffix, 'live writer data');
+    lock('rebuild.pid', 999999);
+    lock('writer.pid', process.pid);
+    cleanUpEndedJob('cold-build', root, 999999, isCreatedDatabase(null));
+    for (const suffix of ['', '-wal', '-shm', '-journal']) expect(fs.readFileSync(dbPath + suffix, 'utf8')).toBe('live writer data');
+    expect(fs.existsSync(path.join(dir, 'writer.pid'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(false);
   });
 
   it('keeps the cold database when the rebuild lock names another pid', () => {
