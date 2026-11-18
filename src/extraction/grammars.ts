@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { ExtractionError, Language } from '../types';
+import { extensionlessLanguage } from '../extensions/host/scan/extensionless-language';
 
 export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
 
@@ -235,9 +236,10 @@ export function hasMpegTsExtension(filePath: string): boolean {
 }
 
 /**
- * Whether a file is one CodeGraph can parse, based purely on its extension.
- * This is the single source of truth for "should we index this file" — derived
- * from EXTENSION_MAP so parser support and indexing selection never drift.
+ * Whether a file is one CodeGraph can parse, based on its extension, or, for a
+ * file with no extension, on its `#!` line (fork R-49). This is the single source
+ * of truth for "should we index this file" — extensions come from EXTENSION_MAP
+ * so parser support and indexing selection never drift.
  *
  * `overrides` is the project's validated custom extension → language map (from
  * `codegraph.json`); when present its extensions count as indexable in addition
@@ -251,6 +253,7 @@ export function isSourceFile(filePath: string, overrides?: Record<string, Langua
   if (isPlayRoutesFile(filePath)) return true; // Play `conf/routes` is extensionless
   if (isShopifyLiquidJson(filePath, rootDir)) return true; // Shopify OS 2.0 JSON templates / section groups
   if (isErlangAppFile(filePath)) return true; // OTP `.app`/`.app.src` resource files
+  if (extensionlessLanguage(filePath, rootDir) !== null) return true; // a `#!` script with no extension (fork R-49)
   const dot = filePath.lastIndexOf('.');
   if (dot < 0) return false;
   const ext = filePath.slice(dot).toLowerCase();
@@ -598,7 +601,8 @@ export function getParser(language: Language): Parser | null {
 }
 
 /**
- * Detect language from file extension.
+ * Detect language from file extension, or from the `#!` line of a file with no
+ * extension (fork R-49).
  *
  * `overrides` is the project's validated custom extension → language map (from
  * `codegraph.json`); when present its mappings take precedence over the built-in
@@ -619,6 +623,11 @@ export function detectLanguage(filePath: string, source?: string, overrides?: Re
   // top-level expressions (last-dot ext `.src` is too generic for the map).
   if (isErlangAppFile(filePath)) return 'erlang';
   const lang = (overrides && overrides[ext]) || EXTENSION_MAP[ext] || 'unknown';
+  // An extensionless script takes its interpreter's language from its `#!` line (fork R-49).
+  if (lang === 'unknown') {
+    const scripted = extensionlessLanguage(filePath, rootDir, source);
+    if (scripted) return scripted;
+  }
 
   // A Flow-typed `.js` (`// @flow` in its leading comments) parses as TSX:
   // the JavaScript grammar can't read its annotations — `render(): React.Node`

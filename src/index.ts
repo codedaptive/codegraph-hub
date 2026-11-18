@@ -1260,7 +1260,7 @@ export class CodeGraph {
         const flowChange = this.resolver.trackParameterFlows();
         const result = await this.orchestrator.sync(options.onProgress, options.paths, backpressure,
           (filePath, content) => {
-            flowChange.before(filePath);
+            flowChange.before(filePath, content);
             if (watchRoutes && routesBefore === null) routesBefore = this.queries.getNodesByKind('route');
             if (!refreshSynthesis && (this.queries.hasSynthesizedEdgesTouchingFile(filePath) ||
               this.queries.wasSynthesisInput(filePath) ||

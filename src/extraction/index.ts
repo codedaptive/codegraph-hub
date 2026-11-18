@@ -1828,7 +1828,9 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges, isSo
   // filtered by exactly the rules a working-tree change is (#766, #999, #1829).
   const classify = (statusCode: string, rel: string): void => {
     const filePath = normalizePath(prefix + rel);
-    if (!isSource(filePath)) return;
+    // A deleted extensionless path cannot be read for its `#!` line, so it is kept here; getChangedFiles acts
+    // on a deletion only for a tracked path (fork R-49).
+    if (!isSource(filePath) && !(statusCode.includes('D') && !path.posix.basename(filePath).includes('.'))) return;
 
     if (statusCode.includes('D')) {
       // Deletions stay unfiltered: getChangedFiles acts on one only when the
