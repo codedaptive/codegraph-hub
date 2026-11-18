@@ -654,6 +654,7 @@
     "__tests__/ui-repeated-keys.test.ts",
     "__tests__/ui-steps-api-servers.test.ts",
     "__tests__/ui-steps-api.test.ts",
+    "__tests__/undeclared-package-imports.test.ts",
     "__tests__/ui-steps-cross-tier.test.ts",
     "__tests__/unittest-named-files.test.ts",
     "__tests__/unittests-directories.test.ts",
