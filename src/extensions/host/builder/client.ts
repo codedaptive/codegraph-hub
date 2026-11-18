@@ -16,8 +16,8 @@
  * is dropped. Stop prevents retries. A builder exit rejects in-flight RPCs; a rebuild lease does not outlive
  * its builder (its locks name a dead pid).
  *
- * The builder exits once this process goes away (its IPC channel closes): a job already running gets the
- * exit grace to finish first, so the builder does not outlive its server for long.
+ * The builder exits once this process goes away (its IPC channel closes): a running job gets the exit
+ * grace to finish first, and a child still running after it is killed and cleaned up before the holds close, so the builder does not outlive its server for long.
  */
 import { fork, type ChildProcess, type ForkOptions, type SpawnOptions } from 'child_process';
 import * as fs from 'fs';
@@ -218,7 +218,7 @@ export class BuilderClient {
     }
   }
 
-  /** The server's sync of a held root: a sync job in the sync lane; resolves with its counts when done (the CLI's sync answers the whole result: {@link cliSync}). Rejects on failure (LockUnavailableError message kept). */
+  /** The server's sync of a held root: a sync job in its repository's lane; resolves with its counts when done (the CLI's sync answers the whole result: {@link cliSync}). Rejects on failure (LockUnavailableError message kept). */
   async sync(root: string): Promise<{ filesChanged: number }> {
     const result = await this.rpc({ op: 'sync', root }) as { filesChanged?: unknown };
     return { filesChanged: typeof result?.filesChanged === 'number' ? result.filesChanged : 0 };
@@ -282,7 +282,7 @@ export class BuilderClient {
   }
 
   /**
-   * One sync of `root` as a job in the sync lane; the builder's whole SyncResult. `onEvent` (optional) receives
+   * One sync of `root` as a job in its repository's lane; the builder's whole SyncResult. `onEvent` (optional) receives
    * the sync's progress events in order, before the result, as {@link cliIndex}'s does. Rejects like
    * {@link cliIndex}. No timeout.
    */

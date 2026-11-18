@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -28,7 +29,7 @@ describe('builder queue lanes', { timeout: 60_000 }, () => {
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     lines = [];
     sent = [];
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: (message) => { sent.push(message); },
       jobLog: (line) => { lines.push(line); },
       log: () => {},

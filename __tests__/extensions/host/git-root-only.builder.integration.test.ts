@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
@@ -18,7 +19,7 @@ describe('git-only builder admission', () => {
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     messages = [];
     jobs = [];
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: (message) => messages.push(message),
       jobLog: (line) => jobs.push(line),
       log: () => {},

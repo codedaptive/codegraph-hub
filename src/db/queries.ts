@@ -4616,6 +4616,47 @@ export class QueryBuilder {
     }));
   }
 
+  /** The `#include`s of C and C++ files the graph holds: the file writing each, and the indexed file it names. */
+  getCppIncludeEdges(): Array<{ source: string; target: string }> {
+    return this.db.prepare(
+      `SELECT s.file_path AS source, t.file_path AS target FROM edges e
+       JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+       WHERE e.kind = 'imports' AND s.kind = 'file' AND t.kind = 'file' AND s.language IN ('c', 'cpp')`
+    ).all() as Array<{ source: string; target: string }>;
+  }
+
+  /**
+   * The failed C++ calls and function values with a qualifier outside `std`
+   * (`Txn::Put`, `T::T/2`), calls on a variable (`shard.Clear`), and what
+   * values are constructed as, which may go through a template parameter
+   * (cpp-template-instantiations.ts), of the files named, one at a time: there
+   * can be a great many, few of which do. (`+status` walks the table: what is
+   * left unresolved is nearly all of it, and the index on status only adds pages.)
+   */
+  *iterateFailedCppTypeReferences(files: readonly string[]): IterableIterator<UnresolvedReference> {
+    const rows = this.db.prepare(
+      `SELECT from_node_id, reference_name, reference_kind, line, col, file_path FROM unresolved_refs
+       WHERE +status = 'failed' AND language = 'cpp' AND file_path IN (SELECT value FROM json_each(?))
+         AND (reference_kind = 'instantiates'
+         OR (reference_kind IN ('calls', 'function_ref') AND reference_name GLOB '*::*' AND reference_name NOT GLOB 'std::*')
+         OR (reference_kind = 'calls' AND reference_name GLOB '*.*' AND reference_name NOT GLOB '*(*'))`
+    ).iterate(JSON.stringify(files)) as IterableIterator<Pick<UnresolvedRefRow, 'from_node_id' | 'reference_name' | 'reference_kind' | 'line' | 'col' | 'file_path'>>;
+    for (const row of rows) {
+      yield {
+        fromNodeId: row.from_node_id,
+        referenceName: row.reference_name,
+        referenceKind: row.reference_kind as EdgeKind,
+        line: row.line,
+        column: row.col,
+        filePath: row.file_path,
+        language: 'cpp',
+      };
+    }
+    // The walk reads the whole table, which would stay in this connection's page
+    // cache through the end of synthesis, where an index peaks in memory.
+    this.db.exec('PRAGMA shrink_memory');
+  }
+
   /**
    * Get the count of PENDING (never-attempted) references without loading
    * them into memory. Rows marked status='failed' — attempted by a completed
@@ -5860,10 +5901,18 @@ export class QueryBuilder {
       const chunk = filePaths.slice(i, i + SQLITE_PARAM_CHUNK_SIZE);
       const placeholders = chunk.map(() => '?').join(',');
       const rows = this.db
-        .prepare(`SELECT DISTINCT file_path, name FROM nodes WHERE file_path IN (${placeholders})`)
-        .all(...chunk) as Array<{ file_path: string; name: string }>;
+        .prepare(`SELECT file_path, name, SUM(language = 'python' AND kind IN ('function', 'method')) AS python_defs
+                    FROM nodes WHERE file_path IN (${placeholders}) GROUP BY file_path, name`)
+        .all(...chunk) as Array<{ file_path: string; name: string; python_defs: number }>;
       // NUL-joined: a path or a symbol name can contain a space, never a NUL.
-      for (const row of rows) pairs.add(`${row.file_path}\0${row.name}`);
+      // A Python name a file defines more than once (typing.overload stubs and
+      // the def below them) also counts its defs, behind a \u0001 in the file's
+      // half: adding or removing the implementation moves every call to the
+      // name (#2963) while the set of names stays the same.
+      for (const row of rows) {
+        const file = row.python_defs > 1 ? `${row.file_path}\u0001${row.python_defs}` : row.file_path;
+        pairs.add(`${file}\0${row.name}`);
+      }
     }
     return pairs;
   }
