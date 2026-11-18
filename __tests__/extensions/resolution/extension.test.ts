@@ -62,14 +62,26 @@ async function run(...args: string[]) {
 }
 
 describe('suspects worktree refusal', () => {
-  it('prints the refusal and stops before looking for an index or suspects', async () => {
-    vi.mocked(requireGitWorktreeRoot).mockReturnValue({ refusal: '/some/path is not in a git repository, and codegraph indexes only git worktrees and the folders opted in to indexing' });
+  it('prints the refusal for the found index root and does not find suspects', async () => {
+    vi.mocked(findNearestCodeGraphRoot).mockReturnValue('/stray');
+    vi.mocked(requireGitWorktreeRoot).mockReturnValue({ refusal: '/stray is not an allowed index root' });
     const result = await run();
-    expect(result.stderr).toBe('✗ /some/path is not in a git repository, and codegraph indexes only git worktrees and the folders opted in to indexing\n');
+    expect(result.stderr).toBe('✗ /stray is not an allowed index root\n');
     expect(result.stdout).toBe('');
     expect(result.exitCode).toBe(1);
-    expect(requireGitWorktreeRoot).toHaveBeenCalledWith('/some/path');
-    expect(findNearestCodeGraphRoot).not.toHaveBeenCalled();
+    expect(findNearestCodeGraphRoot).toHaveBeenCalledWith('/some/path');
+    expect(requireGitWorktreeRoot).toHaveBeenCalledWith('/stray');
+    expect(findSuspects).not.toHaveBeenCalled();
+  });
+
+  it('prints the no-index error without checking worktree eligibility', async () => {
+    vi.mocked(findNearestCodeGraphRoot).mockReturnValue(null);
+    const result = await run();
+    expect(result.stderr).toBe('✗ No CodeGraph index at or above /some/path. Run `codegraph init` in the project first.\n');
+    expect(result.stdout).toBe('');
+    expect(result.exitCode).toBe(1);
+    expect(findNearestCodeGraphRoot).toHaveBeenCalledWith('/some/path');
+    expect(requireGitWorktreeRoot).not.toHaveBeenCalled();
     expect(findSuspects).not.toHaveBeenCalled();
   });
 });
