@@ -28,6 +28,7 @@ import { ambientModuleDeclarations, declaringFileAnswers, inBlock, isDeclaration
 import { leavesWorkspaceRoot } from './workspace-packages';
 import { isMinifiedContent } from '../extraction/generated-detection';
 import { getCargoWorkspaceCrateMap, parsePackageName, parseTargetPaths, parseWorkspaceMembers } from './frameworks/cargo-workspace';
+import { rustHeadUse } from './rust-head-use';
 import { blankRustCode, readRustScopes, rustBindingAt, rustInnerBlockAt, rustBoundsOf, rustFnAt, rustImplAt, splitRustTopLevel, type RustBinding, type RustPatternSite, type RustScopes } from './rust-scopes';
 /**
  * Ceiling on how many same-named definitions a FUZZY name-match strategy will
@@ -12489,8 +12490,10 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * `use std::fs;`), whatever module of that name the project has. A head a
  * `use` in a function's body binds is the path that `use` names (`use
  * crate::b as a;` makes `a::take()` `crate::b::take()`), walked from the
- * module that `use` is written in: one binding, not followed through a further
- * local alias.
+ * module that `use` is written in (rustHeadUse). A local alias whose head is
+ * itself a local alias is followed, each read where its `use` is written; a
+ * `mod` of the head's name declared in a nearer block makes the path that
+ * `mod`'s, not the `use`'s, and so null.
  */
 export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): Node | null {
   let segs = ref.referenceName.replace(/^::/, '').split('::');
@@ -12511,17 +12514,15 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
   const bare = head !== 'crate' && head !== 'self' && head !== 'super';
   // A `use` in the function, or in a block of it, binds the head there alone,
   // ahead of the module's own: `fn f() { use crate::store::gzip; gzip::write() }`.
-  let headUse: RustVisibleUse | undefined;
-  if (bare) {
-    let bound = rustVisibleUse(head, ref.filePath, offset, context);
-    if (bound && bound.std.length > 0 && bound.paths.length === 0) return null;
-    if (bound && bound.block >= 0 && bound.paths.length > 0) headUse = bound;
-  }
+  // An alias is not followed for a `use` itself, nor for a type a `use` binds.
+  const headUse = bare ? rustHeadUse(head, offset, !variants && !(typed && segs.length === 2),
+    (name, at) => rustVisibleUse(name, ref.filePath, at, context), rustUsesOf(ref.filePath, context).blocks, from.block) : undefined;
+  if (headUse === null) return null;
   let memo = RUST_PATH_TARGETS.get(context);
   if (!memo) RUST_PATH_TARGETS.set(context, (memo = new Map()));
   // (A type a `use` binds is that `use`'s, wherever it is written; so is a head.)
   const scope = ownerUse ? `${ownerUse.block}\0${ownerUse.paths[0]!.at}` : '';
-  const headScope = headUse ? `${headUse.block}\0${headUse.paths[0]!.at}` : '';
+  const headScope = headUse ? `${headUse.block}\0${headUse.paths[0]!.at}\0${headUse.paths[0]!.segs.join('::')}` : '';
   const key = `${ref.filePath}\0${from.block?.open ?? -1}\0${variants ? 1 : 0}\0${scope}\0${headScope}\0${segs.join('::')}`;
   const hit = memo.get(key);
   if (hit !== undefined) return hit === null ? null : context.getNodeById?.(hit) ?? null;
