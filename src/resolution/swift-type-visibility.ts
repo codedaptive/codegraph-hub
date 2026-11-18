@@ -395,7 +395,7 @@ function fitsPath(node: Node, path: string, context: ResolutionContext): boolean
   const head = path.slice(0, path.length - qn.length - 2);
   const parentName = head.split('::').pop()!;
   // A member can be indexed at the top level — the grammar drops the parent
-  // of a member that follows a freestanding macro (`#Macro()`) in a type's or
+  // of a member that follows a freestanding macro (`#Macro()`) in an
   // extension's body. It still shares a file with a declaration or extension
   // of the parent the site names.
   if (context.getNodesInFile(node.filePath).some((p) => p.name === parentName && TYPE_KINDS.has(p.kind) && p.id !== node.id)) return true;
