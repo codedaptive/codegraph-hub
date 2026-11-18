@@ -21,10 +21,7 @@ The CLI commands (`codegraph blast`, `codegraph grep`, ...) have no session and 
 output is unchanged by it, and so is an MCP session started without `--focus`. `outsideFocus` is
 absent from the report in both cases, so unfocused json is unchanged. A session with a focus that
 holds the whole index still carries `outsideFocus` in json, empty (`count: 0`, `modules: []`);
-text and markdown print no section. `codegraph grep`, `codegraph blast` and `codegraph orphans`
-refuse an indexed root that is in no git worktree and not opted in with `codegraph init <dir>
---no-git`: they print `requireGitWorktreeRoot`'s refusal on stderr and exit 1, and a root with no
-index keeps each command's no-index answer (S-84).
+text and markdown print no section.
 
 Reading the focus: only through host's helpers. `focusPrefixesOfTool` (`src/extensions/queries/shared/focus.ts`) calls host's `focusPrefixesFor` on `ctx.focus`, which host resolves per call against the worktree the call is answered from; a path is tested with host's `inFocus`, which `grep-core.ts` and `blast/focus.ts` import directly. Never compare a path with the raw `ctx.focus` array; `focusDirsText` reads it for display only. The `## Outside focus (N)` heading is `outsideFocusHeading(n)`, byte-equal to host's callers and
 impact. Blast's split is `splitReportByFocus` in `src/extensions/queries/blast/focus.ts`.
