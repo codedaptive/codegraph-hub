@@ -133,8 +133,11 @@ sync is a full reconcile.
 A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8 GB resident
 (`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
-applied; an ended seed removes its own staging copy), the locks it took itself are released (its `rebuild.pid`,
-and a `writer.pid` it took), and one log line names the root, the job kind, the limit and the measured value. Each
+applied; an ended seed removes its own staging copy; an ended cold build removes the database it made, and one
+that had not reported which file that is (ended during its `init`, or on Windows, where a file has no identity to
+report) removes the database at the root unless another live process holds the root's writer slot, in which case
+that database is left for that process), the locks it took itself are released (its `rebuild.pid`, and a
+`writer.pid` it took), and one log line names the root, the job kind, the limit and the measured value. Each
 job runs in its own child process of the builder, so its memory is measured on its own and a limit ends only that
 process: the builder and the jobs running beside it go on (R-53). A root's `writer.pid` that names the builder
 belongs to the builder's hold on that root, not to a job: it stays when a job ends, and the hold releases it when
