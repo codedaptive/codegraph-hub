@@ -216,12 +216,12 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-11-17)
+## 8. Status (2026-11-18)
 
 Every item of the governing spec [B1]-[B14] is built and shipped, [B1]'s "or directory" included as R-50 restores
 it (the opt-in for a folder outside git, sm.16). Installed globally: **1.6.2-sm.16** (ours 3d65edec, 2026-11-17,
 R-52); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public: `codedaptive/codegraph-hub`,
-release `v1.6.2-sm.12` (R-31, R-32). The last upstream main merged into ours is f72c9d2e. What is left, in queue
+release `v1.6.2-sm.12` (R-31, R-32). The last upstream main merged into ours is cc17b69a (1.6.3, sm.17). What is left, in queue
 order, is the second table.
 
 | Release | What it shipped |
@@ -238,11 +238,12 @@ order, is the second table.
 | sm.14 (ours 6a2b6eff, 2026-11-10) | a launcher no longer takes over a busy server, and a stopping server removes only its own socket (split-server fix, F-1/F-2, S-58); the R-38 bug list (Swift member and nested-supertype resolution, `grep`/`orphans` tool descriptions, install runbook, seed and upgrade-version fixes); upstream PRs #3249 (impact speed) and #3215 (order-independent resolution) taken early (R-40). Repo work landed with this commit, not in the package: the first test-group moves (D281); the S-65 moves follow |
 | sm.15 (ours d1e4c984, 2026-11-17) | after the 11-16 incident: only a git worktree root is indexed: the CLI's `init`, `index` and `sync` refuse a path outside every git worktree on both routes, and a path below a worktree root acts on that root (R-46, S-70; code outside git waits for R-50's opt-in); every builder job is ended at 60 minutes or 8 GB resident and not retried until an explicit `index` or `init` (R-47, S-69); on macOS a watcher is ready once its delivery probe sees its own event or gives up (macos-watcher-gap). Review follow-ups, the stopped note and R-50's opt-in for code outside git follow in sm.16 |
 | sm.16 (ours 3d65edec, 2026-11-17) | the rest of the 11-16 incident set: a folder outside git is indexed once a person opts it in with `codegraph init <dir> --no-git`, ended by `uninit` or `project remove` (R-50); `project pin` pins the enclosing git worktree root (R-46); a root stopped at a job limit is answered from its index with a note naming the limit's variable and `codegraph index`, in tool answers, `status`, the CLI's reads and the prompt hook (S-69, S-71); a watcher whose sync the builder ended at a limit stops at once with the builder's message instead of retrying; `--color` and `--no-color` reach the CLI's warnings; a folder link leaving the root is followed only when the root's ignore rules re-include it, in the scan, git's file list, the `include` walk and the watcher (R-44, S-72, S-75, S-76, S-77), and the `include` walk, on the git route and the folder walk alike, also follows a link that `codegraph.json` names itself as an `include` root (S-77); a cold build or a seed replaces the schema-less database a killed build left (S-73); syncs, catch-ups, seeds and opens of indexed roots run beside a cold build (R-43, S-78); a VACUUM after a job that leaves a large freelist, when free disk allows (R-45, S-81) |
+| sm.17 (2026-11-18) | upstream main cc17b69a merged in (77 commits, 1.6.3), upstream's #3365 standing for R-51's #3256 (S-91); the CLI's own reads (`grep`, `suspects`, `blast`, `orphans`) refuse a stray index outside git that was not opted in, and `grep` and `suspects` answer the git root (S-82, S-84, S-85, S-86, S-88); every builder job runs in its own child process, one lane per git repository plus two bypass lanes while the load average is below 95 (R-53, replacing R-43's two lanes), and an ended cold build's partial work is rolled back: one ended before it reports its database removes the database at the root unless another live process holds the root's writer slot (S-90); a VACUUM runs only while no process other than the builder holds the root's writer slot |
 
 | Left | State |
 |---|---|
-| Upstream main merged into ours (docs/SPEC-upstream.md §7 item 5) | Orc-Codegraph |
-| R-51's five upstream pull requests | the owning lanes, after the upstream merge |
+| R-51's four upstream pull requests (#3261, #3258, #3303, #3226; #3256 came in as upstream's #3365, S-91) | the owning lanes |
+| A catch-up the WAL valve stopped is retried, 5 s doubling to 5 minutes (S-93) | host (valve-catchup-retry) |
 | R-49: (a) a file with no extension indexed by its shebang line; (b) a Python test linked to the file it loads by path | (a) a hook-in in upstream-owned code, orc-approved; (b) resolution |
 | fleet/README's rust-path-calls row (K-F7); the lanes' own lists | lanes' todos |
 | The hub's monthly update, next due 2026-12-04 | Bob (R-36) |
