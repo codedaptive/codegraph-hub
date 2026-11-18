@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -33,7 +34,7 @@ it('logs an ended own-retry open once and does not re-arm it', async () => {
   const queue = new JobQueue();
   const enqueue = vi.spyOn(queue, 'enqueue');
   const lines: string[] = [];
-  const holders = new HolderSet({
+  const holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
     queue, fences: new RebuildFences(queue, (line) => lines.push(line)),
     onFreshness: () => undefined, log: (line) => lines.push(line), watchOptions: () => ({}),
     openWaitMs: 10000, recoverWaitMs: 1000, ownRetryMs: 50, pollMs: 1000,

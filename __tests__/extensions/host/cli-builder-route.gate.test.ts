@@ -13,7 +13,7 @@
  * The helpers that start servers and read the lock files are in machine-server.harness.ts.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as path from 'path';
@@ -71,6 +71,7 @@ interface HolderSample {
   pid: number;
   builderPid: number | null;
   serverPid: number | null;
+  parentPid: number | null;
 }
 
 interface LockSampler {
@@ -196,7 +197,15 @@ function startLockSampler(stateDir: string, roots: string[]): LockSampler {
       const serverPid = serverPidOf(stateDir);
       for (const root of roots) {
         for (const holder of lockFileHolders(root)) {
-          sampler.holders.push({ root, file: holder.file, pid: holder.pid, builderPid, serverPid });
+          const ps = holder.file === 'codegraph.lock' && holder.pid !== builderPid
+            ? spawnSync('ps', ['-o', 'ppid=', '-p', String(holder.pid)], { encoding: 'utf8' })
+            : null;
+          const parent = ps?.stdout?.trim();
+          const parentPid = parent && /^\d+$/.test(parent) ? Number(parent) : null;
+          // A holder gone before `ps` read it (a job child that just ended) is skipped: the CLI and the server
+          // are alive throughout the sample, so a vanished holder is neither.
+          if (ps !== null && parentPid === null) continue;
+          sampler.holders.push({ root, file: holder.file, pid: holder.pid, builderPid, serverPid, parentPid });
         }
       }
       await sleep(SAMPLE_MS);
@@ -210,7 +219,7 @@ function startLockSampler(stateDir: string, roots: string[]): LockSampler {
 }
 
 /**
- * One problem line per distinct holder that is not the builder, naming the CLI process when it is the holder.
+ * One problem line per distinct holder that is neither the builder nor its child holding codegraph.lock.
  * `requireSamples` is for the commands whose job holds the lock for seconds (init, index): a sampler that saw
  * no holder at all proves nothing, so it is a problem there. A sync is short, and its samples are reported only.
  */
@@ -227,7 +236,7 @@ function holderProblems(
   }
   const counts = new Map<string, number>();
   for (const h of sampler.holders) {
-    if (h.builderPid !== null && h.pid === h.builderPid) continue;
+    if (h.builderPid !== null && (h.pid === h.builderPid || (h.file === 'codegraph.lock' && h.parentPid === h.builderPid))) continue;
     const who =
       h.pid === cliPid
         ? 'the CLI process'

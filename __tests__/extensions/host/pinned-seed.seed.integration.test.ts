@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
@@ -85,7 +86,7 @@ describe('pinned seed core and builder', { timeout: 60_000 }, () => {
     return fs.realpathSync(target);
   }
   function startService(seedWaitMs = 100): BuilderService {
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: (message) => sent.push(message),
       jobLog: (line) => jobLines.push(line),
       log: () => {},

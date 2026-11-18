@@ -2,9 +2,9 @@
  * The child process one builder job runs in (forked by ./job-supervisor.ts), so a limit that ends it ends that
  * job alone. It waits for the job's spec (./job-spec-type.ts), loads the body module, calls its export with the
  * spec's `args` and a context (`progress`, `reportDatabase`, `writerPid`), and sends what the body reports, in
- * call order, then the result and exit 0, or the error and exit 1. It exits too on its channel's 'disconnect'
- * event (the builder is gone): the job runs until the event loop reaches that event (callbacks already queued
- * run first), and nothing of the job runs after it.
+ * call order, then the result and exit 0, or the error (its message and name; 'Error' for a thrown non-Error)
+ * and exit 1. It exits too on its channel's 'disconnect' event (the builder is gone): the job runs until the
+ * event loop reaches that event (callbacks already queued run first), and nothing of the job runs after it.
  *
  * Each job pays this file's start-up, so it imports only node built-ins and types.
  */
@@ -31,7 +31,8 @@ async function runSpec(
     channel.send({ type: 'result', value });
     channel.exit(0);
   } catch (err) {
-    channel.send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    if (err instanceof Error) channel.send({ type: 'error', message: err.message, name: err.name });
+    else channel.send({ type: 'error', message: String(err), name: 'Error' });
     channel.exit(1);
   }
 }

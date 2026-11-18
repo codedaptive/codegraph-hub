@@ -16,6 +16,7 @@
  * gates (index-builder.validation.test.ts). The exception is the symlink-into-a-nested-repository case, which runs a
  * real BuilderService and a real cold build. Real git worktrees and real SQLite in a temp dir.
  */
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
@@ -331,7 +332,7 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
     const savedState = process.env.CODEGRAPH_STATE_DIR;
     process.env.CODEGRAPH_STATE_DIR = path.join(workspace, 'state');
     const jobLines: string[] = [];
-    const service = new BuilderService({
+    const service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => { /* the pushed freshness is not under test */ },
       jobLog: (line) => { jobLines.push(line); },
       log: () => { /* diagnostics are not under test */ },

@@ -4,14 +4,19 @@
  * for writing: the builder does every write. With no such builder, the CLI writes in its own process. The server relays the CLI's request over the builder IPC
  * (`cliIndex`, `cliSync`, ./protocol.ts); the wire to the CLI is ./cli-wire.ts.
  *
- * `cliIndex` has four modes, each one job:
+ * Each job checks its fences and takes its locks here, in the builder, then runs its body through the
+ * builder's job runner (./job-runner-type.ts: a child process per job), so a limit ends that job alone. The
+ * bodies take no `writer.pid` or `rebuild.pid` of their own.
+ *
+ * `cliIndex` has four modes, each one job (./index-root-body.ts in the job's child):
  *   init            `CodeGraph.init(root, {index:false})`, an `initialized` event, `indexAll` with progress
  *                   events, close. An `init` job. It takes no `rebuild.pid` and registers nothing in
  *                   the project registry, as `codegraph init` does in its own process; a cold build
  *                   (../worktree-lifecycle/cold-build.ts) takes both, for a root nobody asked for.
  *   rebuild         `codegraph index`: needs the root's lease (./fences.ts, `fence` request, which holds
- *                   `rebuild.pid`). Lets go of the root if the builder holds it, takes `writer.pid` for the lease,
- *                   recreates the database, `indexAll` with progress events, close. An `index` job.
+ *                   `rebuild.pid`). Lets go of the root if the builder holds it and takes `writer.pid` (mode
+ *                   `rebuild`, the builder's pid) for the lease; the child recreates the database, runs
+ *                   `indexAll` with progress events and closes. An `index` job.
  *   reindex-leased  `indexAll` again on a writable open that the job closes when it ends, under the same lease
  *                   (the interactive re-run of `index`): needs the lease, takes no writer lock. An `index` job.
  *   reindex         `indexAll` on an existing index with no lease (the re-run of `init`): the writable open the
@@ -22,33 +27,37 @@
  * is fenced for its removal (a `release` fence, `codegraph uninit`:
  * ./fences.ts `refuseIfRemoving`), so no job of these opens a database that is being deleted.
  *
- * `cliSync` is one `sync` job: through the hold's own graph when the builder holds the root and
- * owns its `writer.pid`, otherwise a writable open of the root for the one sync. It answers the whole SyncResult.
- * Under an `index` fence the fallback open checks nothing, as an in-process `codegraph sync` during another
- * process's rebuild checks neither `writer.pid` nor `rebuild.pid`; the queue never runs two jobs of one root together, so
- * the sync runs between a lease's jobs, never inside one. Under a `release` fence both branches refuse.
+ * `cliSync` is one `sync` job (./sync-root-body.ts in the job's child): a writable open of the root for the one
+ * sync. It answers the whole SyncResult. When the builder holds the root and owns its `writer.pid`, the sync runs
+ * under that lock; the child takes none. Under an `index` fence the job checks nothing more, as an in-process
+ * `codegraph sync` during another process's rebuild checks neither `writer.pid` nor `rebuild.pid`; the queue
+ * never runs two jobs of one root together, so the sync runs between a lease's jobs, never inside one. Under a
+ * `release` fence it refuses.
  *
- * Progress callbacks and abort signals never cross the IPC: a job (an index's or a sync's) turns the engine's
- * progress callback into `requestEvent` pushes (in order, one per callback, none dropped). A `verbose` index job
- * also turns the engine's console.log lines into `log` events, in the same order; while verbose jobs of two
- * repositories overlap, each also gets the other's lines (./capturing-log.ts).
+ * Progress callbacks and abort signals never cross the IPC: the child sends the engine's progress as payloads,
+ * and the builder turns them into `requestEvent` pushes (in order, one per callback, none dropped). A `verbose`
+ * index job also sends the engine's console.log lines, which go out as `log` events in the same order
+ * (./run-index-job.ts).
  */
 import * as path from 'path';
-import CodeGraph from '../../../index';
-import type { IndexProgress, IndexResult, SyncResult } from '../../../extraction';
+import type { IndexResult, SyncResult } from '../../../extraction';
 import { tryAcquireWriterLock, writerLockHeldMessage } from '../../../mcp/writer-lock';
-import { capturingLog } from './capturing-log';
 import type { IndexWriteEvent } from './cli-wire';
 import type { RebuildFences, RebuildLease } from './fences';
 import type { HolderSet } from './holder';
+import type { JobRunner } from './job-runner-type';
 import type { BuilderToServer, CliIndexMode } from './protocol';
 import { requireGitWorktreeRoot } from '../worktree-lifecycle/requireGitWorktreeRoot';
 import type { JobQueue } from './queue';
+import { runIndexJob } from './run-index-job';
+import { runSyncJob } from './run-sync-job';
 
 export interface CliJobDeps {
   queue: JobQueue;
   holders: HolderSet;
   fences: RebuildFences;
+  /** Runs each job's body (the builder's runner: a child process per job). */
+  runJob: JobRunner;
   /** Send a push to the server (the IPC channel). */
   send(message: BuilderToServer): void;
 }
@@ -72,27 +81,22 @@ export class CliJobs {
       if ('refusal' in required) throw new Error(required.refusal);
       this.deps.fences.refuseIfRemoving(root);
       const emit = (event: IndexWriteEvent): void => this.deps.send({ op: 'requestEvent', requestId, event });
-      const onProgress = (progress: IndexProgress): void => emit({ kind: 'progress', progress });
-      // A verbose job runs with the builder's console.log turned into `log` events (./capturing-log.ts).
-      // Every job first asks again whether the root is being removed: the fence may have come while it waited.
-      const checked = <T>(job: () => Promise<T>): (() => Promise<T>) => () => {
+      // Every job first asks again whether the root is being removed (the fence may have come while it
+      // waited), then runs its prelude (the lease's checks and locks), then its body.
+      const run = async (jobId: number, open: 'init' | 'recreate' | 'open', prelude?: () => Promise<void> | void): Promise<IndexResult> => {
         this.deps.fences.refuseIfRemoving(root);
-        return job();
+        await prelude?.();
+        return runIndexJob(this.deps.runJob, jobId, { root, open, verbose }, emit);
       };
-      const run = <T>(job: () => Promise<T>): (() => Promise<T>) => (verbose ? () => capturingLog((line) => emit({ kind: 'log', line }), checked(job)) : checked(job));
-      const engine = { onProgress, verbose };
       switch (mode) {
         case 'init':
-          return this.deps.queue.enqueue('init', root, run(() => this.init(root, emit, engine)));
+          return this.deps.queue.enqueue('init', root, ({ id }) => run(id, 'init'));
         case 'reindex':
-          return this.deps.queue.enqueue('index', root, run(() => this.reindex(root, engine)));
+          return this.deps.queue.enqueue('index', root, ({ id }) => run(id, 'open'));
         case 'rebuild':
-          return this.underLease(root, (lease) => run(() => this.rebuild(lease, engine))());
+          return this.underLease(root, (lease, id) => run(id, 'recreate', () => this.takeRebuildWriter(lease)));
         case 'reindex-leased':
-          return this.underLease(root, (lease) => run(() => {
-            lease.assertLive();
-            return this.reindex(root, engine);
-          })());
+          return this.underLease(root, (lease, id) => run(id, 'open', () => lease.assertLive()));
         default:
           throw new Error(`unknown index mode: ${String(mode)}`);
       }
@@ -116,21 +120,12 @@ export class CliJobs {
     } catch (err) {
       return Promise.reject(err);
     }
-    const onProgress = (progress: IndexProgress): void => this.deps.send({ op: 'requestEvent', requestId, event: { kind: 'progress', progress } });
-    return this.deps.queue.enqueue('sync', root, async () => {
-      // A removal fenced the root while the job waited: neither the hold nor a fresh open may be used.
+    return this.deps.queue.enqueue('sync', root, async ({ id }) => {
+      // A removal fenced the root while the job waited.
       this.deps.fences.refuseIfRemoving(root);
-      // Asked when the job runs: a hold the builder let go of while the job waited is not used.
-      const held = this.deps.holders.ownedGraph(root);
-      if (held) return held.sync({ onProgress });
-      // No other fence check here: this matches an in-process `codegraph sync` while another process rebuilds (sync
-      // looks at neither writer.pid nor rebuild.pid), and the queue's one-writer-per-root rule keeps it out of a lease's jobs.
-      const cg = await CodeGraph.open(root);
-      try {
-        return await cg.sync({ onProgress });
-      } finally {
-        cg.close();
-      }
+      return runSyncJob(this.deps.runJob, id, 'sync', root, {
+        onProgress: (progress) => this.deps.send({ op: 'requestEvent', requestId, event: { kind: 'progress', progress } }),
+      });
     });
   }
 
@@ -139,57 +134,28 @@ export class CliJobs {
    * The lease is looked up now (no lease: rejected) and checked again when the job starts (`run` asserts it).
    * What is tracked is the promise the request answers with, so `unfence` answers after the job's own reply.
    */
-  private underLease(root: string, run: (lease: RebuildLease) => Promise<IndexResult>): Promise<IndexResult> {
+  private underLease(root: string, run: (lease: RebuildLease, jobId: number) => Promise<IndexResult>): Promise<IndexResult> {
     const lease = this.deps.fences.requireLive(root);
-    const job = this.deps.queue.enqueue('index', root, () => run(lease));
+    const job = this.deps.queue.enqueue('index', root, ({ id }) => run(lease, id));
     lease.track(job);
     return job;
   }
 
-  private async init(root: string, emit: (event: IndexWriteEvent) => void, engine: IndexEngineOptions): Promise<IndexResult> {
-    const cg = await CodeGraph.init(root, { index: false });
-    try {
-      emit({ kind: 'initialized' });
-      return await cg.indexAll(engine);
-    } finally {
-      cg.close();
-    }
-  }
-
-  private async rebuild(lease: RebuildLease, engine: IndexEngineOptions): Promise<IndexResult> {
+  /**
+   * The rebuild's locks, taken in the builder before its child runs. The builder's own hold of the root (its
+   * watcher and `writer.pid`) goes first: the server released its handle before it asked for this job, but a
+   * hold of the builder's may still be there: an `open` job that ran after the fence refuses to open (holder.ts
+   * openWritable), leaving the hold entry. This job is the root's running job, so the release must not wait for
+   * the root to go idle. Then `writer.pid` is taken with mode `rebuild` under the builder's pid, for the lease to
+   * release at `unfence`: a lock under the child's pid would be left behind when the child exits.
+   */
+  private async takeRebuildWriter(lease: RebuildLease): Promise<void> {
     lease.assertLive();
-    const root = lease.root;
-    // The builder's own hold of the root (open database, watcher, writer.pid) goes first: the server released
-    // its handle before it asked for this job, but a hold of the builder's may still be there: an `open` job
-    // that ran after the fence refuses to open (holder.ts openWritable), leaving the hold entry. `recreate`
-    // deletes the database files. This job is the root's running job, so the release must not wait for the root
-    // to go idle.
-    await this.deps.holders.release(root, { fromJobOfRoot: true });
-    const writer = tryAcquireWriterLock(root, 'rebuild');
+    await this.deps.holders.release(lease.root, { fromJobOfRoot: true });
+    const writer = tryAcquireWriterLock(lease.root, 'rebuild');
     if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
     lease.noteWriter();
-    const cg = await CodeGraph.recreate(root);
-    try {
-      return await cg.indexAll(engine);
-    } finally {
-      cg.close();
-    }
   }
-
-  private async reindex(root: string, engine: IndexEngineOptions): Promise<IndexResult> {
-    const cg = await CodeGraph.open(root);
-    try {
-      return await cg.indexAll(engine);
-    } finally {
-      cg.close();
-    }
-  }
-}
-
-/** What a job passes to indexAll: the progress callback, and `verbose` only when the CLI asked for it. */
-interface IndexEngineOptions {
-  onProgress: (progress: IndexProgress) => void;
-  verbose: boolean;
 }
 
 /** A root from the IPC must be an absolute path: a relative one would mean this process's working directory. */

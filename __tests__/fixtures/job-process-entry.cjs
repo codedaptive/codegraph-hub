@@ -9,6 +9,6 @@ process.on('message', async ({ type, spec }) => {
     });
     process.send({ type: 'result', value }, () => process.exit(0));
   } catch (error) {
-    process.send({ type: 'error', message: error.message }, () => process.exit(1));
+    process.send({ type: 'error', message: error.message, name: error.name }, () => process.exit(1));
   }
 });

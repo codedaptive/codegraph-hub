@@ -26,7 +26,7 @@
  * (the server's builder takes the project's writer slot then).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, spawn, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -46,7 +46,7 @@ import {
   startVictim,
   waitFor,
 } from './fixtures/dead-lock-helpers';
-import { Fixtures } from './machine-server.harness';
+import { Fixtures, isAlive as processIsAlive, lockFileHolders } from './machine-server.harness';
 
 const REPO = path.resolve(__dirname, '../../..');
 const BIN = path.join(REPO, 'dist/bin/codegraph.js');
@@ -276,21 +276,35 @@ async function killDirectServerMidWrite(): Promise<{ writerPid: number; victimPi
 
   const lockFile = path.join(getCodeGraphDir(root), 'codegraph.lock');
   const giveUp = Date.now() + MID_WRITE_BOUND_MS;
-  let sawLock = false;
-  for (let round = 0; !sawLock && Date.now() < giveUp; round++) {
+  let lockHolder: { pid: number; parentPid: number } | null = null;
+  for (let round = 0; lockHolder === null && Date.now() < giveUp; round++) {
     // New files each round: every round is a change the watcher must sync.
     for (let i = 0; i < 40; i++) {
       fs.writeFileSync(path.join(root, 'src', `bulk${round}_${i}.ts`), `export function bulk${round}_${i}() { return ${i}; }\n`);
     }
     const roundEnd = Math.min(Date.now() + LOCK_ROUND_MS, giveUp);
-    while (!(sawLock = fs.existsSync(lockFile)) && Date.now() < roundEnd) await sleep(5);
+    while (lockHolder === null && Date.now() < roundEnd) {
+      const holder = lockFileHolders(root).find((h) => h.file === 'codegraph.lock');
+      if (holder) {
+        const ps = spawnSync('ps', ['-o', 'ppid=', '-p', String(holder.pid)], { encoding: 'utf8' });
+        const parent = ps.stdout?.trim();
+        if (parent && /^\d+$/.test(parent)) lockHolder = { pid: holder.pid, parentPid: Number(parent) };
+      }
+      if (lockHolder === null) await sleep(5);
+    }
   }
-  expect(sawLock, `codegraph.lock never appeared within ${MID_WRITE_BOUND_MS} ms of edits: the kill would not be mid-write`).toBe(true);
+  expect(lockHolder, `no live codegraph.lock holder appeared within ${MID_WRITE_BOUND_MS} ms of edits`).not.toBeNull();
+  if (lockHolder === null) throw new Error(`no live holder of ${lockFile}`);
+  const holderPid = lockHolder.pid;
+  expect(lockHolder.parentPid, 'the lock holder is the builder job child').toBe(writerPid);
+  expect(processIsAlive(holderPid), 'the job child is alive before the builder is killed').toBe(true);
   // The builder dies mid-write; the server goes right after it, before it could start another builder.
-  try { process.kill(writerPid, 'SIGKILL'); } catch { /* already gone */ }
+  process.kill(writerPid, 'SIGKILL');
   first.child.kill('SIGKILL');
-  await waitFor(() => exited(first), 60_000, 'the first server to die');
-  await waitFor(() => !isAlive(writerPid), 60_000, 'the first builder to die');
+  await waitFor(() => exited(first), READY_WAIT_MS, 'the first server to die');
+  await waitFor(() => !processIsAlive(writerPid), READY_WAIT_MS, 'the first builder to die');
+  await waitFor(() => !processIsAlive(holderPid), READY_WAIT_MS, 'the job child to exit on IPC disconnect');
+  expect(processIsAlive(holderPid), 'the job child exits without being signalled by the test').toBe(false);
   expect(readJson(getWriterPidPath(root))?.pid, 'the killed builder left its writer.pid').toBe(writerPid);
 
   const victimPid = await startVictim(root, ['rebuild', 'filelock'], READY_WAIT_MS);

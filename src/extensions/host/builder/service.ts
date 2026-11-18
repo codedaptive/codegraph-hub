@@ -3,12 +3,13 @@
  * the held roots, the cold-build and seed host, the rebuild fences, the codegraph CLI's jobs, the
  * housekeeping sweep, and the request handler the IPC channel feeds.
  *
- * The index writes the builder makes as jobs happen here, in a lane per git repository (one job at a time in
+ * The index writes the builder makes are jobs queued here, in a lane per git repository (one job at a time in
  * each) plus two shared bypass slots on {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
  * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, the CLI's `init` and `index`
  * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts), and the VACUUM a job's end queues when it
- * left its root's freelist over the limit (./vacuum-after-job.ts). The one write a job does not await is the
- * oversized-WAL checkpoint a writable open starts (see holder.ts openWritable). The housekeeping sweep runs on its own timer with its own hold set,
+ * left its root's freelist over the limit (./vacuum-after-job.ts). The held roots' jobs and the CLI's run their
+ * bodies through {@link BuilderServiceOptions.runJob} (the builder's: a child process per job, ./main.ts); the
+ * cold builds, seed copies and VACUUMs run in this process. The housekeeping sweep runs on its own timer with its own hold set,
  * outside the queue, and tears down the indexes whose worktree is gone.
  */
 import { canonicalProjectRoot } from '../../../directory';
@@ -23,6 +24,7 @@ import { withEndedJob } from './ended-outcome';
 import { RebuildFences, parseFenceKind } from './fences';
 import { HolderSet } from './holder';
 import { jobEventListener } from './job-event-listener';
+import type { JobRunner } from './job-runner-type';
 import type { BuilderRequest, BuilderToServer } from './protocol';
 import { JobQueue } from './queue';
 import { BuilderSeedHost, resolveSeedWaitMs } from './seed-host';
@@ -34,6 +36,8 @@ export interface BuilderServiceOptions {
   jobLog(line: string): void;
   /** One diagnostic line for stderr. */
   log(line: string): void;
+  /** Runs a held root's or the CLI's job body (./job-runner-type.ts). */
+  runJob: JobRunner;
   /** The watcher options for every held root (debounce, logging callbacks). */
   watchOptions(): WatchOptions;
   /** Test seams; the defaults are the builder's real settings. */
@@ -71,6 +75,7 @@ export class BuilderService {
     this.holders = new HolderSet({
       queue: this.queue,
       fences: this.fences,
+      runJob: opts.runJob,
       onFreshness: (state) => opts.send({ op: 'freshness', state }),
       log: (line) => opts.log(line),
       watchOptions: () => opts.watchOptions(),
@@ -79,7 +84,7 @@ export class BuilderService {
       ownRetryMs: opts.timing?.ownRetryMs ?? 1_000,
       pollMs: opts.timing?.pollMs ?? 250,
     });
-    this.cliJobs = new CliJobs({ queue: this.queue, holders: this.holders, fences: this.fences, send: (message) => opts.send(message) });
+    this.cliJobs = new CliJobs({ queue: this.queue, holders: this.holders, fences: this.fences, runJob: opts.runJob, send: (message) => opts.send(message) });
     // The sweep tears down registered projects whose worktree is gone and releases every held root whose index
     // vanished. It runs here, not in the server: the builder is the process that holds the roots and the one
     // allowed to delete an index. The server's own housekeeping only lets go of its read-only handles.

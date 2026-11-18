@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -55,7 +56,7 @@ describe('macOS watcher delivery readiness', () => {
     graph.close();
     const queue = new JobQueue();
     const recorded = vi.spyOn(queue, 'enqueue');
-    return { queue, jobs: () => recorded.mock.calls.map((call) => call[0]), held: holders = new HolderSet({
+    return { queue, jobs: () => recorded.mock.calls.map((call) => call[0]), held: holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
       queue,
       fences: new RebuildFences(queue, () => undefined),
       onFreshness: () => undefined,
@@ -101,7 +102,8 @@ describe('macOS watcher delivery readiness', () => {
     expect(probeName).toBeDefined();
     listener('change', path.join(dataDir, probeName ?? ''));
     await held.caughtUp(root);
-    expect(held.ownedGraph(root)?.getFile('src/gap.ts')).toEqual(expect.objectContaining({ path: 'src/gap.ts' }));
+    const graph = CodeGraph.openSync(root, { readOnly: true });
+    try { expect(graph.getFile('src/gap.ts')).toEqual(expect.objectContaining({ path: 'src/gap.ts' })); } finally { graph.close(); }
   });
 
   it.runIf(process.platform === 'darwin')('clears delivery-related timers when a held root is released', async () => {

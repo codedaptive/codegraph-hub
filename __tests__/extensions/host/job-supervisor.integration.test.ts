@@ -19,6 +19,16 @@ describe('JobSupervisor', () => {
     await expect(supervisor.run(2, spec('fail'))).rejects.toThrow('fixture failed');
   });
 
+  it('preserves the child error name and message in its rejection', async () => {
+    const job = { ...spec('fail'), module: path.resolve(__dirname, 'fixtures/named-error-job.cjs') };
+    const rejection = supervisor.run(12, job);
+    await expect(rejection).rejects.toBeInstanceOf(Error);
+    await expect(rejection).rejects.toMatchObject({
+      name: 'LockUnavailableError',
+      message: 'lock is unavailable',
+    });
+  });
+
   it('rejects an exit without a result and names its code', async () => {
     await expect(supervisor.run(7, spec('exit'))).rejects.toThrow(/17/);
   });

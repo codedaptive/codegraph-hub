@@ -16,6 +16,7 @@
  * back (`{id, ok, result | error}` replies, `{op: 'requestEvent', requestId, event}` pushes) and the job log.
  * The fence registry, the queue and the holder are not reached into.
  */
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -147,7 +148,7 @@ describe('the builder CLI requests', { timeout: 60_000 }, () => {
   }, 30_000);
 
   function startService(housekeeping = false): BuilderService {
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: (message) => { sent.push(message as unknown as Outbound); },
       jobLog: (line) => { jobLines.push(line); },
       log: () => { /* diagnostics are not under test */ },

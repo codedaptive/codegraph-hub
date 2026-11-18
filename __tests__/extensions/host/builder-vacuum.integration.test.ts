@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -49,7 +50,7 @@ describe('builder vacuum after a job', () => {
     { disk: 0, shouldVacuum: false },
   ])('respects available disk $disk', async ({ disk, shouldVacuum }) => {
     const lines: string[] = [];
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => {},
       jobLog: (line) => { lines.push(line); },
       log: () => {},

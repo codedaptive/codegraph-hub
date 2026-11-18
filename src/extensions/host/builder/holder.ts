@@ -1,15 +1,18 @@
 /**
- * The roots the index builder holds. A held root is one the builder keeps open for writing: its database is
- * open writable (so the migrations ran), `writer.pid` names the builder, a FileWatcher watches its working
- * tree, and every write to it, whoever asked, is a job on the builder's queue (./queue.ts), except the
- * oversized-WAL checkpoint a writable open starts, which its job does not await (see openWritable).
+ * The roots the index builder holds. A held root is one the builder writes: its database was opened writable
+ * once (so the migrations ran), `writer.pid` names the builder, a FileWatcher watches its working tree, and
+ * every write to it, whoever asked, is a job on the builder's queue (./queue.ts). The builder keeps no graph of
+ * a held root open: each job checks the hold and the fences here, then runs its body through the job runner
+ * (./job-runner-type.ts: a child process per job), which opens the database, acts and closes. The bodies take
+ * no lock: `writer.pid` is the hold's, under the builder's pid, so a job whose child is killed leaves it in
+ * place and the root's next job runs under it.
  *
  * This is the project writer for the HELD roots: the one place a held root's writer slot, watcher and syncs
  * are owned, so the server only reads (a CLI command's one-shot index writes on a root, which need no hold,
  * are ./cli-jobs.ts's):
- *   - the writable open is a job: taking `writer.pid` and opening the database (which can run migrations,
- *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, so it never runs
- *     beside another job of its own root;
+ *   - the writable open is a job: taking `writer.pid` (here) and opening the database (./open-held-root-body.ts,
+ *     which can run migrations, heal an interrupted bulk load and do WAL maintenance) is an `open` job on the
+ *     queue, so it never runs beside another job of its own root;
  *   - one writer per root: `writer.pid` is taken with mode `builder`; when another live process owns it (a
  *     `codegraph watch`, a server of another state dir) the hold serves no writes and tries again every
  *     {@link HolderDeps.ownRetryMs};
@@ -17,15 +20,17 @@
  *     live process (`codegraph index` in its own process), or a fence this builder gave a `codegraph index`
  *     that runs through the server (./fences.ts);
  *   - a hold ends when the root is released (stop the watcher; when it owns `writer.pid`, wait until the root
- *     has no job queued or running; close, free `writer.pid`). A job that writes without the hold's graph (a VACUUM) relies on the
- *     slot, so the hold keeps it until that job ends; a job of the root that releases the root itself (a rebuild) does not wait for itself.
+ *     has no job queued or running; free `writer.pid`). Every job of the root writes under the slot, so the
+ *     hold keeps it until those jobs end; a job of the root that releases the root itself (a rebuild) does not wait for itself;
+ *   - when anything after the open took `writer.pid` fails (the open's body, the watcher options, the watcher's
+ *     start), the slot is freed and no hold is left.
  *
  * The watcher is a FileWatcher whose sync function QUEUES a `watch-sync` job, not `CodeGraph.watch()`, whose
  * syncs would run outside the queue and so outside its priorities. On Windows the watcher gets the same filter
- * `CodeGraph.watch()` gives its own: {@link isIndexedFileStateCurrent} drops the NTFS last-access
- * notifications (#1451) of files whose indexed size and mtime still match. It is a copy of `CodeGraph`'s
- * private check, built on the public `getFile`; only its POSIX-runnable behavior is tested here, never a
- * Windows run.
+ * `CodeGraph.watch()` gives its own: {@link isIndexedFileStateCurrent}, on a read-only open of the root for
+ * each notification, drops the NTFS last-access notifications (#1451) of files whose indexed size and mtime
+ * still match. It is a copy of `CodeGraph`'s private check, built on the public `getFile`; only its
+ * POSIX-runnable behavior is tested here, never a Windows run.
  *
  * The watcher state the server needs for its stale-index notices (watching, degraded, recovering, the pending
  * files) is polled every {@link HolderDeps.pollMs} and pushed through `onFreshness` when it changed: the
@@ -41,8 +46,11 @@ import { DEFAULT_DELIVERY_PROBE_MAX_MS, deliveryProbeGate } from '../sync/delive
 import { markWriterReady, readWriterLock, releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import type { BuilderFreshness } from './client';
 import type { RebuildFences } from './fences';
+import { jobBodySpec } from './job-body-spec';
 import { JobEndedError } from './job-ended-error';
+import type { JobRunner } from './job-runner-type';
 import type { JobQueue } from './queue';
+import { runSyncJob } from './run-sync-job';
 
 export type HoldResult =
   | { kind: 'held'; root: string }
@@ -56,6 +64,8 @@ export interface HolderDeps {
   queue: JobQueue;
   /** The builder's rebuild fences: a fenced root is never held, opened or taken over (see {@link RebuildFences.rebuildHeld}). */
   fences: RebuildFences;
+  /** Runs each job's body (the builder's runner: a child process per job). */
+  runJob: JobRunner;
   /** A held root's watcher state changed. */
   onFreshness(state: BuilderFreshness): void;
   /** One diagnostic line (stderr). */
@@ -81,7 +91,6 @@ interface Hold {
   key: string;
   /** The realpath the index is opened at. */
   root: string;
-  cg: CodeGraph | null;
   watcher: FileWatcher | null;
   /** This process owns `writer.pid`, so it writes this root. False while another live process does. */
   owner: boolean;
@@ -145,6 +154,24 @@ export function isIndexedFileStateCurrent(
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * {@link isIndexedFileStateCurrent} on a read-only open of `root` made for this one check: the builder keeps no
+ * graph of a held root open. False when the index cannot be opened, so the notification reaches the sync.
+ */
+function isIndexedFileStateCurrentOnDisk(root: string, relPath: string): boolean {
+  let cg: CodeGraph;
+  try {
+    cg = CodeGraph.openSync(root, { readOnly: true });
+  } catch {
+    return false;
+  }
+  try {
+    return isIndexedFileStateCurrent(cg, root, relPath);
+  } finally {
+    cg.close();
   }
 }
 
@@ -237,7 +264,7 @@ export class HolderSet {
     let jobOfRootReleasing: () => void = () => {};
     const releasedByJobOfRoot = new Promise<void>((resolve) => { jobOfRootReleasing = resolve; });
     const hold: Hold = {
-      key, root, cg: null, watcher: null, owner: false, closed: false, openJobPending: false,
+      key, root, watcher: null, owner: false, closed: false, openJobPending: false,
       released, release,
       opening: Promise.resolve({ kind: 'held', root }), caughtUp: Promise.resolve(),
       publishFailed: false, ownTimer: null, closing: null, releasedByJobOfRoot, jobOfRootReleasing, lastPushed: '',
@@ -289,17 +316,16 @@ export class HolderSet {
     if (!hold || hold.closed) throw new Error(`${root} is not held by the index builder`);
     await hold.opening;
     if (!hold.owner) return { filesChanged: 0 };
-    return this.deps.queue.enqueue('sync', hold.root, async () => {
-      const cg = this.openGraph(hold);
-      const r = await cg.sync();
+    return this.deps.queue.enqueue('sync', hold.root, async ({ id }) => {
+      this.requireWritable(hold);
+      const r = await runSyncJob(this.deps.runJob, id, 'sync', hold.root);
       return { filesChanged: r.filesAdded + r.filesModified + r.filesRemoved };
     }, { coalesceKey: `sync:${hold.key}` });
   }
 
   /**
    * Drop the hold on `root`: stop its watcher; when the hold owns `writer.pid`, wait until no job of the root
-   * is queued or running (the queued ones that need the hold's graph refuse to run, see openGraph); close the
-   * database, free `writer.pid`.
+   * is queued or running (the queued ones of the hold refuse to run, see requireWritable); free `writer.pid`.
    * Resolves after, so another process can take the slot. A root not held resolves at once. Every release of
    * one root shares one teardown.
    *
@@ -315,16 +341,6 @@ export class HolderSet {
     return hold.closing;
   }
 
-  /**
-   * The open writable graph of a root this builder holds and owns (`writer.pid` is its), or null. Asked by a
-   * job that runs on the queue (the CLI's `sync`, ./cli-jobs.ts), which syncs through it rather than opening
-   * the database a second time.
-   */
-  ownedGraph(root: string): CodeGraph | null {
-    const hold = this.holds.get(canonicalProjectRoot(root));
-    return hold && !hold.closed && hold.owner ? hold.cg : null;
-  }
-
   /** The watcher state of a held root; null when it is not held. */
   freshness(root: string): BuilderFreshness | null {
     const hold = this.holds.get(canonicalProjectRoot(root));
@@ -338,9 +354,9 @@ export class HolderSet {
 
   // -------------------------------------------------------------------------
 
-  private openGraph(hold: Hold): CodeGraph {
-    if (hold.closed || !hold.cg) throw new Error(`${hold.root} was released by the index builder`);
-    return hold.cg;
+  /** Throws unless the hold is open and owns `writer.pid`: a job of a released hold refuses to run. */
+  private requireWritable(hold: Hold): void {
+    if (hold.closed || !hold.owner) throw new Error(`${hold.root} was released by the index builder`);
   }
 
   /** Open (a job), recover, watch, arrange catch-up after readiness or the holder's bound. Throws when opening fails. */
@@ -351,24 +367,44 @@ export class HolderSet {
 
   private async activate(hold: Hold): Promise<void> {
     // Taking the slot and opening writable is one job: the open can migrate, heal bulk-load state and start WAL
-    // maintenance (not awaited by the job, see openWritable), so it waits for the running job like every write
-    // does. Recovery and catch-up are separate jobs: the queue cannot wait on itself. Catch-up waits outside
-    // the queue for watcher readiness, unless released first, to narrow the scan-to-stream gap. A fallback
-    // can still leave delivery unproven. The queue refuses the open of a root whose open was ended over a job
-    // limit (a JobEndedError, ./queue.ts): that rejects from here, no job is pending, and openWritable never runs.
+    // maintenance (see open-held-root-body.ts), so it waits for the running job like every write does.
+    // Recovery and catch-up are separate jobs: the queue cannot wait on itself. The queue refuses the open of a
+    // root whose open was ended over a job limit (a JobEndedError, ./queue.ts): that rejects from here, no job
+    // is pending, and openWritable never runs.
     hold.openJobPending = true;
-    const opened = await this.deps.queue.enqueue('open', hold.root, async () => {
+    const opened = await this.deps.queue.enqueue('open', hold.root, async ({ id }) => {
       hold.openJobPending = false;
-      return this.openWritable(hold);
+      return this.openWritable(hold, id);
     }).catch((err: unknown) => {
       if (err instanceof JobEndedError) hold.openJobPending = false;
       throw err;
     });
     if (opened === null || hold.closed) return;
-    if (opened.recoveryPending) {
+    try {
+      await this.recoverAndWatch(hold, opened.recoveryPending);
+    } catch (err) {
+      // The open took `writer.pid`: free it, so a failed hold leaves no slot behind.
+      hold.watcher?.stop();
+      hold.watcher = null;
+      hold.owner = false;
+      releaseWriterLock(hold.root);
+      throw err;
+    }
+  }
+
+  /**
+   * After the open: recover, start the watcher, arrange the catch-up. Catch-up waits outside the queue for
+   * watcher readiness, unless released first, to narrow the scan-to-stream gap. A fallback can still leave
+   * delivery unproven. Throws when the watcher options or the watcher's start throw.
+   */
+  private async recoverAndWatch(hold: Hold, recoveryPending: boolean): Promise<void> {
+    if (recoveryPending) {
       // Off this thread (#1887), as a job so it does not overlap another root's write. A recovery that outlasts
       // the wait leaves the indexes slower, never wrong, for the reader; the catch-up queues behind it.
-      const recovery = this.deps.queue.enqueue('recover', hold.root, () => this.openGraph(hold).recoverIndexes());
+      const recovery = this.deps.queue.enqueue('recover', hold.root, async ({ id }) => {
+        this.requireWritable(hold);
+        await this.deps.runJob(id, jobBodySpec('recover', hold.root, 'recover-indexes-body', 'recoverIndexesBody', { root: hold.root }));
+      });
       recovery.catch((err: unknown) => this.deps.log(`index recovery of ${hold.root} failed: ${messageOf(err)}`));
       await boundedWait(recovery, this.deps.recoverWaitMs);
       if (hold.closed) return;
@@ -385,21 +421,15 @@ export class HolderSet {
   }
 
   /**
-   * The body of the `open` job: take `writer.pid` and open the database writable. Null when nothing was
+   * The `open` job (job `jobId`): check the fences, take `writer.pid` for the builder, then run the open's body
+   * (./open-held-root-body.ts), which opens the database writable and closes it. Null when nothing was
    * opened: the hold was released while the job waited, a rebuild holds the root now (one that started while
    * the job waited: the retry opens it once the rebuild is over), or another live process owns the slot (this
    * serves nothing for the root, and the retry takes over when that process exits; a retry whose open the
-   * queue refuses as ended over a job limit stops there, see scheduleOwnRetry). Throws when the index
-   * cannot be opened.
-   *
-   * Not awaited by the job: the open starts CodeGraph's oversized-WAL heal fire-and-forget (db/index.ts `open`,
-   * `void conn.healOversizedWal()`: an off-thread PASSIVE then TRUNCATE checkpoint), and the job ends without
-   * awaiting it. The connection is private to CodeGraph (src/index.ts), and src/index.ts is upstream, not
-   * editable from this zone, so the job has no handle on the checkpoint. The checkpoint can therefore overlap
-   * the next job. When that job writes the same database, SQLite serializes the two itself; when it writes
-   * another root's database, they run side by side.
+   * queue refuses as ended over a job limit stops there, see scheduleOwnRetry). Throws, with `writer.pid`
+   * freed, when the body fails.
    */
-  private openWritable(hold: Hold): { recoveryPending: boolean } | null {
+  private async openWritable(hold: Hold, jobId: number): Promise<{ recoveryPending: boolean } | null> {
     if (hold.closed) return null;
     // A rebuild (fenced here, or another process's `rebuild.pid`) may have started since holdNow looked: the
     // open would take `writer.pid` and migrate a database the rebuild is about to replace.
@@ -417,16 +447,14 @@ export class HolderSet {
       return null;
     }
     hold.owner = true;
-    let cg: CodeGraph;
+    const spec = jobBodySpec('open', hold.root, 'open-held-root-body', 'openHeldRootBody', { root: hold.root });
     try {
-      cg = CodeGraph.openSync(hold.root, { deferIndexRecovery: true });
+      return await this.deps.runJob(jobId, spec) as { recoveryPending: boolean };
     } catch (err) {
       hold.owner = false;
       releaseWriterLock(hold.root);
       throw err;
     }
-    hold.cg = cg;
-    return { recoveryPending: cg.hasPendingIndexRecovery() };
   }
 
   /**
@@ -471,7 +499,10 @@ export class HolderSet {
     hold.watcher = new FileWatcher(
       hold.root,
       async (paths) => {
-        const r = await this.deps.queue.enqueue('watch-sync', hold.root, () => this.openGraph(hold).sync({ paths }));
+        const r = await this.deps.queue.enqueue('watch-sync', hold.root, async ({ id }) => {
+          this.requireWritable(hold);
+          return runSyncJob(this.deps.runJob, id, 'watch-sync', hold.root, { paths });
+        });
         return { filesChanged: r.filesAdded + r.filesModified + r.filesRemoved, durationMs: r.durationMs };
       },
       {
@@ -484,7 +515,7 @@ export class HolderSet {
       },
       // Windows only, as `CodeGraph.watch()` passes its own filter.
       process.platform === 'win32'
-        ? (relPath) => isIndexedFileStateCurrent(hold.cg, hold.root, relPath)
+        ? (relPath) => isIndexedFileStateCurrentOnDisk(hold.root, relPath)
         : undefined,
     );
     if (!hold.watcher.start()) {
@@ -518,7 +549,10 @@ export class HolderSet {
    * is at the failure, before the retry, which is not waited for.
    */
   private queueCatchUp(hold: Hold, attempt: number): Promise<void> {
-    return this.deps.queue.enqueue('catch-up', hold.root, () => this.openGraph(hold).sync()).then(
+    return this.deps.queue.enqueue('catch-up', hold.root, async ({ id }) => {
+      this.requireWritable(hold);
+      return runSyncJob(this.deps.runJob, id, 'catch-up', hold.root);
+    }).then(
       (r) => {
         if (hold.closed) return;
         this.publishReady(hold);
@@ -569,18 +603,12 @@ export class HolderSet {
     if (!hold.openJobPending) await hold.opening;
     hold.watcher?.stop();
     hold.watcher = null;
-    // While this hold owns `writer.pid`, every job of the root, running or queued, ends before the database
-    // closes and the slot is freed: a job that writes without this graph (a VACUUM) relies on the slot, and the
-    // queued ones that need the graph refuse to run (openGraph), so the wait ends. A hold that never took the
-    // slot (its open still queued, or another process owns it) protects nothing and does not wait. A release
-    // from a job of the root ends the wait: that job is the only one of the root running, and it would
-    // otherwise wait for itself.
+    // While this hold owns `writer.pid`, every job of the root, running or queued, ends before the slot is
+    // freed: each one writes under the slot, and the queued ones of the hold refuse to run (requireWritable), so
+    // the wait ends. A hold that never took the slot (its open still queued, or another process owns it)
+    // protects nothing and does not wait. A release from a job of the root ends the wait: that job is the only
+    // one of the root running, and it would otherwise wait for itself.
     if (hold.owner) await Promise.race([this.deps.queue.whenRootIdle(hold.root), hold.releasedByJobOfRoot]);
-    const cg = hold.cg;
-    if (cg) {
-      try { cg.close(); } catch { /* already closed */ }
-      hold.cg = null;
-    }
     if (hold.owner) releaseWriterLock(hold.root);
     hold.owner = false;
     this.holds.delete(hold.key);

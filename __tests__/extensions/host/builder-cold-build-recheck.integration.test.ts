@@ -12,6 +12,7 @@
  *
  * Real SQLite, real files and real git in mkdtemp dirs.
  */
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
@@ -51,7 +52,7 @@ describe('a queued cold build is admitted again when its job starts', { timeout:
     vi.stubEnv('CODEGRAPH_HOUSEKEEPING_INTERVAL_MS', '0');
     jobLines = [];
     releaseBlocker = () => {};
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => { /* the pushes are not under test */ },
       jobLog: (line) => { jobLines.push(line); },
       log: () => { /* diagnostics are not under test */ },

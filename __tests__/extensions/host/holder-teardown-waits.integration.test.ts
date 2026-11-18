@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -25,7 +26,7 @@ describe('holder teardown and root jobs', { timeout: 60_000 }, () => {
     const graph = await CodeGraph.init(root);
     try { await graph.indexAll(); } finally { graph.close(); }
     sent = [];
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: (message) => { sent.push(message); },
       jobLog: () => {},
       log: () => {},

@@ -38,7 +38,26 @@ describe('runJobChild', () => {
     runJobChild(channel, () => ({ work: () => { if (mode === 'throw') throw new Error('broken'); return Promise.reject(new Error('broken')); } }));
     handler({ type: 'spec', spec });
     await done;
-    expect(events).toEqual([{ type: 'error', message: 'broken' }, { exit: 1 }]);
+    expect(events).toEqual([{ type: 'error', message: 'broken', name: 'Error' }, { exit: 1 }]);
+  });
+
+  it('sends the name and message of a named error', async () => {
+    const events: unknown[] = [];
+    let handler: (message: unknown) => void = () => undefined;
+    let finished: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => { finished = resolve; });
+    const channel = { send: (message: unknown) => { events.push(message); }, onMessage: (fn: (message: unknown) => void) => { handler = fn; }, exit: (code: number) => { events.push({ exit: code }); finished(); } };
+    runJobChild(channel, () => ({ work: () => {
+      const error = new Error('lock is unavailable');
+      error.name = 'LockUnavailableError';
+      throw error;
+    } }));
+    handler({ type: 'spec', spec });
+    await done;
+    expect(events).toEqual([
+      { type: 'error', message: 'lock is unavailable', name: 'LockUnavailableError' },
+      { exit: 1 },
+    ]);
   });
 
   it('names a missing export and exits unsuccessfully', async () => {

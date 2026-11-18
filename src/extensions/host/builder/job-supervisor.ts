@@ -2,8 +2,9 @@
  * Runs builder jobs each in its own child process (./job-child-main.ts), so the watchdog (./job-watchdog.ts) reads
  * each job's memory on its own and a limit (./job-limit-guard.ts) kills only that job's process; the builder and
  * the jobs beside it go on. A run sends the child its spec (./job-spec-type.ts), hands its progress to the
- * caller, and settles when the child has closed: with the body's result, with its error, or, when the child
- * ended with neither (killed, or exited on its own), with an error naming its exit code or signal.
+ * caller, and settles when the child has closed: with the body's result, with its error (an Error with the
+ * thrown error's message and name, not an instance of its class), or, when the child ended with neither
+ * (killed, or exited on its own), with an error naming its exit code or signal.
  *
  * The children are forked with the flags the builder itself runs with (./client.ts) and share its stderr.
  */
@@ -64,7 +65,7 @@ export class JobSupervisor {
         if (message.type === 'progress') onProgress?.(message.payload);
         else if (message.type === 'database-created') this.databases.set(jobId, message.identity);
         else if (message.type === 'result') outcome = { ok: true, value: message.value };
-        else outcome = { ok: false, error: new Error(message.message) };
+        else outcome = { ok: false, error: Object.assign(new Error(message.message), { name: message.name }) };
       });
       child.send({ type: 'spec', spec } satisfies JobSpecMessage);
     });

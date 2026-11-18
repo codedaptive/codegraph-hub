@@ -15,6 +15,7 @@
  * the record ready leaves the retry eligible; the normal path publishes once; a catch-up that waited out lock
  * contention and then failed to publish raises no unhandled rejection.
  */
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -129,7 +130,7 @@ describe('HolderSet catch-up readiness publication', { timeout: 60_000 }, () => 
     vi.mocked(writerLock.markWriterReady).mockClear();
     logLines = [];
     const queue = new JobQueue();
-    holders = new HolderSet({
+    holders = new HolderSet({ runJob: inProcessJobRunner().runJob,
       queue,
       fences: new RebuildFences(queue, (line) => logLines.push(line)),
       onFreshness: () => undefined,

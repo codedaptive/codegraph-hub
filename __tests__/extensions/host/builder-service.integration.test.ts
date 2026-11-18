@@ -8,6 +8,7 @@
  *
  * Real SQLite and real files in mkdtemp dirs; the watcher is the real FileWatcher on a short debounce.
  */
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -91,7 +92,7 @@ describe('BuilderService', { timeout: 60_000 }, () => {
   }, 30_000);
 
   function startService(housekeeping = false, seedWaitMs = 1_000): BuilderService {
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: (message) => { sent.push(message); },
       jobLog: (line) => { jobLines.push(line); },
       log: () => { /* diagnostics are not under test */ },

@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -18,7 +19,7 @@ beforeEach(async () => {
   execFileSync('git', ['init', '-q'], { cwd: root });
   CodeGraph.initSync(root).close();
   vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(root, 'state'));
-  service = new BuilderService({ send: () => undefined, jobLog: () => undefined, log: () => undefined, watchOptions: () => ({}), housekeeping: false });
+  service = new BuilderService({ runJob: inProcessJobRunner().runJob, send: () => undefined, jobLog: () => undefined, log: () => undefined, watchOptions: () => ({}), housekeeping: false });
   await service.ensure(root);
   await service.holders.caughtUp(root);
   service.fences.fence(fencedRoot);

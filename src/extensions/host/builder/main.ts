@@ -4,8 +4,10 @@
  *   node --liftoff-only main.js        (forked by BuilderClient, ./client.ts, with an IPC channel)
  *
  * The server (the machine server, or a direct-mode session) forks one builder and keeps it running. Every
- * cold build, seed copy, sync and watcher sync of every index happens here, and so does every `init`, `index`
- * and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts), on a queue with one lane per git
+ * cold build, seed copy, sync and watcher sync of every index is a job of this process, and so is every `init`,
+ * `index` and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts). The held roots' jobs and the
+ * CLI's run their bodies each in its own child process (./job-supervisor.ts); cold builds, seed copies and
+ * VACUUMs run in this process. The jobs wait on a queue with one lane per git
  * repository plus two shared bypass slots (./queue.ts): each repository runs one job at a time, its short jobs
  * ahead of its cold builds, `init`, `index` and VACUUMs, different repositories run at once, and a busy
  * repository's next job may take a bypass slot while the load average is below 95; the server opens the databases read-only and asks for the rest over IPC (./protocol.ts). The builder has no idle timer of any kind: it lives until its
@@ -165,10 +167,12 @@ export function runBuilder(): void {
     }
   };
 
+  const supervisor = new JobSupervisor();
   const service = new BuilderService({
     send: sendToServer,
     jobLog: (line) => logFile.append(line),
     log,
+    runJob: (id, spec, onProgress) => supervisor.run(id, spec, onProgress),
     watchOptions: () => ({
       // The debounce override CODEGRAPH_WATCH_DEBOUNCE_MS (issue #403), parsed by watch-policy.ts.
       debounceMs: parseDebounceEnv(process.env.CODEGRAPH_WATCH_DEBOUNCE_MS),
@@ -181,7 +185,6 @@ export function runBuilder(): void {
     }),
   });
 
-  const supervisor = new JobSupervisor();
   let stopping = false;
   const shutdown = (graceMs: number): void => {
     if (stopping) return;
