@@ -1,6 +1,8 @@
 /**
  * Ends a job that went past a limit (./job-watchdog.ts finds it). The job runs in its own child process
- * (./job-supervisor.ts): the child is killed, and once it has closed the `job limit` line and the job's mark
+ * (./job-supervisor.ts): the child the limit was measured on is killed. When the job runs in another child by then
+ * (the kill resolves false), nothing more is done: no line, no mark, no cleanup, and the watchdog judges the new
+ * child on its own. Otherwise, once the child has closed, the `job limit` line and the job's mark
  * (./ended-jobs-file.ts) are written, so no builder runs that job again until an explicit `codegraph index` or
  * `init`, and the job is cleaned up by the child's pid (./clean-up-ended-job.ts): a seed's staging copy removed,
  * a cold build's partial database removed when its identity is the one the child reported creating (or, when the
@@ -15,7 +17,7 @@ import { formatLimitLine } from './job-limit-line';
 import type { LimitBreach } from './limit-breach';
 import type { JobKind } from './queue';
 
-/** End the over-limit `job` by killing its child; see the header. */
+/** End the over-limit `job` by killing the child it was measured in; see the header. */
 export async function endOverLimit(
   job: { kind: JobKind; root: string },
   breach: LimitBreach,
@@ -23,14 +25,17 @@ export async function endOverLimit(
     jobLog: (line: string) => void;
     endedFile: Pick<EndedJobsFile, 'append'>;
     now?: () => Date;
-    /** The over-limit job's child: its pid, the database identity it reported creating, and its kill. */
-    child: { pid: number; createdDatabase: string | null; kill: () => Promise<void> };
+    /**
+     * The over-limit job's child: its pid, the database identity it reported creating, and its kill, which
+     * resolves false when that child no longer runs the job and was not killed.
+     */
+    child: { pid: number; createdDatabase: string | null; kill: () => Promise<boolean> };
   },
 ): Promise<void> {
   const now = deps.now ?? (() => new Date());
   const { root, kind } = job;
   const { child } = deps;
-  await child.kill();
+  if (!(await child.kill())) return;
   attempt(() => deps.jobLog(formatLimitLine(job, breach, now())));
   attempt(() => deps.endedFile.append({ root, kind, limit: breach.limit, at: now().toISOString() }));
   cleanUpEndedJob(kind, root, child.pid, isCreatedDatabase(child.createdDatabase));

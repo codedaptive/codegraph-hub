@@ -216,8 +216,14 @@ export function runBuilder(): void {
     onBreach: (job, breach, childPid) => void endOverLimit(job, breach, {
       jobLog: (line) => logFile.append(line), endedFile,
       // A getter: the guard reads the identity after the kill has closed the child, so a report the child sent
-      // just before the kill is not missed, and the read drops the killed job's entry (./job-supervisor.ts).
-      child: { pid: childPid, get createdDatabase() { return supervisor.createdDatabase(job.id); }, kill: () => supervisor.kill(job.id) },
+      // just before the kill is not missed, and the read drops the killed job's entry (./job-supervisor.ts). The
+      // kill names `childPid`, so the child killed is the one the guard cleans up after; a job already running in
+      // a new child is left alone.
+      child: {
+        pid: childPid,
+        get createdDatabase() { return supervisor.createdDatabase(job.id); },
+        kill: () => supervisor.kill(job.id, childPid),
+      },
     }),
   }).start();
   service.start();

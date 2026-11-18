@@ -7,7 +7,9 @@
  * one interval late (and later while the builder's event loop is blocked, since the sample runs on its main
  * thread). A job with no child at the check (its builder-side checks before the child starts, or a cold build's
  * delay between attempts) is not judged, but its time still counts from that first sight. A sample reads the
- * children's sizes asynchronously, and a check that comes while one is still reading is skipped.
+ * children's sizes asynchronously, and a check that comes while one is still reading is skipped. A size is judged
+ * only if, once read, its job still runs in the child it was read from: a job whose child closed or was replaced
+ * (a cold build's retry) during the read is dropped unjudged, and the next check samples its current child.
  */
 import { checkJobLimits } from './job-limit-breach';
 import type { JobLimits } from './job-limits-type';
@@ -25,7 +27,7 @@ interface JobWatchdogOptions {
   childPid: (jobId: number) => number | null;
   readChildRssBytes?: (pid: number) => Promise<number | null>;
   intervalMs?: number;
-  /** `childPid` is the pid of the job's child at the sample. */
+  /** `childPid` is the pid of the child the job was sampled in, and still runs in after the read. */
   onBreach: (job: RunningJob, breach: LimitBreach, childPid: number) => void;
 }
 
@@ -50,7 +52,7 @@ export class JobWatchdog {
   /**
    * One sample: once the children's sizes are read, the first job over a limit in ascending id (the older job
    * first) is reported through `onBreach`, and the sample ends there; no job is reported twice, and a job that
-   * ended meanwhile is skipped.
+   * ended, or whose child is no longer the one read, meanwhile is skipped without being marked reported.
    */
   check(): Promise<void> {
     if (this.sampling) return Promise.resolve();
@@ -67,12 +69,15 @@ export class JobWatchdog {
     return Promise.all(pending.map(async ({ job, pid }) => ({ job, pid, rss: await this.readChildRssBytes(pid) })))
       .then((sized) => {
         const still = new Set(this.queue.runningJobs().map((job) => job.id));
-        this.judge(now, sized.filter(({ job }) => still.has(job.id)));
+        this.judge(now, sized.filter(({ job, pid }) => still.has(job.id) && this.opts.childPid(job.id) === pid));
       })
       .finally(() => { this.sampling = false; });
   }
 
-  /** Report the first of `jobs` over a limit at `now`; a null `rss` (a child's size that could not be read) judges time only. */
+  /**
+   * Report the first of `jobs` (each still running in child `pid`) over a limit at `now`; a null `rss` (a child's
+   * size that could not be read) judges time only.
+   */
   private judge(now: number, jobs: readonly { job: RunningJob; pid: number; rss: number | null }[]): void {
     for (const { job, pid, rss } of jobs) {
       const breach = checkJobLimits(now - (this.startedAt.get(job.id) ?? now), rss ?? 0, this.limits);
