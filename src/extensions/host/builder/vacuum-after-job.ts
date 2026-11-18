@@ -6,9 +6,14 @@
  * it, S-78) waits for it (one writer per root); one queued
  * VACUUM per root is shared by every job that asks for it (its coalesce key).
  *
- * When the job runs it decides again on what is on disk then: a rebuild that holds the root (a release or index
- * fence, or another process's `rebuild.pid`) leaves it alone, a freelist since reused is left as it is, and a
- * disk with no more than twice the database free is logged and skipped, since a VACUUM writes a whole copy.
+ * When the job runs, a rebuild that holds the root (a release or index fence, or another process's `rebuild.pid`)
+ * leaves it alone. Otherwise it takes the root's writer slot (writer.pid, ./take-vacuum-writer-slot.ts) before it
+ * decides: another live process holding it (or a lock that cannot be read) is logged and skipped; when this process
+ * holds it (the slot was free, or the holder's own), the job runs and keeps the slot until the VACUUM settles. It
+ * then decides again on what is on disk: a freelist since reused is left as it is, and a disk with no more than
+ * twice the database free is logged and skipped, since a VACUUM writes a whole copy.
+ * Ownership by this same process is still exposed to the holder's teardown (./holder.ts HolderSet.teardown frees
+ * writer.pid without waiting for the root's jobs); that fix belongs in holder.ts.
  *
  * Never throws: it runs inside the queue's event callback, and a failed check only means no VACUUM.
  */
@@ -21,10 +26,12 @@ import { MIN_VACUUM_FREELIST_BYTES } from './min-vacuum-freelist-bytes';
 import type { JobEvent } from './queue';
 import { readDbPageStats } from './read-db-page-stats';
 import { runVacuumOffThread } from './run-vacuum-off-thread';
+import { takeVacuumWriterSlot } from './take-vacuum-writer-slot';
 import type { VacuumAfterJobDeps } from './vacuum-after-job-deps';
 import { vacuumVerdict } from './vacuum-verdict';
+import type { WriterLockInfo } from '../../../mcp/writer-lock';
 
-type VacuumOutcome = 'fenced' | 'vacuum' | 'freelist-small' | 'disk-short';
+type VacuumOutcome = 'fenced' | 'writer-held' | 'vacuum' | 'freelist-small' | 'disk-short';
 
 export function vacuumAfterJob(event: JobEvent, deps: VacuumAfterJobDeps): void {
   if (event.edge !== 'end' || !event.ok || event.kind === 'vacuum') return;
@@ -51,13 +58,29 @@ async function vacuumBody(
   minFreelistBytes: number,
 ): Promise<VacuumOutcome> {
   if (deps.rebuildHeld(root)) return 'fenced';
-  const stats = readStats(dbPath);
-  if (stats === null) return 'freelist-small';
-  const free = (deps.freeDisk ?? freeDiskBytes)(path.dirname(dbPath));
-  const verdict = vacuumVerdict(stats, free, minFreelistBytes);
-  if (verdict === 'vacuum') await (deps.runVacuum ?? runVacuumOffThread)(dbPath);
-  if (verdict === 'disk-short') deps.jobLog(skipLine(root, free, stats.pageCount * stats.pageSize));
-  return verdict;
+  const slot = (deps.takeWriterSlot ?? takeVacuumWriterSlot)(root);
+  if (slot.kind === 'busy') {
+    deps.jobLog(writerHeldLine(root, slot.holder));
+    return 'writer-held';
+  }
+  try {
+    const stats = readStats(dbPath);
+    if (stats === null) return 'freelist-small';
+    const free = (deps.freeDisk ?? freeDiskBytes)(path.dirname(dbPath));
+    const verdict = vacuumVerdict(stats, free, minFreelistBytes);
+    if (verdict === 'vacuum') await (deps.runVacuum ?? runVacuumOffThread)(dbPath);
+    if (verdict === 'disk-short') deps.jobLog(skipLine(root, free, stats.pageCount * stats.pageSize));
+    return verdict;
+  } finally {
+    slot.release();
+  }
+}
+
+function writerHeldLine(root: string, holder: WriterLockInfo | null): string {
+  const why = holder === null
+    ? 'writer.pid is held and could not be read'
+    : `writer.pid is held by live process ${holder.pid} (${holder.mode})`;
+  return `${new Date().toISOString()} vacuum skipped ${root}: ${why}`;
 }
 
 function skipLine(root: string, free: number | null, dbBytes: number): string {
