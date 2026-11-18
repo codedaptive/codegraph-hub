@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const PKG_VERSION = JSON.parse(
@@ -36,7 +37,7 @@ describe('codegraph status --json — CI fields (#329)', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-json-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-status-json-')));
   });
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -92,7 +93,7 @@ describe('index completeness marker (index_state)', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-state-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-index-state-')));
   });
 
   afterEach(() => {

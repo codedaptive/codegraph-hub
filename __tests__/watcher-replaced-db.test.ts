@@ -18,6 +18,7 @@ import * as path from 'path';
 import CodeGraph, { LockUnavailableError } from '../src/index';
 import type { MCPEngine } from '../src/mcp/engine';
 import { ADMIT_ALL } from './helpers/admit-all';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const posixOnly = it.runIf(process.platform !== 'win32');
 
@@ -52,6 +53,7 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-1902-'));
+    gitInitTempRoot(root);
     fs.mkdirSync(path.join(root, 'src'));
     fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export function alpha() { return 1; }\n');
     fs.writeFileSync(path.join(root, 'src', 'b.ts'), 'export function bravo() { return 2; }\n');

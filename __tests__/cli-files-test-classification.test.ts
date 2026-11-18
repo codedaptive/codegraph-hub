@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -19,7 +20,7 @@ describe('CLI test-file classification (#1877)', () => {
   }
 
   beforeAll(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-test-files-'));
+    dir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-test-files-')));
     fs.mkdirSync(path.join(dir, 'src'));
     fs.writeFileSync(path.join(dir, 'src/app.ts'), 'export function app() { return 1; }\n');
     fs.writeFileSync(path.join(dir, 'src/app.test.ts'), 'import { app } from "./app";\napp();\n');

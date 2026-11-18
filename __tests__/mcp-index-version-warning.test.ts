@@ -12,6 +12,7 @@ import { EXTRACTION_VERSION } from '../src/extraction/extraction-version';
 import { IndexVersionWarningState } from '../src/mcp/index-version-warning';
 import { MCPSession } from '../src/mcp/session';
 import { resolveRepoAnchor } from '../src/extensions/host/server/repo-anchor';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 import type { MCPEngine } from '../src/mcp/engine';
 import type {
   JsonRpcNotification,
@@ -74,6 +75,7 @@ describe('MCP index extraction-version warning (#1852)', () => {
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-version-'));
+    gitInitTempRoot(root);
     fs.writeFileSync(path.join(root, 'alpha.ts'), 'export function alpha() { return 1; }\n');
     cg = await CodeGraph.init(root, { index: false });
     await cg.indexAll();

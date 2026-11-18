@@ -130,6 +130,7 @@ describe('a schema-less codegraph.db is not an initialized project (#1895)', () 
   });
 
   it('a real index still resolves upward from a subdirectory', async () => {
+    gitInitTempRoot(parent);
     await indexProject(parent);
     expect(isInitialized(parent)).toBe(true);
     expect(findNearestCodeGraphRoot(child)).toBe(parent);
@@ -147,6 +148,7 @@ describe('a schema-less codegraph.db is not an initialized project (#1895)', () 
 
   it('(a) an empty db in the parent does not hijack the initialized child', async () => {
     plantBrokenDb(parent, 'empty');
+    gitInitTempRoot(child);
     await indexProject(child);
     expect(findNearestCodeGraphRoot(child)).toBe(child);
     expect(resolveServerRoot(child).root).toBe(child);
