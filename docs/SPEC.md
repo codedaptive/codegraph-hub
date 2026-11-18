@@ -130,14 +130,15 @@ A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
 applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root,
 the job kind, the limit and the measured value. Jobs run inside the builder process, so ending one ends the
-process: a job running beside it in the other lane ends with it, rolled back, logged as failed and not marked
-(S-79). Memory is one figure for the process; host charges a breach to the cold build when one runs (`rssOwner`, a
-heuristic). The ended job is not re-queued by itself, and the root's stopped mark survives every builder restart.
-A call for a stopped root that has an index is answered from it, with one line saying its last builder job was
-stopped at a limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`;
-with no index, it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`)
-print the same line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or
-`codegraph init` of that root clears the mark and tries again, under the same limits (S-69).
+process: a job running beside it in the other lane ends with it, rolled back and not marked (S-79); its log line
+is a failed `job end` naming the over-limit job. Memory is one figure for the process; host charges a breach to
+the cold build when one runs (`rssOwner`, a heuristic). The ended job is not re-queued by itself, and the root's
+stopped mark survives every builder restart. A call for a stopped root that has an index is answered from it, with
+one line saying its last builder job was stopped at a limit, so the index may be partial or behind, naming the
+variable to raise and `codegraph index`; with no index, it gets that guidance alone. The fork's CLI read commands
+(`grep`, `blast`, `orphans`, `suspects`) print the same line on stderr and answer as before (S-71,
+team/settled.md). Only an explicit `codegraph index` or `codegraph init` of that root clears the mark and tries
+again, under the same limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
 queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
@@ -226,7 +227,7 @@ order, is the second table.
 | sm.13 (ours be5ab360, 2026-11-06) | a pinned project with no index is seeded from its nearest sibling; `codegraph project seed <path>` (S-57) |
 | sm.14 (ours 6a2b6eff, 2026-11-10) | a launcher no longer takes over a busy server, and a stopping server removes only its own socket (split-server fix, F-1/F-2, S-58); the R-38 bug list (Swift member and nested-supertype resolution, `grep`/`orphans` tool descriptions, install runbook, seed and upgrade-version fixes); upstream PRs #3249 (impact speed) and #3215 (order-independent resolution) taken early (R-40). Repo work landed with this commit, not in the package: the first test-group moves (D281); the S-65 moves follow |
 | sm.15 (ours d1e4c984, 2026-11-17) | after the 11-16 incident: only a git worktree root is indexed: the CLI's `init`, `index` and `sync` refuse a path outside every git worktree on both routes, and a path below a worktree root acts on that root (R-46, S-70; code outside git waits for R-50's opt-in); every builder job is ended at 60 minutes or 8 GB resident and not retried until an explicit `index` or `init` (R-47, S-69); on macOS a watcher is ready once its delivery probe sees its own event or gives up (macos-watcher-gap). Review follow-ups, the stopped note and R-50's opt-in for code outside git follow in sm.16 |
-| sm.16 (ours 3d65edec, 2026-11-17) | the rest of the 11-16 incident set: a folder outside git is indexed once a person opts it in with `codegraph init <dir> --no-git`, ended by `uninit` or `project remove` (R-50); `project pin` pins the enclosing git worktree root (R-46); a root stopped at a job limit is answered from its index with a note naming the limit's variable and `codegraph index`, in tool answers, `status`, the CLI's reads and the prompt hook, and its watcher degrades at once (S-69, S-71); `--color` and `--no-color` reach the CLI's warnings; a folder link leaving the root is followed only when `.codegraphignore` re-includes it, in the scan, git's file list, the `include` walk and the watcher (R-44, S-72, S-75, S-76, S-77); a cold build or a seed replaces the schema-less database a killed build left (S-73); syncs, catch-ups, seeds and opens of indexed roots run beside a cold build (R-43, S-78); a VACUUM after a job that leaves a large freelist, when free disk allows (R-45, S-81). Repo work, not in the package: its gate was the first to run the integration test group (S-83) |
+| sm.16 (ours 3d65edec, 2026-11-17) | the rest of the 11-16 incident set: a folder outside git is indexed once a person opts it in with `codegraph init <dir> --no-git`, ended by `uninit` or `project remove` (R-50); `project pin` pins the enclosing git worktree root (R-46); a root stopped at a job limit is answered from its index with a note naming the limit's variable and `codegraph index`, in tool answers, `status`, the CLI's reads and the prompt hook (S-69, S-71); a watcher whose sync the builder ended at a limit stops at once with the builder's message instead of retrying; `--color` and `--no-color` reach the CLI's warnings; a folder link leaving the root is followed only when the root's ignore rules re-include it, in the scan, git's file list, the `include` walk and the watcher (R-44, S-72, S-75, S-76, S-77), and the `include` walk, on the git route and the folder walk alike, also follows a link that `codegraph.json` names itself as an `include` root (S-77); a cold build or a seed replaces the schema-less database a killed build left (S-73); syncs, catch-ups, seeds and opens of indexed roots run beside a cold build (R-43, S-78); a VACUUM after a job that leaves a large freelist, when free disk allows (R-45, S-81). Repo work, not in the package: its gate was the first to run the integration test group (S-83) |
 
 | Left | State |
 |---|---|
