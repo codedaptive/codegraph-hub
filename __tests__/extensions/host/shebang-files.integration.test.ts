@@ -1,5 +1,4 @@
-// R-49: these tests remain red until Orc's extraction hook-in lands;
-// red until Orc's R-49(a) hook-in in src/extraction/grammars.ts lands (isSourceFile, detectLanguage); remove this note in that work order.
+// R-49(a): an extensionless script is source, gets its language and is indexed by its `#!` line (isSourceFile, detectLanguage).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
