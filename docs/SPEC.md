@@ -93,7 +93,9 @@ override it. `uninit` and `project remove` still work on such a root.
 **Opting in (R-50; built, ships in sm.16).** `codegraph init <dir> --no-git`, run once by a person,
 opts a folder outside git in. The opt-in is recorded in the project registry, and from then on the folder is
 served, synced and caught up like a git worktree root. Nothing else opts in: no MCP call, catch-up, seed or
-housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. An opted-in folder keeps the
+housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. `codegraph project list` marks
+an opted-in folder `no-git`; `codegraph uninit` or `codegraph project remove` on it ends the opt-in, and running
+`init --no-git` there again opts it back in. An opted-in folder keeps the
 guards below: symlinked folders leaving it are not followed and `.codegraphignore` decides what is read (R-44),
 and the job limits apply (R-47).
 
@@ -101,13 +103,20 @@ The builder still refuses what upstream's `unsafeIndexRootReason` (`src/director
 home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
 the queued job starts.
 
-### What a build and the watcher read (R-44, S-72, S-75)
+### What a build and the watcher read (R-44, S-72, S-75, S-76, S-77)
 
-The scan does not follow a symlinked folder whose real path is outside the root; it follows one whose real path is
-inside it. No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
+The scan does not follow a symlinked folder whose real path is outside the root; the folder walk follows one whose
+real path is inside it (a git root's list, below, needs no alias). No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
 matcher as the root `.gitignore` (`buildDefaultIgnore`), so it applies wherever that matcher does: the walk, the
 git path, sync and the watcher, and an embedded repository's own `.codegraphignore` applies inside it (S-72). A `!`
 line naming a link's path inside the project re-includes a symlinked folder that leaves the root.
+
+On a git root the scan takes git's file list, which names a folder link without its contents. A link in it whose
+real path leaves the root is walked when the root's rules re-include it; a link into the root is not followed
+there, because git already lists those files under their own paths (S-76). The `include` walk of `codegraph.json`
+follows a folder link it meets by the same rule, so a wildcard include does not leave the root; an include root
+that is itself the link is followed, and `include` still overrides `.codegraphignore` as it overrides `.gitignore`
+(S-77).
 
 The file watcher follows directory links by the same rule (S-75): a link whose real path is inside the root is
 watched, one leaving it only when re-included. An edit to the root `.codegraphignore` rebuilds the watcher's scope
