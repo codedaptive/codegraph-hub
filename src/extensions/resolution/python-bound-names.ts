@@ -5,7 +5,7 @@
  * `as` target (`with`, `except`, `import`), and the name of a `def` or `class`.
  *
  * Why: pythonLoaderPaths knows a module name at a loader call only when nothing else binds
- * it, at module level or in a function enclosing the call. A name read here that the line
+ * it in module scope or in a function enclosing the call. A name read here that the line
  * does not really bind only makes a path unknown, never wrong, so the reading leans wide.
  * Attribute and subscript targets (`self.x =`, `d[k] =`) bind no name and are skipped, as
  * is a `=` inside a call's parentheses, which is a keyword argument.
@@ -18,7 +18,7 @@ const AS = /\bas\s+(\([^)]*\)|[A-Za-z_]\w*)/g;
 const ASSIGN = /^([^=]*?)\s*(?:\/\/|\*\*|>>|<<|[-+*/%&|^@])?=(?!=)/;
 const NAME = /^[A-Za-z_]\w*$/;
 
-export function pythonLineBindings(text: string): string[] {
+export function pythonBoundNames(text: string): string[] {
   const def = DEF.exec(text);
   if (def) return [def[1] ?? ''];
   const names = [...text.matchAll(AS)].flatMap((match) => targetNames(match[1] ?? ''));

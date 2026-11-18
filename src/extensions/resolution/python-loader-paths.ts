@@ -9,15 +9,16 @@
  * call in a comment or docstring is not read and offsets still give the right line.
  *
  * The path is the 2nd positional argument or the `path=` / `location=` keyword. It is
- * evaluated by pythonPathExpression against the module-level names: a name bound exactly
- * once by a logical line at column 0, as `name = value` on one physical line. A line that
- * starts inside an open bracket continues the line before and binds nothing. A name a
+ * evaluated by pythonPathExpression against the module names pythonModuleNames reads from
+ * the logical lines. A line that starts inside an open bracket continues the line before
+ * and binds nothing. A name a
  * function enclosing the call binds (a parameter, or any binding in its body) is the
  * function's at that call, not the module's, so it is unknown there. A path built from
  * an unknown name is skipped.
  */
 import { stripCommentsForRegex } from '../../resolution/strip-comments';
-import { pythonLineBindings } from './python-line-bindings';
+import { pythonBoundNames } from './python-bound-names';
+import { pythonModuleNames } from './python-module-names';
 import { pythonPathExpression } from './python-path-expression';
 import { pythonSkipToken } from './python-skip-token';
 
@@ -34,7 +35,6 @@ interface LogicalLine {
 }
 
 const LOADER_CALL = /\b(?:SourceFileLoader|spec_from_file_location)\s*\(/g;
-const MODULE_VALUE = /^[A-Za-z_]\w*[ \t]*=(?!=)([^\n]*)$/;
 const DEF_OPEN = /^(?:async\s+)?def\s+[A-Za-z_]\w*\s*\(/;
 const PARAMETER = /^\*{0,2}\s*([A-Za-z_]\w*)/;
 const PATH_KEYWORD = /^(?:path|location)\s*=(?!=)/;
@@ -43,7 +43,7 @@ const ANY_KEYWORD = /^\w+\s*=(?!=)/;
 export function pythonLoaderPaths(filePath: string, content: string): LoaderPath[] {
   const source = stripCommentsForRegex(content, 'python');
   const lines = logicalLines(source);
-  const names = moduleNames(lines);
+  const names = pythonModuleNames(lines);
   const found: LoaderPath[] = [];
   let line = 1;
   let counted = 0;
@@ -75,21 +75,6 @@ function logicalLines(source: string): LogicalLine[] {
   return lines;
 }
 
-/** Names bound exactly once at module level, to the expression text bound. */
-function moduleNames(lines: LogicalLine[]): Map<string, string> {
-  const bindings = new Map<string, string[]>();
-  for (const line of lines.filter((candidate) => candidate.indent === 0)) {
-    for (const name of pythonLineBindings(line.text)) {
-      bindings.set(name, [...(bindings.get(name) ?? []), MODULE_VALUE.exec(line.text)?.[1]?.trim() ?? '']);
-    }
-  }
-  const names = new Map<string, string>();
-  for (const [name, values] of bindings) {
-    if (values.length === 1 && values[0]) names.set(name, values[0]);
-  }
-  return names;
-}
-
 /**
  * Names bound in every `def` enclosing lines[at]. Walking back from the call's line, each
  * line indented less than every line seen so far opens a block enclosing the call; the
@@ -115,7 +100,7 @@ function defNames(source: string, lines: LogicalLine[], i: number): string[] {
   const parameters = callArguments(source, def.start + def.indent + open[0].length) ?? [];
   const names = parameters.flatMap((parameter) => PARAMETER.exec(parameter)?.[1] ?? []);
   for (let body = i + 1; (lines[body]?.indent ?? 0) > def.indent; body++) {
-    names.push(...pythonLineBindings(lines[body]?.text ?? ''));
+    names.push(...pythonBoundNames(lines[body]?.text ?? ''));
   }
   return names;
 }

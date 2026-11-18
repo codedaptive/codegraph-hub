@@ -1,13 +1,13 @@
 /**
- * Unit tests of pythonLineBindings: the names a logical line binds (plain, annotated,
+ * Unit tests of pythonBoundNames: the names a logical line binds (plain, annotated,
  * augmented and tuple assignment targets, `for` and `as` targets, def and class names),
  * and the lines that bind no name (attribute and subscript targets, keyword arguments,
  * comparisons, statements without a target).
  */
 import { describe, expect, it } from 'vitest';
-import { pythonLineBindings } from '../../../src/extensions/resolution/python-line-bindings';
+import { pythonBoundNames } from '../../../src/extensions/resolution/python-bound-names';
 
-describe('pythonLineBindings', () => {
+describe('pythonBoundNames', () => {
   it.each([
     ['ROOT = Path(__file__)', ['ROOT']],
     ['ROOT: str = "x"', ['ROOT']],
@@ -20,7 +20,7 @@ describe('pythonLineBindings', () => {
     ['async def run():', ['run']],
     ['class C(Base):', ['C']],
   ])('binds the names of %s', (text, expected) => {
-    expect(pythonLineBindings(text)).toEqual(expected);
+    expect(pythonBoundNames(text)).toEqual(expected);
   });
 
   it.each([
@@ -31,6 +31,6 @@ describe('pythonLineBindings', () => {
     'x <= 1',
     'return x',
   ])('binds no name in %s', (text) => {
-    expect(pythonLineBindings(text)).toEqual([]);
+    expect(pythonBoundNames(text)).toEqual([]);
   });
 });

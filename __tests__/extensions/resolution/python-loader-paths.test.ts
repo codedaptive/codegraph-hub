@@ -3,7 +3,8 @@
  * chains, string literals, module-level names) and the lines it reports, multiline and
  * keyword calls, calls in comments and docstrings, and the dynamic, absolute, escaping,
  * local-only, shadowed and multiply assigned forms it refuses, and continuation lines
- * that are not module bindings.
+ * that are not module bindings. Module blocks, class bodies and global declarations
+ * distinguish module bindings from local ones.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonLoaderPaths } from '../../../src/extensions/resolution/python-loader-paths';
@@ -141,6 +142,56 @@ path="s.py"
 )
 SourceFileLoader("m", path)`;
     expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a module name rebound in an if block', () => {
+    const source = `ROOT = Path(__file__).parent
+if SHIFT:
+    ROOT = Path(__file__).parents[2]
+SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a module name rebound in an except block', () => {
+    const source = `ROOT = Path(__file__).parent
+try:
+    import x
+except ImportError:
+    ROOT = Path(__file__).parents[2]
+SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a module name rebound by a module-level for target', () => {
+    const source = `ROOT = Path(__file__).parent
+for ROOT in []:
+    pass
+SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('rejects a name declared global in a function', () => {
+    const source = `ROOT = Path(__file__).parent
+def reset():
+    global ROOT
+    ROOT = Path(__file__).parents[2]
+SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('resolves a name bound once in a module-level block', () => {
+    const source = `if True:
+    ROOT = Path(__file__).parent
+SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([{ line: 3, name: '/tests/unit/x.py' }]);
+  });
+
+  it('does not count a class attribute as a module binding', () => {
+    const source = `ROOT = Path(__file__).parent
+class C:
+    ROOT = 1
+SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([{ line: 4, name: '/tests/unit/x.py' }]);
   });
 
   it('rejects multiply assigned module names and their dependent aliases', () => {
