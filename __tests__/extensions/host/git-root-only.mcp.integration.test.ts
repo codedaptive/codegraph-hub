@@ -91,7 +91,7 @@ describe('MCP calls require a git worktree', { timeout: 60_000 }, () => {
     expect(result.content.map((c) => c.text).join('\n')).not.toContain('alphaSymbol');
   });
 
-  it('refuses a stray index at the session guard, before any builder request', async () => {
+  it('refuses a stray index on the session path without asking the builder', async () => {
     const plain = path.join(tmp, 'plain');
     fs.mkdirSync(plain);
     fs.writeFileSync(path.join(plain, 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
