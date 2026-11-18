@@ -140,7 +140,7 @@ describe('JobSupervisor', () => {
     await expect(supervisor.kill(999)).resolves.toBe(true);
   });
 
-  it('resolves true for an unknown id with a pid', async () => {
-    await expect(supervisor.kill(999, 101)).resolves.toBe(true);
+  it('resolves false for an unknown id with a pid', async () => {
+    await expect(supervisor.kill(999, 101)).resolves.toBe(false);
   });
 });

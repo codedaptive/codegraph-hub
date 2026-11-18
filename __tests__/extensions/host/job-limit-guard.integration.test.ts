@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { statInode } from '../../../src/directory';
 import { endOverLimit } from '../../../src/extensions/host/builder/job-limit-guard';
+import { testJobSupervisor } from './helpers/test-job-supervisor';
 
 const breach = { limit: 'time' as const, maxMs: 3600000, measuredMs: 3600001 };
 const at = '2026-11-16T10:00:00.000Z';
@@ -81,5 +82,41 @@ describe('endOverLimit with a child', () => {
     await endOverLimit({ kind: 'seed', root }, breach, deps(123, null, async () => true));
     expect(fs.existsSync(path.join(dir, 'codegraph.db.seed-123-0a1b2c3d.tmp'))).toBe(false);
     expect(fs.existsSync(path.join(dir, 'codegraph.db.seed-456-0a1b2c3d.tmp'))).toBe(true);
+  });
+});
+
+describe('endOverLimit with a real supervisor', { timeout: 90_000 }, () => {
+  const supervisor = testJobSupervisor();
+  const returning = path.resolve(__dirname, '../../fixtures/job-process-bodies.cjs');
+  const hanging = path.resolve(__dirname, 'fixtures/hanging-leftovers.cjs');
+  const spec = (module: string, name: string) =>
+    ({ kind: 'cold-build' as const, root, module, export: name, args: { root }, writerPid: process.pid });
+
+  it('leaves a job that moved to a new child running, unmarked and with its files', async () => {
+    const first = supervisor.run(1, spec(returning, 'progress'));
+    const childA = supervisor.childPid(1);
+    if (childA === null) throw new Error('first run has no child');
+    await expect(first).resolves.toEqual({ answer: 42 });
+    let ready: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    const second = supervisor.run(1, spec(hanging, 'coldBuild'), () => ready());
+    const rejected = expect(second).rejects.toThrow();
+    try {
+      await Promise.race([started, second.then(() => { throw new Error('fixture returned'); })]);
+      const childB = supervisor.childPid(1);
+      expect(childB).not.toBeNull();
+      expect(childB).not.toBe(childA);
+      const options = { jobLog: vi.fn(), endedFile: { append: vi.fn() }, now: () => new Date(at),
+        child: { pid: childA, createdDatabase: null, kill: () => supervisor.kill(1, childA) } };
+      await endOverLimit({ kind: 'cold-build', root }, breach, options);
+      expect(options.jobLog).not.toHaveBeenCalled();
+      expect(options.endedFile.append).not.toHaveBeenCalled();
+      expect(supervisor.childPid(1)).toBe(childB);
+      expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(true);
+      for (const name of dbNames) expect(fs.readFileSync(path.join(dir, name), 'utf8')).toBe('partial build');
+    } finally {
+      await supervisor.kill(1);
+      await rejected;
+    }
   });
 });

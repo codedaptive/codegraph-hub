@@ -99,13 +99,13 @@ export class JobSupervisor {
   }
 
   /**
-   * SIGKILL job `jobId`'s child and resolve true once it has closed, or at once when no child runs for that id.
-   * Given `pid`, a running child with another pid (the job moved on to a new child since `pid` was read) is left
-   * alone and the result is false.
+   * SIGKILL job `jobId`'s child and resolve true once it has closed; without `pid`, true at once when no child
+   * runs for that id. Given `pid`, false when that child is not the job's running child (another child runs, or
+   * none), so nothing was killed.
    */
   async kill(jobId: number, pid?: number): Promise<boolean> {
     const running = this.children.get(jobId);
-    if (!running) return true;
+    if (!running) return pid === undefined;
     if (pid !== undefined && running.child.pid !== pid) return false;
     running.killed = true;
     running.child.kill('SIGKILL');
