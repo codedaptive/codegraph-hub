@@ -255,7 +255,7 @@ function resolveRoot(root: string): string {
 /**
  * The CLI's own refusals (src/bin/codegraph.ts: runInit and the `index`, `sync` commands), no more:
  * `init` and `index` refuse an unsafe root unless forced (a root that does not exist yet passes: init
- * creates it); `init` refuses an initialized root, the others an uninitialized one; `release` has no CLI refusal
+ * creates it); `init` refuses an initialized root (runInit rebuilds a stopped one through `index`), the others an uninitialized one; `release` has no CLI refusal
  * (`uninit` warns and exits 0 first), so its check is the server's own, worded as uninit's warning.
  * `seed` accepts an uninitialized root and leaves path validation to seedWorktreeNow in the builder.
  */

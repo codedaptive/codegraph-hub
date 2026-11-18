@@ -27,11 +27,12 @@
  * and kind rejects with {@link JobEndedError} (./ended-jobs.ts holds the marks). So a `vacuum` ended over a
  * limit is not queued again for its root until an explicit `init` or `index` of it. Cold builds are refused by
  * the builder before their child starts instead (cold-build-job.ts), and `init` and `index` never are: they are the explicit way to try
- * again, and one that ends ok clears its root's marks.
+ * again, and one that resolves with a value other than a failed result (`success: false`) clears its root's marks.
  */
 import * as os from 'os';
 import { canonicalProjectRoot } from '../../../directory';
 import { endedJobs } from './ended-jobs';
+import { isFailedResult } from './is-failed-result';
 import { JobEndedError } from './job-ended-error';
 import type { JobLane } from './job-lane-type';
 import { nextStart } from './next-start';
@@ -132,8 +133,8 @@ export class JobQueue {
   /**
    * Queue a job. Resolves with `run`'s value, rejects with its error (the failure is logged as well). A
    * closed queue rejects at once, and so does a root and kind ended over a limit (a {@link JobEndedError},
-   * with no run and no log line), except the {@link NEVER_REFUSED} kinds. An `init` or `index` that ends ok
-   * clears its root's ended marks. `run` is called with an object holding the job's `id`, the one {@link JobQueue.runningJobs} reports.
+   * with no run and no log line), except the {@link NEVER_REFUSED} kinds. An `init` or `index` that resolves
+   * with a value other than a failed result (./is-failed-result.ts) clears its root's ended marks. `run` is called with an object holding the job's `id`, the one {@link JobQueue.runningJobs} reports.
    */
   enqueue<T>(kind: JobKind, root: string, run: (job: { id: number }) => Promise<T>, opts: EnqueueOptions = {}): Promise<T> {
     if (this.closed) return Promise.reject(new Error('the index builder is stopping'));
@@ -223,7 +224,9 @@ export class JobQueue {
         // `run` may throw before its first await; the async wrapper turns that into a rejection too.
         void (async () => entry.run({ id: entry.id }))().then(
           (value) => {
-            if (entry.kind === 'init' || entry.kind === 'index') endedJobs.clearRoot(entry.root);
+            // An `init` or `index` clears its root's ended marks unless it resolved with a failed result
+            // (`success: false`, ./is-failed-result.ts), so a failed explicit init or index leaves the root stopped.
+            if ((entry.kind === 'init' || entry.kind === 'index') && !isFailedResult(value)) endedJobs.clearRoot(entry.root);
             this.emit({ edge: 'end', kind: entry.kind, root: entry.root, ok: true });
             this.running.splice(this.running.indexOf(slot), 1);
             entry.resolve(value);
