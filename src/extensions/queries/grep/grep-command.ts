@@ -8,6 +8,7 @@ import { findNearestCodeGraphRoot } from '../../../directory';
 import { GrepIndexError, GrepPatternError, GrepScopeError, grepIndex, type GrepOptions } from './grep-core';
 import { formatGrepResult, zeroHitNote } from './grep-format';
 import { stoppedIndexWarning } from '../shared/stopped-index-warning';
+import { readRefusal } from '../shared/readRefusal';
 
 export interface CommandOutput { stdout: string; stderr: string; exitCode: number }
 
@@ -71,7 +72,9 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
 
 /**
  * Run `grep` with CLI semantics: exit 1 with a `✗` line on stderr for a bad
- * pattern, an unknown `--in` prefix or a missing index; exit 0 otherwise.
+ * pattern, an unknown `--in` prefix, a missing index, or an indexed root that
+ * is neither in a git worktree nor opted in (../shared/readRefusal.ts); exit 0
+ * otherwise.
  * The project root is `--path` when given, else the nearest ancestor of `cwd`
  * holding an index.
  * Zero hits is not an error: text mode puts the note on stderr and exits 0.
@@ -88,6 +91,8 @@ export async function runGrepCommand(argv: string[], cwd: string): Promise<Comma
     if (root === null) {
       throw new GrepIndexError(`no codegraph index at or above ${cwd} — run codegraph init in the project first`, 'not-indexed');
     }
+    const refusal = readRefusal(root);
+    if (refusal !== null) return { stdout: '', stderr: refusal, exitCode: 1 };
     const result = await grepIndex(root, pattern, parsed.opts);
     const warning = stoppedIndexWarning(root) ?? '';
     if (parsed.json) return { stdout: JSON.stringify(result, null, 2) + '\n', stderr: warning, exitCode: 0 };
