@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { rustHeadUse } from '../../../src/resolution/rust-head-use';
-import type { RustHeadBinding } from '../../../src/resolution/rust-head-use';
+import { rustHeadUse } from '../../../src/extensions/resolution/rust-head-use';
+
+/** The binding rustHeadUse returns, as its fakes for `visible` must shape it. */
+type RustHeadBinding = NonNullable<ReturnType<typeof rustHeadUse>>;
 
 describe('rustHeadUse', () => {
   it('expands local aliases and preserves the first binding block', () => {
@@ -73,6 +75,26 @@ describe('rustHeadUse', () => {
       : { paths: [{ segs: ['crate', 'shadow', 'a'], at: 20 }], std: [], block: 10 };
     expect(rustHeadUse('a', 70, false, visible, [], null)).toEqual({
       paths: [{ segs: ['b'], at: 50 }], std: [], block: 40,
+    });
+  });
+
+  it('keeps the path of a plain self-binding without following it through itself', () => {
+    const visible = (name: string, at: number): RustHeadBinding | undefined =>
+      name === 'a' && (at === 70 || at === 20)
+        ? { paths: [{ segs: ['a'], at: 20 }], std: [], block: 10 }
+        : undefined;
+    expect(rustHeadUse('a', 70, true, visible, [], null)).toEqual({
+      paths: [{ segs: ['a'], at: 20 }], std: [], block: 10,
+    });
+  });
+
+  it('keeps the tail of a self-binding without repeatedly expanding it', () => {
+    const visible = (name: string, at: number): RustHeadBinding | undefined =>
+      name === 'a' && (at === 70 || at === 20)
+        ? { paths: [{ segs: ['a', 'c'], at: 20 }], std: [], block: 10 }
+        : undefined;
+    expect(rustHeadUse('a', 70, true, visible, [], null)).toEqual({
+      paths: [{ segs: ['a', 'c'], at: 20 }], std: [], block: 10,
     });
   });
 

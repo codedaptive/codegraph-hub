@@ -28,7 +28,7 @@ import { ambientModuleDeclarations, declaringFileAnswers, inBlock, isDeclaration
 import { leavesWorkspaceRoot } from './workspace-packages';
 import { isMinifiedContent } from '../extraction/generated-detection';
 import { getCargoWorkspaceCrateMap, parsePackageName, parseTargetPaths, parseWorkspaceMembers } from './frameworks/cargo-workspace';
-import { rustHeadUse } from './rust-head-use';
+import { rustHeadUse } from '../extensions/resolution/rust-head-use';
 import { blankRustCode, readRustScopes, rustBindingAt, rustInnerBlockAt, rustBoundsOf, rustFnAt, rustImplAt, splitRustTopLevel, type RustBinding, type RustPatternSite, type RustScopes } from './rust-scopes';
 /**
  * Ceiling on how many same-named definitions a FUZZY name-match strategy will
@@ -12490,10 +12490,11 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * `use std::fs;`), whatever module of that name the project has. A head a
  * `use` in a function's body binds is the path that `use` names (`use
  * crate::b as a;` makes `a::take()` `crate::b::take()`), walked from the
- * module that `use` is written in (rustHeadUse). A local alias whose head is
- * itself a local alias is followed, each read where its `use` is written; a
- * `mod` of the head's name declared in a nearer block makes the path that
- * `mod`'s, not the `use`'s, and so null.
+ * module that `use` is written in, else, as a 2015 path, from its crate's root
+ * (rustHeadUse). A local alias whose head is itself a local alias is followed,
+ * each read where its `use` is written, but never through the `use` itself
+ * (`use a;` names the module `a`); a `mod` of the head's name declared in a
+ * nearer block makes the path that `mod`'s, not the `use`'s, and so null.
  */
 export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): Node | null {
   let segs = ref.referenceName.replace(/^::/, '').split('::');
@@ -12533,11 +12534,18 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
       const ids = rustUseItemsAt(path[0]!, ref, context);
       return ids === null ? null : [...ids].map((id) => context.getNodeById?.(id)).filter((n): n is Node => !!n);
     }
-    // A head a `use` in the function binds: the path through that `use`'s, from where it is written.
+    // A head a `use` in the function binds: the path through that `use`'s, from where it is written,
+    // else as a 2015 path from the crate's root, by the rule below.
     if (headUse) {
       const found: Node[] = [];
       for (const p of headUse.paths) {
-        const items = rustUsePathItems([...p.segs, ...path.slice(1)], rustModuleAt(ref.filePath, p.at, context), context, new Set());
+        const full = [...p.segs, ...path.slice(1)];
+        const lead = full[0] ?? '';
+        let items = rustUsePathItems(full, rustModuleAt(ref.filePath, p.at, context), context, new Set());
+        if (items === null && lead !== 'crate' && lead !== 'self' && lead !== 'super' && !rustUsesOf(from.file, context).pathMods.has(lead)) {
+          const root = rustCrateRootModule(ref.filePath, context);
+          if (root) items = rustUsePathItems(full, root, context, new Set());
+        }
         if (items === null) return null;
         found.push(...items);
       }

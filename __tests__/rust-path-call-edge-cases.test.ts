@@ -29,7 +29,17 @@ beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-rust-path-edge-'));
   const files: Record<string, string> = {
     'Cargo.toml': '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n',
-    'src/lib.rs': 'pub mod inline;\npub mod local;\npub mod shadow;\npub mod order;\npub mod refimpl;\npub mod traits;\npub mod shapes;\npub mod store;\npub mod split;\npub mod callback;\npub mod near;\npub mod constarg;\n',
+    'src/lib.rs': 'pub mod inline;\npub mod local;\npub mod shadow;\npub mod order;\npub mod refimpl;\npub mod traits;\npub mod shapes;\npub mod store;\npub mod split;\npub mod callback;\npub mod near;\npub mod constarg;\npub mod plain;\npub mod sub2015;\npub mod util2015;\n',
+    'src/plain.rs': `pub mod a {
+    pub fn make() -> usize { 1 }
+}
+
+pub fn through_plain_use() -> usize { use a; a::make() }
+`,
+    'src/sub2015.rs': `pub fn via_root() -> usize { use util2015 as u; u::take() }
+`,
+    'src/util2015.rs': `pub fn take() -> usize { 1 }
+`,
     // a's Cache has only a trait's provided `open`; b's has an inherent one.
     'src/inline.rs': `pub mod a {
     pub struct Cache;
@@ -434,6 +444,14 @@ describe('Rust calls through a type a path names', () => {
     expect(calls('src/shadow.rs', 'through_use_fn')).toEqual(['function make src/shadow.rs:20']);
     // Where no `use` in the body binds `a`, it is the module `a` (control).
     expect(calls('src/shadow.rs', 'through_module')).toEqual(['method Cache::open src/shadow.rs:4']);
+  });
+
+  it('resolves a plain local use through the module rather than itself', () => {
+    expect(calls('src/plain.rs', 'through_plain_use')).toEqual(['function make src/plain.rs:2']);
+  });
+
+  it('resolves a local use from the crate root when the module-relative path is absent', () => {
+    expect(calls('src/sub2015.rs', 'via_root')).toEqual(['function take src/util2015.rs:1']);
   });
 
   it('never reach module a\'s item through a module `a` the function declares in its own body', () => {
