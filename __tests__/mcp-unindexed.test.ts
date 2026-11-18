@@ -140,12 +140,13 @@ describe('Session policy for a launch directory with no index', () => {
     expect(tools.map((t) => t.name)).toContain('codegraph_explore');
   });
 
-  it('a query by projectPath reaches an INDEXED sub-project of an unindexed launch directory (monorepo) (#964)', async () => {
-    // The launch directory (tempDir) has no index; an indexed sub-project lives
-    // under it — exactly the monorepo shape (outside a repository, the anchor
-    // is the launch directory and its subtree). The sub-project is its own git
-    // worktree, since only a worktree's index is answered. The query must
-    // resolve to the sub-project's .codegraph/ and return real results. Run through the real
+  it('a query by projectPath reaches an INDEXED nested repository of an unindexed launch directory (#964)', async () => {
+    // The launch directory (tempDir) is outside git and has no index; an
+    // indexed repository of its own lives under it (outside a repository, the
+    // anchor is the launch directory and its subtree). A sub-project inside one
+    // repository is answered from that repository root's index instead
+    // (selectIndexRoot, src/extensions/host/server/index-root.ts). The query must
+    // resolve to the nested repository's .codegraph/ and return real results. Run through the real
     // spawned server (a second-project open can't be exercised in-process under
     // vitest — see mcp-toolhandler cache notes — but a child process can).
     const svc = path.join(tempDir, 'service_a');
