@@ -8,16 +8,17 @@
  * are owned, so the server only reads (a CLI command's one-shot index writes on a root, which need no hold,
  * are ./cli-jobs.ts's):
  *   - the writable open is a job: taking `writer.pid` and opening the database (which can run migrations,
- *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, in the sync lane, so it
- *     can run beside another root's cold build but never beside another job of its own root;
+ *     heal an interrupted bulk load and do WAL maintenance) is an `open` job on the queue, so it never runs
+ *     beside another job of its own root;
  *   - one writer per root: `writer.pid` is taken with mode `builder`; when another live process owns it (a
  *     `codegraph watch`, a server of another state dir) the hold serves no writes and tries again every
  *     {@link HolderDeps.ownRetryMs};
  *   - a hold never starts, opens or takes over a root while a rebuild holds it: `rebuild.pid` of another
  *     live process (`codegraph index` in its own process), or a fence this builder gave a `codegraph index`
  *     that runs through the server (./fences.ts);
- *   - a hold ends when the root is released (stop the watcher, wait out a running job, close, free
- *     `writer.pid`).
+ *   - a hold ends when the root is released (stop the watcher; when it owns `writer.pid`, wait until the root
+ *     has no job queued or running; close, free `writer.pid`). A job that writes without the hold's graph (a VACUUM) keeps the slot
+ *     until it ends; a job of the root that releases the root itself (a rebuild) does not wait for itself.
  *
  * The watcher is a FileWatcher whose sync function QUEUES a `watch-sync` job, not `CodeGraph.watch()`, whose
  * syncs would run outside the queue and so outside its priorities. On Windows the watcher gets the same filter
@@ -109,6 +110,9 @@ interface Hold {
   /** The retry for a root another process owns. */
   ownTimer: NodeJS.Timeout | null;
   closing: Promise<void> | null;
+  /** Settles when a job of this root releases it (see {@link HolderSet.release}): teardown stops waiting for the root to go idle. */
+  releasedByJobOfRoot: Promise<void>;
+  jobOfRootReleasing: () => void;
   /** JSON of the last freshness pushed. */
   lastPushed: string;
 }
@@ -230,11 +234,13 @@ export class HolderSet {
     if (this.deps.fences.rebuildHeld(root)) return Promise.resolve({ kind: 'rebuilding', root });
     let release: () => void = () => {};
     const released = new Promise<void>((resolve) => { release = resolve; });
+    let jobOfRootReleasing: () => void = () => {};
+    const releasedByJobOfRoot = new Promise<void>((resolve) => { jobOfRootReleasing = resolve; });
     const hold: Hold = {
       key, root, cg: null, watcher: null, owner: false, closed: false, openJobPending: false,
       released, release,
       opening: Promise.resolve({ kind: 'held', root }), caughtUp: Promise.resolve(),
-      publishFailed: false, ownTimer: null, closing: null, lastPushed: '',
+      publishFailed: false, ownTimer: null, closing: null, releasedByJobOfRoot, jobOfRootReleasing, lastPushed: '',
     };
     this.holds.set(key, hold);
     hold.opening = this.open(hold).then(
@@ -273,7 +279,7 @@ export class HolderSet {
   }
 
   /**
-   * Sync a held `root` in the sync lane (the server's `sync` request). Concurrent calls for one root share the
+   * Sync a held `root` as a `sync` job on the queue (the server's `sync` request). Concurrent calls for one root share the
    * job while it waits. Resolves with the number of files changed; rejects when the root is not held or the
    * sync fails. A root another process owns resolves with 0: that process syncs it. The codegraph CLI's sync
    * of any root, held or not, answers a whole SyncResult and is `cliSync` (./cli-jobs.ts).
@@ -291,12 +297,20 @@ export class HolderSet {
   }
 
   /**
-   * Drop the hold on `root`: stop its watcher, let a job that is running on it finish, close the database,
-   * free `writer.pid`. Resolves after, so another process can take the slot. A root not held resolves at once.
+   * Drop the hold on `root`: stop its watcher; when the hold owns `writer.pid`, wait until no job of the root
+   * is queued or running (the queued ones that need the hold's graph refuse to run, see openGraph); close the
+   * database, free `writer.pid`.
+   * Resolves after, so another process can take the slot. A root not held resolves at once. Every release of
+   * one root shares one teardown.
+   *
+   * `fromJobOfRoot`: the caller is itself a job of this root (a rebuild), which the queue runs alone among the
+   * root's jobs; waiting for the root to go idle would wait for the caller. Such a release does not wait, and
+   * ends the wait of a teardown already under way.
    */
-  release(root: string): Promise<void> {
+  release(root: string, opts: { fromJobOfRoot?: boolean } = {}): Promise<void> {
     const hold = this.holds.get(canonicalProjectRoot(root));
     if (!hold) return Promise.resolve();
+    if (opts.fromJobOfRoot) hold.jobOfRootReleasing();
     if (!hold.closing) hold.closing = this.teardown(hold);
     return hold.closing;
   }
@@ -555,11 +569,15 @@ export class HolderSet {
     if (!hold.openJobPending) await hold.opening;
     hold.watcher?.stop();
     hold.watcher = null;
+    // While this hold owns `writer.pid`, every job of the root, running or queued, ends before the database
+    // closes and the slot is freed: a job that writes without this graph (a VACUUM) relies on the slot, and the
+    // queued ones that need the graph refuse to run (openGraph), so the wait ends. A hold that never took the
+    // slot (its open still queued, or another process owns it) protects nothing and does not wait. A release
+    // from a job of the root ends the wait: that job is the only one of the root running, and it would
+    // otherwise wait for itself.
+    if (hold.owner) await Promise.race([this.deps.queue.whenRootIdle(hold.root), hold.releasedByJobOfRoot]);
     const cg = hold.cg;
     if (cg) {
-      // A job that is running on this graph owns the database until it ends; the jobs still queued for the
-      // root refuse to run (openGraph), so this wait ends.
-      while (cg.isIndexing()) await new Promise<void>((resolve) => setTimeout(resolve, 25));
       try { cg.close(); } catch { /* already closed */ }
       hold.cg = null;
     }

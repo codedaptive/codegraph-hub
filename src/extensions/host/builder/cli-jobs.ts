@@ -6,12 +6,12 @@
  *
  * `cliIndex` has four modes, each one job:
  *   init            `CodeGraph.init(root, {index:false})`, an `initialized` event, `indexAll` with progress
- *                   events, close. An `init` job (cold lane). It takes no `rebuild.pid` and registers nothing in
+ *                   events, close. An `init` job. It takes no `rebuild.pid` and registers nothing in
  *                   the project registry, as `codegraph init` does in its own process; a cold build
  *                   (../worktree-lifecycle/cold-build.ts) takes both, for a root nobody asked for.
  *   rebuild         `codegraph index`: needs the root's lease (./fences.ts, `fence` request, which holds
  *                   `rebuild.pid`). Lets go of the root if the builder holds it, takes `writer.pid` for the lease,
- *                   recreates the database, `indexAll` with progress events, close. An `index` job (cold lane).
+ *                   recreates the database, `indexAll` with progress events, close. An `index` job.
  *   reindex-leased  `indexAll` again on a writable open that the job closes when it ends, under the same lease
  *                   (the interactive re-run of `index`): needs the lease, takes no writer lock. An `index` job.
  *   reindex         `indexAll` on an existing index with no lease (the re-run of `init`): the writable open the
@@ -22,7 +22,7 @@
  * is fenced for its removal (a `release` fence, `codegraph uninit`:
  * ./fences.ts `refuseIfRemoving`), so no job of these opens a database that is being deleted.
  *
- * `cliSync` is one `sync` job (sync lane): through the hold's own graph when the builder holds the root and
+ * `cliSync` is one `sync` job: through the hold's own graph when the builder holds the root and
  * owns its `writer.pid`, otherwise a writable open of the root for the one sync. It answers the whole SyncResult.
  * Under an `index` fence the fallback open checks nothing, as an in-process `codegraph sync` during another
  * process's rebuild checks neither `writer.pid` nor `rebuild.pid`; the queue never runs two jobs of one root together, so
@@ -30,13 +30,14 @@
  *
  * Progress callbacks and abort signals never cross the IPC: a job (an index's or a sync's) turns the engine's
  * progress callback into `requestEvent` pushes (in order, one per callback, none dropped). A `verbose` index job
- * also turns the engine's console.log lines into `log` events, in the same order.
+ * also turns the engine's console.log lines into `log` events, in the same order; while verbose jobs of two
+ * repositories overlap, each also gets the other's lines (./capturing-log.ts).
  */
 import * as path from 'path';
-import { format } from 'util';
 import CodeGraph from '../../../index';
 import type { IndexProgress, IndexResult, SyncResult } from '../../../extraction';
 import { tryAcquireWriterLock, writerLockHeldMessage } from '../../../mcp/writer-lock';
+import { capturingLog } from './capturing-log';
 import type { IndexWriteEvent } from './cli-wire';
 import type { RebuildFences, RebuildLease } from './fences';
 import type { HolderSet } from './holder';
@@ -72,13 +73,13 @@ export class CliJobs {
       this.deps.fences.refuseIfRemoving(root);
       const emit = (event: IndexWriteEvent): void => this.deps.send({ op: 'requestEvent', requestId, event });
       const onProgress = (progress: IndexProgress): void => emit({ kind: 'progress', progress });
-      // A verbose job runs with the builder's console.log turned into `log` events (see capturingLog).
+      // A verbose job runs with the builder's console.log turned into `log` events (./capturing-log.ts).
       // Every job first asks again whether the root is being removed: the fence may have come while it waited.
       const checked = <T>(job: () => Promise<T>): (() => Promise<T>) => () => {
         this.deps.fences.refuseIfRemoving(root);
         return job();
       };
-      const run = <T>(job: () => Promise<T>): (() => Promise<T>) => (verbose ? () => capturingLog(emit, checked(job)) : checked(job));
+      const run = <T>(job: () => Promise<T>): (() => Promise<T>) => (verbose ? () => capturingLog((line) => emit({ kind: 'log', line }), checked(job)) : checked(job));
       const engine = { onProgress, verbose };
       switch (mode) {
         case 'init':
@@ -161,8 +162,9 @@ export class CliJobs {
     // The builder's own hold of the root (open database, watcher, writer.pid) goes first: the server released
     // its handle before it asked for this job, but a hold of the builder's may still be there: an `open` job
     // that ran after the fence refuses to open (holder.ts openWritable), leaving the hold entry. `recreate`
-    // deletes the database files.
-    await this.deps.holders.release(root);
+    // deletes the database files. This job is the root's running job, so the release must not wait for the root
+    // to go idle.
+    await this.deps.holders.release(root, { fromJobOfRoot: true });
     const writer = tryAcquireWriterLock(root, 'rebuild');
     if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
     lease.noteWriter();
@@ -188,25 +190,6 @@ export class CliJobs {
 interface IndexEngineOptions {
   onProgress: (progress: IndexProgress) => void;
   verbose: boolean;
-}
-
-/**
- * Run `job` with console.log turned into `log` events, and put console.log back when it ends, whatever
- * way. With `verbose` the engine writes its `[worker] ...` and `[wal-valve] ...` diagnostics with console.log
- * (src/extraction/index.ts, src/index.ts), which a CLI running the index itself shows on its stdout; here the
- * lines go to the CLI as events, in order with the progress events. The builder's stdout is not connected
- * to anything (the server forks it with stdio 'ignore', ./client.ts), and only `index` and `init` jobs capture (the
- * cold lane runs one at a time; no sync-lane job logs with console.log on its path), so the lines logged while a
- * capturing job runs are that job's.
- */
-async function capturingLog<T>(emit: (event: IndexWriteEvent) => void, job: () => Promise<T>): Promise<T> {
-  const original = console.log;
-  console.log = (...args: unknown[]): void => emit({ kind: 'log', line: format(...args) });
-  try {
-    return await job();
-  } finally {
-    console.log = original;
-  }
 }
 
 /** A root from the IPC must be an absolute path: a relative one would mean this process's working directory. */
