@@ -133,15 +133,18 @@ sync is a full reconcile.
 A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8 GB resident
 (`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
-applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root,
-the job kind, the limit and the measured value. Each job runs in its own child process of the builder, so its
-memory is measured on its own and a limit ends only that process: the builder and the jobs running beside it go
-on (R-53). The ended job is not re-queued by itself, and the root's stopped mark survives every builder restart. A
-call for a stopped root that has an index is answered from it, with one line saying its last builder job was
-stopped at a limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with
-no index, it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print
-the same line on stderr and answer as before (S-71, team/settled.md). Only an explicit `codegraph index` or
-`codegraph init` of that root clears the mark and tries again, under the same limits (S-69).
+applied; an ended seed removes its own staging copy), the locks it took itself are released (its `rebuild.pid`,
+and a `writer.pid` it took), and one log line names the root, the job kind, the limit and the measured value. Each
+job runs in its own child process of the builder, so its memory is measured on its own and a limit ends only that
+process: the builder and the jobs running beside it go on (R-53). A root's `writer.pid` that names the builder
+belongs to the builder's hold on that root, not to a job: it stays when a job ends, and the hold releases it when
+it closes, after the root's jobs end. The ended job is not re-queued by itself, and the root's stopped mark
+survives every builder restart. A call for a stopped root that has an index is answered from it, with one line
+saying its last builder job was stopped at a limit, so the index may be partial or behind, naming the variable to
+raise and `codegraph index`; with no index, it gets that guidance alone. The fork's CLI read commands (`grep`,
+`blast`, `orphans`, `suspects`) print the same line on stderr and answer as before (S-71, team/settled.md). Only
+an explicit `codegraph index` or `codegraph init` of that root clears the mark and tries again, under the same
+limits (S-69).
 
 After a job that leaves a root's freelist over a quarter of its database file and at least 256 MB, the builder
 queues a VACUUM of that root as its own job, behind small syncs, and runs it only when free disk exceeds twice the
