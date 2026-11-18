@@ -40,7 +40,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, execFileSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
@@ -54,6 +54,7 @@ import { EXTRACTION_VERSION } from '../src/extraction/extraction-version';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { SERVER_INFO } from '../src/mcp/session';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -250,9 +251,9 @@ describe('The machine server', () => {
     // This process computes the server's socket path with the same helpers the
     // server uses, so it must see the same state dir the children are given.
     process.env.CODEGRAPH_STATE_DIR = stateDir;
+    realRoot = gitInitTempRoot(tempDir);
     const cg = await CodeGraph.init(tempDir);
     cg.close();
-    realRoot = fs.realpathSync(tempDir);
   });
 
   afterEach(async () => {
@@ -429,8 +430,13 @@ describe('The machine server', () => {
     stampIndexStale(indexed, '0.1.0');
     indexed.close();
 
+    // `other` is a linked worktree of tempDir's repository: the session anchor
+    // admits it (same git common dir), and its `.git` file makes it its own git
+    // root, so its own index answers rather than tempDir's.
     const otherRoot = path.join(tempDir, 'other');
-    fs.mkdirSync(otherRoot);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: tempDir, stdio: 'ignore' });
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init');
+    git('worktree', 'add', '-q', otherRoot, '-b', 'other');
     fs.writeFileSync(path.join(otherRoot, 'bravo.ts'), 'export function bravo() { return 2; }\n');
     const other = await CodeGraph.init(otherRoot, { index: false });
     await other.indexAll();
@@ -564,7 +570,7 @@ describe('The machine server', () => {
   }, 30000);
 
   it('direct stdio answers for its launch repository only; a second repository is refused by the anchor', async () => {
-    // Two indexed projects side by side, no index at the parent. The session is
+    // Two indexed repositories side by side, no index at the parent. The session is
     // launched in `alpha`: that fixes its repo anchor, so `beta` is outside it
     // and gets guidance naming the anchor — never an error — while a call that
     // names no project gets the exact missing-argument text.
@@ -572,6 +578,7 @@ describe('The machine server', () => {
     for (const name of ['alpha', 'beta']) {
       const root = path.join(tempDir, name);
       fs.mkdirSync(root);
+      gitInitTempRoot(root);
       fs.writeFileSync(path.join(root, 'app.ts'), `export function ${name}Symbol() { return 42; }\n`);
       const cg = await CodeGraph.init(root);
       try { await cg.indexAll(); } finally { cg.close(); }
