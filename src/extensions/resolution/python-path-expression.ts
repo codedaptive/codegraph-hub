@@ -1,9 +1,10 @@
 /**
  * Evaluates statically the Python path expression an importlib loader is given, so the
  * loading module can be linked to the file it loads. Read: string literals, `__file__`,
- * Path()/str()/os.fspath()/os.path.abspath/realpath/normpath (identity), os.path.dirname,
- * os.path.join, `/`, `.parent`, `.parents[N]`, `.resolve()`, `.absolute()`, `.joinpath()`,
- * and the module's single-assignment `names`, to a bounded depth so `A = B` / `B = A` ends.
+ * Path()/PurePath()/str()/fspath()/abspath()/realpath()/normpath() (identity), dirname(),
+ * join(), `/`, `.parent`, `.parents[N]`, `.resolve()`, `.absolute()`, `.joinpath()`, and
+ * the module's single-assignment `names`, to a bounded depth so `A = B` / `B = A` ends.
+ * A call is matched by its last dotted name only: `os.path.join` and `x.join` are alike.
  * Anything else is computed at run time and gives null: a guessed path is a false edge.
  * A path anchored on `__file__` comes back root-relative with a leading '/' (null when it
  * climbs above the root); any other is relative as written, normalized, with './'

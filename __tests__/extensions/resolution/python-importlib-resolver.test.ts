@@ -1,3 +1,10 @@
+/**
+ * Tests of pythonImportlibResolver with a context that throws on any lookup a test does
+ * not stub: detect, extract (file-level `imports` references named by the path),
+ * claimsReference, ownsReference, and resolve (root-relative candidate before
+ * loader-relative, none for anchored names or root-escaping ones, the file-kind fallback
+ * when getNodeById is absent).
+ */
 import { describe, expect, it } from 'vitest';
 import { pythonImportlibResolver } from '../../../src/extensions/resolution/python-importlib-resolver';
 import type { ResolutionContext, UnresolvedRef } from '../../../src/resolution/types';

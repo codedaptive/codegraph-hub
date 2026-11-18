@@ -1,3 +1,10 @@
+/**
+ * Indexes a temporary Python project and checks that getFileDependents sees a test that
+ * loads a file by path with SourceFileLoader or spec_from_file_location (anchored on
+ * `__file__`, root-relative, loader-relative), that a path from a function parameter
+ * links nothing, and that the dependency returns after the target is deleted and
+ * re-added across syncs.
+ */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';

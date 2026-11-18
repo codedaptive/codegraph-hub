@@ -12,7 +12,7 @@
  * root-relative first, then relative to the loading file's directory.
  *
  * resolve() runs for every Python reference, so one that is not ours returns null
- * after an O(1) test and no context call. ownsReference keeps the import and name
+ * after a test of the reference's own fields and no context call. ownsReference keeps the import and name
  * strategies from guessing a module for a path no file answers.
  */
 import * as path from 'path';

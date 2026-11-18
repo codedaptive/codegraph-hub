@@ -431,7 +431,8 @@ export interface FrameworkResolver {
    *
    * Returns route nodes, middleware nodes, etc., plus unresolved references
    * that link those nodes to handlers (view classes, controller methods,
-   * included modules). Unresolved references flow into the normal resolution
+   * included modules), or, with no nodes, a file to a file it loads by path
+   * (the python-importlib resolver). Unresolved references flow into the normal resolution
    * pipeline; the framework's own `resolve()` is one of the strategies tried.
    */
   extract?(filePath: string, content: string): FrameworkExtractionResult;

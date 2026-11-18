@@ -1,3 +1,9 @@
+/**
+ * Unit tests of pythonLoaderPaths: the path expressions it evaluates (Path/os.path
+ * chains, string literals, module-level names) and the lines it reports, multiline and
+ * keyword calls, calls in comments and docstrings, and the dynamic, absolute, escaping,
+ * local-only and multiply assigned forms it refuses.
+ */
 import { describe, expect, it } from 'vitest';
 import { pythonLoaderPaths } from '../../../src/extensions/resolution/python-loader-paths';
 
