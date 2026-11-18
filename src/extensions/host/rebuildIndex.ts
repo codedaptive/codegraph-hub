@@ -2,7 +2,8 @@
  * The full rebuild of an initialized root, as `codegraph index` runs it (src/bin/codegraph.ts) and as an explicit
  * `codegraph init` of a root the index builder stopped at a limit runs it (./retryStoppedInit.ts). `runIndexOn` is
  * the CLI's supervised, progress-rendered index: it destroys the writer it is given and answers whether the index
- * succeeded. Throws when another rebuild holds the root or a running server did not release it.
+ * succeeded. Throws when another rebuild holds the root, another process holds its writer lock, or a running
+ * server did not release it.
  */
 import * as fs from 'node:fs';
 import type { IndexWriter } from './builder/cli-route';

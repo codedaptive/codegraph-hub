@@ -16,7 +16,7 @@
  * Nothing here creates a file or a directory, starts a process, or waits on a timer once connected: an index
  * runs for minutes.
  *
- * Loaded only with `await import`, by the commands' hook-ins in src/bin/codegraph.ts and
+ * Loaded only with `await import`, by the commands' hook-ins in src/bin/codegraph.ts (the `index` rebuild: ../rebuildIndex.ts) and
  * ../fresh/cli.ts and ../worktree-lifecycle/cli.ts, so registering a command never loads this module or the engine.
  * A `seed` waits for the builder's seed-only operation, returns its outcome, and takes no connection lease.
  *
