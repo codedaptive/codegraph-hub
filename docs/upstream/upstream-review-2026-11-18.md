@@ -48,90 +48,91 @@ Conflict blocks per file (`git show 43f88f8d:<file>` read for `<<<<<<<` / `=====
 
 ## 2. Per-commit table (77 commits, oldest first)
 
-"Ours overlap" lists the files a commit changes (CHANGELOG.md left out) that ours has also changed since f72c9d2e
+"Files" counts every file the command below lists for the commit, CHANGELOG.md included. "Ours overlap" lists the files a
+commit changes (CHANGELOG.md left out) that ours has also changed since f72c9d2e
 (`git diff --name-only f72c9d2e ours`). File level only: an overlap is not a conflict. Five commits carry author dates
 before the newest commits around them (7f6e4348, 98d722a4, b2862791, 5fd2d019, df208537): they were merged into upstream main
 after f72c9d2e, so the table follows `git log --reverse` order, not author date.
 
 | # | Commit | PR | Gist | Files | Ours overlap |
 |---|---|---|---|---|---|
-| 1 | 01a49312 | #3196 | C++: a call through a template parameter links each class written as its argument | 14 | AGENTS.md, src/db/queries.ts, RI, NM, src/resolution/types.ts |
-| 2 | 329dd12f | #3215 | Resolution walks answer the same whoever asks first (final form of the PR ours carries) | 9 | the two #3215 tests, c-macro-renames.ts, cpp-includers.ts, II, RI, NM, pascal-scope.ts |
+| 1 | 01a49312 | #3196 | C++: a call through a template parameter links each class written as its argument | 15 | AGENTS.md, src/db/queries.ts, RI, NM, src/resolution/types.ts |
+| 2 | 329dd12f | #3215 | Resolution walks answer the same whoever asks first (final form of the PR ours carries) | 10 | the two #3215 tests, c-macro-renames.ts, cpp-includers.ts, II, RI, NM, pascal-scope.ts |
 | 3 | 9bc50cf0 | #3306 | Release notes cut to GitHub's limit | 3 | AGENTS.md |
-| 4 | b300ccea | #3307 | 1.6.3 changelog condensed | 0 | none |
+| 4 | b300ccea | #3307 | 1.6.3 changelog condensed | 1 | none |
 | 5 | 22c11045 | #3312 | Blank string contents by slices (perf) | 3 | NM |
 | 6 | 73d57959 | #3313 | C#: extension-method overload by its arguments | 2 | NM |
-| 7 | b0779f76 | #3314 | PHP: anonymous classes, imported names, Eloquent locals | 4 | NM |
-| 8 | 2b5adb3a | #3315 | Rust: a call through Pin onto a type parameter | 2 | NM |
-| 9 | 932a7fab | #3316 | Ruby: a class name is the class Ruby's lookup finds | 3 | NM |
+| 7 | b0779f76 | #3314 | PHP: anonymous classes, imported names, Eloquent locals | 5 | NM |
+| 8 | 2b5adb3a | #3315 | Rust: a call through Pin onto a type parameter | 3 | NM |
+| 9 | 932a7fab | #3316 | Ruby: a class name is the class Ruby's lookup finds | 4 | NM |
 | 10 | 94c1c0eb | #3317 | Sync skips the manifest walk when git shows no manifest change | 6 | EI, SI, RI |
 | 11 | 1f569a6a | #3318 | One-off sync drops framework-detection reads | 3 | EI, SI |
-| 12 | 147fe290 | #3319 | TS: callback parameters, call results, type guards type the receiver | 8 | EI, SI, II, RI, NM |
+| 12 | 147fe290 | #3319 | TS: callback parameters, call results, type guards type the receiver | 9 | EI, SI, II, RI, NM |
 | 13 | 3212a990 | #3323 | Release 1.6.3 | 3 | package.json, package-lock.json |
 | 14 | d19748fa | #3324 | CI: macOS kernel on macos-15 | 1 | none |
 | 15 | 44098dec | #3325 | README for 1.6.3 | 1 | README.md |
-| 16 | ef4bd058 | - | Changelog: [Unreleased] to [1.6.3] | 0 | none |
+| 16 | ef4bd058 | - | Changelog: [Unreleased] to [1.6.3] | 1 | none |
 | 17 | f8b3681b | #3326 | Site docs for 1.6.3 | 14 | none |
 | 18 | e2af4146 | #3328 | CI: wait for npm up to 30 minutes | 1 | none |
-| 19 | ffaaf6f2 | #3331 | Python: `import time` links no project function `time` | 3 | RI, NM |
-| 20 | 1ddbe699 | #3334 | Rust: a module a glob `use` brings in, and a head a function's `use` binds | 2 | NM |
-| 21 | 5ea5aeb9 | #3338 | Change detection without git's index lock | 2 | EI |
-| 22 | 7f6e4348 | #3248 | Impact reads a node's edges in one unlimited query (PR #3249's change) | 3 | __tests__/graph.test.ts, src/db/queries.ts, src/graph/traversal.ts |
-| 23 | 21cb1699 | #3354 | MCP: a catch-up the WAL valve stopped backs off (5 s doubling to 5 min) | 2 | src/mcp/project-lifecycle.ts |
-| 24 | 70853c06 | #3355 | MCP: a direct session arms its liveness watchdog on first work | 4 | src/mcp/engine.ts, index.ts, session.ts |
-| 25 | 96abf099 | #3356 | Daemon exits once its project is gone; deregister only its own record | 3 | src/mcp/daemon-registry.ts, src/mcp/daemon.ts |
-| 26 | 34ce0f49 | #3345 | JS/TS: `this.m()` and a shadowing local don't link the import | 4 | II, RI, NM |
-| 27 | a7fb6d89 | #3352 | JS/TS: a bare call links the declaration in scope | 2 | NM |
-| 28 | bff60e89 | #3353 | JS/TS: namespace re-exports and `export *` barrels | 3 | II, NM |
-| 29 | 8184f026 | #3371 | TS: a local's call result and an interface property decide the method | 2 | NM |
-| 30 | ac6149c5 | #3372 | JS/TS: a call two fields deep from `this` | 3 | RI, NM |
-| 31 | e10d3920 | #3333 | Installer: upgrade from the home folder leaves user-wide setup alone | 2 | none |
-| 32 | fd2c36b3 | #3336 | CLI init says when the last index run didn't finish | 2 | __tests__/cli-install-init.test.ts, src/bin/codegraph.ts |
-| 33 | 619b5a62 | #3344 | CLI callers/callees/impact warn when a file changed since indexed (`src/graph/file-drift.ts`) | 4 | src/bin/codegraph.ts, src/mcp/tools.ts |
-| 34 | d2facd72 | #3351 | A workspaces entry outside the project names no member | 2 | none |
-| 35 | e4cc9662 | #3359 | Status reports changes to gitignored source that `include` indexes | 2 | EI |
-| 36 | 460b4f24 | #3363 | A run killed by a signal names it and exits like a shell | 5 | src/extraction/wasm-runtime-flags.ts |
-| 37 | 0ae76391 | #3370 | Synthesis: a test's request reaches only its own app's routes | 2 | none |
-| 38 | bbaf7185 | #3373 | Sync: a call through an imported object follows edits to its members | 5 | SI, NM |
-| 39 | adad3152 | #3332 | PHP: `(new Foo())->bar()` | 3 | II, NM |
-| 40 | 8fb8b91d | #3337 | Laravel: a route's controller is the imported class | 2 | none |
-| 41 | bc81faa1 | #3347 | Java: a call reaches the same-named class the file can see | 2 | NM |
-| 42 | 3e4d8697 | #3348 | Kotlin: extension on an aliased library type | 2 | NM |
-| 43 | 7e57aa16 | #3361 | PHP: method called in another letter case | 3 | II, NM |
-| 44 | b4be1c70 | #3368 | PHP: `$str{0}` offset keeps its function | 2 | none |
-| 45 | 1e590ea6 | #3379 | PHP: require/include inside a function | 4 | TS |
-| 46 | 98d722a4 | #3265 | Blast radius counts Rust `#[cfg(test)]` and tests.rs callers as tests (`isTestCode` takes a source reader) | 5 | src/bin/codegraph.ts, src/mcp/tools.ts |
+| 19 | ffaaf6f2 | #3331 | Python: `import time` links no project function `time` | 4 | RI, NM |
+| 20 | 1ddbe699 | #3334 | Rust: a module a glob `use` brings in, and a head a function's `use` binds | 3 | NM |
+| 21 | 5ea5aeb9 | #3338 | Change detection without git's index lock | 3 | EI |
+| 22 | 7f6e4348 | #3248 | Impact reads a node's edges in one unlimited query (PR #3249's change) | 4 | __tests__/graph.test.ts, src/db/queries.ts, src/graph/traversal.ts |
+| 23 | 21cb1699 | #3354 | MCP: a catch-up the WAL valve stopped backs off (5 s doubling to 5 min) | 3 | src/mcp/project-lifecycle.ts |
+| 24 | 70853c06 | #3355 | MCP: a direct session arms its liveness watchdog on first work | 5 | src/mcp/engine.ts, index.ts, session.ts |
+| 25 | 96abf099 | #3356 | Daemon exits once its project is gone; deregister only its own record | 4 | src/mcp/daemon-registry.ts, src/mcp/daemon.ts |
+| 26 | 34ce0f49 | #3345 | JS/TS: `this.m()` and a shadowing local don't link the import | 5 | II, RI, NM |
+| 27 | a7fb6d89 | #3352 | JS/TS: a bare call links the declaration in scope | 3 | NM |
+| 28 | bff60e89 | #3353 | JS/TS: namespace re-exports and `export *` barrels | 4 | II, NM |
+| 29 | 8184f026 | #3371 | TS: a local's call result and an interface property decide the method | 3 | NM |
+| 30 | ac6149c5 | #3372 | JS/TS: a call two fields deep from `this` | 4 | RI, NM |
+| 31 | e10d3920 | #3333 | Installer: upgrade from the home folder leaves user-wide setup alone | 3 | none |
+| 32 | fd2c36b3 | #3336 | CLI init says when the last index run didn't finish | 3 | __tests__/cli-install-init.test.ts, src/bin/codegraph.ts |
+| 33 | 619b5a62 | #3344 | CLI callers/callees/impact warn when a file changed since indexed (`src/graph/file-drift.ts`) | 5 | src/bin/codegraph.ts, src/mcp/tools.ts |
+| 34 | d2facd72 | #3351 | A workspaces entry outside the project names no member | 3 | none |
+| 35 | e4cc9662 | #3359 | Status reports changes to gitignored source that `include` indexes | 3 | EI |
+| 36 | 460b4f24 | #3363 | A run killed by a signal names it and exits like a shell | 6 | src/extraction/wasm-runtime-flags.ts |
+| 37 | 0ae76391 | #3370 | Synthesis: a test's request reaches only its own app's routes | 3 | none |
+| 38 | bbaf7185 | #3373 | Sync: a call through an imported object follows edits to its members | 6 | SI, NM |
+| 39 | adad3152 | #3332 | PHP: `(new Foo())->bar()` | 4 | II, NM |
+| 40 | 8fb8b91d | #3337 | Laravel: a route's controller is the imported class | 3 | none |
+| 41 | bc81faa1 | #3347 | Java: a call reaches the same-named class the file can see | 3 | NM |
+| 42 | 3e4d8697 | #3348 | Kotlin: extension on an aliased library type | 3 | NM |
+| 43 | 7e57aa16 | #3361 | PHP: method called in another letter case | 4 | II, NM |
+| 44 | b4be1c70 | #3368 | PHP: `$str{0}` offset keeps its function | 3 | none |
+| 45 | 1e590ea6 | #3379 | PHP: require/include inside a function | 5 | TS |
+| 46 | 98d722a4 | #3265 | Blast radius counts Rust `#[cfg(test)]` and tests.rs callers as tests (`isTestCode` takes a source reader) | 6 | src/bin/codegraph.ts, src/mcp/tools.ts |
 | 47 | d5f883cb | #3343 | Rust file read as a declared module only by a declarable name | 2 | none |
-| 48 | b2862791 | - | Rust: a method passed as a value through its path | 6 | TS, RI, NM |
+| 48 | b2862791 | - | Rust: a method passed as a value through its path | 7 | TS, RI, NM |
 | 49 | 723781d9 | #3382 | Rust kernel keeps a function passed through its path | 3 | codegraph-kernel/src/rustlang.rs |
-| 50 | be3a0e08 | #3383 | Rust: no link to a same-named method a bare name can't reach | 3 | RI, NM |
-| 51 | 4fb11bc4 | #3384 | Rust: calls inside `format!`, `assert_eq!`, `vec!` (`rust-macro-calls.ts`) | 6 | codegraph-kernel/src/rustlang.rs, TS |
-| 52 | 0ac95cb5 | #3349 | Python: an overloaded function's call reaches the def that runs | 4 | src/db/queries.ts, RI |
-| 53 | 905b1fd7 | #3350 | Python: `self.x()` on an attribute | 3 | RI, NM |
-| 54 | 962e8796 | #3357 | Python: builtins link no project namesake | 2 | RI |
-| 55 | 195462e8 | #3358 | Python: a name the code around it binds | 2 | NM |
-| 56 | 5969542c | #3360 | Python: a local built through its module or bound by `with` | 2 | NM |
-| 57 | 6f0fa222 | #3375 | Python: a local typed by its callee's return | 3 | NM |
-| 58 | d2f3f07e | #3377 | Python: a from-import inside a function is that function's | 3 | II, NM |
-| 59 | ddac1222 | #3362 | JS: an emitted event links only handlers on the same emitter | 5 | none |
-| 60 | bb0f254e | #3380 | JS: a constructor's prototype and static functions are its methods | 9 | TS, II, NM |
-| 61 | 3b860721 | #3386 | JS/TS: a call on `this` never links a const, require or declared function | 3 | RI, NM |
-| 62 | 99014e22 | #3339 | Swift: inheritance read from the type's own header, not a nested type's | 2 | src/resolution/swift-type-visibility.ts |
-| 63 | d509d2f5 | #3388 | C#: a call on what a bare method call returns | 2 | NM |
-| 64 | 1a161dc9 | #3389 | ASP.NET attribute routes | 4 | none |
-| 65 | 70decd12 | #3390 | C#: extension method by its `this` parameter's type | 2 | NM |
-| 66 | dc53ff33 | #3385 | Go: a method called on `new(T)` / `make(T)` | 6 | TS, RI, NM |
-| 67 | da7089da | #3387 | C#: calls through `?.` and `!.` | 4 | TS |
-| 68 | 9253fea5 | #3391 | C#: a method group through a receiver is a use | 6 | RI, NM |
-| 69 | 7efa65b6 | #3392 | Swift: tree-sitter-swift 0.7.4 (wasm and kernel) | 14 | __tests__/kernel-swift-parity.test.ts, __tests__/swift-try-await-condition.test.ts, codegraph-kernel/src/swift.rs, TS |
-| 70 | 46450bc3 | #3340 | JS/TS: a local declared after a comma or beside a default shadows | 2 | NM |
-| 71 | b2858dd6 | #3364 | JS: a member a required module lacks links nothing else | 2 | NM |
-| 72 | 3d27a988 | #3365 | Tier: a call to another host's URL links none of the project's routes (fixes #2974) | 2 | none |
-| 73 | 6e03cda6 | #3366 | JS/TS: an unimported standard global links no module's export | 3 | NM |
-| 74 | 5fd2d019 | #2964 | A relative require of a folder loads its package.json main | 2 | II |
-| 75 | 19f906a7 | #3378 | JS: a variable holding a required module's call result is not the module | 3 | II, NM |
-| 76 | df208537 | #3271 | An installed but undeclared package is the package's | 3 | RI |
-| 77 | cc17b69a | #3374 | A parse that never ends is cancelled (`parse-budget.ts`, `parse-pool.ts`) | 24 | codegraph-kernel/src/rustlang.rs, codegraph-kernel/src/swift.rs, TS |
+| 50 | be3a0e08 | #3383 | Rust: no link to a same-named method a bare name can't reach | 4 | RI, NM |
+| 51 | 4fb11bc4 | #3384 | Rust: calls inside `format!`, `assert_eq!`, `vec!` (`rust-macro-calls.ts`) | 7 | codegraph-kernel/src/rustlang.rs, TS |
+| 52 | 0ac95cb5 | #3349 | Python: an overloaded function's call reaches the def that runs | 5 | src/db/queries.ts, RI |
+| 53 | 905b1fd7 | #3350 | Python: `self.x()` on an attribute | 4 | RI, NM |
+| 54 | 962e8796 | #3357 | Python: builtins link no project namesake | 3 | RI |
+| 55 | 195462e8 | #3358 | Python: a name the code around it binds | 3 | NM |
+| 56 | 5969542c | #3360 | Python: a local built through its module or bound by `with` | 3 | NM |
+| 57 | 6f0fa222 | #3375 | Python: a local typed by its callee's return | 4 | NM |
+| 58 | d2f3f07e | #3377 | Python: a from-import inside a function is that function's | 4 | II, NM |
+| 59 | ddac1222 | #3362 | JS: an emitted event links only handlers on the same emitter | 6 | none |
+| 60 | bb0f254e | #3380 | JS: a constructor's prototype and static functions are its methods | 10 | TS, II, NM |
+| 61 | 3b860721 | #3386 | JS/TS: a call on `this` never links a const, require or declared function | 4 | RI, NM |
+| 62 | 99014e22 | #3339 | Swift: inheritance read from the type's own header, not a nested type's | 3 | src/resolution/swift-type-visibility.ts |
+| 63 | d509d2f5 | #3388 | C#: a call on what a bare method call returns | 3 | NM |
+| 64 | 1a161dc9 | #3389 | ASP.NET attribute routes | 5 | none |
+| 65 | 70decd12 | #3390 | C#: extension method by its `this` parameter's type | 3 | NM |
+| 66 | dc53ff33 | #3385 | Go: a method called on `new(T)` / `make(T)` | 7 | TS, RI, NM |
+| 67 | da7089da | #3387 | C#: calls through `?.` and `!.` | 5 | TS |
+| 68 | 9253fea5 | #3391 | C#: a method group through a receiver is a use | 7 | RI, NM |
+| 69 | 7efa65b6 | #3392 | Swift: tree-sitter-swift 0.7.4 (wasm and kernel) | 15 | __tests__/kernel-swift-parity.test.ts, __tests__/swift-try-await-condition.test.ts, codegraph-kernel/src/swift.rs, TS |
+| 70 | 46450bc3 | #3340 | JS/TS: a local declared after a comma or beside a default shadows | 3 | NM |
+| 71 | b2858dd6 | #3364 | JS: a member a required module lacks links nothing else | 3 | NM |
+| 72 | 3d27a988 | #3365 | Tier: a call to another host's URL links none of the project's routes (fixes #2974) | 3 | none |
+| 73 | 6e03cda6 | #3366 | JS/TS: an unimported standard global links no module's export | 4 | NM |
+| 74 | 5fd2d019 | #2964 | A relative require of a folder loads its package.json main | 3 | II |
+| 75 | 19f906a7 | #3378 | JS: a variable holding a required module's call result is not the module | 4 | II, NM |
+| 76 | df208537 | #3271 | An installed but undeclared package is the package's | 4 | RI |
+| 77 | cc17b69a | #3374 | A parse that never ends is cancelled (`parse-budget.ts`, `parse-pool.ts`) | 25 | codegraph-kernel/src/rustlang.rs, codegraph-kernel/src/swift.rs, TS |
 
 Commands: `git log --reverse --format='%h|%ad|%s' --date=short f72c9d2e..upstream/main`; per commit
 `git diff-tree --no-commit-id --name-only -r <sha>` compared with `git diff --name-only f72c9d2e ours`.
