@@ -133,7 +133,7 @@ export class JobQueue {
    * Queue a job. Resolves with `run`'s value, rejects with its error (the failure is logged as well). A
    * closed queue rejects at once, and so does a root and kind ended over a limit (a {@link JobEndedError},
    * with no run and no log line), except the {@link NEVER_REFUSED} kinds. An `init` or `index` that ends ok
-   * clears its root's ended marks. `run` is called with the job's {@link RunningJob} id.
+   * clears its root's ended marks. `run` is called with an object holding the job's `id`, the one {@link JobQueue.runningJobs} reports.
    */
   enqueue<T>(kind: JobKind, root: string, run: (job: { id: number }) => Promise<T>, opts: EnqueueOptions = {}): Promise<T> {
     if (this.closed) return Promise.reject(new Error('the index builder is stopping'));

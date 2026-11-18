@@ -58,7 +58,7 @@ export class JobWatchdog {
 
   /**
    * One sample: the first job over a limit in ascending id (the older job first) is reported through `onBreach`,
-   * and the sample ends there; no job is reported twice. With no job in a child, the sample is judged before this
+   * and the sample ends there; no job is reported twice. With no unreported job in a child, the sample is judged before this
    * returns. Otherwise it is judged once the children's sizes are read, skipping a job that ended meanwhile.
    */
   check(): Promise<void> {
