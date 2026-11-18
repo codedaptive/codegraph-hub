@@ -12529,8 +12529,6 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
   const key = `${ref.filePath}\0${from.block?.open ?? -1}\0${variants ? 1 : 0}\0${scope}\0${headScope}\0${segs.join('::')}`;
   const hit = memo.get(key);
   if (hit !== undefined) return hit === null ? null : context.getNodeById?.(hit) ?? null;
-  const walk = (p: readonly string[], m: RustModule): Node[] | null => rustUsePathItems(p, m, context, new Set());
-  const crateRoot = (): RustModule | null => rustCrateRootModule(ref.filePath, context);
   // The items the path's segments name — up to its type's, for a typed one.
   const named = (path: readonly string[]): Node[] | null => {
     // A type a `use` binds, written alone: the item that `use` names.
@@ -12543,13 +12541,13 @@ export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): 
     if (headUse) {
       const found: Node[] = [];
       for (const p of headUse.paths) {
-        const items = rustPathItemsOr2015([...p.segs, ...path.slice(1)], rustModuleAt(ref.filePath, p.at, context), pathMods, walk, crateRoot);
+        const items = rustPathItemsOr2015([...p.segs, ...path.slice(1)], rustModuleAt(ref.filePath, p.at, context), pathMods, ref.filePath, context, rustUsePathItems, rustCrateRootModule);
         if (items === null) return null;
         found.push(...items);
       }
       return found;
     }
-    return rustPathItemsOr2015(path, from, pathMods, walk, crateRoot);
+    return rustPathItemsOr2015(path, from, pathMods, ref.filePath, context, rustUsePathItems, rustCrateRootModule);
   };
   let target: Node | null = null;
   if (typed) {
