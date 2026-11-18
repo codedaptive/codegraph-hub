@@ -749,6 +749,7 @@
     "__tests__/mcp-status-freshness.test.ts"
   ],
   "validation": [
-    "__tests__/ui-highlight.test.ts"
+    "__tests__/ui-highlight.test.ts",
+    "__tests__/cli-parse-warning.test.ts"
   ]
 }
