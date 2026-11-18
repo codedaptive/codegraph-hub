@@ -354,7 +354,7 @@ describe('JobQueue', () => {
     expect(events).toEqual(['start cold-build /a', 'end cold-build /a', 'start sync /a', 'end sync /a']);
   });
 
-  it('blocks a cold job whose additional root is running in the sync lane', async () => {
+  it('blocks a whole-repository job whose additional root a running job holds', async () => {
     const { queue, events } = recordingQueue();
     const sync = held();
     const a = queue.enqueue('seed', '/work', sync.run, { alsoRoots: ['/source'] });

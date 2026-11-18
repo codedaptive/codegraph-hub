@@ -18,7 +18,7 @@
  *                   <ISO8601> job end <kind> <root> ok|failed[: msg]
  *                   <ISO8601> job limit <kind> <root> time|rss <measured> > <max> (<variable>); ended, not retried
  *                 kind is sync (a caller's sync, the server's or the CLI's), catch-up, watch-sync, seed, cold-build,
- *                 init or index (the CLI's, ./cli-jobs.ts), recover or open. Past 4 MiB the file is moved to
+ *                 init or index (the CLI's, ./cli-jobs.ts), recover, open or vacuum (./vacuum-after-job.ts). Past 4 MiB the file is moved to
  *                 builder.log.1 (replacing an older one) and a new one starts.
  *   builder-ended-jobs.jsonl  one JSON line `{"root","kind","limit","at"}` per job ended over a limit
  *                 (./ended-jobs-file.ts); loaded at start and kept across every restart, so each builder
@@ -27,9 +27,9 @@
  *                 process (./clear-ended-root.ts).
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
- * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the one running gets
+ * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the running jobs get
  * CODEGRAPH_BUILDER_EXIT_GRACE_MS (default 30 s) to finish before the holds are released and the process
- * exits. SIGTERM and SIGINT drop the running job's grace and exit after at most 2 s of hold teardown. A
+ * exits. SIGTERM and SIGINT drop the running jobs' grace and exit after at most 2 s of hold teardown. A
  * killed builder leaves locks that name a dead pid (a CLI index's rebuild lease among them); the next builder
  * reclaims them (writer-lock.ts) and the server's client restarts it. A clean exit releases every rebuild
  * lease (./fences.ts) after the holds.

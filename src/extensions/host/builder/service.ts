@@ -208,7 +208,7 @@ export class BuilderService {
   }
 
   /**
-   * Stop. The jobs still queued are dropped and the one running gets `graceMs` to finish, so a cold build the
+   * Stop. The jobs still queued are dropped and the running jobs get `graceMs` to finish, so a cold build the
    * server's exit interrupted is not thrown away at once; then every hold is released (bounded: a job still
    * running past the grace leaves its root's lock for the next builder to reclaim, its pid being dead).
    * Last, whatever the earlier steps did, every rebuild fence is released (`rebuild.pid`, and `writer.pid` where

@@ -17,8 +17,8 @@
  *     live process (`codegraph index` in its own process), or a fence this builder gave a `codegraph index`
  *     that runs through the server (./fences.ts);
  *   - a hold ends when the root is released (stop the watcher; when it owns `writer.pid`, wait until the root
- *     has no job queued or running; close, free `writer.pid`). A job that writes without the hold's graph (a VACUUM) keeps the slot
- *     until it ends; a job of the root that releases the root itself (a rebuild) does not wait for itself.
+ *     has no job queued or running; close, free `writer.pid`). A job that writes without the hold's graph (a VACUUM) relies on the
+ *     slot, so the hold keeps it until that job ends; a job of the root that releases the root itself (a rebuild) does not wait for itself.
  *
  * The watcher is a FileWatcher whose sync function QUEUES a `watch-sync` job, not `CodeGraph.watch()`, whose
  * syncs would run outside the queue and so outside its priorities. On Windows the watcher gets the same filter

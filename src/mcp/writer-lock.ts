@@ -9,8 +9,7 @@
  * processes: the builders of two state dirs (a development build beside the
  * live one), or of a server and a `CODEGRAPH_NO_DAEMON=1` session, would each
  * start a watcher, contend on `codegraph.lock`, and degrade auto-sync. The builder
- * takes it per held project, with mode `builder`, and its VACUUM job of a
- * project takes it with mode `builder` too; the cold build and the seed
+ * takes it per held project, with mode `builder`; the cold build and the seed
  * take `rebuild.pid` with their own modes, and the lease a routed `codegraph index` holds takes
  * `rebuild.pid` and `writer.pid`, each with mode `rebuild`.
  *
@@ -300,7 +299,7 @@ export function getWriterPidPath(projectRoot: string, lockName: 'writer.pid' | '
  */
 export interface WriterLockInfo extends Partial<LockStamp> {
   pid: number;
-  /** Who took the slot (`builder`: the index builder's hold on a project, or its VACUUM job of one; `cold-build`, `seed`: the builder's index jobs; `rebuild`: `codegraph index`) — for actionable error text only. */
+  /** Who took the slot (`builder`: the index builder's hold on a project; `cold-build`, `seed`: the builder's index jobs; `rebuild`: `codegraph index`) — for actionable error text only. */
   mode: string;
   startedAt: number;
   /** False until the MCP owner has finished its initial catch-up. */
