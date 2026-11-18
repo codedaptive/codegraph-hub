@@ -1,19 +1,28 @@
 /**
- * The database each running cold build (./cold-build.ts) created, by root, so the build's own failure path and
- * the builder's job-limit exit (../builder/job-limit-guard.ts) remove a database only when it is that build's.
- * A root is registered once `CodeGraph.init` has returned, with the identity of the file it created, and
- * cleared when the build ends; roots compare by their canonical spelling.
+ * The database each running cold build (./cold-build.ts) created, by root, so the build's own failure path
+ * removes a database only when it is that build's. A root is registered once `CodeGraph.init` has returned, with
+ * the identity of the file it created, and cleared when the build ends; roots compare by their canonical
+ * spelling. The build runs in its job's child process, so each registration also goes to the one set listener:
+ * the cold-build job's body (../builder/cold-build-body.ts) reports it to the builder, which ends that child at a
+ * limit or after its stop's grace and then removes the database only when it has that identity
+ * (../builder/clean-up-ended-job.ts).
  */
 import * as fs from 'fs';
 import { canonicalProjectRoot, statInode } from '../../../directory';
 
 /** Each running build's `created` identity ({@link statInode}'s `dev:ino`; null where the platform has none). */
 const createdByRoot = new Map<string, string | null>();
+let setListener: ((root: string, created: string | null) => void) | undefined;
 
 export const coldBuildDatabases = {
   /** Records that the cold build of `root` created the database whose identity is `created`. */
   set(root: string, created: string | null): void {
     createdByRoot.set(canonicalProjectRoot(root), created);
+    setListener?.(root, created);
+  },
+  /** Sets the one listener {@link coldBuildDatabases.set} calls with the root as given and its identity; a second call replaces it. */
+  onSet(listener: (root: string, created: string | null) => void): void {
+    setListener = listener;
   },
   clear(root: string): void {
     createdByRoot.delete(canonicalProjectRoot(root));

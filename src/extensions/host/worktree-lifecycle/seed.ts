@@ -72,8 +72,10 @@
  * W's `rebuild.pid` and `codegraph.lock`. One whose state cannot be read is
  * kept as it is.
  * A seeder killed mid-copy leaves `codegraph.db.seed-<pid>-<hex>.tmp`; the
- * next seed of W removes each one whose pid is dead. A seed the builder ends
- * at a job limit has its own removed on the way out (../builder/job-limit-guard.ts).
+ * next seed of W removes each one whose pid is dead. The builder copies in
+ * each seed job's own child process (../builder/seed-copy-body.ts), so a seed
+ * it ends at a job limit or after its stop's grace has its staging copy removed
+ * by that child's pid (../builder/clean-up-ended-job.ts).
  *
  * `CODEGRAPH_NO_AUTO_SEED=1` turns all of it off, seed and cold build.
  */
@@ -111,9 +113,12 @@ import {
   tryAcquireWriterLock,
 } from '../../../mcp/writer-lock';
 import { isProcessAlive } from '../../../mcp/server-control';
-import { registerProject, stampSeedNonce } from './project-registry';
+import { stampSeedNonce } from './project-registry';
 import { seedStagingPid } from './seed-staging-pid';
 import { discardSeedTargetLeftover } from './discardSeedTargetLeftover';
+import { jobBodySpec } from '../builder/job-body-spec';
+import type { JobSpec } from '../builder/job-spec-type';
+import { seedCopyBody } from '../builder/seed-copy-body';
 
 export type SeedMethod = 'clone' | 'copy' | 'backup';
 
@@ -821,8 +826,9 @@ export interface SeedHost {
    */
   buildingRootFor(projectPath: string): string | null;
   /**
-   * Whether a cold build of `root` returned FAILED in this builder: subsequent
-   * calls do not retry it. Exhausted LOCKED retries and a build killed with the
+   * Whether a cold build of `root` returned FAILED in this builder, or was
+   * refused because one was ended over a job limit: subsequent calls do not
+   * retry it. Exhausted LOCKED retries and a build killed with the
    * builder are not recorded; a later call can queue another build.
    */
   hasFailedBuild(root: string): boolean;
@@ -834,21 +840,30 @@ export interface SeedHost {
    */
   rebuildHeld?(root: string): boolean;
   /**
-   * Queue the cold build of `root` (./cold-build.ts), unless one is already queued or running. `approval` is
+   * Queue the cold build of `root` (./cold-build.ts), unless one is already queued or running, or
+   * {@link hasFailedBuild} says this builder retries it no more. `approval` is
    * what {@link admitColdBuild} approved: the job runs that admission again when it starts (the queue may
    * hold it for minutes, and `root` is a path, not a directory) and builds nothing unless it still holds.
    */
   queueColdBuild(root: string, approval: ColdBuildApproval): void;
   /**
-   * Run `copy` (the seed of `root`, which reads the index of `source`) as a job on the queue. The job counts as
+   * Run the seed of `root`, which reads the index of `source`, as a job on the queue: `spec` names its body
+   * (../builder/seed-copy-body.ts) and the body's JSON args, and `value` is the body's result, typed `T` by the
+   * caller (seedCopyBody answers a SeedMethod). The job counts as
    * a job of `source` as well as of `root` while it is queued or running, and a host that fences roots for their
-   * removal fails it when it starts if `source` or `root` is being removed, before `copy` opens anything.
+   * removal fails it when it starts if `source` or `root` is being removed, before the body runs. Each
+   * `{log: line}` the body reports goes to `opts.log`.
    * `done: false` when it did not finish within the host's wait, because a long job was ahead of
    * it: the job stays queued, and {@link buildingRootFor} names `root` until
    * it ends. `wait: true` removes that bound, for a caller that needs the finished result. Rejects with the
-   * copy's error when it ran and failed.
+   * body's error (its message and name) when it ran and failed.
    */
-  runSeed<T>(root: string, source: string, copy: () => Promise<T>, opts?: { wait?: boolean }): Promise<{ done: true; value: T } | { done: false }>;
+  runSeed<T>(
+    root: string,
+    source: string,
+    spec: JobSpec,
+    opts?: { wait?: boolean; log?: (line: string) => void },
+  ): Promise<{ done: true; value: T } | { done: false }>;
 }
 
 /**
@@ -942,22 +957,16 @@ async function seedWorktreeOnly(worktree: string, opts: WorktreeSeedOptions): Pr
   if (source === null) return { kind: 'no-source', root: worktree };
   if (abandoned && !discardAbandonedIndex(worktree, rebuildHeld)) return { kind: 'queued', root: worktree };
   if (!abandoned) discardSeedTargetLeftover(worktree, rebuildHeld);
-  const commonDir = await gitCommonDirAsync(worktree);
-  const copy = async (): Promise<SeedMethod> => {
-    const { method, nonce } = await seedFromSibling(worktree, source);
-    registerProject(worktree, { seeded: true, commonDir, seedNonce: nonce });
-    const line = `[CodeGraph MCP] Seeded the index of ${worktree} from ${source} (${method}).`;
-    if (opts.log) opts.log(line);
-    else process.stderr.write(`${line}\n`);
-    return method;
-  };
+  const args = { root: worktree, source, commonDir: await gitCommonDirAsync(worktree) };
+  const log = opts.log ?? ((line: string) => process.stderr.write(`${line}\n`));
   if (host) {
-    const run = await host.runSeed(worktree, source, copy, { wait: opts.wait === true });
+    const spec = jobBodySpec('seed', worktree, 'seed-copy-body', 'seedCopyBody', args);
+    const run = await host.runSeed<SeedMethod>(worktree, source, spec, { wait: opts.wait === true, log });
     return run.done
       ? { kind: 'seeded', root: worktree, source, method: run.value }
       : { kind: 'queued', root: worktree };
   }
-  return { kind: 'seeded', root: worktree, source, method: await copy() };
+  return { kind: 'seeded', root: worktree, source, method: await seedCopyBody(args, { progress: ({ log: line }) => log(line) }) };
 }
 
 /** One seed or build decision per worktree at a time; concurrent calls share it. */
@@ -1061,7 +1070,7 @@ async function seedOrBuild(
   // With the abandoned index kept, the call answers from it: no not-indexed text.
   const considered: SeedOutcome = replaceAbandoned ? NONE : { kind: 'none', worktree };
 
-  const commonDir = await gitCommonDirAsync(worktree, true);
+  const args = { root: worktree, commonDir: await gitCommonDirAsync(worktree, true) };
   const rebuildHeld = rebuildHeldBy(host);
   const source = await pickFromEntries(worktree, entries, rebuildHeld, true);
   if (source) {
@@ -1071,16 +1080,13 @@ async function seedOrBuild(
     try {
       // The copy is a job on the builder's queue; one that waits behind a long
       // job past the host's bound keeps its place, and the call answers 'building'.
-      const run = await host.runSeed(worktree, source, async () => {
-        const { method, nonce } = await seedFromSibling(worktree, source);
-        registerProject(worktree, { seeded: true, commonDir, seedNonce: nonce });
-        process.stderr.write(`[CodeGraph MCP] Seeded the index of ${worktree} from ${source} (${method}).\n`);
-        return method;
-      });
+      const spec = jobBodySpec('seed', worktree, 'seed-copy-body', 'seedCopyBody', { ...args, source });
+      const run = await host.runSeed<SeedMethod>(worktree, source, spec, { log: (line) => process.stderr.write(`${line}\n`) });
       if (!run.done) return { kind: 'building', root: worktree };
       return { kind: 'seeded', root: worktree, source, method: run.value };
     } catch (err) {
-      if (err instanceof SeedTargetTakenError || isInitialized(worktree)) return NONE;
+      // The copy's error crossed from the job's child: its class is told by its name.
+      if ((err instanceof Error && err.name === 'SeedTargetTakenError') || isInitialized(worktree)) return NONE;
       process.stderr.write(
         `[CodeGraph MCP] Could not seed ${worktree} from ${source}: ${err instanceof Error ? err.message : String(err)}\n`
       );

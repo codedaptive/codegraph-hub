@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
@@ -58,7 +59,7 @@ describe('worktree seeding with a schema-only database', () => {
       pid: 999999, mode: 'cold-build', startedAt: Date.now(), root: fs.realpathSync(wt),
     }) + '\n');
 
-    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue()));
+    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue(), { runJob: inProcessJobRunner().runJob }));
     expect(outcome).toMatchObject({ kind: 'seeded', root: fs.realpathSync(wt), source: fs.realpathSync(main) });
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -88,7 +89,7 @@ describe('worktree seeding with a schema-only database', () => {
 
   it('preserves a schema-only database without a rebuild lock', async () => {
     const inode = fs.statSync(dbPath).ino;
-    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue()));
+    const outcome = await ensureWorktreeIndex(wt, new BuilderSeedHost(new JobQueue(), { runJob: inProcessJobRunner().runJob }));
     expect(outcome.kind).not.toBe('seeded');
     expect(fs.existsSync(dbPath)).toBe(true);
     expect(fs.statSync(dbPath).ino).toBe(inode);

@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -15,7 +16,7 @@ describe('builder non-git opt-in', () => {
     workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-opted-builder-')));
     vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(workspace, 'state'));
     messages = [];
-    service = new BuilderService({ send: (message) => messages.push(message), jobLog: () => {}, log: () => {}, watchOptions: () => ({}), housekeeping: false });
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob, send: (message) => messages.push(message), jobLog: () => {}, log: () => {}, watchOptions: () => ({}), housekeeping: false });
   });
   afterEach(async () => {
     await service.stop(0);

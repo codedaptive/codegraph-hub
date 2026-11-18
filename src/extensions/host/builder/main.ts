@@ -4,20 +4,22 @@
  *   node --liftoff-only main.js        (forked by BuilderClient, ./client.ts, with an IPC channel)
  *
  * The server (the machine server, or a direct-mode session) forks one builder and keeps it running. Every
- * cold build, seed copy, sync and watcher sync of every index happens here, and so does every `init`, `index`
- * and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts), on a queue with two lanes (./queue.ts):
- * the cold lane runs cold builds, `init` and `index` one at a time, and the sync lane runs every other job one at
- * a time beside it; the server opens the databases read-only and asks for the rest over IPC (./protocol.ts). The builder has no idle timer of any kind: it lives until its
+ * cold build, seed copy, sync, watcher sync and VACUUM of every index is a job of this process, and so is every
+ * `init`, `index` and `sync` of a codegraph CLI that the server relays (./cli-jobs.ts). Every job runs its body
+ * in its own child process (./job-supervisor.ts). The jobs wait on a queue with one lane per git
+ * repository plus two shared bypass slots (./queue.ts): each repository runs one job at a time, its short jobs
+ * ahead of its cold builds, `init`, `index` and VACUUMs, different repositories run at once, and a busy
+ * repository's next job may take a bypass slot while the load average is below 95; the server opens the databases read-only and asks for the rest over IPC (./protocol.ts). The builder has no idle timer of any kind: it lives until its
  * IPC channel closes (the server is gone) or it is signalled.
  *
  * Files in the state dir (CODEGRAPH_STATE_DIR, inherited from the server, else ~/.codegraph):
- *   builder.pid   JSON `{"pid":n,"serverPid":n,"startedAt":"ISO8601"}`, written on start, removed on a clean exit and on a job-limit exit.
+ *   builder.pid   JSON `{"pid":n,"serverPid":n,"startedAt":"ISO8601"}`, written on start, removed on a clean exit.
  *   builder.log   one line per job edge, appended:
  *                   <ISO8601> job start <kind> <root>
  *                   <ISO8601> job end <kind> <root> ok|failed[: msg]
  *                   <ISO8601> job limit <kind> <root> time|rss <measured> > <max> (<variable>); ended, not retried
  *                 kind is sync (a caller's sync, the server's or the CLI's), catch-up, watch-sync, seed, cold-build,
- *                 init or index (the CLI's, ./cli-jobs.ts), recover or open. Past 4 MiB the file is moved to
+ *                 init or index (the CLI's, ./cli-jobs.ts), recover, open or vacuum (./vacuum-after-job.ts). Past 4 MiB the file is moved to
  *                 builder.log.1 (replacing an older one) and a new one starts.
  *   builder-ended-jobs.jsonl  one JSON line `{"root","kind","limit","at"}` per job ended over a limit
  *                 (./ended-jobs-file.ts); loaded at start and kept across every restart, so each builder
@@ -26,38 +28,41 @@
  *                 process (./clear-ended-root.ts).
  *
  * Exit: when the channel closes (the 'disconnect' event, or a message that cannot be sent because it is
- * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and the one running gets
- * CODEGRAPH_BUILDER_EXIT_GRACE_MS (default 30 s) to finish before the holds are released and the process
- * exits. SIGTERM and SIGINT drop the running job's grace and exit after at most 2 s of hold teardown. A
+ * already closed: the server may be gone before the first `ready`), the jobs still queued are dropped and a
+ * running job gets CODEGRAPH_BUILDER_EXIT_GRACE_MS (default 30 s) to finish; a child still running after it is
+ * killed and waited for, and cleaned up as a job ended at a limit is (./end-jobs-after-grace.ts: its seed
+ * staging copy, the partial cold build it reported creating, the locks naming it), before the holds are
+ * released and the process exits. SIGTERM and SIGINT give no grace: the job children are killed and cleaned up at
+ * once, and the process exits after at most 2 s of hold teardown. A
  * killed builder leaves locks that name a dead pid (a CLI index's rebuild lease among them); the next builder
  * reclaims them (writer-lock.ts) and the server's client restarts it. A clean exit releases every rebuild
  * lease (./fences.ts) after the holds.
  *
- * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) cannot be
- * interrupted inside this process, so the builder ends itself: it writes the `job limit` line and the job's mark,
- * rolls back a partial cold build, releases this pid's rebuild.pid and writer.pid at that job's root, removes
- * builder.pid and exits with code 75 (./job-limit-guard.ts), with no grace for any other job. The exit also ends
- * the job running in the other lane: it gets a failed `job end` line naming the over-limit job, no mark, the same
- * rollback of a partial cold build and release of this pid's locks at its root, and runs again only when something
- * asks for it. Only the over-limit job is marked, so nothing retries it automatically. The server's client
- * restarts the builder. Other held roots' writer.pid still name the dead pid, for the next builder to reclaim.
- * The watchdog (./job-watchdog.ts) samples both lanes every 5 s on the main thread, so a job that blocks the
- * event loop is caught only when the loop turns; the process's RSS is charged to the cold-lane job when one runs.
+ * A job over its limit (CODEGRAPH_BUILDER_JOB_MAX_MS, CODEGRAPH_BUILDER_JOB_MAX_RSS_MB; ./job-limits.ts) is ended
+ * alone by ./job-limit-guard.ts: its child is killed, the `job limit` line and the job's mark are written, so
+ * nothing retries it automatically, a partial cold build it reported creating is rolled back, the locks and seed
+ * staging naming the child's pid are removed, and the builder and every other job go on. The watchdog
+ * (./job-watchdog.ts) samples every running job every 5 s on the main thread, so it is late while the event loop
+ * is blocked; each job is charged its own child's resident size (./read-process-rss.ts).
  *
- * Parse workers run inside `indexAll`, which destroys its pool before it returns; the exit path collects
- * garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in flight when the process ends.
+ * Parse workers run inside `indexAll`, in a job's child, which destroys its pool before it returns; this
+ * process's exit path collects garbage first (worker-teardown.ts, "Windows worker crashes") so no marking is in
+ * flight when it ends.
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseDebounceEnv } from '../../../sync/watch-policy';
 import { collectBeforeExit } from '../../../worker-teardown';
 import { ensureStateDir } from '../server/state-dir';
+import { endJobsAfterGrace } from './end-jobs-after-grace';
 import { endedJobs } from './ended-jobs';
 import { EndedJobsFile } from './ended-jobs-file';
 import { endOverLimit } from './job-limit-guard';
 import { resolveJobLimits } from './job-limits';
+import { JobSupervisor } from './job-supervisor';
 import { JobWatchdog } from './job-watchdog';
 import type { BuilderRequest, BuilderToServer } from './protocol';
+import { readProcessRssBytes } from './read-process-rss';
 import { BuilderService } from './service';
 
 /** Past this size the job log moves to `builder.log.1`. */
@@ -156,10 +161,12 @@ export function runBuilder(): void {
     }
   };
 
+  const supervisor = new JobSupervisor();
   const service = new BuilderService({
     send: sendToServer,
     jobLog: (line) => logFile.append(line),
     log,
+    runJob: (id, spec, onProgress) => supervisor.run(id, spec, onProgress),
     watchOptions: () => ({
       // The debounce override CODEGRAPH_WATCH_DEBOUNCE_MS (issue #403), parsed by watch-policy.ts.
       debounceMs: parseDebounceEnv(process.env.CODEGRAPH_WATCH_DEBOUNCE_MS),
@@ -176,7 +183,9 @@ export function runBuilder(): void {
   const shutdown = (graceMs: number): void => {
     if (stopping) return;
     stopping = true;
-    void service.stop(graceMs).finally(() => {
+    // Every job gets the grace; a child still running after it is killed and cleaned up before any hold is
+    // released, so none writes to a root after its release.
+    void service.stop(graceMs, () => endJobsAfterGrace(supervisor)).finally(() => {
       removePidFile(pidFile);
       // No worker thread should be marking its heap when the process ends (worker-teardown.ts).
       collectBeforeExit();
@@ -202,10 +211,13 @@ export function runBuilder(): void {
   const { limits, warnings } = resolveJobLimits();
   for (const warning of warnings) log(warning);
   new JobWatchdog(service.queue, limits, {
-    onBreach: (job, breach) => endOverLimit(job, breach, {
-      jobLog: (line) => logFile.append(line), endedFile, beforeExit: () => removePidFile(pidFile),
-      exit: (code) => { collectBeforeExit(); process.exit(code); },
-      alongside: service.queue.runningJobs().filter((j) => j.id !== job.id),
+    childPid: (jobId) => supervisor.childPid(jobId),
+    readChildRssBytes: readProcessRssBytes,
+    onBreach: (job, breach, childPid) => void endOverLimit(job, breach, {
+      jobLog: (line) => logFile.append(line), endedFile,
+      // A getter: the guard reads the identity after the kill has closed the child, so a report the child sent
+      // just before the kill is not missed, and the read drops the killed job's entry (./job-supervisor.ts).
+      child: { pid: childPid, get createdDatabase() { return supervisor.createdDatabase(job.id); }, kill: () => supervisor.kill(job.id) },
     }),
   }).start();
   service.start();

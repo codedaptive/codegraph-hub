@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
+import type { JobSpec } from '../../../src/extensions/host/builder/job-spec-type';
+import { vacuumJob } from '../../../src/extensions/host/builder/vacuum-job';
 
 let root: string;
 let dbPath: string;
@@ -49,12 +51,18 @@ describe('builder vacuum after a job', () => {
     { disk: 0, shouldVacuum: false },
   ])('respects available disk $disk', async ({ disk, shouldVacuum }) => {
     const lines: string[] = [];
-    service = new BuilderService({
+    // The VACUUM's body runs in this process with the free disk faked; the args are the ones the job sends.
+    const runJob = async (_id: number, spec: JobSpec, progress?: (payload: unknown) => void) => vacuumJob(
+      spec.args as { root: string; dbPath: string; minFreelistBytes: number },
+      { progress: (payload) => progress?.(payload), writerPid: process.pid },
+      { freeDisk: () => disk },
+    );
+    service = new BuilderService({ runJob,
       send: () => {},
       jobLog: (line) => { lines.push(line); },
       log: () => {},
       housekeeping: false,
-      vacuum: { minFreelistBytes: 65536, freeDiskBytes: () => disk },
+      vacuum: { minFreelistBytes: 65536 },
     });
     const beforeSize = fs.statSync(dbPath).size;
     const beforeFree = freelist();

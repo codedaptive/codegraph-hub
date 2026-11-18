@@ -1,3 +1,4 @@
+import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -21,7 +22,7 @@ describe('builder ensure on an indexed non-git folder', { timeout: 60_000 }, () 
     fs.writeFileSync(path.join(root, 'a.ts'), 'export function alphaSymbol() { return 1; }\n');
     const cg = await CodeGraph.init(root);
     try { await cg.indexAll(); } finally { cg.close(); }
-    service = new BuilderService({
+    service = new BuilderService({ runJob: inProcessJobRunner().runJob,
       send: () => {}, jobLog: () => {}, log: () => {}, watchOptions: () => ({}), housekeeping: false,
     });
   });
