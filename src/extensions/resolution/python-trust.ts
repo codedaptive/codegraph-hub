@@ -9,6 +9,8 @@
  * bindings is such a from-import or a plain `import …` of it, so `mock.patch.object(os.path,
  * "join", …)` (a string occurrence) or `mod.path = fake` leaves `os.path.join` untrusted.
  * An `as` beside the word, or any other statement on the line, makes it untrusted.
+ * Any binding of a later word of a dotted call, including a plain local `path`, makes the
+ * call untrusted, so that file's loader gives no edge for it.
  * A word nothing may bind is trusted: `str` is the builtin, and any other is read where
  * Python would raise NameError; the edge is still emitted, and `affected` accepts it as
  * over-inclusion. Why: a callee bound to anything else computes something else, and
