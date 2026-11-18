@@ -121,7 +121,7 @@ describe('codegraph init on an index whose last run did not finish (#3228)', () 
   const USUAL_HINT = 'Use "codegraph index" to re-index or "codegraph sync" to update';
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-init-unfinished-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-init-unfinished-')));
     fs.writeFileSync(path.join(tempDir, 'a.ts'), 'export function a() { return b(); }\nexport function b() { return 1; }\n');
     expect(runCodegraph(['init', '--yes'], tempDir).status).toBe(0);
   });

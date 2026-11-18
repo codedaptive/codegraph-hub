@@ -67,11 +67,12 @@ describe('endOverLimit with a child', () => {
     expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(false);
     for (const name of dbNames) expect(fs.existsSync(path.join(dir, name))).toBe(identity === 'mismatch');
   });
-  it.each(['init', 'index'] as const)('keeps a user database when a %s child reports its identity', async (kind) => {
+  it.each(['init', 'index'] as const)('keeps a user database when a %s child is ended, with or without a reported identity', async (kind) => {
     for (const name of dbNames) fs.writeFileSync(path.join(dir, name), 'user data');
     lock('rebuild.pid', 123);
     const identity = statInode(path.join(dir, 'codegraph.db'));
-    expect(identity).not.toBeNull();
+    // statInode reports no identity on win32 (src/directory.ts); an init or index end keeps the database either way.
+    expect(identity === null).toBe(process.platform === 'win32');
     await endOverLimit({ kind, root }, breach, deps(123, identity, async () => true));
     for (const name of dbNames) expect(fs.readFileSync(path.join(dir, name), 'utf8')).toBe('user data');
   });
