@@ -1,7 +1,10 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
+import { runColdBuild } from '../../../src/extensions/host/worktree-lifecycle/cold-build';
 import { statInode } from '../../../src/directory';
 import { endOverLimit } from '../../../src/extensions/host/builder/job-limit-guard';
 import { testJobSupervisor } from './helpers/test-job-supervisor';
@@ -18,13 +21,14 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await supervisor.killAll();
+  vi.unstubAllEnvs();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-async function start(kind: 'seed' | 'cold-build') {
+async function start(kind: 'seed' | 'cold-build', body?: string) {
   let ready: () => void = () => {};
   const started = new Promise<void>((resolve) => { ready = resolve; });
-  const job = supervisor.run(1, { kind, root, module: fixture, export: kind === 'seed' ? 'seed' : 'coldBuild', args: { root }, writerPid: process.pid }, () => ready());
+  const job = supervisor.run(1, { kind, root, module: fixture, export: body ?? (kind === 'seed' ? 'seed' : 'coldBuild'), args: { root }, writerPid: process.pid }, () => ready());
   const rejected = expect(job).rejects.toThrow();
   await Promise.race([started, job.then(() => { throw new Error('fixture returned'); })]);
   const pid = supervisor.childPid(1);
@@ -41,6 +45,23 @@ async function end(kind: 'seed' | 'cold-build', pid: number) {
 }
 
 describe('child limit rollback', { timeout: 90_000 }, () => {
+  it('rebuilds a schema-less database left by a killed child before identity reporting', async () => {
+    vi.stubEnv('CODEGRAPH_STATE_DIR', path.join(root, 'state'));
+    execFileSync('git', ['init', '-q', root]);
+    fs.writeFileSync(path.join(root, 'alpha.ts'), 'export function alpha() {}\n');
+    const { pid, rejected } = await start('cold-build', 'coldBuildWithoutIdentity');
+    expect(supervisor.createdDatabase(1)).toBeNull();
+    await end('cold-build', pid);
+    await rejected;
+    expect(await runColdBuild(root)).toBe(0);
+    const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'), { readOnly: true });
+    try {
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'nodes'").get()).toEqual({ name: 'nodes' });
+    } finally {
+      db.close();
+    }
+  });
+
   it('removes a killed seed child staging copy and its side files', async () => {
     const { pid, rejected } = await start('seed');
     const staging = path.join(root, '.codegraph', `codegraph.db.seed-${pid}-0a1b2c3d.tmp`);

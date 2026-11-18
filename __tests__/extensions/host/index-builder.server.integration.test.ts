@@ -6,24 +6,21 @@
  *    ... don't call codegraph for it again" (no answer says that). In a git worktree it gets the building
  *    note when the builder is building one, and the not-yet-seeded guidance when it is not. A directory
  *    outside git receives success-shaped guidance that it is not a repository; it is never built.
- *  - A query worker's handler opens every project read-only: an index with an unfinished repair is not
- *    healed by a worker (a writable open rewrites the database; a read-only one leaves it).
  *  - The builder is asked to hold an index before the handler opens it, once per open: not on every call.
  *  - Freshness (the staleness banner, `codegraph_status`) is read from the builder's pushed state, not
  *    from the server's own handles, which never watch.
  *
  * The builder here is a stub that records what it is asked: its real behavior has its own tests and the
- * gates (index-builder.validation.test.ts). The exception is the symlink-into-a-nested-repository case, which runs a
+ * gates (index-builder.validation.test.ts); the query worker's read-only open runs the built worker, and is in
+ * index-builder.server.validation.test.ts. The exception is the symlink-into-a-nested-repository case, which runs a
  * real BuilderService and a real cold build. Real git worktrees and real SQLite in a temp dir.
  */
 import { inProcessJobRunner } from './helpers/in-process-job-runner';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
-import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { Worker } from 'worker_threads';
 import CodeGraph from '../../../src/index';
 import type { BuilderClient, BuilderFreshness, EnsureOutcome } from '../../../src/extensions/host/builder/client';
 import { BuilderService } from '../../../src/extensions/host/builder/service';
@@ -33,8 +30,6 @@ import { buildingNote } from '../../../src/extensions/host/worktree-lifecycle/se
 import { resolveRepoAnchor } from '../../../src/extensions/host/server/repo-anchor';
 import { dispatchToolCall } from '../../../src/extensions/host/server/tool-call';
 import { ADMIT_ALL } from '../../helpers/admit-all';
-
-const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
 
 const DONT_CALL_AGAIN = "don't call codegraph for it again";
 const NOT_INDEXED = "isn't indexed with codegraph";
@@ -385,46 +380,4 @@ describe('the server side of the index builder', { timeout: 60_000 }, () => {
     }
   });
 
-  // ---- the query worker ----
-
-  it('a query worker opens every project read-only: an index with an unfinished repair is left as it is', async () => {
-    const root = await indexedProject();
-    // A bulk load the last writer never finished: the FTS trigger is missing. A WRITABLE open heals it by
-    // rewriting the database; a read-only open leaves that to the writer.
-    const dbFile = path.join(root, '.codegraph', 'codegraph.db');
-    const db = new DatabaseSync(dbFile);
-    db.exec('DROP TRIGGER IF EXISTS nodes_au');
-    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    db.close();
-    const digest = (): string => {
-      const ro = new DatabaseSync(dbFile, { readOnly: true });
-      try {
-        const objects = ro.prepare('SELECT type, name FROM sqlite_master ORDER BY type, name').all();
-        return createHash('sha256').update(JSON.stringify(objects)).update(fs.readFileSync(dbFile)).digest('hex');
-      } finally {
-        ro.close();
-      }
-    };
-    const before = digest();
-
-    const worker = new Worker(path.resolve(__dirname, '../../../dist/mcp/query-worker.js'), { workerData: { root: null } });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        worker.once('error', reject);
-        worker.on('message', (m: { type?: string; ok?: boolean; error?: string }) => {
-          if (m?.type === 'ready') m.ok ? resolve() : reject(new Error(String(m.error)));
-        });
-      });
-      const result = await new Promise<{ isError?: boolean; content: Array<{ type: string; text?: string }> }>((resolve, reject) => {
-        worker.once('error', reject);
-        worker.on('message', (m: { type?: string; result?: never }) => { if (m?.type === 'result') resolve(m.result!); });
-        worker.postMessage({ type: 'call', id: 1, toolName: 'codegraph_search', args: { query: 'alphaSymbol', projectPath: root } });
-      });
-      expect(result.isError).toBeFalsy();
-      expect(textOf(result)).toContain('alphaSymbol');
-      expect(digest(), 'the worker opened the index read-only: no repair, no migration, no write').toBe(before);
-    } finally {
-      await worker.terminate();
-    }
-  });
 });

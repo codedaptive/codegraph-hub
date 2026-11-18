@@ -52,9 +52,18 @@ describe('endOverLimit with a child', () => {
     lock('rebuild.pid', 123);
     const createdDatabase = identity === 'match' ? statInode(path.join(dir, 'codegraph.db')) : identity === 'mismatch' ? 'different' : null;
     await endOverLimit({ kind: 'cold-build', root }, breach, deps(123, createdDatabase, async () => {}));
-    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(identity === 'null');
     for (const name of dbNames) expect(fs.existsSync(path.join(dir, name))).toBe(identity !== 'match');
   });
+  it.each(['init', 'index'] as const)('keeps a user database when a %s child reports its identity', async (kind) => {
+    for (const name of dbNames) fs.writeFileSync(path.join(dir, name), 'user data');
+    lock('rebuild.pid', 123);
+    const identity = statInode(path.join(dir, 'codegraph.db'));
+    expect(identity).not.toBeNull();
+    await endOverLimit({ kind, root }, breach, deps(123, identity, async () => {}));
+    for (const name of dbNames) expect(fs.readFileSync(path.join(dir, name), 'utf8')).toBe('user data');
+  });
+
   it('removes only seed staging files owned by the child', async () => {
     fs.writeFileSync(path.join(dir, 'codegraph.db.seed-123-0a1b2c3d.tmp'), 'child');
     fs.writeFileSync(path.join(dir, 'codegraph.db.seed-456-0a1b2c3d.tmp'), 'builder');

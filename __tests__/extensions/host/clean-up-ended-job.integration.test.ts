@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { cleanUpEndedJob } from '../../../src/extensions/host/builder/clean-up-ended-job';
+import { isCreatedDatabase } from '../../../src/extensions/host/builder/is-created-database';
+import { DatabaseSync } from 'node:sqlite';
 
 let root: string;
 let dir: string;
@@ -34,6 +36,17 @@ describe('cleanUpEndedJob', () => {
     cleanUpEndedJob('cold-build', root, 123, (givenRoot, dbFile) => { seen.push([givenRoot, dbFile]); return matches; });
     expect(seen).toEqual([[root, path.join(dir, 'codegraph.db')]]);
     for (const name of names) expect(fs.existsSync(path.join(dir, name))).toBe(remains);
+  });
+
+  it('keeps the dead child rebuild lock and schema-less database when no identity was reported', () => {
+    const dbPath = path.join(dir, 'codegraph.db');
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE schema_versions (version INTEGER)');
+    db.close();
+    lock('rebuild.pid', 999999);
+    cleanUpEndedJob('cold-build', root, 999999, isCreatedDatabase(null));
+    expect(fs.existsSync(dbPath)).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'rebuild.pid'))).toBe(true);
   });
 
   it('keeps the cold database when the rebuild lock names another pid', () => {

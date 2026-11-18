@@ -4,8 +4,9 @@
  * every write to it, whoever asked, is a job on the builder's queue (./queue.ts). The builder keeps no graph of
  * a held root open: each job checks the hold and the fences here, then runs its body through the job runner
  * (./job-runner-type.ts: a child process per job), which opens the database, acts and closes. The bodies take
- * no lock: `writer.pid` is the hold's, under the builder's pid, so a job whose child is killed leaves it in
- * place and the root's next job runs under it.
+ * no writer or rebuild lock (a sync body takes only the engine's own `codegraph.lock`): `writer.pid` is the
+ * hold's, under the builder's pid, so a job whose child is killed leaves it in place and the root's next job
+ * runs under it.
  *
  * This is the project writer for the HELD roots: the one place a held root's writer slot, watcher and syncs
  * are owned, so the server only reads (a CLI command's one-shot index writes on a root, which need no hold,
@@ -22,8 +23,10 @@
  *   - a hold ends when the root is released (stop the watcher; when it owns `writer.pid`, wait until the root
  *     has no job queued or running; free `writer.pid`). Every job of the root writes under the slot, so the
  *     hold keeps it until those jobs end; a job of the root that releases the root itself (a rebuild) does not wait for itself;
- *   - when anything after the open took `writer.pid` fails (the open's body, the watcher options, the watcher's
- *     start), the slot is freed and no hold is left.
+ *   - when anything after the open took `writer.pid` throws (the open's body, the watcher options, the
+ *     watcher's start), the slot is freed and no hold is left. A watcher whose start returns false (it could
+ *     not start, without throwing) leaves the hold owning `writer.pid` with its watcher not running: the catch-up
+ *     still runs, and the root's later syncs come only from `sync` requests.
  *
  * The watcher is a FileWatcher whose sync function QUEUES a `watch-sync` job, not `CodeGraph.watch()`, whose
  * syncs would run outside the queue and so outside its priorities. On Windows the watcher gets the same filter
@@ -49,7 +52,10 @@ import type { RebuildFences } from './fences';
 import { jobBodySpec } from './job-body-spec';
 import { JobEndedError } from './job-ended-error';
 import type { JobRunner } from './job-runner-type';
+import { isIndexedFileStateCurrentOnDisk } from './is-indexed-file-state-current-on-disk';
+import type { OpenHeldRootResult } from './open-held-root-result-type';
 import type { JobQueue } from './queue';
+import { requireWritable } from './require-writable';
 import { runSyncJob } from './run-sync-job';
 
 export type HoldResult =
@@ -154,24 +160,6 @@ export function isIndexedFileStateCurrent(
     );
   } catch {
     return false;
-  }
-}
-
-/**
- * {@link isIndexedFileStateCurrent} on a read-only open of `root` made for this one check: the builder keeps no
- * graph of a held root open. False when the index cannot be opened, so the notification reaches the sync.
- */
-function isIndexedFileStateCurrentOnDisk(root: string, relPath: string): boolean {
-  let cg: CodeGraph;
-  try {
-    cg = CodeGraph.openSync(root, { readOnly: true });
-  } catch {
-    return false;
-  }
-  try {
-    return isIndexedFileStateCurrent(cg, root, relPath);
-  } finally {
-    cg.close();
   }
 }
 
@@ -317,7 +305,7 @@ export class HolderSet {
     await hold.opening;
     if (!hold.owner) return { filesChanged: 0 };
     return this.deps.queue.enqueue('sync', hold.root, async ({ id }) => {
-      this.requireWritable(hold);
+      requireWritable(hold);
       const r = await runSyncJob(this.deps.runJob, id, 'sync', hold.root);
       return { filesChanged: r.filesAdded + r.filesModified + r.filesRemoved };
     }, { coalesceKey: `sync:${hold.key}` });
@@ -353,11 +341,6 @@ export class HolderSet {
   }
 
   // -------------------------------------------------------------------------
-
-  /** Throws unless the hold is open and owns `writer.pid`: a job of a released hold refuses to run. */
-  private requireWritable(hold: Hold): void {
-    if (hold.closed || !hold.owner) throw new Error(`${hold.root} was released by the index builder`);
-  }
 
   /** Open (a job), recover, watch, arrange catch-up after readiness or the holder's bound. Throws when opening fails. */
   private async open(hold: Hold): Promise<void> {
@@ -402,7 +385,7 @@ export class HolderSet {
       // Off this thread (#1887), as a job so it does not overlap another root's write. A recovery that outlasts
       // the wait leaves the indexes slower, never wrong, for the reader; the catch-up queues behind it.
       const recovery = this.deps.queue.enqueue('recover', hold.root, async ({ id }) => {
-        this.requireWritable(hold);
+        requireWritable(hold);
         await this.deps.runJob(id, jobBodySpec('recover', hold.root, 'recover-indexes-body', 'recoverIndexesBody', { root: hold.root }));
       });
       recovery.catch((err: unknown) => this.deps.log(`index recovery of ${hold.root} failed: ${messageOf(err)}`));
@@ -429,7 +412,7 @@ export class HolderSet {
    * queue refuses as ended over a job limit stops there, see scheduleOwnRetry). Throws, with `writer.pid`
    * freed, when the body fails.
    */
-  private async openWritable(hold: Hold, jobId: number): Promise<{ recoveryPending: boolean } | null> {
+  private async openWritable(hold: Hold, jobId: number): Promise<OpenHeldRootResult | null> {
     if (hold.closed) return null;
     // A rebuild (fenced here, or another process's `rebuild.pid`) may have started since holdNow looked: the
     // open would take `writer.pid` and migrate a database the rebuild is about to replace.
@@ -447,9 +430,8 @@ export class HolderSet {
       return null;
     }
     hold.owner = true;
-    const spec = jobBodySpec('open', hold.root, 'open-held-root-body', 'openHeldRootBody', { root: hold.root });
     try {
-      return await this.deps.runJob(jobId, spec) as { recoveryPending: boolean };
+      return await this.deps.runJob<OpenHeldRootResult>(jobId, jobBodySpec('open', hold.root, 'open-held-root-body', 'openHeldRootBody', { root: hold.root }));
     } catch (err) {
       hold.owner = false;
       releaseWriterLock(hold.root);
@@ -500,7 +482,7 @@ export class HolderSet {
       hold.root,
       async (paths) => {
         const r = await this.deps.queue.enqueue('watch-sync', hold.root, async ({ id }) => {
-          this.requireWritable(hold);
+          requireWritable(hold);
           return runSyncJob(this.deps.runJob, id, 'watch-sync', hold.root, { paths });
         });
         return { filesChanged: r.filesAdded + r.filesModified + r.filesRemoved, durationMs: r.durationMs };
@@ -550,7 +532,7 @@ export class HolderSet {
    */
   private queueCatchUp(hold: Hold, attempt: number): Promise<void> {
     return this.deps.queue.enqueue('catch-up', hold.root, async ({ id }) => {
-      this.requireWritable(hold);
+      requireWritable(hold);
       return runSyncJob(this.deps.runJob, id, 'catch-up', hold.root);
     }).then(
       (r) => {

@@ -11,8 +11,9 @@
  */
 import CodeGraph from '../../../index';
 import type { JobContext } from './job-context-type';
+import type { OpenHeldRootResult } from './open-held-root-result-type';
 
-export async function openHeldRootBody(args: { root: string }, _ctx: JobContext): Promise<{ recoveryPending: boolean }> {
+export async function openHeldRootBody(args: { root: string }, _ctx: JobContext): Promise<OpenHeldRootResult> {
   const cg = CodeGraph.openSync(args.root, { deferIndexRecovery: true });
   try {
     return { recoveryPending: cg.hasPendingIndexRecovery() };

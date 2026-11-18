@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import CodeGraph from '../../../src/index';
 import { coldBuildJob } from '../../../src/extensions/host/builder/cold-build-job';
 import { endedJobs } from '../../../src/extensions/host/builder/ended-jobs';
+import { BuilderSeedHost } from '../../../src/extensions/host/builder/seed-host';
+import { JobQueue, type JobEvent } from '../../../src/extensions/host/builder/queue';
 import { inProcessJobRunner } from './helpers/in-process-job-runner';
 
 let root: string;
@@ -30,4 +32,20 @@ it('refuses an ended cold build before taking a lock or creating the data direct
   expect(runJob).not.toHaveBeenCalled();
   expect(init).not.toHaveBeenCalled();
   expect(fs.existsSync(path.join(root, '.codegraph'))).toBe(false);
+});
+
+it('marks an ended cold build failed and does not queue it a second time', async () => {
+  endedJobs.add({ root, kind: 'cold-build', limit: 'time', at: '2026-11-16T10:00:00.000Z' });
+  const events: JobEvent[] = [];
+  const queue = new JobQueue({ onEvent: (event) => events.push(event), loadAverage: () => 0 });
+  const runJob = vi.fn(inProcessJobRunner().runJob);
+  const host = new BuilderSeedHost(queue, { runJob });
+  host.queueColdBuild(root, { realRoot: root });
+  await queue.whenIdle();
+  await Promise.resolve();
+  expect.soft(host.hasFailedBuild(root)).toBe(true);
+  host.queueColdBuild(root, { realRoot: root });
+  await queue.whenIdle();
+  expect(runJob).not.toHaveBeenCalled();
+  expect(events.filter((event) => event.edge === 'start' && event.kind === 'cold-build')).toHaveLength(1);
 });

@@ -33,16 +33,19 @@ export class JobSupervisor {
     this.execArgv = opts.execArgv ?? [...WASM_RUNTIME_FLAGS, ...NODE_RUNTIME_FLAGS];
   }
 
-  /** Run `spec` in a new child for job `jobId`; `onProgress` gets each progress payload in order. */
-  run(jobId: number, spec: JobSpec, onProgress?: (payload: unknown) => void): Promise<unknown> {
+  /**
+   * Run `spec` in a new child for job `jobId`; `onProgress` gets each progress payload in order. Resolves with
+   * the body's result as `T`, the result type the caller names for the body `spec` names (./job-runner-type.ts).
+   */
+  run<T>(jobId: number, spec: JobSpec, onProgress?: (payload: unknown) => void): Promise<T> {
     this.databases.delete(jobId);
-    return new Promise((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       const child = fork(this.entry, [], {
         execArgv: [...this.execArgv],
         env: process.env,
         stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
       });
-      let outcome: { ok: true; value: unknown } | { ok: false; error: Error } | null = null;
+      let outcome: { ok: true; value: T } | { ok: false; error: Error } | null = null;
       let settle: () => void = () => undefined;
       const closed = new Promise<void>((done) => { settle = done; });
       const finish = (ended: Error): void => {
@@ -65,7 +68,8 @@ export class JobSupervisor {
       child.on('message', (message: JobChildMessage) => {
         if (message.type === 'progress') onProgress?.(message.payload);
         else if (message.type === 'database-created') this.databases.set(jobId, message.identity);
-        else if (message.type === 'result') outcome = { ok: true, value: message.value };
+        // The IPC channel carries the result as JSON with no type: the one place it is given the caller's.
+        else if (message.type === 'result') outcome = { ok: true, value: message.value as T };
         else outcome = { ok: false, error: Object.assign(new Error(message.message), { name: message.name }) };
       });
       child.send({ type: 'spec', spec } satisfies JobSpecMessage);

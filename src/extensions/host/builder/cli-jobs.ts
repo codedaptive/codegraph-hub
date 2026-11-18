@@ -41,7 +41,6 @@
  */
 import * as path from 'path';
 import type { IndexResult, SyncResult } from '../../../extraction';
-import { tryAcquireWriterLock, writerLockHeldMessage } from '../../../mcp/writer-lock';
 import type { IndexWriteEvent } from './cli-wire';
 import type { RebuildFences, RebuildLease } from './fences';
 import type { HolderSet } from './holder';
@@ -51,6 +50,7 @@ import { requireGitWorktreeRoot } from '../worktree-lifecycle/requireGitWorktree
 import type { JobQueue } from './queue';
 import { runIndexJob } from './run-index-job';
 import { runSyncJob } from './run-sync-job';
+import { takeRebuildWriter } from './take-rebuild-writer';
 
 export interface CliJobDeps {
   queue: JobQueue;
@@ -94,7 +94,7 @@ export class CliJobs {
         case 'reindex':
           return this.deps.queue.enqueue('index', root, ({ id }) => run(id, 'open'));
         case 'rebuild':
-          return this.underLease(root, (lease, id) => run(id, 'recreate', () => this.takeRebuildWriter(lease)));
+          return this.underLease(root, (lease, id) => run(id, 'recreate', () => takeRebuildWriter(lease, this.deps.holders)));
         case 'reindex-leased':
           return this.underLease(root, (lease, id) => run(id, 'open', () => lease.assertLive()));
         default:
@@ -139,22 +139,6 @@ export class CliJobs {
     const job = this.deps.queue.enqueue('index', root, ({ id }) => run(lease, id));
     lease.track(job);
     return job;
-  }
-
-  /**
-   * The rebuild's locks, taken in the builder before its child runs. The builder's own hold of the root (its
-   * watcher and `writer.pid`) goes first: the server released its handle before it asked for this job, but a
-   * hold of the builder's may still be there: an `open` job that ran after the fence refuses to open (holder.ts
-   * openWritable), leaving the hold entry. This job is the root's running job, so the release must not wait for
-   * the root to go idle. Then `writer.pid` is taken with mode `rebuild` under the builder's pid, for the lease to
-   * release at `unfence`: a lock under the child's pid would be left behind when the child exits.
-   */
-  private async takeRebuildWriter(lease: RebuildLease): Promise<void> {
-    lease.assertLive();
-    await this.deps.holders.release(lease.root, { fromJobOfRoot: true });
-    const writer = tryAcquireWriterLock(lease.root, 'rebuild');
-    if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
-    lease.noteWriter();
   }
 }
 

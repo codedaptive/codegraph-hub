@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('builder job limit', { timeout: 90_000 }, () => {
-  it('ends an over-time child, records the mark and runs a later job in another child', async () => {
+  it.each(['time', 'rss'] as const)('ends an over-%s child, records the mark and runs a later job in another child', async (limit) => {
     const root = path.join(base, 'project');
     const other = path.join(base, 'other');
     fs.mkdirSync(path.join(root, '.codegraph'), { recursive: true });
@@ -54,7 +54,7 @@ describe('builder job limit', { timeout: 90_000 }, () => {
     let now = 0;
     let ended: Promise<void> | undefined;
     const watchdog = new JobWatchdog(service.queue, { maxMs: 1, maxRssMb: 8 }, {
-      clock: () => now, childPid: (jobId) => supervisor.childPid(jobId), readChildRssBytes: async () => 0,
+      clock: () => now, childPid: (jobId) => supervisor.childPid(jobId), readChildRssBytes: async () => limit === 'rss' ? 9437184 : 0,
       onBreach: (job, breach, childPid) => {
         if (childPid === null) throw new Error('missing child');
         ended = endOverLimit(job, breach, {
@@ -69,8 +69,10 @@ describe('builder job limit', { timeout: 90_000 }, () => {
     expect(ended).toBeDefined();
     await ended;
     await rejected;
-    expect(journal.load()).toEqual([{ root, kind: 'cold-build', limit: 'time', at: '2026-11-16T10:00:00.000Z' }]);
-    expect(lines.some((line) => line.includes(`job limit cold-build ${root} time 2 ms > 1 ms`))).toBe(true);
+    expect(journal.load()).toEqual([{ root, kind: 'cold-build', limit, at: '2026-11-16T10:00:00.000Z' }]);
+    expect(lines.some((line) => line.includes(limit === 'time'
+      ? `job limit cold-build ${root} time 2 ms > 1 ms`
+      : `job limit cold-build ${root} rss 9 MB > 8 MB`))).toBe(true);
     expect(fs.existsSync(path.join(root, '.codegraph', 'codegraph.db'))).toBe(false);
     expect(fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid'))).toBe(false);
     expect(await service.queue.enqueue('sync', other, ({ id: nextId }) => supervisor.run(nextId, {

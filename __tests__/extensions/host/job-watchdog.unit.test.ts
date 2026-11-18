@@ -167,6 +167,7 @@ describe('JobWatchdog', async () => {
   });
 
   it('does not charge builder RSS to a child with an unavailable RSS sample', async () => {
+    vi.mocked(process.memoryUsage.rss).mockReturnValue(64 * 1024 * 1024 * 1024);
     const onBreach = vi.fn();
     const opts = { clock: () => 0, onBreach,
       childPid: () => 101, readChildRssBytes: async () => null };

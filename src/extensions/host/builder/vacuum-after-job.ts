@@ -31,10 +31,9 @@ export function vacuumAfterJob(event: JobEvent, deps: VacuumAfterJobDeps): void 
     const dbPath = path.join(getCodeGraphDir(root), 'codegraph.db');
     const stats = (deps.readStats ?? readDbPageStats)(dbPath);
     if (stats === null || !freelistOverLimit(stats, minFreelistBytes)) return;
-    const spec = jobBodySpec('vacuum', root, 'vacuum-job', 'vacuumJob', { root, dbPath, minFreelistBytes });
     const body = async ({ id }: { id: number }): Promise<unknown> => {
       if (deps.rebuildHeld(root)) return 'fenced';
-      return deps.runJob(id, spec, (payload) => {
+      return deps.runJob(id, jobBodySpec('vacuum', root, 'vacuum-job', 'vacuumJob', { root, dbPath, minFreelistBytes }), (payload) => {
         const line = progressLogLine(payload);
         if (line !== null) deps.jobLog(line);
       });

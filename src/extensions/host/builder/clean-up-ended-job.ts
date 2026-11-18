@@ -5,6 +5,10 @@
  * it names `pid` (releaseWriterLock compares with process.pid, so `pid` is compared here), so a writer.pid naming
  * the builder (its hold on the root) stays, and a staging copy only where its name carries it. An `index` or
  * `init` keeps its database: it may be a user's.
+ *
+ * A cold build whose child reported no database (killed before CodeGraph.init returned) keeps both its partial
+ * database and the `rebuild.pid` naming its dead child: that record is what tells the next cold build of the
+ * root, which takes the lock over, to discard the leftover first (../worktree-lifecycle/cold-build.ts).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -12,6 +16,7 @@ import { getCodeGraphDir } from '../../../directory';
 import { getWriterPidPath, readWriterLock } from '../../../mcp/writer-lock';
 import { seedStagingPid } from '../worktree-lifecycle/seed-staging-pid';
 import { attempt } from './attempt';
+import type { BuildDatabaseTest } from './build-database-test-type';
 import type { JobKind } from './queue';
 
 function lockNamesPid(root: string, lockName: 'rebuild.pid' | 'writer.pid', pid: number): boolean {
@@ -43,10 +48,11 @@ function removeSeedStaging(root: string, pid: number): void {
 }
 
 /** Clean up after the `kind` job of `root` that ran in process `pid`; see the header. */
-export function cleanUpEndedJob(kind: JobKind, root: string, pid: number, isBuildDatabase: (root: string, dbFile: string) => boolean): void {
+export function cleanUpEndedJob(kind: JobKind, root: string, pid: number, isBuildDatabase: BuildDatabaseTest): void {
   if (kind === 'cold-build') attempt(() => rollBackColdBuild(root, pid, isBuildDatabase));
   if (kind === 'seed') attempt(() => removeSeedStaging(root, pid));
-  for (const lockName of ['rebuild.pid', 'writer.pid'] as const) {
+  const keepRebuildLock = kind === 'cold-build' && isBuildDatabase.identityReported === false;
+  for (const lockName of keepRebuildLock ? ['writer.pid'] as const : ['rebuild.pid', 'writer.pid'] as const) {
     attempt(() => {
       if (lockNamesPid(root, lockName, pid)) fs.unlinkSync(getWriterPidPath(root, lockName));
     });

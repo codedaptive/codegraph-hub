@@ -15,6 +15,17 @@ exports.seed = async ({ root }, ctx) => {
   return hang();
 };
 
+exports.coldBuildWithoutIdentity = async ({ root }, ctx) => {
+  const result = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
+  if (result.kind !== 'acquired') throw new Error('could not acquire rebuild lock');
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(root, '.codegraph', 'codegraph.db'));
+  db.exec("CREATE TABLE schema_versions (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL, description TEXT); INSERT INTO schema_versions VALUES (1, 0, 'Initial schema')");
+  db.close();
+  ctx.progress({ ready: true });
+  return hang();
+};
+
 exports.coldBuild = async ({ root }, ctx) => {
   const result = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
   if (result.kind !== 'acquired') throw new Error('could not acquire rebuild lock');

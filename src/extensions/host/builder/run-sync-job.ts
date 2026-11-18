@@ -6,6 +6,7 @@
  */
 import type { IndexProgress, SyncResult } from '../../../extraction';
 import { LockUnavailableError } from '../../../errors';
+import { isIndexProgress } from './is-index-progress';
 import { jobBodySpec } from './job-body-spec';
 import type { JobRunner } from './job-runner-type';
 import type { JobKind } from './queue';
@@ -18,11 +19,12 @@ export async function runSyncJob(
   root: string,
   opts: { paths?: string[]; onProgress?: (progress: IndexProgress) => void } = {},
 ): Promise<SyncResult> {
-  const args = opts.paths ? { root, paths: opts.paths } : { root };
-  const onProgress = opts.onProgress;
-  // The payloads are the engine's IndexProgress objects, sent as they came (./sync-root-body.ts).
-  const forward = onProgress && ((payload: unknown): void => onProgress(payload as IndexProgress));
-  const outcome = await runJob(jobId, jobBodySpec(kind, root, 'sync-root-body', 'syncRootBody', args), forward) as SyncJobOutcome;
+  const outcome = await runJob<SyncJobOutcome>(
+    jobId,
+    jobBodySpec(kind, root, 'sync-root-body', 'syncRootBody', opts.paths ? { root, paths: opts.paths } : { root }),
+    // The body sends only the engine's IndexProgress objects, as they came (./sync-root-body.ts).
+    (payload) => { if (isIndexProgress(payload)) opts.onProgress?.(payload); },
+  );
   if ('locked' in outcome) throw new LockUnavailableError(outcome.locked);
   return outcome.result;
 }

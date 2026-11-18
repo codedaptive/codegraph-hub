@@ -43,7 +43,7 @@ export class BuilderSeedHost implements SeedHost {
   private readonly cold = new Map<string, string>();
   /** A root stays building until every seed of it settles, including one queued behind another. */
   private readonly seeds = new Map<string, { root: string; count: number }>();
-  /** Roots whose cold build returned FAILED: remembered until this builder restarts. */
+  /** Roots whose cold build returned FAILED or was refused as ended over a limit: remembered until this builder restarts. */
   private readonly failed = new Set<string>();
 
   /**
@@ -86,7 +86,7 @@ export class BuilderSeedHost implements SeedHost {
 
   queueColdBuild(root: string, approval: ColdBuildApproval): void {
     const key = canonicalProjectRoot(root);
-    if (this.cold.has(key)) return;
+    if (this.cold.has(key) || this.failed.has(key)) return;
     this.cold.set(key, root);
     this.queue
       .enqueue('cold-build', root, ({ id }) => coldBuildJob(id, root, approval, {
@@ -100,12 +100,12 @@ export class BuilderSeedHost implements SeedHost {
       .finally(() => this.cold.delete(key));
   }
 
-  async runSeed(
+  async runSeed<T>(
     root: string,
     source: string,
     spec: JobSpec,
     opts: { wait?: boolean; log?: (line: string) => void } = {},
-  ): Promise<{ done: true; value: unknown } | { done: false }> {
+  ): Promise<{ done: true; value: T } | { done: false }> {
     const key = canonicalProjectRoot(root);
     const entry = this.seeds.get(key) ?? { root, count: 0 };
     entry.count++;
@@ -114,10 +114,10 @@ export class BuilderSeedHost implements SeedHost {
     // drain of a root being removed (queue.ts whenRootIdle) waits for it. `source` was chosen when the seed was
     // asked for, and the job may wait for minutes: when it starts it asks again, and a source or a target that
     // is being removed (a `release` fence of `codegraph uninit`) fails the seed before its child is started.
-    const checked = async ({ id }: { id: number }): Promise<unknown> => {
+    const checked = async ({ id }: { id: number }): Promise<T> => {
       this.opts.fences?.refuseIfRemoving(source);
       this.opts.fences?.refuseIfRemoving(root);
-      return this.opts.runJob(id, spec, (payload) => {
+      return this.opts.runJob<T>(id, spec, (payload) => {
         const line = progressLogLine(payload);
         if (line !== null) opts.log?.(line);
       });

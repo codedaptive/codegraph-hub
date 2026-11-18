@@ -4,7 +4,8 @@
  * (./ended-jobs-file.ts) are written, so no builder runs that job again until an explicit `codegraph index` or
  * `init`, and the job is cleaned up by the child's pid (./clean-up-ended-job.ts): a seed's staging copy removed,
  * a cold build's partial database removed only when its identity is the one the child reported creating, and the
- * locks naming the child released. A lock naming the builder (a held root's writer.pid) stays. The builder and
+ * locks naming the child released (a cold build whose child reported none keeps its `rebuild.pid` and database
+ * for the next cold build to discard). A lock naming the builder (a held root's writer.pid) stays. The builder and
  * the jobs beside it go on.
  */
 import { attempt } from './attempt';

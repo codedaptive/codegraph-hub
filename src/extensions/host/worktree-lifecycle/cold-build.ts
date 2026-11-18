@@ -26,18 +26,21 @@
  * with no database file at dbFile. On 1 or 4, removal of this build's database
  * is best-effort and only if its identity still matches; see runColdBuild.
  * The builder runs each attempt in its own child process (builder/cold-build-body.ts). A child the builder
- * ends at a job limit or after its stop's grace is killed; the builder then removes the `rebuild.pid` naming
- * that child, and the partial database only when it is this build's by the same identity check, which the
- * child reported (builder/clean-up-ended-job.ts). A build killed with its builder leaves its partial database
- * and a `rebuild.pid` naming a dead pid, and what the next builder does depends on the root:
+ * ends at a job limit or after its stop's grace is killed. When the child had reported its database (init
+ * returned), the builder removes the `rebuild.pid` naming that child, and the partial database only when it is
+ * this build's by that identity (builder/clean-up-ended-job.ts). When it had reported none (killed during
+ * init), the builder leaves both: the `rebuild.pid` names a dead pid with mode `cold-build`, as it does after a
+ * build killed with its builder. Such a leftover is discarded thus:
+ *   - the next cold build of that root reads the dead cold build's record
+ *     (./deadColdBuildHolder.ts) before it takes the lock over, and then
+ *     discards whatever database is at the path (./discardDeadColdBuildLeftover.ts),
+ *     with or without the schema, before it checks whether the root is indexed;
  *   - a git worktree's index is judged abandoned (`isAbandonedIndex`, seed.ts,
  *     which requires a `.git` entry at the root): a later call for that root
  *     that seeds or rebuilds it discards both and builds again;
- *   - a database killed before init wrote its schema is never judged abandoned
- *     (root selection treats a database without the schema as no index), so
- *     the next cold build of that root takes over the dead holder's
- *     `rebuild.pid` and runColdBuild itself discards the schema-less database
- *     (./discardSchemalessLeftover.ts) before init;
+ *   - after any other dead holder (a `codegraph index` lease's record has mode
+ *     `rebuild`), only a database without the schema is discarded before init
+ *     (./discardSchemalessLeftover.ts);
  *   - a root outside git is never cold-built (`admitColdBuild`, seed.ts), so it
  *     has no killed build's partial database to judge.
  * The job itself (builder/cold-build-job.ts) refuses a root whose cold build was ended over a job limit, and
@@ -52,7 +55,9 @@ import { gitCommonDirAsync } from './git';
 import { registerProject, stampSeedNonce } from './project-registry';
 import { releaseWriterLock, tryAcquireWriterLock } from '../../../mcp/writer-lock';
 import { coldBuildDatabases } from './cold-build-database';
+import { deadColdBuildHolder } from './deadColdBuildHolder';
 import { deadRebuildHolder } from './deadRebuildHolder';
+import { discardDeadColdBuildLeftover } from './discardDeadColdBuildLeftover';
 import { discardSchemalessLeftover } from './discardSchemalessLeftover';
 
 export const COLD_BUILD_EXIT_BUILT = 0;
@@ -96,7 +101,7 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
 
 /**
  * Build `root`'s index under its `rebuild.pid`. On failure only a database
- * this call created is removed, besides a schema-less leftover discarded
+ * this call created is removed, besides a dead build's leftover discarded
  * before init (below): the one `CodeGraph.init` returned a handle on,
  * and only while that same file is still the one at the path
  * (`coldBuildDatabases.isOurs`, ./cold-build-database.ts, where this call
@@ -115,15 +120,18 @@ async function registerColdBuilt(root: string, dbFile: string): Promise<void> {
  * An init lock leaving a file returns FAILED; registration errors are handled
  * best-effort, not returned as LOCKED. A held rebuild.pid returns BUSY.
  *
- * One database this call did not create is removed: when the `rebuild.pid`
- * it took over named a dead holder (./deadRebuildHolder.ts), a database
- * without the schema is that killed build's leftover and is discarded before
- * init (./discardSchemalessLeftover.ts), unless another live process holds
- * `writer.pid` or the file is not SQLite. With no `rebuild.pid` in place (a
- * user's own `codegraph init`, say) such a database stays, and init fails on it.
+ * One database this call did not create is removed, unless another live
+ * process holds `writer.pid`: when the `rebuild.pid` it took over named a dead
+ * cold build (./deadColdBuildHolder.ts), whatever database is at the path is
+ * that build's leftover and is discarded first (./discardDeadColdBuildLeftover.ts);
+ * when it named another dead holder (./deadRebuildHolder.ts), a database
+ * without the schema is discarded before init (./discardSchemalessLeftover.ts),
+ * unless the file is not SQLite. With no `rebuild.pid` in place (a user's own
+ * `codegraph init`, say) such a database stays, and init fails on it.
  */
 export async function runColdBuild(root: string): Promise<number> {
   const afterDeadHolder = deadRebuildHolder(root);
+  const afterDeadColdBuild = deadColdBuildHolder(root);
   const lock = tryAcquireWriterLock(root, 'cold-build', 'rebuild.pid');
   if (lock.kind === 'taken') return COLD_BUILD_EXIT_BUSY;
   let cg: CodeGraph | null = null;
@@ -133,6 +141,8 @@ export async function runColdBuild(root: string): Promise<number> {
   let step: 'init' | 'indexAll' | null = null;
   try {
     await coldBuildTestDelay();
+    // Before the check below: a dead cold build's database may carry the schema without being a built index.
+    if (afterDeadColdBuild) discardDeadColdBuildLeftover(root);
     // A seed or a `codegraph init` may have landed between the decision and now.
     if (isInitialized(root)) {
       ok = true;
