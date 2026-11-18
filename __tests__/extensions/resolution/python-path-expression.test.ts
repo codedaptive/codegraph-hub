@@ -2,7 +2,8 @@
  * Unit tests of pythonPathExpression, the pure evaluator of one Python path expression:
  * a `__file__`-anchored chain comes back root-relative with a leading '/', a literal
  * relative as written (with './' when it has no '/'), a module name is read from the
- * names map, and a name cycle, a climb above the root or a computed value gives null.
+ * names map, and a name cycle, an out-of-range parents index, a climb above the root
+ * or a computed value gives null.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonPathExpression } from '../../../src/extensions/resolution/python-path-expression';
@@ -30,6 +31,19 @@ describe('pythonPathExpression', () => {
   it('gives null for a two-name cycle', () => {
     const names = new Map([['A', 'B'], ['B', 'A']]);
     expect(pythonPathExpression('A / "x.py"', file, names)).toBeNull();
+  });
+
+  it('rejects a huge parents index without throwing', () => {
+    let v: string | null | undefined;
+    expect(() => {
+      v = pythonPathExpression('Path(__file__).parents[5000000000] / "x.py"', file, none);
+    }).not.toThrow();
+    expect(v).toBeNull();
+  });
+
+  it('permits the last parent and rejects the next index', () => {
+    expect(pythonPathExpression('Path(__file__).parents[2] / "x.py"', file, none)).toBe('/x.py');
+    expect(pythonPathExpression('Path(__file__).parents[3] / "x.py"', file, none)).toBeNull();
   });
 
   it('gives null for a path that climbs above the root', () => {

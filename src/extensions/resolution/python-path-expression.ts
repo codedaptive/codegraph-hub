@@ -128,11 +128,11 @@ class Parser {
     return args && joinAll([value, ...args]);
   }
 
-  /** `.parents[N]` is the (N+1)-th parent. */
+  /** `.parents[N]` is the (N+1)-th parent; an N past the path's own parents is null, as Python raises. */
   private parents(value: PathValue): PathValue | null {
     const index = this.eat('[') ? this.tokens[this.pos++] : undefined;
-    if (index?.kind !== 'number' || !this.eat(']')) return null;
-    return push(value, Array(Number(index.text) + 1).fill('..').join('/'));
+    const n = index?.kind === 'number' && this.eat(']') ? Number(index.text) : Infinity;
+    return n < value.segs.length ? { anchored: value.anchored, segs: value.segs.slice(0, -n - 1) } : null;
   }
 
   /** Positional arguments after an eaten '(' through its ')'; a keyword argument fails to parse. */

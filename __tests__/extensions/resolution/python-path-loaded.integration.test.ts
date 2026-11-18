@@ -2,7 +2,7 @@
  * Indexes a temporary Python project and checks that getFileDependents sees a test that
  * loads a file by path with SourceFileLoader or spec_from_file_location (anchored on
  * `__file__`, root-relative, loader-relative), that a path from a function parameter
- * links nothing, and that the dependency returns after the target is deleted and
+ * links nothing even when it shadows a module name, and that the dependency returns after the target is deleted and
  * re-added across syncs.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -23,6 +23,7 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(root, 'share/x.py'), xContent);
   fs.writeFileSync(path.join(root, 'share/y.py'), 'def y():\n    return 2\n');
   fs.writeFileSync(path.join(root, 'share/z.py'), 'def z():\n    return 3\n');
+  fs.writeFileSync(path.join(root, 'share/v.py'), 'def v():\n    return 5\n');
   fs.writeFileSync(path.join(root, 'lib/w.py'), 'def w():\n    return 4\n');
   fs.writeFileSync(path.join(root, 'tests/unit/test_a.py'), `from pathlib import Path
 import importlib.machinery
@@ -39,6 +40,12 @@ spec = importlib.util.spec_from_file_location("w", "../lib/w.py")
   fs.writeFileSync(path.join(root, 'tests/test_d.py'), `import importlib.machinery, sys
 def load(p):
     return importlib.machinery.SourceFileLoader("z", p).load_module()
+`);
+  fs.writeFileSync(path.join(root, 'tests/test_e.py'), `import importlib.machinery
+from pathlib import Path
+path = str(Path(__file__).resolve().parents[1] / "share" / "v.py")
+def load(path):
+    return importlib.machinery.SourceFileLoader("v", path).load_module()
 `);
   cg = await CodeGraph.init(root, { index: true });
 });
@@ -63,6 +70,10 @@ describe('Python path-loaded file dependents', () => {
 
   it('does not link an unknown function parameter to a file', () => {
     expect(cg.getFileDependents('share/z.py')).not.toContain('tests/test_d.py');
+  });
+
+  it('does not link a parameter that shadows a module path', () => {
+    expect(cg.getFileDependents('share/v.py')).not.toContain('tests/test_e.py');
   });
 
   it('restores the dependency when a deleted target is reintroduced and synced', async () => {

@@ -2,7 +2,8 @@
  * Unit tests of pythonLoaderPaths: the path expressions it evaluates (Path/os.path
  * chains, string literals, module-level names) and the lines it reports, multiline and
  * keyword calls, calls in comments and docstrings, and the dynamic, absolute, escaping,
- * local-only and multiply assigned forms it refuses.
+ * local-only, shadowed and multiply assigned forms it refuses, and continuation lines
+ * that are not module bindings.
  */
 import { describe, expect, it } from 'vitest';
 import { pythonLoaderPaths } from '../../../src/extensions/resolution/python-loader-paths';
@@ -83,6 +84,62 @@ SourceFileLoader("m", "real.py") # SourceFileLoader("m", "tail.py")`;
     local = "share/x.py"
     SourceFileLoader("a", p)
     SourceFileLoader("b", local)`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it.each([
+    ['parameter', 'def load(path):'],
+    ['variadic positional parameter', 'def load(*path):'],
+    ['variadic keyword parameter', 'def load(**path):'],
+    ['defaulted and annotated parameter', 'def load(path: str = "default.py"):'],
+    ['multiline parameter', 'def load(\n    path: str = "default.py",\n):'],
+  ])('does not resolve a module name shadowed by a %s', (_description, signature) => {
+    const source = `path = Path(__file__).parent / "x.py"
+${signature}
+    return SourceFileLoader("m", path)`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it.each([
+    ['assignment', 'ROOT = Path("elsewhere")'],
+    ['annotated assignment', 'ROOT: str = "elsewhere"'],
+    ['augmented assignment', 'ROOT += "elsewhere"'],
+    ['for target', 'for ROOT in paths:\n        pass'],
+    ['with target', 'with context() as ROOT:\n        pass'],
+  ])('does not resolve a module name shadowed by a local %s', (_description, binding) => {
+    const source = `ROOT = Path(__file__).resolve().parents[2]
+def load():
+    ${binding}
+    return SourceFileLoader("m", str(ROOT / "x.py"))`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('does not resolve a name bound in an enclosing function', () => {
+    const source = `path = Path(__file__).parent / "x.py"
+def outer(path):
+    def inner():
+        return SourceFileLoader("m", path)`;
+    expect(pythonLoaderPaths(file, source)).toEqual([]);
+  });
+
+  it('keeps a module name visible outside the function that shadows it', () => {
+    const source = `path = Path(__file__).parent / "x.py"
+def other(path):
+    pass
+SourceFileLoader("m", path)
+def load():
+    return SourceFileLoader("m", path)`;
+    expect(pythonLoaderPaths(file, source)).toEqual([
+      { line: 4, name: '/tests/unit/x.py' },
+      { line: 6, name: '/tests/unit/x.py' },
+    ]);
+  });
+
+  it('does not treat a keyword on a continuation line as a module binding', () => {
+    const source = `x = configure(
+path="s.py"
+)
+SourceFileLoader("m", path)`;
     expect(pythonLoaderPaths(file, source)).toEqual([]);
   });
 
