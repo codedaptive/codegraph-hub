@@ -13,7 +13,7 @@
  * then decides again on what is on disk: a freelist since reused is left as it is, and a disk with no more than
  * twice the database free is logged and skipped, since a VACUUM writes a whole copy.
  * Ownership by this same process is still exposed to the holder's teardown (./holder.ts HolderSet.teardown frees
- * writer.pid without waiting for the root's jobs); that fix belongs in holder.ts.
+ * writer.pid without waiting for a VACUUM running off-thread or a job still queued); that fix belongs in holder.ts.
  *
  * Never throws: it runs inside the queue's event callback, and a failed check only means no VACUUM.
  */
@@ -77,10 +77,9 @@ async function vacuumBody(
 }
 
 function writerHeldLine(root: string, holder: WriterLockInfo | null): string {
-  const why = holder === null
+  return `${new Date().toISOString()} vacuum skipped ${root}: ${holder === null
     ? 'writer.pid is held and could not be read'
-    : `writer.pid is held by live process ${holder.pid} (${holder.mode})`;
-  return `${new Date().toISOString()} vacuum skipped ${root}: ${why}`;
+    : `writer.pid is held by live process ${holder.pid} (${holder.mode})`}`;
 }
 
 function skipLine(root: string, free: number | null, dbBytes: number): string {
