@@ -6,12 +6,12 @@
  *
  * `cliIndex` has four modes, each one job:
  *   init            `CodeGraph.init(root, {index:false})`, an `initialized` event, `indexAll` with progress
- *                   events, close. An `init` job (COLD class). It takes no `rebuild.pid` and registers nothing in
+ *                   events, close. An `init` job (cold lane). It takes no `rebuild.pid` and registers nothing in
  *                   the project registry, as `codegraph init` does in its own process; a cold build
  *                   (../worktree-lifecycle/cold-build.ts) takes both, for a root nobody asked for.
  *   rebuild         `codegraph index`: needs the root's lease (./fences.ts, `fence` request, which holds
  *                   `rebuild.pid`). Lets go of the root if the builder holds it, takes `writer.pid` for the lease,
- *                   recreates the database, `indexAll` with progress events, close. An `index` job (COLD class).
+ *                   recreates the database, `indexAll` with progress events, close. An `index` job (cold lane).
  *   reindex-leased  `indexAll` again on a writable open that the job closes when it ends, under the same lease
  *                   (the interactive re-run of `index`): needs the lease, takes no writer lock. An `index` job.
  *   reindex         `indexAll` on an existing index with no lease (the re-run of `init`): the writable open the
@@ -22,11 +22,11 @@
  * is fenced for its removal (a `release` fence, `codegraph uninit`:
  * ./fences.ts `refuseIfRemoving`), so no job of these opens a database that is being deleted.
  *
- * `cliSync` is one `sync` job (SYNC class): through the hold's own graph when the builder holds the root and
+ * `cliSync` is one `sync` job (sync lane): through the hold's own graph when the builder holds the root and
  * owns its `writer.pid`, otherwise a writable open of the root for the one sync. It answers the whole SyncResult.
  * Under an `index` fence the fallback open checks nothing, as an in-process `codegraph sync` during another
- * process's rebuild checks neither `writer.pid` nor `rebuild.pid`; the queue is serial, so the sync runs between
- * a lease's jobs, never inside one. Under a `release` fence both branches refuse.
+ * process's rebuild checks neither `writer.pid` nor `rebuild.pid`; the queue never runs two jobs of one root together, so
+ * the sync runs between a lease's jobs, never inside one. Under a `release` fence both branches refuse.
  *
  * Progress callbacks and abort signals never cross the IPC: a job (an index's or a sync's) turns the engine's
  * progress callback into `requestEvent` pushes (in order, one per callback, none dropped). A `verbose` index job
@@ -123,7 +123,7 @@ export class CliJobs {
       const held = this.deps.holders.ownedGraph(root);
       if (held) return held.sync({ onProgress });
       // No other fence check here: this matches an in-process `codegraph sync` while another process rebuilds (sync
-      // looks at neither writer.pid nor rebuild.pid), and the serial queue keeps it out of a lease's jobs.
+      // looks at neither writer.pid nor rebuild.pid), and the queue's one-writer-per-root rule keeps it out of a lease's jobs.
       const cg = await CodeGraph.open(root);
       try {
         return await cg.sync({ onProgress });
@@ -195,8 +195,9 @@ interface IndexEngineOptions {
  * way. With `verbose` the engine writes its `[worker] ...` and `[wal-valve] ...` diagnostics with console.log
  * (src/extraction/index.ts, src/index.ts), which a CLI running the index itself shows on its stdout; here the
  * lines go to the CLI as events, in order with the progress events. The builder's stdout is not connected
- * to anything (the server forks it with stdio 'ignore', ./client.ts), and the queue runs one job at a time,
- * so the lines logged while a job runs are that job's.
+ * to anything (the server forks it with stdio 'ignore', ./client.ts), and only `index` and `init` jobs capture (the
+ * cold lane runs one at a time; no sync-lane job logs with console.log on its path), so the lines logged while a
+ * capturing job runs are that job's.
  */
 async function capturingLog<T>(emit: (event: IndexWriteEvent) => void, job: () => Promise<T>): Promise<T> {
   const original = console.log;

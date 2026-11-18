@@ -22,7 +22,7 @@ opted in (R-46, R-50), through one MCP server and the
 | Process | Count | Does |
 |---|---|---|
 | Server | one per computer [B1] | Answers every query, for every repository. Reads databases; never writes an index. |
-| Builder | one, long-lived, separate from the server [B9] | Every index write: cold builds, catch-up after a copy, syncs, VACUUM. Runs a queue; small syncs go ahead of cold builds [B10]; syncs and catch-ups of roots that already have an index run in their own lane, alongside a running cold build, while cold builds stay serial (R-43). Every job has a time and a memory limit (R-47, S-69). |
+| Builder | one, long-lived, separate from the server [B9] | Every index write: cold builds, catch-up after a copy, syncs, VACUUM. Runs a queue; small syncs go ahead of cold builds [B10]; work on roots that already have an index (syncs, catch-ups, seeds, opens) runs in its own lane, alongside a running cold build, while cold builds stay serial (R-43, S-78). Every job has a time and a memory limit (R-47, S-69). R-53 replaces these two lanes after sm.16 (not yet in the code): one lane per git repository, plus two bypass lanes any repository may use while the 1-minute load average is below 95, each job in its own child process. |
 | `serve --mcp` session | one per agent session | Carries the session's launch settings (§4) and forwards calls to the server. |
 
 The first client starts the server; the server starts the builder; neither exits when idle (R-12). That keeps
@@ -90,10 +90,12 @@ or opted-in folder enclosing its path, or gets that guidance.
 process (§2, R-14), before anything is written: an error and exit 1, as for an unsafe root; `--force` does not
 override it. `uninit` and `project remove` still work on such a root.
 
-**Opting in (R-50; comes in sm.16, not yet in the code).** `codegraph init <dir> --no-git`, run once by a person,
+**Opting in (R-50; built, ships in sm.16).** `codegraph init <dir> --no-git`, run once by a person,
 opts a folder outside git in. The opt-in is recorded in the project registry, and from then on the folder is
 served, synced and caught up like a git worktree root. Nothing else opts in: no MCP call, catch-up, seed or
-housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. An opted-in folder keeps the
+housekeeping pass. A `.codegraph/` with no registry opt-in counts as not opted in. `codegraph project list` marks
+an opted-in folder `no-git`; `codegraph uninit` or `codegraph project remove` on it ends the opt-in, and running
+`init --no-git` there again opts it back in. An opted-in folder keeps the
 guards below: symlinked folders leaving it are not followed and `.codegraphignore` decides what is read (R-44),
 and the job limits apply (R-47).
 
@@ -101,13 +103,20 @@ The builder still refuses what upstream's `unsafeIndexRootReason` (`src/director
 home directory, a filesystem root, any parent of home) and sensitive paths, and checks the real path again when
 the queued job starts.
 
-### What a build and the watcher read (R-44, S-72, S-75)
+### What a build and the watcher read (R-44, S-72, S-75, S-76, S-77)
 
-The scan does not follow a symlinked folder whose real path is outside the root; it follows one whose real path is
-inside it. No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
+The scan does not follow a symlinked folder whose real path is outside the root; the folder walk follows one whose
+real path is inside it (a git root's list, below, needs no alias). No size cap. A `.codegraphignore` at the root has `.gitignore`'s syntax and meaning and joins the same
 matcher as the root `.gitignore` (`buildDefaultIgnore`), so it applies wherever that matcher does: the walk, the
 git path, sync and the watcher, and an embedded repository's own `.codegraphignore` applies inside it (S-72). A `!`
 line naming a link's path inside the project re-includes a symlinked folder that leaves the root.
+
+On a git root the scan takes git's file list, which names a folder link without its contents. A link in it whose
+real path leaves the root is walked when the root's rules re-include it; a link into the root is not followed
+there, because git already lists those files under their own paths (S-76). The `include` walk of `codegraph.json`
+follows a folder link it meets by the same rule, so a wildcard include does not leave the root; an include root
+that is itself the link is followed, and `include` still overrides `.codegraphignore` as it overrides `.gitignore`
+(S-77).
 
 The file watcher follows directory links by the same rule (S-75): a link whose real path is inside the root is
 watched, one leaving it only when re-included. An edit to the root `.codegraphignore` rebuilds the watcher's scope
@@ -120,7 +129,10 @@ A builder job over 60 minutes of wall time (`CODEGRAPH_BUILDER_JOB_MAX_MS`) or 8
 (`CODEGRAPH_BUILDER_JOB_MAX_RSS_MB`) is ended: its partial work is rolled back as a failed job's is (a sync
 commits in several transactions, so an ended sync leaves a consistent index with part of the sync possibly
 applied; an ended seed removes its own staging copy), its writer lock released, and one log line names the root, the job kind, the limit and the measured
-value. It is not re-queued by itself, and the root's stopped mark survives every builder restart. A call for a
+value. Jobs run inside the builder process, so ending one ends the process: a job running beside it in the other
+lane ends with it, rolled back, logged as failed and not marked (S-79). Memory is one figure for the process; host
+charges a breach to the cold build when one runs (`rssOwner`, a heuristic). The ended job is not re-queued by itself, and the root's stopped mark
+survives every builder restart. A call for a
 stopped root that has an index is answered from it, with one line saying its last builder job was stopped at a
 limit, so the index may be partial or behind, naming the variable to raise and `codegraph index`; with no index,
 it gets that guidance alone. The fork's CLI read commands (`grep`, `blast`, `orphans`, `suspects`) print the same
@@ -196,7 +208,7 @@ On throwaway clones, never live team worktrees, and against a development server
 ## 8. Status (2026-11-17)
 
 Every item of the governing spec [B1]-[B14] is built and shipped, except [B1]'s "or directory" as R-50 restores it
-(the opt-in for a folder outside git), which comes in sm.16. Installed globally: **1.6.2-sm.15** (ours
+(the opt-in for a folder outside git), which is built and ships in sm.16. Installed globally: **1.6.2-sm.15** (ours
 d1e4c984, 2026-11-17, R-48); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public:
 `codedaptive/codegraph-hub`, release `v1.6.2-sm.12` (R-31, R-32). The team works its bug list, bug fixes only (R-38); upstream main f72c9d2e is already in ours.
 
