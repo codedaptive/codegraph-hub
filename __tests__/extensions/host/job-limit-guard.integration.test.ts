@@ -241,7 +241,7 @@ describe('endOverLimit', async () => {
     expect(beforeExit).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledWith(75);
   });
-  it('kills first, preserves builder writer lock, removes child rebuild lock and does not end alongside jobs', async () => {
+  it("kills first, keeps the hold's writer lock naming the builder, removes child rebuild lock and does not end alongside jobs", async () => {
     lock('rebuild.pid', 123);
     lock('writer.pid', 456);
     let release: () => void = () => undefined;

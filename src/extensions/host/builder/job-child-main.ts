@@ -3,8 +3,8 @@
  * job alone. It waits for the job's spec (./job-spec-type.ts), loads the body module, calls its export with the
  * spec's `args` and a context (`progress`, `reportDatabase`, `writerPid`), and sends what the body reports, in
  * call order, then the result and exit 0, or the error and exit 1. It exits too on its channel's 'disconnect'
- * event (the builder is gone), at its next event-loop turn: a synchronous step of the job already running
- * finishes first, and nothing of the job runs after that turn.
+ * event (the builder is gone): the job runs until the event loop reaches that event (callbacks already queued
+ * run first), and nothing of the job runs after it.
  *
  * Each job pays this file's start-up, so it imports only node built-ins and types.
  */

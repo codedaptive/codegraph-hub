@@ -14,6 +14,10 @@ exports.database = async (args, ctx) => {
   ctx.progress('ready');
   await new Promise(() => {});
 };
+exports.databaseResult = async (args, ctx) => {
+  ctx.reportDatabase('/root', 'device:inode');
+  return { answer: 42 };
+};
 exports.memory = async (args, ctx) => {
   const memory = Buffer.alloc(200 * 1024 * 1024, 1);
   ctx.progress(memory.length);

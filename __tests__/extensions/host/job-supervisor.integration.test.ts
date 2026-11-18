@@ -77,6 +77,22 @@ describe('JobSupervisor', () => {
     await rejected;
   });
 
+  it('retains a killed child database identity for exactly one read after kill', async () => {
+    let ready: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    const rejected = expect(supervisor.run(10, spec('database'), () => ready())).rejects.toThrow();
+    await started;
+    await supervisor.kill(10);
+    expect(supervisor.createdDatabase(10)).toBe('device:inode');
+    expect(supervisor.createdDatabase(10)).toBeNull();
+    await rejected;
+  });
+
+  it('drops a database identity when the child returns a result', async () => {
+    await expect(supervisor.run(11, spec('databaseResult'))).resolves.toEqual({ answer: 42 });
+    expect(supervisor.createdDatabase(11)).toBeNull();
+  });
+
   it('resolves a kill for an unknown id', async () => {
     await expect(supervisor.kill(999)).resolves.toBeUndefined();
   });
