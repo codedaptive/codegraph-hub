@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -36,7 +37,7 @@ describe('codegraph node — argument handling (#1044)', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-node-cmd-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-node-cmd-')));
     fs.mkdirSync(path.join(tempDir, 'src'));
     fs.writeFileSync(path.join(tempDir, 'src/util.ts'), 'export function util(x: number){ return x + 1; }\n');
     const cg = CodeGraph.initSync(tempDir);
@@ -105,7 +106,7 @@ describe('codegraph node — symbol pinned to a file includes the body (#1284)',
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-node-pin-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-node-pin-')));
     fs.mkdirSync(path.join(tempDir, 'a'));
     fs.mkdirSync(path.join(tempDir, 'b'));
     // Two same-named definitions, so `-f` is genuinely disambiguating.

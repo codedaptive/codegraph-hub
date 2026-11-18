@@ -79,6 +79,8 @@ import type { Node, Edge, Language } from '../types';
 import { isTestPath } from '../search/query-utils';
 import { registerExtensionCommands } from '../extensions/host/registry';
 import { requireGitWorktreeRoot } from '../extensions/host/worktree-lifecycle/requireGitWorktreeRoot';
+import { refuseReadOutsideRepository } from '../extensions/host/worktree-lifecycle/refuseReadOutsideRepository';
+import { dropStrayFrontloadRoots } from '../extensions/host/worktree-lifecycle/dropStrayFrontloadRoots';
 import { gitRootByStat } from '../extensions/host/server/index-root';
 // Static: .option() needs the --fresh / --checkpoint help text when the program is built.
 import { FRESH_OPTION_HELP, CHECKPOINT_OPTION_HELP, type FreshFlags } from '../extensions/host/fresh/options';
@@ -1313,6 +1315,7 @@ program
         info('Run "codegraph init" to initialize');
         return;
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       const { default: CodeGraph } = await loadCodeGraph();
       // Status only reads. Opened read-write, it ran the open-time repairs
@@ -1590,6 +1593,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       // Loaded per command so other commands never load it; loadCodeGraph is passed so a load failure under --fresh prints this file's banner and exits 1.
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
@@ -1681,6 +1685,7 @@ program
         error(`CodeGraph isn't available here — no .codegraph/ index exists in ${projectPath}. If you are an AI agent: continue with your usual tools; indexing is the user's decision, do not run it yourself. (The project owner can enable CodeGraph with 'codegraph init'.)`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath, { stoppedNote: false });
@@ -1739,6 +1744,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       const cg = await openIndexToRead(projectPath);
 
@@ -1833,8 +1839,9 @@ program
       // the sub-project the prompt points at, plus a `projectPath` nudge for any
       // others. Without the down-scan the hook injected nothing at a monorepo
       // root (it only walked up), so the validated adoption lever never fired
-      // exactly where the agent most needs it.
-      const plan = planFrontload(String(input.cwd || process.cwd()), prompt);
+      // exactly where the agent most needs it. A root in no git worktree and not
+      // opted in is dropped from the plan: the hook serves nothing for it.
+      const plan = dropStrayFrontloadRoots(planFrontload(String(input.cwd || process.cwd()), prompt));
       if (!plan.exploreRoot && plan.nudgeProjects.length === 0) { gate('noop-no-index'); return; } // nothing reachable — the agent's normal tools apply
 
       // A "pass projectPath" line for indexed sub-projects we did NOT front-load.
@@ -1981,6 +1988,7 @@ program
         error(`CodeGraph isn't available here — no .codegraph/ index exists in ${projectPath}. If you are an AI agent: continue with your usual tools; indexing is the user's decision, do not run it yourself. (The project owner can enable CodeGraph with 'codegraph init'.)`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath, { stoppedNote: false });
@@ -2057,6 +2065,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       const cg = await openIndexToRead(projectPath);
       let files = cg.getFiles();
@@ -2462,6 +2471,7 @@ ${BROWSER_ENV}=none to never open one.
       printNoIndexGuidance(projectPath);
       process.exit(1);
     }
+    refuseReadOutsideRepository(projectPath, error);
 
     const { startUiServer, openBrowser, createGraphApi, ViewerMissingError } = await import(
       '../ui-server'
@@ -2700,6 +2710,7 @@ for (const direction of ['callers', 'callees'] as const) {
           error(`CodeGraph not initialized in ${projectPath}`);
           process.exit(1);
         }
+        refuseReadOutsideRepository(projectPath, error);
 
         fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
         const cg = await openIndexToRead(projectPath);
@@ -2855,6 +2866,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       fresh = await (await import('../extensions/host/fresh/cli')).startFresh(projectPath, options, loadCodeGraph);
       const cg = await openIndexToRead(projectPath);
@@ -3015,6 +3027,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       const cg = await openIndexToRead(projectPath);
       try {
@@ -3130,6 +3143,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       // Collect changed files from args or stdin
       let changedFiles: string[] = [...(fileArgs || [])];
@@ -3266,6 +3280,7 @@ program
         error(`CodeGraph not initialized in ${projectPath}`);
         process.exit(1);
       }
+      refuseReadOutsideRepository(projectPath, error);
 
       const cg = await openIndexToRead(projectPath);
       try {

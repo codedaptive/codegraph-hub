@@ -10,7 +10,8 @@
  * grep's is in `../extension.ts`. The command's action loads the project-root
  * lookup (`../../../directory`), `../shared/nested-repo` (which loads the CodeGraph
  * class when it runs), `./index` (blast, git helpers and the database layer) and
- * `../shared/stopped-index-warning`; the tool's handler loads only `./index`, taking
+ * `../shared/stopped-index-warning` and `../shared/readRefusal` (host's git-worktree
+ * rule); the tool's handler loads only `./index`, taking
  * the root from `ctx.getCodeGraph`. `await import()` of a `.ts` module works
  * under vitest, where a lazy `require` would not.
  *
@@ -36,7 +37,9 @@ interface BlastCommandOptions {
  * when that root's index leaves out the nested git repository `--path` is in
  * (`isUncoveredNestedRepo`, shared with `orphans` in `../shared/nested-repo.ts`),
  * the resolved path itself is passed, so `runBlast` prints its own no-index
- * message and exits 1. Depth and format defaults are `runBlast`'s (depth 2,
+ * message and exits 1. An indexed root that is neither in a git worktree nor
+ * opted in with `codegraph init <dir> --no-git` prints only its refusal
+ * (`../shared/readRefusal.ts`) on stderr and exits 1. Depth and format defaults are `runBlast`'s (depth 2,
  * text). The action is async (its modules load on first use); commander's
  * `parse()` does not await it, but the process stays up until it settles, and
  * it sets `process.exitCode` rather than exiting. An exit-0 answer prints the
@@ -58,8 +61,15 @@ export function registerBlastCommand(program: Command): void {
       const { runBlast } = await import('./index');
       const { isUncoveredNestedRepo } = await import('../shared/nested-repo');
       const { stoppedIndexWarning } = await import('../shared/stopped-index-warning');
+      const { readRefusal } = await import('../shared/readRefusal');
       const found = findNearestCodeGraphRoot(start);
       const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
+      const refusal = readRefusal(root);
+      if (refusal !== null) {
+        process.stderr.write(refusal);
+        process.exitCode = 1;
+        return;
+      }
       const r = runBlast(root, { base: opts.base, depth: opts.depth, format: opts.format, strict: opts.strict });
       if (r.output) process.stdout.write(r.output);
       // Only a non-error answer carries the note, as host's answers do.

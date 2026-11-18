@@ -10,8 +10,8 @@
  * loaded with `await import(...)`, as the zone's `../extension.ts` does for grep.
  * The command's action loads `../../../directory`, `../shared/nested-repo` (which
  * loads the CodeGraph class when it runs), `./index` (the report: the database
- * layer, the Rust parser, ripgrep) and `../shared/stopped-index-warning`; the
- * tool's handler loads only `./index`, taking the root from `ctx.getCodeGraph`.
+ * layer, the Rust parser, ripgrep), `../shared/stopped-index-warning` and
+ * `../shared/readRefusal` (host's git-worktree rule); the tool's handler loads only `./index`, taking the root from `ctx.getCodeGraph`.
  * A dynamic import works under vitest; a lazy `require` of a `.ts` file does not
  * (see the host registry).
  */
@@ -32,7 +32,10 @@ interface OrphansCommandOptions {
  * `codegraph blast`: the nearest CodeGraph root at or above `--path` (default:
  * the working directory), or the resolved path itself when there is none or
  * its index leaves out the nested git repository `--path` is in, so
- * `runOrphans` prints its own no-index message and exits 1. A missing `--base`
+ * `runOrphans` prints its own no-index message and exits 1. An indexed root
+ * that is neither in a git worktree nor opted in with `codegraph init <dir>
+ * --no-git` prints only its refusal (`../shared/readRefusal.ts`) on stderr and
+ * exits 1, before `--base` is looked at. A missing `--base`
  * is `runOrphans`'s message too (exit 1), rather than commander's. An exit-0
  * answer prints the stopped-index line first on stderr when the builder marked
  * the root (`../shared/stopped-index-warning.ts`); an error answer does not.
@@ -50,17 +53,26 @@ export function registerOrphansCommand(program: Command): void {
       let r: OrphansResult;
       let warning: string | null = null;
       try {
-        const [{ findNearestCodeGraphRoot }, { isUncoveredNestedRepo }, { runOrphans }, { stoppedIndexWarning }] =
-          await Promise.all([
-            import('../../../directory'),
-            import('../shared/nested-repo'),
-            import('./index'),
-            import('../shared/stopped-index-warning'),
-          ]);
+        const [
+          { findNearestCodeGraphRoot },
+          { isUncoveredNestedRepo },
+          { runOrphans },
+          { stoppedIndexWarning },
+          { readRefusal },
+        ] = await Promise.all([
+          import('../../../directory'),
+          import('../shared/nested-repo'),
+          import('./index'),
+          import('../shared/stopped-index-warning'),
+          import('../shared/readRefusal'),
+        ]);
         const start = path.resolve(opts.path ?? process.cwd());
         const found = findNearestCodeGraphRoot(start);
         const root = found && !(await isUncoveredNestedRepo(start, found)) ? found : start;
-        r = await runOrphans(root, { base: opts.base, format: opts.json ? 'json' : 'text' });
+        const refusal = readRefusal(root);
+        r = refusal !== null
+          ? { output: '', exitCode: 1, stderr: refusal }
+          : await runOrphans(root, { base: opts.base, format: opts.json ? 'json' : 'text' });
         // Only a non-error answer carries the note, as host's answers do.
         if (r.exitCode === 0) warning = stoppedIndexWarning(root);
       } catch (err) {

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../src';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 
@@ -18,7 +19,7 @@ describe('CLI truncation reporting (#1639)', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cli-truncation-'));
+    tempDir = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cli-truncation-')));
     fs.writeFileSync(
       path.join(tempDir, 'lib.ts'),
       [

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import { runProjectList, runProjectPin } from '../../../src/extensions/host/worktree-lifecycle/cli';
@@ -11,7 +12,8 @@ describe('git-only pins and legacy non-git registrations', () => {
   let state: string;
 
   beforeEach(() => {
-    workspace = fs.realpathSync(fs.mkdtempSync(path.join('/tmp', 'cg-git-only-')));
+    // '/tmp' keeps the workspace outside any git worktree whatever TMPDIR points at; Windows has no '/tmp'.
+    workspace = fs.realpathSync(fs.mkdtempSync(path.join(process.platform === 'win32' ? os.tmpdir() : '/tmp', 'cg-git-only-')));
     state = path.join(workspace, 'state');
     root = path.join(workspace, 'plain');
     fs.mkdirSync(root);

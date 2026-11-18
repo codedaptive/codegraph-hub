@@ -27,6 +27,7 @@ import {
   waitForFreshTracked, type AnswerCheckpoint,
 } from './checkpoint';
 import { EXIT_NOT_FRESH, type FreshFlags } from './options';
+import { refuseReadOutsideRepository } from '../worktree-lifecycle/refuseReadOutsideRepository';
 import type { SyncWriter } from '../builder/cli-route';
 
 /** Loads the engine; src/bin/codegraph.ts's loadCodeGraph (banner and exit 1 on failure). */
@@ -311,7 +312,8 @@ async function openIndexToRead(projectPath: string): Promise<CodeGraph> {
  * has not caught up with. Exit 3 when not fresh: files still pending or the
  * count unknown (a `--fresh` bound that passed leaves files pending). Exit 0
  * when fresh, including a `--fresh` sync error with nothing pending. Exit 1
- * on error or when the project is not initialized. A `--fresh` that ended
+ * on error, when the project is not initialized, or when it is neither in a
+ * git worktree nor opted in (refuseReadOutsideRepository). A `--fresh` that ended
  * not fresh prints the `Note:` saying why: in the text output, or on stderr
  * with `--json`. All of it is printed before any wait for the sync to settle.
  */
@@ -326,6 +328,7 @@ export async function runCheckpointCommand(
       error(`CodeGraph not initialized in ${projectPath}`);
       process.exit(1);
     }
+    refuseReadOutsideRepository(projectPath, error);
 
     wait = await freshBeforeAnswer(projectPath, options, loadCodeGraphForCheckpoint);
     let cp = wait && 'checkpoint' in wait ? wait.checkpoint : undefined;

@@ -26,6 +26,7 @@ import { getWriterPidPath, readWriterLock } from '../src/mcp/writer-lock';
 import { isProcessAlive, readServerLock, stopServer } from '../src/mcp/server-control';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
 import { ADMIT_ALL } from './helpers/admit-all';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 // Exercise the shipped lazy CommonJS loader as well as the engine lifecycle.
 const { MCPEngine: BuiltMCPEngine } = require('../dist/mcp/engine') as typeof import('../src/mcp/engine');
@@ -99,7 +100,7 @@ describe('machine server — one writer per project, the builder (#1740)', () =>
   beforeEach(async () => {
     cleanedUp = false;
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg1740-mcp-'));
-    realRoot = fs.realpathSync(tempDir);
+    realRoot = gitInitTempRoot(tempDir);
     fs.mkdirSync(path.join(realRoot, 'src'));
     fs.writeFileSync(path.join(realRoot, 'src/a.ts'), 'export function a() { return 1; }\n');
     const cg = await CodeGraph.init(realRoot);
@@ -283,7 +284,7 @@ describe('an engine with a builder asks it and never takes a lock or writes itse
   let engine: MCPEngine;
 
   beforeEach(async () => {
-    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cgib-engine-')));
+    root = gitInitTempRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cgib-engine-')));
     fs.writeFileSync(path.join(root, 'app.ts'), 'export function originalSymbol() { return 1; }\n');
     const cg = await CodeGraph.init(root);
     try { await cg.indexAll(); } finally { cg.close(); }

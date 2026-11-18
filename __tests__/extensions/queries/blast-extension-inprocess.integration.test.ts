@@ -5,7 +5,7 @@
  *
  * In-process (src): the zone's default export registered with
  * `registerExtension`, then listed and executed through `ToolHandler`.
- * Spawned-process tests are in blast-extension.integration.test.ts.
+ * Spawned-process tests are in blast-extension.validation.test.ts.
  *
  * The fixture's git commands build repositories for the in-process tests.
  * No codegraph process is spawned by these tests.

@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ADMIT_ALL } from './helpers/admit-all';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const DIST = path.resolve(__dirname, '../dist');
 const CodeGraph = (require(path.join(DIST, 'index.js')) as typeof import('../src/index')).default;
@@ -67,6 +68,7 @@ afterEach(async () => {
 function interruptedProject(rows: { nodes: number; refs: number; edges: number }): { root: string; dbPath: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-recover-'));
   dirs.push(root);
+  gitInitTempRoot(root);
   CodeGraph.initSync(root).close();
   const dbPath = getDatabasePath(root);
   const conn = DatabaseConnection.open(dbPath);

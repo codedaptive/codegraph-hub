@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import ignore from 'ignore';
+import { sep } from 'path';
 import { filesUnderReincludedLinks } from '../../../src/extensions/host/scan/files-under-reincluded-links';
 
 type EntryKind = 'dir' | 'file' | 'link' | 'other';
@@ -10,18 +11,23 @@ type Node = {
   entries?: Array<{ name: string; kind: EntryKind }> | Error;
 };
 
+/** The code joins paths with `path.join`, which writes backslashes on Windows; the fake's keys are POSIX. */
+const posix = (path: string) => path.split(sep).join('/');
+
 function fakeFs(nodes: Record<string, Node>) {
   function node(path: string): Node {
-    const result = nodes[path];
+    const result = nodes[posix(path)];
     if (!result) throw new Error(`missing: ${path}`);
     return result;
   }
+  // Records the POSIX key, so call assertions read the same on every platform.
+  const isLink = vi.fn((key: string) => nodes[key]?.link ?? false);
   return {
-    isLink: vi.fn((path: string) => nodes[path]?.link ?? false),
+    isLink: Object.assign((path: string) => isLink(posix(path)), { mock: isLink.mock }),
     realpath(path: string): string {
       const value = node(path).real;
       if (value instanceof Error) throw value;
-      return value ?? path;
+      return value ?? posix(path);
     },
     kind(path: string): 'dir' | 'file' | 'other' {
       return node(path).kind;
@@ -188,7 +194,7 @@ describe('filesUnderReincludedLinks', () => {
     });
     const originalKind = fs.kind;
     fs.kind = (path: string) => {
-      if (path === '/repo/unreadable') throw new Error('denied');
+      if (posix(path) === '/repo/unreadable') throw new Error('denied');
       return originalKind(path);
     };
     expect(filesUnderReincludedLinks('/repo', ['broken', 'unreadable', 'data/runs'],

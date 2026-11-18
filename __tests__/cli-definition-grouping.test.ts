@@ -7,6 +7,7 @@ import * as path from 'path';
 import { CodeGraph } from '../src';
 import { ToolHandler } from '../src/mcp/tools';
 import { lookupSymbolNodes } from '../src/graph/symbol-lookup';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
 const COMMANDS = ['callers', 'callees', 'impact'] as const;
@@ -41,6 +42,7 @@ function write(file: string, source: string) {
 
 beforeAll(async () => {
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cli-1512-'));
+  gitInitTempRoot(projectRoot);
   for (const [dir, helper] of [['a', 'alpha'], ['b', 'beta']]) {
     write(`${dir}/${helper}.js`, `export function ${helper}() { return 1; }\n`);
     write(`${dir}/svc.js`, `import { ${helper} } from './${helper}.js';\nexport function handle() { return ${helper}(); }\n`);
@@ -237,6 +239,7 @@ describe('CLI definition boundaries and limits', () => {
 
   it('says so when impact stops at its safety limit, and only then', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-impact-limit-'));
+    gitInitTempRoot(root);
     try {
       const callers = Array.from({ length: 10_050 }, (_, i) => `export function caller${i}() { hub(); }`);
       fs.writeFileSync(path.join(root, 'hub.ts'), ['export function hub() {}', ...callers].join('\n'));

@@ -18,6 +18,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 import { DatabaseConnection, getDatabasePath } from '../../../src/db';
+import { gitInitTempRoot } from '../../helpers/git-init-temp-root';
 import {
   grepIndex,
   formatGrepResult,
@@ -104,6 +105,7 @@ let unindexedRoot = '';
 
 beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-grep-by-symbol-'));
+  gitInitTempRoot(root);
   for (const [rel, content] of Object.entries(FILES)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), content);
