@@ -12492,8 +12492,9 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * `use` in a function's body binds is the path that `use` names (`use
  * crate::b as a;` makes `a::take()` `crate::b::take()`), walked from the
  * module that `use` is written in, else, as a 2015 path, from its crate's root
- * (rustHeadUse). A local alias whose head is itself a local alias is followed,
- * each read where its `use` is written, but never through the `use` itself
+ * (rustPathItemsOr2015). A local alias whose head is itself a local alias is
+ * followed (rustHeadUse), each read where its `use` is written, but never
+ * through the `use` itself
  * (`use a;` names the module `a`); a `mod` of the head's name declared in a
  * nearer block makes the path that `mod`'s, not the `use`'s, and so null.
  */
