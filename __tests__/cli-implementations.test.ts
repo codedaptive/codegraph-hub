@@ -39,6 +39,8 @@ function json(args: string[]) {
 
 beforeAll(async () => {
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-impl-2833-'));
+  const git = spawnSync('git', ['init', '-q'], { cwd: projectRoot, encoding: 'utf8' });
+  if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
   write('Cargo.toml', '[workspace]\nmembers = ["api", "store-real", "app"]\n');
   write('api/Cargo.toml', '[package]\nname = "api"\nversion = "0.1.0"\n');
   write('api/src/lib.rs', 'pub trait Store {\n    fn put(&self, key: &str);\n}\n');

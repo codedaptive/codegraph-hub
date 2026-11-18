@@ -88,6 +88,8 @@ describe('the #2908 repro through the CLI and codegraph_node', () => {
 
   beforeAll(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-qualified-boundary-'));
+    const git = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+    if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
     fs.writeFileSync(
       path.join(root, 'Pricing.cs'),
       [

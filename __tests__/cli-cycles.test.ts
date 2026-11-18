@@ -47,6 +47,8 @@ describe('codegraph cycles', () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cycles-cli-'));
+    const git = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8' });
+    if (git.status !== 0) throw new Error(`git init failed: ${git.stderr}`);
   });
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });

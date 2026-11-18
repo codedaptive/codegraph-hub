@@ -205,6 +205,7 @@ describe('listing an indexed project by package', () => {
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-files-package-'));
+    execFileSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
     manifest(dir, 'package.json', { private: true });
     manifest(dir, 'apps/api/package.json', { name: '@acme/api' });
     manifest(dir, 'apps/web/package.json', { name: '@acme/web' });

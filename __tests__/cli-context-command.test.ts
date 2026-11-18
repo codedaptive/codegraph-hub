@@ -37,6 +37,7 @@ describe('codegraph context — registered CLI command (#1611)', () => {
 
   beforeEach(async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-context-cmd-'));
+    execFileSync('git', ['init', '-q'], { cwd: tempDir, stdio: 'ignore' });
     fs.mkdirSync(path.join(tempDir, 'src'));
     fs.writeFileSync(
       path.join(tempDir, 'src/auth.ts'),
