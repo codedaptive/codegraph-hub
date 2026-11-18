@@ -5,8 +5,9 @@
  *
  * The index writes the builder makes as jobs happen here, in two lanes (one job at a time
  * in each) on {@link BuilderService.queue}: cold builds, seed copies, the writable open of a held root, the catch-up after
- * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, and the CLI's `init` and `index`
- * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts). The one write a job does not await is the
+ * a hold, every sync (a caller's, a watcher's or the CLI's), index recovery, the CLI's `init` and `index`
+ * (./cli-jobs.ts, under a rebuild lease for `index`: ./fences.ts), and the VACUUM a job's end queues when it
+ * left its root's freelist over the limit (./vacuum-after-job.ts). The one write a job does not await is the
  * oversized-WAL checkpoint a writable open starts (see holder.ts openWritable). The housekeeping sweep runs on its own timer with its own hold set,
  * outside the queue, and tears down the indexes whose worktree is gone.
  */
@@ -21,8 +22,9 @@ import type { BuilderFreshness, EnsureOutcome } from './client';
 import { withEndedJob } from './ended-outcome';
 import { RebuildFences, parseFenceKind } from './fences';
 import { HolderSet } from './holder';
+import { jobEventListener } from './job-event-listener';
 import type { BuilderRequest, BuilderToServer } from './protocol';
-import { JobQueue, formatJobLine } from './queue';
+import { JobQueue } from './queue';
 import { BuilderSeedHost, resolveSeedWaitMs } from './seed-host';
 
 export interface BuilderServiceOptions {
@@ -38,6 +40,8 @@ export interface BuilderServiceOptions {
   timing?: { recoverWaitMs?: number; ownRetryMs?: number; pollMs?: number; seedWaitMs?: number };
   /** Run the housekeeping sweep on its own timer (default true). */
   housekeeping?: boolean;
+  /** Test seams for the VACUUM after a job; the defaults are the 256 MiB freelist floor and the real free disk. */
+  vacuum?: { minFreelistBytes?: number; freeDiskBytes?: (dir: string) => number | null };
 }
 
 export class BuilderService {
@@ -50,7 +54,8 @@ export class BuilderService {
   private readonly housekeeping: EngineHousekeeping | null;
 
   constructor(private readonly opts: BuilderServiceOptions) {
-    this.queue = new JobQueue({ onEvent: (event) => opts.jobLog(formatJobLine(event)) });
+    // this.queue and this.fences are read when an event comes, after the constructor has set them.
+    this.queue = new JobQueue({ onEvent: jobEventListener({ jobLog: (line) => opts.jobLog(line), queue: () => this.queue, rebuildHeld: (root) => this.fences.rebuildHeld(root), vacuum: opts.vacuum }) });
     this.fences = new RebuildFences(this.queue, (line) => opts.log(line));
     this.seedHost = new BuilderSeedHost(this.queue, {
       seedWaitMs: opts.timing?.seedWaitMs ?? resolveSeedWaitMs(),
@@ -153,7 +158,8 @@ export class BuilderService {
    * the hold could not open it (another live writer, an open failure). The server then opens read-only
    * whatever is on disk: the migrations are guaranteed only in the first case.
    *
-   * A `projectPath` in no git worktree answers `none`: nothing is seeded, built or held for it.
+   * A `projectPath` in no git worktree and no opted-in folder (R-50) answers `none`: nothing is seeded, built
+   * or held for it.
    */
   async ensure(projectPath: string): Promise<EnsureOutcome> {
     const decision = await ensureWorktreeIndex(projectPath, this.seedHost);
@@ -166,8 +172,10 @@ export class BuilderService {
     // Nothing to seed or build: the call is answered from the index selectOwnIndexRoot names, if there is one.
     // That is never an index above a git repository nested around the path (another repository's), nor one
     // git could not vouch for (ownIndexRootFor fails closed): with seeding off, such a path holds nothing.
-    // Nor is an index outside git (SPEC §3): a sub-project's index inside a worktree is held, a non-git
-    // ancestor's never. A git worktree's index a killed build left half-made is no index
+    // Nor is an index in no git worktree unless its folder was opted in with `codegraph init <dir> --no-git`
+    // (R-50, S-82): gitRootByStat answers an opted-in folder as a root, so its index is held, and a folder
+    // outside git without the opt-in is not, whatever `.codegraph/` it holds. A sub-project's index inside a
+    // worktree is held, a non-git ancestor's that was not opted in never. A git worktree's index a killed build left half-made is no index
     // (isAbandonedIndex, seed.ts). The call may be answered before the catch-up is queued or finishes.
     const root = selectOwnIndexRoot(projectPath);
     if (root === null || gitRootByStat(root) === null) return { kind: 'none' };
