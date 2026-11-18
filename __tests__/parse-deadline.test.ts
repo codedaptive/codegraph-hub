@@ -22,6 +22,7 @@ import { spawnSync } from 'child_process';
 import { extractFromSource } from '../src/extraction';
 import { initGrammars, loadGrammarsForLanguages } from '../src/extraction/grammars';
 import { getKernel, kernelRoutes, resetKernelForTests } from '../src/extraction/kernel';
+import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
 const REPO = path.resolve(__dirname, '..');
 const KERNEL_PATH = path.join(REPO, 'codegraph-kernel', 'prebuilds', `${process.platform}-${process.arch}`, 'codegraph-kernel.node');
@@ -107,6 +108,7 @@ describe.skipIf(!distBuilt)('the CLI finishes with a file whose parse never ends
   let tmp: string;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-parse-deadline-'));
+    tmp = gitInitTempRoot(tmp); // fork S-82: the CLI indexes only git worktrees
     fs.mkdirSync(path.join(tmp, 'src'));
     fs.writeFileSync(path.join(tmp, 'src', 'ok.tsx'), OK);
     fs.writeFileSync(path.join(tmp, 'src', 'poc.tsx'), HANG);

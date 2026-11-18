@@ -294,6 +294,8 @@ describe('an undeclared specifier with no install evidence keeps linking', () =>
       'outside/kit/package.json': JSON.stringify({ name: 'acme-kit', main: 'src/index.ts' }),
       'outside/kit/src/index.ts': 'export function makeKit() { return 1; }\n',
       'proj/app/src/main.ts': "import { makeKit } from 'acme-kit';\nexport function run() {\n  return makeKit();\n}\n",
+      // fork R-44: a folder link leaving the root is followed only when re-included.
+      'proj/.codegraphignore': '!packages/\n',
     });
     fs.symlinkSync(path.join(tempDir, 'outside'), path.join(tempDir, 'proj/packages'), 'junction');
     fs.mkdirSync(path.join(tempDir, 'proj/node_modules'));
