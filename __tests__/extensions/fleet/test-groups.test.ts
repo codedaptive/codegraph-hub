@@ -237,7 +237,7 @@ describe('vitest.config.mts engine selection', () => {
   it('selects exactly the integration files', async () => {
     const selected = await engineFiles('integration');
     expect(selected).toEqual(engineSelection('integration', files, manifest).include);
-    expect(selected).toContain('__tests__/daemon-older-version.test.ts');
+    expect(selected).toContain('__tests__/function-ref.test.ts');
   });
 
   it('selects exactly the validation files', async () => {
@@ -285,12 +285,12 @@ describe('real test-group seed', () => {
   });
 
   it.each([
-    ['__tests__/daemon-older-version.test.ts', 'integration'],
-    ['__tests__/mcp-ppid-watchdog.test.ts', 'integration'],
+    ['__tests__/daemon-older-version.test.ts', 'validation'],
+    ['__tests__/mcp-ppid-watchdog.test.ts', 'validation'],
     ['__tests__/add-lang-check-grammar.test.ts', 'integration'],
-    ['__tests__/status-index-health.test.ts', 'integration'],
+    ['__tests__/status-index-health.test.ts', 'validation'],
     ['__tests__/function-ref.test.ts', 'integration'],
-    ['__tests__/frontload-hook.test.ts', 'integration'],
+    ['__tests__/frontload-hook.test.ts', 'validation'],
     ['__tests__/liveness-watchdog.test.ts', 'integration'],
     ['__tests__/ui-trails.test.ts', 'integration'],
     ['__tests__/ui-highlight.test.ts', 'validation'],
