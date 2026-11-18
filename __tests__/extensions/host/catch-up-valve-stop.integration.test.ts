@@ -1,12 +1,4 @@
-/**
- * A WAL valve abort ends the holder's catch-up without a retry, even after ten minutes. A valve error reaches
- * the holder as a plain Error named `WalValveAbortError` (it crosses the job child as a name and message), and
- * `queueCatchUp` re-queues only on `LockUnavailableError`; any other failure is logged once. This covers the
- * catch-up path only. A valve-stopped watch-sync is retried by the watcher (src/sync/watcher.ts) as a generic
- * sync failure: up to MAX_SYNC_FAILURE_RETRIES (5) times, waiting from the debounce doubling to
- * MAX_RETRY_BACKOFF_MS (30 s), then auto-sync degrades; that path is not exercised here. The lock-contention case is the control: it shows the catch-up start counter sees a re-queue
- * (the first retry after 1 s), so the valve case's count of one means no retry was queued.
- */
+/** Catch-up valve retries, their logs and termination, alongside lock and other failure controls. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -14,6 +6,7 @@ import * as path from 'path';
 import CodeGraph from '../../../src/index';
 import { LockUnavailableError } from '../../../src/errors';
 import { HolderSet } from '../../../src/extensions/host/builder/holder';
+import { JobEndedError } from '../../../src/extensions/host/builder/job-ended-error';
 import { RebuildFences } from '../../../src/extensions/host/builder/fences';
 import { JobQueue } from '../../../src/extensions/host/builder/queue';
 import type { JobRunner } from '../../../src/extensions/host/builder/job-runner-type';
@@ -23,10 +16,12 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
   let base: string;
   let root: string;
   let holders: HolderSet;
+  let queue: JobQueue;
   let catchUpStarts: number;
   let logLines: string[];
-  let failure: Error;
+  let failureFor: (attempt: number) => Error | undefined;
   let releaseFailure: () => void;
+  const valve = () => Object.assign(new Error('checkpoint pinned'), { name: 'WalValveAbortError' });
 
   beforeEach(async () => {
     base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-catch-up-valve-')));
@@ -40,31 +35,29 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
 
     catchUpStarts = 0;
     logLines = [];
-    let firstCatchUp = true;
+    failureFor = () => undefined;
+    let attempts = 0;
     const gate = new Promise<void>((resolve) => { releaseFailure = resolve; });
     const runner = inProcessJobRunner().runJob;
     const runJob: JobRunner = async (id, spec, onProgress) => {
-      if (spec.kind === 'catch-up' && firstCatchUp) {
-        firstCatchUp = false;
-        await gate;
-        throw failure;
+      if (spec.kind === 'catch-up') {
+        attempts += 1;
+        if (attempts === 1) await gate;
+        const failure = failureFor(attempts);
+        if (failure) throw failure;
       }
       return runner(id, spec, onProgress);
     };
-    const queue = new JobQueue({ onEvent: (event) => {
+    queue = new JobQueue({ onEvent: (event) => {
       if (event.kind === 'catch-up' && event.edge === 'start') catchUpStarts += 1;
     } });
     holders = new HolderSet({
-      runJob,
-      queue,
+      runJob, queue,
       fences: new RebuildFences((line) => logLines.push(line)),
       onFreshness: () => undefined,
       log: (line) => logLines.push(line),
       watchOptions: () => ({}),
-      openWaitMs: 10_000,
-      recoverWaitMs: 1_000,
-      ownRetryMs: 50,
-      pollMs: 25,
+      openWaitMs: 10_000, recoverWaitMs: 1_000, ownRetryMs: 50, pollMs: 25,
     });
   });
 
@@ -76,29 +69,130 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
-  it('logs a WAL valve abort once and does not retry catch-up over ten minutes', async () => {
-    const message = 'WAL checkpoint cannot progress; Aborting to avoid unbounded disk growth.';
-    failure = Object.assign(new Error(message), { name: 'WalValveAbortError', code: 'WAL_VALVE_ABORT' });
+  async function start() {
     expect(await holders.hold(root)).toEqual({ kind: 'held', root });
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.setSystemTime(new Date('2026-11-18T12:00:00.000Z'));
     releaseFailure();
-    await expect(holders.caughtUp(root)).resolves.toBeUndefined();
+    await holders.caughtUp(root);
     expect(catchUpStarts).toBe(1);
-    await vi.advanceTimersByTimeAsync(600_000);
+  }
+
+  it('retries a valve stop at five seconds, not before', async () => {
+    failureFor = (n) => n === 1 ? valve() : undefined;
+    await start();
+    await vi.advanceTimersByTimeAsync(4_999);
     expect(catchUpStarts).toBe(1);
-    const failures = logLines.filter((line) => line.includes('Catch-up sync failed for'));
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toContain(message);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(2);
   });
 
-  it('retries catch-up after lock contention', async () => {
-    failure = new LockUnavailableError();
-    expect(await holders.hold(root)).toEqual({ kind: 'held', root });
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    releaseFailure();
-    await expect(holders.caughtUp(root)).resolves.toBeUndefined();
+  it('doubles consecutive valve waits and caps them at five minutes', async () => {
+    failureFor = () => valve();
+    await start();
+    for (const [wait, before] of [[5_000, 1], [10_000, 2], [20_000, 3], [40_000, 4],
+      [80_000, 5], [160_000, 6], [300_000, 7], [300_000, 8]]) {
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(catchUpStarts).toBe(before);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(catchUpStarts).toBe(before + 1);
+    }
+  });
+
+  it('logs each valve stop once with the exact next attempt and no generic failure', async () => {
+    failureFor = () => valve();
+    await start();
+    for (const wait of [5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 300_000]) {
+      await vi.advanceTimersByTimeAsync(wait);
+    }
+    expect(logLines.filter((line) => line.includes('stopped by the WAL valve'))).toEqual([
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 5 s, at 2026-11-18T12:00:05.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 10 s, at 2026-11-18T12:00:15.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 20 s, at 2026-11-18T12:00:35.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 40 s, at 2026-11-18T12:01:15.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 80 s, at 2026-11-18T12:02:35.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 160 s, at 2026-11-18T12:05:15.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 300 s, at 2026-11-18T12:10:15.000Z`,
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 300 s, at 2026-11-18T12:15:15.000Z`,
+    ]);
+    expect(logLines.filter((line) => line.includes('Catch-up sync failed for'))).toEqual([]);
+  });
+
+  it('stops retrying after two valve stops and a successful catch-up', async () => {
+    failureFor = (n) => n <= 2 ? valve() : undefined;
+    await start();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(catchUpStarts).toBe(3);
+    await queue.whenRootIdle(root);
+    expect(logLines.filter((line) => line.includes('stopped by the WAL valve'))).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(catchUpStarts).toBe(3);
+    expect(logLines.filter((line) => line.includes('stopped by the WAL valve'))).toHaveLength(2);
+  });
+
+  it('cancels the pending valve retry when the hold is released', async () => {
+    failureFor = () => valve();
+    await start();
+    expect(vi.getTimerCount()).toBe(1);
+    await holders.release(root);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(600_000);
     expect(catchUpStarts).toBe(1);
-    await vi.advanceTimersByTimeAsync(1_001);
+  });
+
+  it('stops after a retry ends at a job limit and logs the failure', async () => {
+    const ended = new JobEndedError(root, 'catch-up', 'time');
+    failureFor = (n) => n === 1 ? valve() : ended;
+    await start();
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(catchUpStarts).toBe(2);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(catchUpStarts).toBe(2);
+    expect(logLines.filter((line) => line.includes('Catch-up sync failed for')))
+      .toEqual([`Catch-up sync failed for ${root}: ${ended.message}`]);
+  });
+
+  it('keeps lock contention retrying at one then two seconds', async () => {
+    failureFor = (n) => n <= 2 ? new LockUnavailableError() : undefined;
+    await start();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(catchUpStarts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(2);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(catchUpStarts).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(3);
+  });
+
+  it('logs another error once and does not retry', async () => {
+    failureFor = () => new Error('boom');
+    await start();
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(catchUpStarts).toBe(1);
+    expect(logLines.filter((line) => line.includes('Catch-up sync failed for')))
+      .toEqual([`Catch-up sync failed for ${root}: boom`]);
+  });
+
+  it('keeps the valve run across an intervening lock failure', async () => {
+    failureFor = (n) => n === 2 ? new LockUnavailableError() : valve();
+    await start();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(catchUpStarts).toBe(2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(catchUpStarts).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(3);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(catchUpStarts).toBe(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(4);
+  });
+
+  it('settles caughtUp on the first valve stop without waiting for the retry', async () => {
+    failureFor = () => valve();
+    await start();
+    expect(catchUpStarts).toBe(1);
+    expect(Date.now()).toBe(new Date('2026-11-18T12:00:00.000Z').getTime());
   });
 });
