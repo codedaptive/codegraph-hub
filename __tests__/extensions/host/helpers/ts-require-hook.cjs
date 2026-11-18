@@ -9,14 +9,15 @@ const crypto = require('node:crypto');
 const ts = require('typescript');
 
 const cacheDir = path.join(os.tmpdir(), 'codegraph-test-ts-require-cache');
-fs.mkdirSync(cacheDir, { recursive: true });
 
 function store(cached, output) {
   const temp = `${cached}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
+    fs.mkdirSync(cacheDir, { recursive: true });
     fs.writeFileSync(temp, output);
     fs.renameSync(temp, cached);
   } catch {
+    // Leave no stray temp file in the shared dir.
     try {
       fs.unlinkSync(temp);
     } catch {}
