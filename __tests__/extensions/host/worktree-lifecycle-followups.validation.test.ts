@@ -449,17 +449,24 @@ describe('F3-F5: seeding and cold builds through the engine', { timeout: 600_000
     const first = await search(wt, 'alphaSymbol');
     expect(first.text).toContain(buildingNote(root));
 
-    // The builder takes rebuild.pid before it creates the database; poll for it
-    // so the kill has a chance to interrupt the build.
+    // The cold build's job child takes rebuild.pid before it creates the database;
+    // poll for it so the kill has a chance to interrupt the build.
     let pid: number | null = null;
     expect(await waitUntil(() => {
       pid = readWriterLock(root, 'rebuild.pid')?.pid ?? null;
       return pid !== null;
     }, 180_000, 5)).toBe(true);
-    expect(pid).toBe(builder.pid());
-    const killed = pid!;
+    // Each builder job runs in its own child process, so rebuild.pid names that live child, not the builder.
+    const child = pid!;
+    expect(child).not.toBe(builder.pid());
+    expect(pidAlive(child)).toBe(true);
+    // Kill the builder, then its job child: the builder's death closes the child's channel and the child exits on
+    // its own (job-child-main.ts), so it may already be gone. Its rebuild.pid, naming a dead pid, is left for the
+    // restarted builder's dead-holder check.
+    const killed = builder.pid()!;
     process.kill(killed, 'SIGKILL');
-    expect(await waitUntil(() => !pidAlive(killed), 180_000, 20)).toBe(true);
+    try { process.kill(child, 'SIGKILL'); } catch { /* already exited */ }
+    expect(await waitUntil(() => !pidAlive(killed) && !pidAlive(child), 180_000, 20)).toBe(true);
     // No successful job end is logged after the kill; a later ok line and
     // complete index provide evidence of the restarted builder's work.
     expect(coldBuildOkCount(stateDir, root)).toBe(0);
