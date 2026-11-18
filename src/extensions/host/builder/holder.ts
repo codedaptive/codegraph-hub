@@ -127,7 +127,7 @@ interface Hold {
   ownTimer: NodeJS.Timeout | null;
   /** The pending catch-up retry after lock contention or a WAL valve stop; cleared by teardown. */
   catchUpTimer: NodeJS.Timeout | null;
-  /** WAL valve stops of the catch-up in a row; a finished catch-up resets it. */
+  /** WAL valve stops of the catch-up in a row, from zero per hold; a finished catch-up ends the retries. */
   valveStops: number;
   closing: Promise<void> | null;
   /** Settles when a job of this root releases it (see {@link HolderSet.release}): teardown stops waiting for the root to go idle. */
@@ -501,9 +501,9 @@ export class HolderSet {
    * job that reconciles changes since the last sync, including during stream startup. Delivery may be unproven.
    * A hold released before queuing does not queue it. Lock contention (a CLI index run holds `codegraph.lock`)
    * is retried with a growing wait (1 s to 30 s). A WAL valve stop (a `WalValveAbortError`) is logged and retried
-   * after {@link valveRetryWaitMs} of the stops in a row, which a finished catch-up resets; lock contention
-   * between valve stops neither resets nor counts in that run. Any other failure, a job ended at a limit
-   * included, is logged and left to the watcher's and callers' syncs. Teardown clears a pending retry.
+   * after {@link valveRetryWaitMs} of the hold's stops in a row, counted from zero; lock contention between
+   * valve stops leaves the count unchanged. A finished catch-up ends the retries: no further catch-up is queued
+   * on the hold. Any other failure, a job ended at a limit included, is logged and left to the watcher's and callers' syncs. Teardown clears a pending retry.
    * A readiness publication afterwards that throws (logged) or leaves the record not ready (not logged) is
    * retried by a later {@link caughtUp}. Settles, never rejects, when the job has run: on lock contention or a
    * valve stop that is at the failure, before the retry, which is not waited for.
@@ -514,7 +514,6 @@ export class HolderSet {
       return runSyncJob(this.deps.runJob, id, 'catch-up', hold.root);
     }).then(
       (r) => {
-        hold.valveStops = 0;
         if (hold.closed) return;
         this.publishReady(hold);
         const changed = r.filesAdded + r.filesModified + r.filesRemoved;

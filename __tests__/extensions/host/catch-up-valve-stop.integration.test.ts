@@ -1,6 +1,6 @@
 /**
  * What the builder's holder does when a catch-up is stopped by the WAL valve: the retry timing (5 s, doubling per
- * stop in a row, capped at 5 min), the builder.log line for each stop, how the retries end (a finished catch-up,
+ * stop in a row, capped at 5 min), the builder's stderr diagnostic line for each stop, how the retries end (a finished catch-up,
  * a release of the hold, a retry ended at a job limit) and that `caughtUp` settles at the first stop. Controls:
  * lock contention keeps its 1 s doubling retry (and does not break a valve run), and any other failure is logged
  * once and not retried.
@@ -27,6 +27,8 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
   let logLines: string[];
   let failureFor: (attempt: number) => Error | undefined;
   let releaseFailure: () => void;
+  let reholdGate: Promise<void>;
+  let releaseRehold: () => void;
   const valve = () => Object.assign(new Error('checkpoint pinned'), { name: 'WalValveAbortError' });
 
   beforeEach(async () => {
@@ -44,11 +46,14 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
     failureFor = () => undefined;
     let attempts = 0;
     const gate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    reholdGate = Promise.resolve();
+    releaseRehold = () => {};
     const runner = inProcessJobRunner().runJob;
     const runJob: JobRunner = async (id, spec, onProgress) => {
       if (spec.kind === 'catch-up') {
         attempts += 1;
         if (attempts === 1) await gate;
+        await reholdGate;
         const failure = failureFor(attempts);
         if (failure) throw failure;
       }
@@ -69,6 +74,7 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
 
   afterEach(async () => {
     releaseFailure();
+    releaseRehold();
     vi.useRealTimers();
     await holders.closeAll();
     vi.unstubAllEnvs();
@@ -124,7 +130,7 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
     expect(logLines.filter((line) => line.includes('Catch-up sync failed for'))).toEqual([]);
   });
 
-  it('stops retrying after two valve stops and a successful catch-up', async () => {
+  it('ends the retries when a catch-up finishes after two valve stops', async () => {
     failureFor = (n) => n <= 2 ? valve() : undefined;
     await start();
     await vi.advanceTimersByTimeAsync(15_000);
@@ -134,6 +140,45 @@ describe('catch-up after a WAL valve stop', { timeout: 60_000 }, () => {
     await vi.advanceTimersByTimeAsync(600_000);
     expect(catchUpStarts).toBe(3);
     expect(logLines.filter((line) => line.includes('stopped by the WAL valve'))).toHaveLength(2);
+  });
+
+  it.each([
+    ['after the previous catch-up finishes', true, 4],
+    ['after release with a retry pending', false, 3],
+  ])('starts a new hold at a five-second valve wait %s', async (_description, finishCatchUp, newHoldStart) => {
+    failureFor = (n) => n <= 2 ? valve() : undefined;
+    await start();
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(catchUpStarts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(2);
+    expect(logLines.filter((line) => line.includes('stopped by the WAL valve')).at(-1)).toBe(
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 10 s, at 2026-11-18T12:00:15.000Z`,
+    );
+    if (finishCatchUp) {
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(catchUpStarts).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(catchUpStarts).toBe(3);
+      await queue.whenRootIdle(root);
+    }
+    await holders.release(root);
+    reholdGate = new Promise<void>((resolve) => { releaseRehold = resolve; });
+    failureFor = (n) => n === newHoldStart ? valve() : undefined;
+    vi.useRealTimers();
+    expect(await holders.hold(root)).toEqual({ kind: 'held', root });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.setSystemTime(new Date('2026-11-18T12:00:00.000Z'));
+    releaseRehold();
+    await holders.caughtUp(root);
+    expect(catchUpStarts).toBe(newHoldStart);
+    expect(logLines.filter((line) => line.includes('stopped by the WAL valve')).at(-1)).toBe(
+      `Catch-up of ${root} stopped by the WAL valve: checkpoint pinned; next attempt in 5 s, at 2026-11-18T12:00:05.000Z`,
+    );
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(catchUpStarts).toBe(newHoldStart);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catchUpStarts).toBe(newHoldStart + 1);
   });
 
   it('cancels the pending valve retry when the hold is released', async () => {
