@@ -886,7 +886,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
   `develop`'s history is not guarded (S-112). Expanded in docs/SPEC-upstream.md §7 item 12.
 
 ## R-59. The backporter owns the hub's GitHub settings
-- Date: 2026-11-19 / Bob, direct: "backporter own github settings" (also his tool-repo publishing rule, creator #5300).
+- Date: 2026-11-19 / Bob, direct to Designer-Codegraph in session (no message number): "backporter own github settings" (also his tool-repo publishing rule, creator #5300).
 - Question: who owns the public hub's GitHub settings, public status and security?
 - Ruling: the backporter lane owns `codedaptive/codegraph-hub`'s GitHub settings, its public status and its security;
   not Orc, not the other lanes.
