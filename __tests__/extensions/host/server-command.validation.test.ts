@@ -2,11 +2,12 @@
  * `codegraph daemon [--stop]`: shows the one
  * machine server of the state dir, or stops it. Non-interactive, no picker.
  *
- * Runs the BUILT binary (dist/bin/codegraph.js) against a stand-in server: a node
- * child that binds the state dir's socket and answers the hello with its own pid,
- * which is what the command's identity proof (src/mcp/server-control.ts) asks
- * for. Each test has its own CODEGRAPH_STATE_DIR, so the live server of
- * `~/.codegraph` is never reached.
+ * Runs the BUILT binary (dist/bin/codegraph.js) against a stand-in server
+ * (__tests__/helpers/spawnStandInServer.ts): a node child that binds the state
+ * dir's socket, answers the hello with its own pid and then the daemon proof
+ * keyed by the sandbox HOME's daemon key, which is what `--stop` asks for before
+ * it signals (src/mcp/server-control.ts). Each test has its own
+ * CODEGRAPH_STATE_DIR, so the live server of `~/.codegraph` is never reached.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFile, spawn, type ChildProcess } from 'child_process';
@@ -17,6 +18,7 @@ import { stateIdentityOf } from './state-identity';
 import { encodeServerLock } from '../../../src/mcp/daemon-paths';
 import { isProcessAlive } from '../../../src/mcp/server-control';
 import { CodeGraphPackageVersion } from '../../../src/mcp/version';
+import { spawnStandInServer } from '../../helpers/spawnStandInServer';
 
 const BIN = path.resolve(__dirname, '../../../dist/bin/codegraph.js');
 
@@ -34,23 +36,10 @@ function run(args: string[], env: Record<string, string> = {}): Promise<{ code: 
   });
 }
 
-/** Bind the state dir's socket in a child, optionally answer the hello as `version`, and write its lock. */
+/** Bind the state dir's socket in a stand-in for `version` that proves itself (`silent`: that sends nothing), and write its lock. */
 async function startStandInServer(version: string, silent = false): Promise<number> {
   const socketPath = path.join(stateDir, 'server.sock');
-  const source = [
-    "const net = require('net');",
-    'const [sock, version] = process.argv.slice(1);',
-    'net.createServer((c) => {',
-    "  c.on('error', () => {});",
-    ...(silent ? [] : ["  c.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath: sock, protocol: 1 }) + '\\n');"]),
-    "}).listen(sock, () => console.log('ready'));",
-  ].join('\n');
-  child = spawn(process.execPath, ['-e', source, socketPath, version], { stdio: ['ignore', 'pipe', 'ignore'] });
-  await new Promise<void>((resolve, reject) => {
-    child!.once('error', reject);
-    child!.once('exit', () => reject(new Error('stand-in server exited before listening')));
-    child!.stdout!.on('data', (chunk) => { if (String(chunk).includes('ready')) resolve(); });
-  });
+  child = await spawnStandInServer(socketPath, version, { silent });
   fs.writeFileSync(path.join(stateDir, 'server.pid'), encodeServerLock({
     pid: child.pid!, version, socketPath, startedAt: Date.now() - 65_000, stateDir, stateId: stateIdentityOf(stateDir),
   }));
@@ -108,7 +97,7 @@ describe('codegraph daemon', () => {
   // 23.0-26.6 s with four copies at load ~101-108. Re-measured after the exit wait below:
   // 18.8-20.6 s. The 90 s limit is about three times the slowest run measured across these
   // tests (32.0 s).
-  it('--stop stops it, verified by its hello, and a second --stop finds none', async () => {
+  it('--stop stops it, verified by its hello and daemon proof, and a second --stop finds none', async () => {
     const pid = await startStandInServer(CodeGraphPackageVersion);
     // The stand-in is this test's own child, so its 'exit' event shows it has exited;
     // the stdout check below ties that exit to --stop. Attach before --stop runs; skip
