@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import ts from 'typescript';
 import { JobSupervisor } from '../../../src/extensions/host/builder/job-supervisor';
 
-const fixture = path.resolve(__dirname, '../../fixtures/job-process-bodies.cjs');
+const fixture = path.resolve(__dirname, 'fixtures/job-process-bodies.cjs');
 const source = path.resolve(__dirname, '../../../src/extensions/host/builder/job-child-main.ts');
 const spec = (name: string) => ({ kind: 'sync' as const, root: '/root', module: fixture, export: name, args: null, writerPid: 123 });
 let dir: string;
