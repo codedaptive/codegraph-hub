@@ -91,7 +91,7 @@ say so.
 Abbreviations: **pub** = the published head carrying the fix (the current one unless named); **red** = the
 failing-first record; **NR** = not recorded / unverified: no archived receipt found (next action: the owner's port
 shows its own red run); **chk** = applicability to `ours` is for the owner to check. Every `ours` location is at
-74e5ac24; the test paths in the "`ours` source · test" column were re-anchored at 22fc8aea (S-65 renames); the "Failing-first test · red" column keeps the paths on the published PR heads it cites, so a path there need not exist on `ours`.
+74e5ac24; the test paths in the "`ours` source · test" column were re-anchored at 22fc8aea (S-65 renames), and R1-17's at 9ef2e820 (S-84 rename); the "Failing-first test · red" column keeps the paths on the published PR heads it cites, so a path there need not exist on `ours`.
 
 | ID | PR · lane | Source | Defect and change | Disposition | Fix commit → pub | Failing-first test · red | `ours` source · test | Applies to ours |
 |---|---|---|---|---|---|---|---|---|
