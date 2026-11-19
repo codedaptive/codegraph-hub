@@ -43,25 +43,31 @@ function real(p: string): string {
   return fs.realpathSync(path.resolve(p));
 }
 
-/** A repository with three tiny TypeScript files, one commit, at `dir`. */
-function makeRepo(dir: string): void {
-  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+/** A repository at `dir` with one commit: three TypeScript files or one non-source file. */
+function makeRepo(dir: string, sources = true): void {
+  fs.mkdirSync(dir, { recursive: true });
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.com');
   git(dir, 'config', 'user.name', 'Test');
   git(dir, 'config', 'commit.gpgsign', 'false');
-  fs.writeFileSync(path.join(dir, 'src', 'alpha.ts'), 'export function alphaSymbol() { return betaSymbol(); }\nimport { betaSymbol } from "./beta";\n');
-  fs.writeFileSync(path.join(dir, 'src', 'beta.ts'), 'export function betaSymbol() { return 2; }\n');
-  fs.writeFileSync(path.join(dir, 'src', 'gamma.ts'), 'export class Gamma { run() { return 3; } }\n');
+  if (sources) {
+    fs.mkdirSync(path.join(dir, 'src'));
+    fs.writeFileSync(path.join(dir, 'src', 'alpha.ts'), 'export function alphaSymbol() { return betaSymbol(); }\nimport { betaSymbol } from "./beta";\n');
+    fs.writeFileSync(path.join(dir, 'src', 'beta.ts'), 'export function betaSymbol() { return 2; }\n');
+    fs.writeFileSync(path.join(dir, 'src', 'gamma.ts'), 'export class Gamma { run() { return 3; } }\n');
+  } else {
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'notes\n');
+  }
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'init');
 }
 
 /** Build a complete index at `dir`. */
-async function indexDir(dir: string): Promise<void> {
+async function indexDir(dir: string) {
   const cg = await CodeGraph.init(dir);
-  await cg.indexAll();
+  const result = await cg.indexAll();
   cg.close();
+  return result;
 }
 
 /** Add a linked worktree at `dir` on a new branch from `from` (default HEAD). */
@@ -69,12 +75,10 @@ function addWorktree(repo: string, dir: string, branch: string, from = 'HEAD'): 
   git(repo, 'worktree', 'add', '-q', '-b', branch, dir, from);
 }
 
-/** Add `n` commits in the worktree at `dir`, each touching its own file. */
+/** Add `n` empty commits in the worktree at `dir`. */
 function commitN(dir: string, n: number, tag: string): void {
   for (let i = 0; i < n; i++) {
-    fs.writeFileSync(path.join(dir, `${tag}-${i}.txt`), `${tag} ${i}\n`);
-    git(dir, 'add', '.');
-    git(dir, 'commit', '-q', '-m', `${tag} ${i}`);
+    git(dir, 'commit', '-q', '--allow-empty', '-m', `${tag} ${i}`);
   }
 }
 
@@ -103,7 +107,7 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
   beforeEach(() => {
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-seed-unit-')));
     main = path.join(workspace, 'main');
-    makeRepo(main);
+    makeRepo(main, false);
   });
 
   afterEach(() => {
@@ -142,9 +146,8 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
     expect(await commitDistance(main, a, '0123456789abcdef0123456789abcdef01234567')).toBeNull();
   });
 
-  // G5. Over 5 s under load: it adds four git worktrees, makes five commits and
-  // builds three real indexes (sib-b, sib-3, sib-a), each a few hundred ms on an
-  // idle machine. The 30 s bound only catches a hang on a loaded one.
+  // G5 builds three complete sibling indexes and excludes incomplete or absent indexes
+  // when choosing the nearest sibling, with realpath order breaking ties.
   it('G5: picks the nearest complete sibling, ties broken by realpath ascending', async () => {
     const base = git(main, 'rev-parse', 'HEAD');
     const target = path.join(workspace, 'wt-target');
@@ -166,13 +169,13 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
     addWorktree(main, sib0, 'sib-0', base);
     CodeGraph.initSync(sib0).close();
 
-    await indexDir(sibB);
-    await indexDir(sib3);
-    await indexDir(sibA);
+    expect(await indexDir(sibB)).toMatchObject({ success: true, filesIndexed: 0 });
+    expect(await indexDir(sib3)).toMatchObject({ success: true, filesIndexed: 0 });
+    expect(await indexDir(sibA)).toMatchObject({ success: true, filesIndexed: 0 });
     // `main` (distance 0) has no index at all: not a source either.
 
     expect(await pickSeedSource(target)).toBe(real(sibA));
-  }, 30_000);
+  });
 
   it('pickSeedSource answers null when no sibling has a complete index', async () => {
     const target = path.join(workspace, 'wt-target');
