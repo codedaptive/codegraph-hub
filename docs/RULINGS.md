@@ -853,3 +853,34 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Done in part: Orc-Codeteam reports the `backporter` lane made in team codegraph as this ruling orders (#5267, via Orc
   #5270), replacing a snapshot-release home that differed from it. At this commit codeteam/teams/codegraph.toml lists no
   backporter lane (its lanes: host, queries, resolution, fleet, upstream-prs); the codeteam record of #5267 is not on disk to check.
+
+## R-57. The hub stays a descendant of upstream
+- Date: 2026-11-19 / Bob, via the creator (#5305): "codegraph's extra challenge under the publishing rule is staying a
+  descendant of upstream (colbymchenry/codegraph)."
+- Question: how does the backporter's build of `develop` and the clean `main` keep upstream in their ancestry every time?
+- Ruling: (1) each upstream sync is a real merge commit, on `develop` and on `main`, never squashed or rebased away;
+  (2) a candidate batch is the last `main`, plus the upstream merge if there is one, plus one squash per feature on
+  top, and a squash never spans an upstream merge; (3) the backporter's push refuses unless
+  `git merge-base --is-ancestor upstream/main <main>` holds at the upstream commit last merged; (4) `pr/*` branches
+  are cut from `upstream/main`, never from our `main` or `develop`; (5) renaming today's `main` to `develop` keeps its
+  upstream ancestry as it is.
+- Reason: Bob's word: the fork must stay a descendant of upstream, so it can merge upstream and offer PRs to it.
+- Not chosen: squashed upstream syncs; PR branches cut from our lines.
+- Amended by R-58 as S-112 reads it: rule (1) holds on `candidate` and `main`; `develop`'s history is not guarded.
+- Extends R-56; supersedes §7 item 5's squashed, force-pushed `develop` (R-35, S-56 for `develop`). Expanded in
+  docs/SPEC-upstream.md §7 item 11. Q-46 is closed by Bob's own words (#5301: "Publish as it is, history included,
+  with no scrubbing"; #5306 (1)): `develop` is `ours` as it is, with history (S-111).
+
+## R-58. `main`, `candidate` and `develop`: the premise behind the publishing rule
+- Date: 2026-11-19 / Bob, via the creator (RULING #5321), for every tool repo.
+- Question: what is each public branch for, and what may happen to it?
+- Ruling: `main` is clean and public facing, polite and well behaved. `candidate` is the place to prepare the next
+  `main`. `develop` is "a hive of scum and villainy": nobody but us should base work on it; we cut our work trees
+  from it, break things, and may leave a mess, squash or delete history; anyone outside who forks it does so at their
+  own peril. The backporter runs `develop` to `candidate` to `main`; it fixes and cleans things in `develop` as they
+  appear but doesn't worry about `develop`'s history. No scrubbing; if a hard boundary is ever needed, adapt the
+  "-ce" pattern used for codeteam-ce (a separate scrubbed repo).
+- Reason: Bob's word.
+- Not chosen: a scrubbed `develop` (retired by R-57/S-111); a separate scrubbed repository now.
+- Governs R-56 and R-57 on branch names and purposes; R-57's upstream-ancestry rules hold on `candidate` and `main`;
+  `develop`'s history is not guarded (S-112). Expanded in docs/SPEC-upstream.md §7 item 12.
