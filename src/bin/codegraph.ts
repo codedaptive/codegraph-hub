@@ -995,7 +995,7 @@ program
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
   .option('-y, --yes', 'Non-interactive: skip every prompt and take the defaults (for scripts / CI / container bootstraps)')
   .option('--local-only', 'Keep .codegraph/ out of git entirely: its .gitignore ignores itself too. Also converts an initialized project')
-  .option('--no-git', 'Opt a folder outside git in to indexing (R-50); run once')
+  .option('--no-git', 'Opt a folder outside git in to indexing; run once')
   .action(async (pathArg: string | undefined, options: { index?: boolean; force?: boolean; verbose?: boolean; yes?: boolean; localOnly?: boolean; git: boolean }) => {
     await runInit(path.resolve(pathArg || process.cwd()), { ...options, noGit: !options.git });
   });
