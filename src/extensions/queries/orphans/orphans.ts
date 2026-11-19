@@ -153,11 +153,16 @@
  *     declared inside a `#[test]` fn: an inherent impl records no conformance,
  *     and a trait impl's methods reach the implementation rules only through an
  *     indexed trait or a listed external one, so this rule covers the rest); or,
- *     in a Rust file, inside a `mod` whose declaration carries `#[cfg(test)]`.
- *     Rust modules are not nodes, so that module's extent is read from the
- *     same tree-sitter Rust parse (`parseRust`, read through `fileParse`:
- *     strings and comments are what the parser says they are, and a comment inside the attribute's
- *     argument list (`cfg(test` then a block comment, then `)`) is ignored);
+ *     in a Rust file, inside a module under a test `cfg`. Rust modules are not
+ *     nodes, so three readings decide it: an inline `mod` whose declaration
+ *     carries `#[cfg(test)]`, its extent read from the same tree-sitter Rust
+ *     parse (`parseRust`, read through `fileParse`: strings and comments are
+ *     what the parser says they are, and a comment inside the attribute's
+ *     argument list (`cfg(test` then a block comment, then `)`) is ignored); an
+ *     inline `mod` under a compound `#[cfg(all(test, …))]` (`inCfgTestModule`
+ *     on the file's text); or a file its parent declares as an out-of-line
+ *     module under `#[cfg(test)]` or `#[cfg(all(test, …))]` (`mod x;`, through
+ *     `inCfgTestFile`). A plain `mod x;` with no test `cfg` is product code;
  *   - entry (the entry-point rule): a top-level `function` named `main` (no
  *     function or method holds it); a Swift type whose declaration carries
  *     `@main` (an `attribute` named `main` among its `modifiers` in the Swift
@@ -240,6 +245,7 @@ import type { BlastNode } from '../blast/blast';
 import type { ChangedFile } from '../blast/diff';
 import { isCandidateEdge } from '../../resolution/suspects';
 import { TEST_PATH } from '../shared/test-path';
+import { inCfgTestFile, inCfgTestModule } from '../../../graph/test-code';
 import type { FailedRef, IncomingUse, NodeDetail, OrphanNode, OrphansStore } from './store';
 
 /** Node kinds checked for orphans: declarations a caller names. */
@@ -796,8 +802,10 @@ function parseTree(language: 'rust' | 'swift', source: string): ReturnType<typeo
  * the `mod_item`, past other attributes and comments), and a comment inside its argument
  * list is ignored. The outer attributes are collected in one forward pass over each node's
  * children (`attribute_item`s pending across comments, dropped at any other child), so a
- * run of N comments costs O(N), not a walk back from every node. Not matched: a `#[cfg(test)] mod x;` (an out-of-line module, no body
- * here), an inner `#![cfg(test)]`, a compound `cfg(all(test, ...))`.
+ * run of N comments costs O(N), not a walk back from every node. Not matched here: a
+ * `#[cfg(test)] mod x;` (an out-of-line module, no body here; `inCfgTestFile` reads it from
+ * the module's own file), a compound `cfg(all(test, ...))` (`inCfgTestModule` reads it), and an
+ * inner `#![cfg(test)]`.
  */
 function parseRust(source: string): FileParse | null {
   const tree = parseTree('rust', source);
@@ -1321,6 +1329,30 @@ export async function findOrphans(
   }
   /** The nested-in-test rule's Rust `#[cfg(test)]` module ranges of a file (from its one parse; none when it has none). */
   const cfgRanges = (path: string): { start: number; end: number }[] => fileParse('rust', path)?.cfgTest ?? [];
+  const cfgTestFileCache = new Map<string, boolean>();
+  const cfgTestModuleCache = new Map<string, boolean>();
+  /**
+   * Rust S is in test-configured code: inside a parsed `#[cfg(test)]` inline module, in a file
+   * its parent declares under a test `cfg` (one answer per path), or inside an inline module
+   * under a compound test `cfg` (one answer per path and line).
+   */
+  function inRustTestModule(s: OrphanNode): boolean {
+    if (cfgRanges(s.path).some((r) => r.start <= s.startLine && r.end >= s.endLine)) return true;
+    let inFile = cfgTestFileCache.get(s.path);
+    if (inFile === undefined) {
+      inFile = inCfgTestFile(s.path, (p) => text(p) ?? undefined);
+      cfgTestFileCache.set(s.path, inFile);
+    }
+    if (inFile) return true;
+    const key = `${s.path}:${s.startLine}`;
+    let inModule = cfgTestModuleCache.get(key);
+    if (inModule === undefined) {
+      const src = text(s.path);
+      inModule = src !== null && inCfgTestModule(src, s.startLine);
+      cfgTestModuleCache.set(key, inModule);
+    }
+    return inModule;
+  }
   function isTest(s: OrphanNode): boolean {
     if (TEST_PATH.test(s.path) || isTestByMark(s, s.language)) return true;
     // Nested-in-test rule: inside a test-marked symbol of the same file (one overlap query per
@@ -1331,10 +1363,7 @@ export async function findOrphans(
       const encloses = start <= s.startLine && end >= s.endLine && (start < s.startLine || end > s.endLine);
       if (encloses && isTestByMark({ name: n.name, path: n.path, startLine: start }, s.language)) return true;
     }
-    if (s.language === 'rust') {
-      return cfgRanges(s.path).some((r) => r.start <= s.startLine && r.end >= s.endLine);
-    }
-    return false;
+    return s.language === 'rust' && inRustTestModule(s);
   }
 
   /** Entry-point rule: a Swift type declared under `@main`, cached by id. */
