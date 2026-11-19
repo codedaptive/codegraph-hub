@@ -108,8 +108,8 @@ export function logAttachedDaemon(socketPath: string, hello: DaemonHello): void 
  * serves that session in-process, as for a mismatch, rather than send it tool
  * calls and put its answers in front of the agent. The caller owns the socket.
  * Used by the local-handshake proxy's background connect. `helloTimeoutMs`
- * bounds the wait for the hello, and again for the proof, so a caller with a
- * deadline can spend no more than it has. `launchDir` is the directory this
+ * bounds the wait for the hello and, afresh, the wait for the proof, so one
+ * connect can take up to twice it. `launchDir` is the directory this
  * session was launched in; it travels in the client hello and fixes the
  * session's repo anchor on the server. `focus` is the session's `--focus`
  * directories (normalised, relative to the repository root; none when

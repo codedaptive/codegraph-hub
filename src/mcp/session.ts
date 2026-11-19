@@ -89,7 +89,7 @@ export function initializeInstructions(base: string, notice: string | null = get
   );
 }
 
-/** Every tool this server defines, by name: the names a client's rewrite may touch. */
+/** The built-in tools, by name: the names a client's rewrite may touch (the extension tools are not in it). */
 const TOOL_NAMES: readonly string[] = tools.map((t) => t.name);
 
 /**

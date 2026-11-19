@@ -221,7 +221,7 @@ export interface DaemonClientHello {
   tools?: string;
   /**
    * A fresh random string from a proxy that wants this user's server to prove
-   * it is one before the proxy sends anything. The server answers with one
+   * it is one before the session starts (the hello itself goes first). The server answers with one
    * `{"codegraph_proof": …}` line before the session starts; a client hello
    * without it gets no such line. See `./daemon-proof`.
    */
@@ -614,7 +614,7 @@ export class Daemon {
   /**
    * Answer a client hello's challenge with this user's proof (see
    * `./daemon-proof`) over the socket path this server bound, so the client can
-   * tell this server from a stand-in at its socket before it sends anything.
+   * tell this server from a stand-in at its socket before the session's first byte.
    * `null` when no key only this user can read can be had: the client then
    * serves the session in-process.
    */

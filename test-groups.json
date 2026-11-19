@@ -725,6 +725,7 @@
     "__tests__/js-this-call-binding.test.ts",
     "__tests__/js-unimported-global-calls.test.ts",
     "__tests__/kernel-csharp-parity.test.ts",
+    "__tests__/kernel-php-parity.test.ts",
     "__tests__/kernel-rustlang-parity.test.ts",
     "__tests__/kernel-swift-parity.test.ts",
     "__tests__/kernel-tsjs-parity.test.ts",

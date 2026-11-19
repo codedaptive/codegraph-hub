@@ -5,7 +5,7 @@
  * server and whose answers go into the agent's context.
  *
  * Where the daemon listens is open to others in two cases: the socket fallback
- * in the system temp folder on macOS and Linux, and on Windows the named pipe,
+ * in the system temp folder on Linux (/tmp; macOS's is per-user), and on Windows the named pipe,
  * whose name lives in one namespace every user can create in. Node can read
  * neither the peer's user on a socket nor a pipe's owner. What a stand-in can't
  * do is read a file only this user can read. So the client sends a fresh random
