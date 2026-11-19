@@ -33,6 +33,7 @@ interface EdgeRow { source: string; target: string; kind: string }
 describe('blast Rust out-of-line test modules', () => {
   let root = '';
   let report: BlastReport;
+  let changedTestsReport: BlastReport;
   let nodes: NodeRow[] = [];
   let edges: EdgeRow[] = [];
 
@@ -65,6 +66,10 @@ describe('blast Rust out-of-line test modules', () => {
     const result = runBlast(root, { base: 'C1', format: 'json' });
     expect(result.exitCode, result.stderr).toBe(0);
     report = JSON.parse(result.output) as BlastReport;
+    write(root, 'src/store/tests.rs', 'use super::*;\nfn store_caller() -> u32 {\n    open_store()\n}\n// changed\n');
+    const changedTestsResult = runBlast(root, { base: 'C1', format: 'json' });
+    expect(changedTestsResult.exitCode, changedTestsResult.stderr).toBe(0);
+    changedTestsReport = JSON.parse(changedTestsResult.output) as BlastReport;
   }, 30_000);
 
   afterAll(() => {
@@ -92,5 +97,18 @@ describe('blast Rust out-of-line test modules', () => {
   it('keeps a plain out-of-line module under modules, not testModules', () => {
     expect(report.modules.flatMap((m) => m.files)).toContain('src/plain/tests.rs');
     expect(report.testModules.flatMap((m) => m.files)).not.toContain('src/plain/tests.rs');
+  });
+
+  it('reports an unchanged cfg-test caller as a stale area test', () => {
+    const area = report.areas.find((a) => a.key === 'src/');
+    expect(area?.testFiles).toContain('src/store/tests.rs');
+    expect(area?.tests).toBe('stale');
+  });
+
+  it('uses a changed cfg-test caller as a test signal, not an area seed', () => {
+    expect(changedTestsReport.areas.flatMap((a) => a.files)).not.toContain('src/store/tests.rs');
+    const area = changedTestsReport.areas.find((a) => a.key === 'src/');
+    expect(area?.changedTestFiles).toContain('src/store/tests.rs');
+    expect(area?.tests).toBe('changed');
   });
 });
