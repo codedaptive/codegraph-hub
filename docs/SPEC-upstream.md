@@ -1,7 +1,7 @@
 # SPEC: offering our work upstream
 
-Draft 6, 2026-11-04, Designer-Codegraph. Governing decisions: Bob, 2026-10-31 (R-17) and 2026-11-04 (R-31, the
-hub, §7). Upstream is `colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
+Draft 7, 2026-11-19, Designer-Codegraph. Governing decisions: Bob, 2026-10-31 (R-17), 2026-11-04 (R-31, the
+hub, §7) and 2026-11-19 (R-56, the hub's stable `main`, §7 item 10). Upstream is `colbymchenry/codegraph`. Lines marked **[check]** are my reading; §6 lists them.
 
 ## 1. What Bob decided
 
@@ -124,18 +124,15 @@ Linux and Windows, if they want it.
 4. **License.** The hub carries upstream's license unchanged (MIT; upstream's `LICENSE` file as is), and the README
    says so.
 5. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
-   then the hub's `main` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
-   bob-codedaptive identity), and the update published as a GitHub release of the hub tagged with the build's
-   version (`v1.6.2-sm.N`), the packed build attached. The first release is sm.12, the first build with R-32's
-   upgrade fix; the rename and README do not wait for it. Each update is one commit whose tree is `ours` minus §4's
-   exclusions plus the README. While the hub has no outside users (no stars, forks, or issues or pull requests from
-   anyone else), its only parent is the upstream `main` that update merged and it is force-pushed over the previous
-   `main`, kept first as a backup ref on our private origin (R-35); after that it has two parents, that upstream
-   `main` and the hub's previous `main`, and is never force-pushed (S-56). GitHub then shows the hub 0 commits behind upstream (`gh api
-   repos/colbymchenry/codegraph/compare/main...codedaptive:codegraph-hub:main` reports `behind_by` 0). Between
-   updates the count grows as upstream moves; that is the monthly cadence, not a fault. (2026-11-04: the hub's
-   `main` is 900d223b, upstream 5cd8a9a8 plus one commit, 20 behind upstream's f72c9d2e, which `ours` has carried
-   since sm.11.)
+   then the hub's `develop` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
+   bob-codedaptive identity); the stable `main` and the release follow from it as item 10 says (R-56). The backporter
+   lane runs the update (R-56, superseding R-36). Each `develop` update is one commit whose tree is `ours` minus
+   §4's exclusions plus the README. While the hub has no outside users (no stars, forks, or issues or pull requests
+   from anyone else), its only parent is the upstream `main` that update merged and it is force-pushed over the
+   previous `develop`, kept first as a backup ref on our private origin (R-35); after that it has two parents, that
+   upstream `main` and the previous `develop`, and is never force-pushed (S-56). (Before R-56 these updates went to
+   the hub's `main`; the first, from sm.12, was released as `v1.6.2-sm.12`. 2026-11-04: the hub's `main` was
+   900d223b, upstream 5cd8a9a8 plus one commit.)
 6. **Sooner fixes.** An issue reported on the hub that needs a fix before the next monthly update gets one out of
    cycle, through the owning lane and the same gate. An open upstream PR comes into `ours` before upstream merges
    it only on Bob's word, PR by PR (R-40: #3249 and #3215); when upstream merges it, the monthly update takes
@@ -146,3 +143,20 @@ Linux and Windows, if they want it.
 9. **Upgrade and update notice (R-32).** `codegraph upgrade` installs the hub's latest release (or the hub version
    named) and never upstream's package or install script; a source checkout keeps "git pull && npm run build". The
    update check reads the hub's releases. Versions keep the `-sm.N` suffix, compared by its number.
+10. **Stable `main` and `develop` (R-56).** The hub has two long-lived branches:
+    - `develop` is the line item 5 updates: `ours` as published, its history as it comes.
+    - `main` is the stable branch and the hub's default. It takes only cleaned-up commits. Upstream comes in as a
+      real merge, with the upstream commit a parent and never squashed in, so GitHub's compare against upstream
+      stays meaningful and the next upstream merge has a base. Each of our features is one squash with a `Feature:`
+      trailer, so it can still be offered upstream as a pull request. `main` is never force-pushed.
+    - The backporter lane builds each batch on a candidate branch cut from `main`: the upstream merge the batch
+      needs, then one squash per feature changed since the last batch, cleaned (§4's exclusions, R-19's rules, the
+      README per item 3). The candidate is done when its tree equals `develop`'s tree for the same `ours` and the
+      whole-suite gate passes on it. The backporter then merges it into `main` and pushes. That push is the
+      publishing gate (rules/global.md rule 12): it refuses any change that still carries an open security finding.
+    - Releases are cut from `main` only, as GitHub releases of the hub tagged `v` plus the build's own version (the
+      packed `package.json` version, e.g. `v1.6.3-sm.17`; the base follows the merged upstream, S-102), with the
+      packed build attached. `develop` gets no releases, so `codegraph upgrade` and the update notice (item 9) offer
+      only stable builds.
+    - The first candidate builds `main` from the upstream base sm.17 carries (cc17b69a) and `ours` at sm.17
+      (987c3715), and its release is `v1.6.3-sm.17`. The `pr/<feature>` branches (§3) are left as they are.
