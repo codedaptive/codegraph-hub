@@ -7,6 +7,7 @@
  *   - `other-key`: another key, as a stand-in another user put there would;
  *   - `other-path`: this user's key for another path, a proof relayed from
  *     this user's server listening elsewhere;
+ *   - `null`: a null proof, as a server with no readable key answers;
  *   - `none`: no proof line, as a server from before the proof.
  * Then it answers each request with what `reply` returns (merged into the
  * JSON-RPC response), or stays silent when that is undefined.

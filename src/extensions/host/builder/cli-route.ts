@@ -30,7 +30,8 @@ import type { IndexProgress, IndexResult, SyncResult } from '../../../extraction
 import type { ServerLockInfo } from '../../../mcp/daemon-paths';
 import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 import { controlClientHelloLine, isServerHello, probeServer } from '../../../mcp/server-control';
-import { daemonKeyPath, daemonProofMatches, newDaemonChallenge, readDaemonKey } from '../../../mcp/daemon-proof';
+import { daemonKeyPath, newDaemonChallenge } from '../../../mcp/daemon-proof';
+import { daemonAnswerProves } from '../../../mcp/daemonAnswerProves';
 import { daemonChallengeLine } from '../../../mcp/daemonChallengeLine';
 import {
   INDEX_WRITE_END_METHOD,
@@ -113,16 +114,14 @@ interface Pending {
 /** What {@link RouteConnection.rpc} saw: the request was never sent, or the server's result. */
 type RpcOutcome = { sent: false } | { sent: true; result: unknown };
 
-/**
- * Where a connection's handshake stands: waiting for the server hello, then for the proof answering the
- * challenge line sent after it, then open for requests.
- */
-type HandshakePhase = 'hello' | 'proof' | 'open';
-
 /** The route over one socket to `lock`'s server. */
 class RouteConnection implements BuilderRoute {
   private buffer = '';
-  private phase: HandshakePhase = 'hello';
+  /**
+   * Where the handshake stands: waiting for the server hello, then for the proof answering the challenge line
+   * sent after it, then open for requests.
+   */
+  private phase: 'hello' | 'proof' | 'open' = 'hello';
   private readonly challenge = newDaemonChallenge();
   private closed = false;
   private nextId = 1;
@@ -281,9 +280,7 @@ class RouteConnection implements BuilderRoute {
       this.socket.write(daemonChallengeLine(this.challenge));
       return true;
     }
-    // Read once the proof is in: the server answering the first challenge makes the key.
-    const key = readDaemonKey();
-    const ok = key !== null && daemonProofMatches(key, this.challenge, this.lock.socketPath, message.codegraph_proof);
+    const ok = daemonAnswerProves(this.challenge, this.lock.socketPath, message.codegraph_proof);
     if (ok) {
       this.phase = 'open';
       this.socket.write(controlClientHelloLine());

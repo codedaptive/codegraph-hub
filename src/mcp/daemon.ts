@@ -601,15 +601,21 @@ export class Daemon {
   }
 
   /**
-   * The client's peers, from its client hello. A proxy first sends a challenge
-   * line and waits for the proof before it says who it is, so a first line
-   * that is a challenge is answered at once, ahead of the anchor lookup and the
-   * session, and the line after it is read as the client hello. A first line
-   * that is a client hello (the codegraph CLI's control and release
-   * connections) gets no proof line.
+   * The client's peers, from its client hello. Every CodeGraph client (the
+   * proxy, the CLI's builder route and its release request) first sends a
+   * challenge line and waits for the proof before it says who it is, so a first
+   * line that is a challenge is answered at once, ahead of the anchor lookup and
+   * the session, and the line after it is read as the client hello. A first line
+   * that is a client hello is still read as one, and gets no proof line.
    */
   private async readPeers(socket: net.Socket): Promise<ClientPeers> {
-    const first = await readClientLine(socket, parseChallengeOrHello, NO_PEERS);
+    // The challenge is checked first: a challenge line is no client hello and
+    // would otherwise go back to the transport as JSON-RPC.
+    const challengeOrHello = (line: string): { challenge: string } | ClientPeers | null => {
+      const challenge = parseDaemonChallengeLine(line);
+      return challenge === null ? parseClientHelloLine(line) : { challenge };
+    };
+    const first = await readClientLine(socket, challengeOrHello, NO_PEERS);
     if (!('challenge' in first)) return first;
     this.answerChallenge(socket, first.challenge);
     return readClientLine(socket, parseClientHelloLine, NO_PEERS);
@@ -1147,15 +1153,6 @@ export function peerIsDead(
   if (!isAlive(peers.pid)) return true;
   if (peers.hostPid !== null && !isAlive(peers.hostPid)) return true;
   return false;
-}
-
-/**
- * A client's first line: its challenge, checked first since a challenge line is
- * no client hello and would otherwise go back as JSON-RPC; else its client hello.
- */
-function parseChallengeOrHello(line: string): { challenge: string } | ClientPeers | null {
-  const challenge = parseDaemonChallengeLine(line);
-  return challenge === null ? parseClientHelloLine(line) : { challenge };
 }
 
 /**

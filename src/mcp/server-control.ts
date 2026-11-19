@@ -25,6 +25,9 @@ import {
   probeServerHello,
   type ServerLockInfo,
 } from './daemon-paths';
+import { newDaemonChallenge } from './daemon-proof';
+import { daemonAnswerProves } from './daemonAnswerProves';
+import { daemonChallengeLine } from './daemonChallengeLine';
 import { removeLockIfUnchanged, snapshotLock } from './lock-takeover';
 import { isOlderRelease } from './version';
 import { WORKER_START_SETTLE_MS } from '../worker-teardown';
@@ -250,16 +253,18 @@ const RELEASE_TIMEOUT_MS = 20_000;
  * server keeps serving every other project and reopens this one on its next
  * call, when the builder holds it again.
  *
- * Protocol (src/mcp/daemon.ts): connect, read the server's hello line, send a
- * client-hello `{codegraph_client:1, control:1, pid, hostPid: null}` carrying no `launchDir` (this is not a
- * session), then one JSON-RPC request
+ * Protocol (src/mcp/daemon.ts): connect, read the server's hello line, send only a challenge line
+ * (src/mcp/daemon-proof.ts) and read the next line, which must be the server's proof for this socket path.
+ * Only then send a client-hello `{codegraph_client:1, control:1, pid, hostPid: null}` carrying no
+ * `launchDir` (this is not a session), then one JSON-RPC request
  * `{"jsonrpc":"2.0","id":"release","method":"codegraph/releaseProject","params":{"root":<root>}}`
- * and wait for the reply with that id.
+ * and wait for the reply with that id. Each candidate socket is tried in turn until one is not `no-server`.
  *
- *   - `no-server`: nothing answers on any candidate socket (or the lock's own).
- *   - `released`: the server replied with a result: neither it nor its builder holds anything for `root`.
- *   - `failed`: it answered something else, an error, or nothing in time. The
- *     caller must not rebuild under a server that may still hold the database.
+ *   - `no-server`: on every candidate socket (the lock's own first), nothing answers, or what answers does
+ *     not prove it runs as this user: its proof does not match, is missing, or does not come in time.
+ *   - `released`: the proven server replied with a result: neither it nor its builder holds anything for `root`.
+ *   - `failed`: what answered sent no server hello, or the proven server answered something else, an error,
+ *     or nothing in time. The caller must not rebuild under a server that may still hold the database.
  */
 export async function requestProjectRelease(
   root: string,
@@ -303,7 +308,8 @@ function releaseOverSocket(
 ): Promise<'released' | 'no-server' | 'failed'> {
   return new Promise((resolve) => {
     let connected = false;
-    let sentRequest = false;
+    let phase: 'hello' | 'proof' | 'open' = 'hello';
+    const challenge = newDaemonChallenge();
     let buffer = '';
     let done = false;
     const socket = net.createConnection(socketPath);
@@ -314,35 +320,51 @@ function releaseOverSocket(
       socket.destroy();
       resolve(result);
     };
-    const timer = setTimeout(() => finish(connected ? 'failed' : 'no-server'), timeoutMs);
+    // Waiting for the proof, what answered is not proven to be this user's server: 'no-server', and the next
+    // candidate is tried. Before the hello a connection that answers nothing is 'failed', as is a proven server
+    // that does not answer the release: either may hold the database, so the caller must not rebuild.
+    const unanswered = () => finish(phase === 'proof' || !connected ? 'no-server' : 'failed');
+    const timer = setTimeout(unanswered, timeoutMs);
     timer.unref?.();
     socket.setEncoding('utf8');
     socket.on('connect', () => { connected = true; });
     socket.on('data', (chunk) => {
       buffer += String(chunk);
-      for (;;) {
-        const newline = buffer.indexOf('\n');
-        if (newline < 0) return;
+      for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        let message: Record<string, unknown>;
-        try { message = JSON.parse(line) as Record<string, unknown>; } catch { return finish('failed'); }
-        if (!sentRequest) {
+        const result = releaseStep(line);
+        if (result) return finish(result);
+      }
+    });
+    socket.on('error', unanswered);
+    socket.on('close', unanswered);
+
+    // One line read; the attempt's result once it has one.
+    function releaseStep(line: string): 'released' | 'no-server' | 'failed' | undefined {
+      let message: Record<string, unknown>;
+      try { message = JSON.parse(line) as Record<string, unknown>; } catch { return phase === 'proof' ? 'no-server' : 'failed'; }
+      switch (phase) {
+        case 'hello':
           // The first line is the server's hello; anything else is not our server.
-          if (!isServerHello(message)) return finish('failed');
-          sentRequest = true;
+          if (!isServerHello(message)) return 'failed';
+          phase = 'proof';
+          socket.write(daemonChallengeLine(challenge));
+          return undefined;
+        case 'proof':
+          if (!daemonAnswerProves(challenge, socketPath, message.codegraph_proof)) return 'no-server';
+          phase = 'open';
           socket.write(controlClientHelloLine());
           socket.write(JSON.stringify({
             jsonrpc: '2.0', id: 'release', method: 'codegraph/releaseProject', params: { root },
           }) + '\n');
-          continue;
+          return undefined;
+        case 'open': {
+          if (message.id !== 'release') return undefined; // a notification: not the reply
+          const result = message.result as Record<string, unknown> | undefined;
+          return !message.error && result?.released === true ? 'released' : 'failed';
         }
-        if (message.id !== 'release') continue; // a notification: not the reply
-        const result = message.result as Record<string, unknown> | undefined;
-        return finish(!message.error && result?.released === true ? 'released' : 'failed');
       }
-    });
-    socket.on('error', () => finish(connected ? 'failed' : 'no-server'));
-    socket.on('close', () => finish(connected ? 'failed' : 'no-server'));
+    }
   });
 }

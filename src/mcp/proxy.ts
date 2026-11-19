@@ -22,7 +22,8 @@ import * as net from 'net';
 import { findNearestCodeGraphRoot } from '../directory';
 import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
 import { DaemonClientHello, DaemonHello, MAX_HELLO_LINE_BYTES } from './daemon';
-import { daemonKeyPath, daemonProofMatches, newDaemonChallenge, readDaemonKey } from './daemon-proof';
+import { daemonKeyPath, newDaemonChallenge } from './daemon-proof';
+import { daemonAnswerProves } from './daemonAnswerProves';
 import { daemonChallengeLine } from './daemonChallengeLine';
 import { EARLY_PPID } from './early-ppid';
 import { supervisionLostReason } from './ppid-watchdog';
@@ -158,9 +159,7 @@ export async function connectWithHello(
   const challenge = newDaemonChallenge();
   socket.write(daemonChallengeLine(challenge));
   const proof = await readProofLine(socket, helloTimeoutMs).catch(() => undefined);
-  // Read once the proof is in: the server answering the first challenge makes the key.
-  const key = proof === undefined ? null : readDaemonKey();
-  if (!key || !daemonProofMatches(key, challenge, socketPath, proof)) {
+  if (!daemonAnswerProves(challenge, socketPath, proof)) {
     socket.destroy();
     process.stderr.write(
       `[CodeGraph MCP] The server on ${socketPath} could not prove it runs as this user ` +
