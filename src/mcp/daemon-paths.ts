@@ -137,6 +137,13 @@ export function getServerPidPath(): string {
   return path.join(getStateDir(), 'server.pid');
 }
 
+/** Whether `CODEGRAPH_NO_DAEMON` was set to a truthy value. */
+export function daemonOptOutSet(): boolean {
+  const raw = process.env.CODEGRAPH_NO_DAEMON;
+  if (!raw) return false;
+  return raw !== '0' && raw.toLowerCase() !== 'false';
+}
+
 /** Absolute path to the detached server's log: `<state>/server.log`. */
 export function getServerLogPath(): string {
   return path.join(getStateDir(), 'server.log');

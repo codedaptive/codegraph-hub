@@ -1,3 +1,5 @@
+import { withOpenCodeToolNames } from './opencode-tool-names';
+
 /**
  * Server-level instructions emitted in the MCP `initialize` response.
  *
@@ -32,6 +34,10 @@
  * one place a focused session sees what the focus held back. The text is the same
  * for every session (the proxy sends it too), so it states what a focus does, not
  * whether this session has one.
+ *
+ * An OpenCode client gets this text with each tool named the way OpenCode lists
+ * it (`codegraph_codegraph_explore`, #1267): see {@link openCodeInstructions}.
+ * Write tool names here as the tools are named; the rewrite is applied for it.
  */
 export const SERVER_INSTRUCTIONS = `# Codegraph — code intelligence over an indexed knowledge graph
 
@@ -103,3 +109,26 @@ A session may be started with \`--focus <dir>\` (repeatable; directories relativ
 - Cross-file resolution is best-effort name matching; ambiguous calls may return multiple candidates.
 - No live correctness validation — that's still the TypeScript compiler / test suite / linter's job. Codegraph supplements those with structural context they don't have.
 `;
+
+/**
+ * The sentence an OpenCode client gets under the instructions' title (#1267):
+ * why every tool name starts with the server's key, and what changes when the
+ * server is registered under a key other than the one `codegraph install` writes.
+ */
+export const OPENCODE_SERVER_KEY_NOTE =
+  "In OpenCode each tool's name starts with this server's key, so the tool names below begin with " +
+  '`codegraph_codegraph_`; if the server is registered under another key, that key replaces the first `codegraph_`.';
+
+/**
+ * What an OpenCode client gets in place of `instructions` (#1267): the same
+ * text, with each of `toolNames` written the way OpenCode lists it and
+ * {@link OPENCODE_SERVER_KEY_NOTE} under the title. Nothing else changes, so
+ * the `codegraph` CLI commands and `CODEGRAPH_*` variables read as they do for
+ * every other client. See `./opencode-tool-names`.
+ */
+export function openCodeInstructions(instructions: string, toolNames: readonly string[]): string {
+  const renamed = withOpenCodeToolNames(instructions, toolNames);
+  const titleEnd = renamed.indexOf('\n');
+  if (titleEnd === -1) return `${renamed}\n\n${OPENCODE_SERVER_KEY_NOTE}`;
+  return `${renamed.slice(0, titleEnd + 1)}\n${OPENCODE_SERVER_KEY_NOTE}\n${renamed.slice(titleEnd + 1)}`;
+}

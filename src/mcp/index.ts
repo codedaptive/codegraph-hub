@@ -56,6 +56,7 @@ import { stopServer, isProcessAlive, readServerLock, namesThisStateDir } from '.
 import { connectWithHello, DAEMON_HELLO_TIMEOUT_MS, runLocalHandshakeProxy } from './proxy';
 import { CodeGraphPackageVersion } from './version';
 import {
+  daemonOptOutSet,
   getServerLogPath,
   getServerSocketCandidates,
   probeServerHello,
@@ -158,11 +159,12 @@ export async function connectAnyDaemonCandidate(
 /**
  * Probe for a daemon every `retryDelayMs` until one answers or `budgetMs` of
  * wall time is spent. `probe` gets the deadline, and caps its own hello wait to
- * it. Resolves the socket, or null once the budget is spent or a daemon of
- * another version answers. The clock is injectable for tests.
+ * it. Resolves the socket, or null once the budget is spent, a daemon of
+ * another version answers, or one can't prove it runs as this user. The clock
+ * is injectable for tests.
  */
 export async function pollForDaemon<S>(
-  probe: (deadline: number) => Promise<S | 'older-version' | 'version-mismatch' | null>,
+  probe: (deadline: number) => Promise<S | 'older-version' | 'version-mismatch' | 'unproven' | null>,
   budgetMs: number = DAEMON_CONNECT_BUDGET_MS,
   retryDelayMs: number = DAEMON_CONNECT_RETRY_DELAY_MS,
   clock: { now(): number; sleep(ms: number): Promise<void> } = { now: Date.now, sleep },
@@ -173,17 +175,11 @@ export async function pollForDaemon<S>(
     if (clock.now() >= deadline) return null;
     const answer = await probe(deadline);
     // An answer from another version ends the poll now; the caller replaces an
-    // older server or serves in-process.
-    if (answer === 'older-version' || answer === 'version-mismatch') return null;
+    // older server or serves in-process. One that can't prove it runs as this
+    // user gets no session; it serves in-process.
+    if (answer === 'older-version' || answer === 'version-mismatch' || answer === 'unproven') return null;
     if (answer) return answer;
   }
-}
-
-/** Whether `CODEGRAPH_NO_DAEMON` was set to a truthy value. */
-function daemonOptOutSet(): boolean {
-  const raw = process.env.CODEGRAPH_NO_DAEMON;
-  if (!raw) return false;
-  return raw !== '0' && raw.toLowerCase() !== 'false';
 }
 
 /** Whether this process was spawned to BE the detached daemon. */
@@ -682,6 +678,10 @@ export class MCPServer {
       // Fast path: a server may already be listening (on either candidate).
       const probe = await connectAnyCandidate();
       if (probe === 'version-mismatch') return null; // definitive — serve in-process, don't poll for 6s
+      // Something of this version answers where the server listens but can't
+      // prove it runs as this user: no session goes through it, and none is
+      // spawned to fight it for the socket. Serve in-process.
+      if (probe === 'unproven') return null;
       if (probe && probe !== 'older-version') return probe;
       // A server of an older release answered — or none did, while the lock may
       // still name one on a socket we don't probe. Either way it makes way for
