@@ -177,3 +177,14 @@ Linux and Windows, if they want it.
     - `pr/*` branches for upstream are cut from `upstream/main`, never from our `main` or `develop`, so our history
       never rides into a pull request.
     - Renaming today's `main` to `develop` keeps its upstream ancestry as it is.
+12. **`main`, `candidate`, `develop` (R-58).** Bob's premise for every tool repo, governing items 5, 10 and 11:
+    - `main` is clean and public facing, polite and well behaved.
+    - `candidate` is where the next `main` is prepared.
+    - `develop` is "a hive of scum and villainy": `ours` published as it is, with no scrubbing. Nobody but us should
+      base work on it; our work trees are cut from it, and we may leave a mess, squash or delete history there. Anyone
+      outside who forks it does so at their own peril. Its upstream syncs still come in as real merges (item 11), so
+      it stays a descendant of upstream; beyond that its history carries no promise.
+    - The backporter runs `develop` → `candidate` → `main`. It fixes and cleans things in `develop` as they appear,
+      and does not worry about `develop`'s history.
+    - No scrubbing. If a hard boundary is ever needed, the hub adopts the "-ce" pattern of codeteam-ce (a separate
+      scrubbed repository); until then there is none.
