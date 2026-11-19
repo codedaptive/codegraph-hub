@@ -333,6 +333,7 @@ CodeGraph detects web-framework routing files and emits `route` nodes linked by 
 | **Flask** | `@app.route('/path', methods=[...])`, blueprint routes |
 | **FastAPI** | `@app.get(...)`, `@router.post(...)`, all standard methods |
 | **Express** | `app.get(...)`, `router.post(...)` with middleware chains |
+| **Elysia** | `new Elysia({ prefix })` chains of `.get(...)`, `.post(...)`, `.route('TRACE', ...)` and `.ws(...)`, `.group()` and `.guard()` callbacks, functional plugins, and `.use(plugin)` prefixes composed across files |
 | **NestJS** | `@Controller` + `@Get/@Post/...` (with `RouterModule` prefixes, `setGlobalPrefix` and URI versioning), GraphQL `@Resolver` + `@Query/@Mutation`, `@MessagePattern`/`@EventPattern`, `@SubscribeMessage` |
 | **Laravel** | `Route::get()`, `Route::resource()`, `Controller@action`, tuple syntax |
 | **Drupal** | `*.routing.yml` routes (`_controller`, `_form`, entity handlers); `hook_*` implementations in `.module`/`.theme`/`.install`/`.inc` and `#[Hook]` methods; `*.services.yml` services, and calls through `\Drupal::service()`; plugin definitions, as attributes or annotations |
@@ -581,6 +582,7 @@ codegraph affected src/auth.ts --filter "e2e/*"     # Custom test file pattern
 | `-f, --filter <glob>` | Glob for the files that count as tests (see below) | auto-detect |
 | `-j, --json` | Output as JSON | `false` |
 | `-q, --quiet` | Output file paths only | `false` |
+| `--cross-tier` | Also follow links across a process boundary: a client's HTTP call to its server's route, a queue job to its consumer, an event to its handler | `false` |
 
 `--filter` matches the whole name. With no slash (`*_test.go`) it matches the file name at any depth, with a slash (`e2e/*.spec.ts`) that folder at any depth, and with a leading `/` (`/tests/**/*.py`) from the project root only. `**` also matches no folder, so `tests/**/*.py` includes `tests/test_x.py`. Without `--filter`, files with the usual test names and folders count as tests, Google-style `foo_unittest.cc` and `foo_unittest.py` included.
 

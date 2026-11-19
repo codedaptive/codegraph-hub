@@ -22,13 +22,14 @@ import * as net from 'net';
 import { findNearestCodeGraphRoot } from '../directory';
 import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
 import { DaemonClientHello, DaemonHello, MAX_HELLO_LINE_BYTES } from './daemon';
+import { daemonKeyPath, daemonProofMatches, newDaemonChallenge, readDaemonKey } from './daemon-proof';
 import { EARLY_PPID } from './early-ppid';
 import { supervisionLostReason } from './ppid-watchdog';
 import { armStartupHandshakeTimeout } from './startup-handshake';
 import { treatStdinFailureAsShutdown } from './stdin-teardown';
 import { treatStdoutFailureAsShutdown } from './stdout-teardown';
 import { CodeGraphPackageVersion, isOlderRelease } from './version';
-import { SERVER_INFO, PROTOCOL_VERSION, initializeInstructions } from './session';
+import { SERVER_INFO, PROTOCOL_VERSION, instructionsForClient, toolsForClient } from './session';
 import { SERVER_INSTRUCTIONS } from './server-instructions';
 import { getStaticTools } from './tools';
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
@@ -94,18 +95,25 @@ export function logAttachedDaemon(socketPath: string, hello: DaemonHello): void 
 }
 
 /**
- * Connect to the server at `socketPath` and verify its hello (exact version
- * match). Returns the live socket (hello already consumed, client hello sent),
- * null if unreachable / stale, or — for a server of another version —
+ * Connect to the server at `socketPath`, verify its hello (exact version
+ * match), then have it prove it runs as this user (see `./daemon-proof`).
+ * Returns the live socket (hello and proof already consumed, client hello
+ * sent), null if unreachable / stale, or — for a server of another version —
  * `'older-version'` when it runs an older release ({@link isOlderRelease}; the
  * launcher replaces it, #2335) and `'version-mismatch'` for any other version,
- * which is left alone. The caller owns the socket. Used by the local-handshake
- * proxy's background connect. `helloTimeoutMs` bounds the wait for the hello,
- * so a caller with a deadline can spend no more than it has. `launchDir` is the
- * directory this session was launched in; it travels in the client hello and
- * fixes the session's repo anchor on the server. `focus` is the session's
- * `--focus` directories (normalised, relative to the repository root; none
- * when omitted), which travel in the same hello.
+ * which is left alone. A server of this version that can't prove it is
+ * `'unproven'`: a stand-in another user put where the server listens (the
+ * shared temp folder's socket, or on Windows a pipe name anyone can take
+ * first), or this user's server running with another home folder. The caller
+ * serves that session in-process, as for a mismatch, rather than send it tool
+ * calls and put its answers in front of the agent. The caller owns the socket.
+ * Used by the local-handshake proxy's background connect. `helloTimeoutMs`
+ * bounds the wait for the hello, and again for the proof, so a caller with a
+ * deadline can spend no more than it has. `launchDir` is the directory this
+ * session was launched in; it travels in the client hello and fixes the
+ * session's repo anchor on the server. `focus` is the session's `--focus`
+ * directories (normalised, relative to the repository root; none when
+ * omitted), which travel in the same hello.
  */
 export async function connectWithHello(
   socketPath: string,
@@ -113,7 +121,7 @@ export async function connectWithHello(
   helloTimeoutMs: number = DAEMON_HELLO_TIMEOUT_MS,
   launchDir?: string,
   focus?: readonly string[],
-): Promise<net.Socket | 'older-version' | 'version-mismatch' | null> {
+): Promise<net.Socket | 'older-version' | 'version-mismatch' | 'unproven' | null> {
   if (process.platform !== 'win32' && !fs.existsSync(socketPath)) return null;
   const socket = net.createConnection(socketPath);
   socket.setEncoding('utf8');
@@ -144,14 +152,30 @@ export async function connectWithHello(
     );
     return 'version-mismatch';
   }
+  // Before any byte of the session, the server proves it holds this user's key.
+  // The one client hello carries the anchor, the scope and the challenge: the
+  // server reads one hello only.
+  const challenge = newDaemonChallenge();
+  sendClientHello(socket, launchDir, focus, challenge);
+  const proof = await readProofLine(socket, helloTimeoutMs).catch(() => undefined);
+  // Read once the proof is in: the server answering the first challenge makes the key.
+  const key = proof === undefined ? null : readDaemonKey();
+  if (!key || !daemonProofMatches(key, challenge, socketPath, proof)) {
+    socket.destroy();
+    process.stderr.write(
+      `[CodeGraph MCP] The server on ${socketPath} could not prove it runs as this user ` +
+      `(with the key in ${daemonKeyPath()}); serving this session in-process.\n`
+    );
+    return 'unproven';
+  }
   logAttachedDaemon(socketPath, hello);
-  sendClientHello(socket, launchDir, focus);
   return socket;
 }
 
 /**
  * Tell the server our pids, launch directory and session scope right after we
- * verify its hello. The pids let its liveness sweep reap this client if our
+ * verify its hello, with the proof challenge when one is passed (the server
+ * then answers one proof line before the session starts). The pids let its liveness sweep reap this client if our
  * process dies without the socket ever signalling close (the Windows
  * named-pipe hazard); the launch directory fixes the session's
  * repo anchor, so without it every call on this session is answered with
@@ -165,7 +189,7 @@ export async function connectWithHello(
  * Never send the `control` marker from an agent session: the server takes a hello with it and no `launchDir`
  * for a control client (daemon.ts ClientPeers.control), which may send codegraph/indexWrite.
  */
-function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[]): void {
+function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[], challenge?: string): void {
   const clientHello: DaemonClientHello = {
     codegraph_client: 1,
     pid: process.pid,
@@ -173,6 +197,7 @@ function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonl
     ...(launchDir !== undefined ? { launchDir } : {}),
     focus: [...(focus ?? [])],
     tools: process.env.CODEGRAPH_MCP_TOOLS ?? '',
+    ...(challenge !== undefined ? { challenge } : {}),
   };
   try { socket.write(JSON.stringify(clientHello) + '\n'); } catch { /* best-effort */ }
 }
@@ -236,10 +261,12 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   let daemonSocket: net.Socket | null = null;
   let clientInitId: unknown = undefined;   // suppress the daemon's reply to the forwarded initialize
   let clientInitLine: string | undefined;  // replayed to a daemon that comes up mid-session (#2277)
-  // Telemetry attribution for the in-process fallback only — calls routed to
-  // the daemon are counted by the daemon's own session (which receives the
-  // forwarded initialize, clientInfo included), never double-counted here.
-  let telemetryClient: ClientInfo | undefined;
+  // The host's clientInfo from initialize, kept as MCPSession keeps it. It picks
+  // the tool names the local handshake says (#1267), and attributes telemetry
+  // for the in-process fallback only — calls routed to the daemon are counted
+  // by the daemon's own session (which receives the forwarded initialize,
+  // clientInfo included), never double-counted here.
+  let clientInfo: ClientInfo | undefined;
   const pending: string[] = [];            // client lines buffered until the daemon resolves
   let engine: MCPEngine | null = null;
   // The repo anchor of this session's launch dir, resolved on the first call
@@ -392,7 +419,7 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
           writeClient({ jsonrpc: '2.0', id, error: outcome.error });
         } else {
           writeClient({ jsonrpc: '2.0', id, result: outcome.result });
-          getTelemetry().recordUsage('mcp_tool', outcome.toolName, !outcome.result.isError, telemetryClient);
+          getTelemetry().recordUsage('mcp_tool', outcome.toolName, !outcome.result.isError, clientInfo);
         }
       } catch (err) {
         writeClient({ jsonrpc: '2.0', id, error: { code: -32603, message: err instanceof Error ? err.message : String(err) } });
@@ -438,15 +465,15 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
         clientInitLine = line;
         const initParams = (msg.params ?? {}) as { clientInfo?: { name?: unknown; version?: unknown } };
         if (initParams.clientInfo) {
-          telemetryClient = {
+          clientInfo = {
             name: typeof initParams.clientInfo.name === 'string' ? initParams.clientInfo.name : undefined,
             version: typeof initParams.clientInfo.version === 'string' ? initParams.clientInfo.version : undefined,
           };
         }
-        writeClient({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO, instructions: initializeInstructions(SERVER_INSTRUCTIONS) } });
+        writeClient({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO, instructions: instructionsForClient(SERVER_INSTRUCTIONS, clientInfo?.name) } });
         routeToDaemon(line); // prime the server's session with the client's initialize (its reply is suppressed below)
       } else if (msg.method === 'tools/list') {
-        writeClient({ jsonrpc: '2.0', id: msg.id, result: { tools: getStaticTools() } });
+        writeClient({ jsonrpc: '2.0', id: msg.id, result: { tools: toolsForClient(getStaticTools(), clientInfo?.name) } });
       } else if (msg.method === 'resources/list') {
         // No resources exposed — answer the probe locally so it never reaches
         // the daemon as an unhandled method and logs `-32601`. (#621)
@@ -680,6 +707,61 @@ function readHelloLine(socket: net.Socket, timeoutMs: number = DAEMON_HELLO_TIME
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error('timed out waiting for daemon hello'));
+    }, timeoutMs);
+    timer.unref?.();
+    socket.on('data', onData);
+    socket.on('error', onError);
+    socket.on('close', onClose);
+  });
+}
+
+/**
+ * Read the server's answer to our client hello's challenge: one
+ * `{"codegraph_proof": …}` line (see `./daemon-proof`), the line the server
+ * sends before the session's first byte. Resolves the proof (null from a server
+ * that holds no key); rejects on anything else, a close, or no line within
+ * `timeoutMs`. Bounded like the hello, and bytes past the line go back to the
+ * stream, so the session that follows reads its stream intact.
+ */
+function readProofLine(socket: net.Socket, timeoutMs: number): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const cleanup = () => {
+      socket.removeListener('data', onData);
+      socket.removeListener('error', onError);
+      socket.removeListener('close', onClose);
+      clearTimeout(timer);
+    };
+    const onData = (chunk: string | Buffer) => {
+      buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      const idx = buffer.indexOf('\n');
+      if (idx === -1) {
+        if (buffer.length > MAX_HELLO_LINE_BYTES) {
+          cleanup();
+          reject(new Error('daemon proof line exceeded size limit'));
+        }
+        return;
+      }
+      const line = buffer.slice(0, idx);
+      const tail = buffer.slice(idx + 1);
+      cleanup();
+      if (tail.length > 0) socket.unshift(tail);
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown> | null;
+        if (!parsed || typeof parsed !== 'object' || !('codegraph_proof' in parsed)) {
+          reject(new Error('daemon sent no proof'));
+          return;
+        }
+        resolve(parsed.codegraph_proof);
+      } catch (err) {
+        reject(new Error(`daemon proof not JSON: ${err instanceof Error ? err.message : String(err)}`));
+      }
+    };
+    const onError = (err: Error) => { cleanup(); reject(err); };
+    const onClose = () => { cleanup(); reject(new Error('daemon closed connection before its proof')); };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('timed out waiting for the daemon proof'));
     }, timeoutMs);
     timer.unref?.();
     socket.on('data', onData);

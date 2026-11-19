@@ -73,6 +73,7 @@ import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { BuilderClient } from '../extensions/host/builder/client';
+import { MAX_CHALLENGE_LENGTH, daemonKey, daemonProof } from './daemon-proof';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -218,6 +219,13 @@ export interface DaemonClientHello {
    * never inherits the server process's.
    */
   tools?: string;
+  /**
+   * A fresh random string from a proxy that wants this user's server to prove
+   * it is one before the proxy sends anything. The server answers with one
+   * `{"codegraph_proof": …}` line before the session starts; a client hello
+   * without it gets no such line. See `./daemon-proof`.
+   */
+  challenge?: string;
 }
 
 /**
@@ -245,6 +253,8 @@ export interface ClientPeers {
   control: boolean;
   focus?: string[];
   tools?: string;
+  /** The hello's proof challenge, absent when it carried none (see DaemonClientHello.challenge). */
+  challenge?: string;
 }
 
 const NO_PEERS: ClientPeers = { pid: null, hostPid: null, launchDir: null, hasLaunchDir: false, control: false };
@@ -562,8 +572,12 @@ export class Daemon {
     // Fail-safe: any problem — timeout, a non-hello first line, an early close —
     // yields null peers and we fall back to the socket-close lifecycle (#692);
     // the session then has no anchor.
-    void readClientHello(socket).then(async (peers) => {
+    void readClientHello(socket).then(async ({ challenge, ...peers }) => {
       if (this.stopping || socket.destroyed) { socket.destroy(); return; }
+      // A client that asked gets its proof first: it waits for it with its
+      // hello timeout, so the anchor's git lookups stay out of that wait, and
+      // the proof still precedes the session's first byte.
+      if (challenge !== undefined) this.answerChallenge(socket, challenge);
       // The socket is paused by readClientHello until the transport starts, so
       // the anchor's git lookups cannot cost the client's first message.
       let anchor: RepoAnchor | null = null;
@@ -595,6 +609,19 @@ export class Daemon {
       this.clientPeers.set(session, peers);
       session.start();
     });
+  }
+
+  /**
+   * Answer a client hello's challenge with this user's proof (see
+   * `./daemon-proof`) over the socket path this server bound, so the client can
+   * tell this server from a stand-in at its socket before it sends anything.
+   * `null` when no key only this user can read can be had: the client then
+   * serves the session in-process.
+   */
+  private answerChallenge(socket: net.Socket, challenge: string): void {
+    const key = daemonKey();
+    const proof = key ? daemonProof(key, challenge, this.socketPath) : null;
+    try { socket.write(JSON.stringify({ codegraph_proof: proof }) + '\n'); } catch { /* the client hung up */ }
   }
 
   /**
@@ -1081,7 +1108,8 @@ function resolveInstallCheckMs(): number {
  * on a relative path. `focus` is kept only as an array of at most
  * `MAX_FOCUS_ENTRIES` strings and `tools` only as a string; any other shape
  * (including a longer focus list, which the CLI never sends) leaves the property
- * absent, as if the hello had not sent it.
+ * absent, as if the hello had not sent it. A `challenge` is kept only as a
+ * string of 1 to `MAX_CHALLENGE_LENGTH` characters.
  */
 export function parseClientHelloLine(line: string): ClientPeers | null {
   let parsed: unknown;
@@ -1100,6 +1128,9 @@ export function parseClientHelloLine(line: string): ClientPeers | null {
     peers.focus = o.focus as string[];
   }
   if (typeof o.tools === 'string') peers.tools = o.tools;
+  if (typeof o.challenge === 'string' && o.challenge.length > 0 && o.challenge.length <= MAX_CHALLENGE_LENGTH) {
+    peers.challenge = o.challenge;
+  }
   return peers;
 }
 
@@ -1121,7 +1152,7 @@ export function peerIsDead(
 /**
  * Read the optional client-hello line a proxy sends after the server hello.
  * Always resolves (never rejects) — fail-safe by design, since every connection
- * funnels through here. Resolves with the peer pids, launch directory and session scope when
+ * funnels through here. Resolves with the peer pids, launch directory, session scope and challenge when
  * the first line is a client-hello; otherwise resolves with null peers and unshifts the already-read
  * bytes so the transport parses them as the client's first JSON-RPC message(s).
  * Accumulates as Buffers and splits on the newline byte so a UTF-8 sequence
