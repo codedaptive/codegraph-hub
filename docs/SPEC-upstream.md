@@ -126,7 +126,9 @@ Linux and Windows, if they want it.
 5. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
    then the hub's `develop` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
    bob-codedaptive identity); the stable `main` and the release follow from it as item 10 says (R-56). The backporter
-   lane runs the update (R-56, superseding R-36). Each `develop` update is one commit whose tree is `ours` minus
+   lane runs the update (R-56, superseding R-36). The hub is public, so the `develop` push publishes too: like the
+   push to `main` (item 10), it refuses while the `ours` it takes still carries an open security finding (rules/global.md
+   rule 12), and that `ours` waits for the fix to promote. Each `develop` update is one commit whose tree is `ours` minus
    §4's exclusions plus the README. While the hub has no outside users (no stars, forks, or issues or pull requests
    from anyone else), its only parent is the upstream `main` that update merged and it is force-pushed over the
    previous `develop`, kept first as a backup ref on our private origin (R-35); after that it has two parents, that
@@ -154,6 +156,7 @@ Linux and Windows, if they want it.
       README per item 3). The candidate is done when its tree equals `develop`'s tree for the same `ours` and the
       whole-suite gate passes on it. The backporter then merges it into `main` and pushes. That push is the
       publishing gate (rules/global.md rule 12): it refuses any change that still carries an open security finding.
+      It is not the only one: the `develop` push (item 5) is checked the same way, so no public push carries one.
     - Releases are cut from `main` only, as GitHub releases of the hub tagged `v` plus the build's own version (the
       packed `package.json` version, e.g. `v1.6.3-sm.17`; the base follows the merged upstream, S-102), with the
       packed build attached. `develop` gets no releases, so `codegraph upgrade` and the update notice (item 9) offer
