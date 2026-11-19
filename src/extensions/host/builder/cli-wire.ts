@@ -36,7 +36,7 @@ export const INDEX_WRITE_END_METHOD = 'codegraph/indexWriteEnd';
  *   index    take the lease (rebuild.pid, then the server lets go of the root, then writer.pid), recreate, indexAll.
  *   reindex  indexAll on the existing index: under this connection's lease when it holds one for the root
  *            (index's interactive re-run), else with no lock but the engine's own (init's re-run).
- *   sync     one sync of the root, on the builder's queue, in the sync lane.
+ *   sync     one sync of the root, on the builder's queue, in its repository's lane.
  *   seed     copy the nearest sibling worktree's index through the builder's seed queue, waiting for it;
  *            never cold-build, take no connection lease, and report a WorktreeSeedOutcome.
  *   release  `uninit`: take a `release` lease (rebuild.pid, then the server and the builder let go of the root,

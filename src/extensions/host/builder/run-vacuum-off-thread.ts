@@ -1,7 +1,8 @@
 /**
  * VACUUM the database at `dbPath` on a worker thread with its own connection, as the WAL checkpoint does
- * (src/db/index.ts checkpointWal), so the builder's event loop (its IPC and the job watchdog) keeps turning
- * during a VACUUM that may take minutes. After the VACUUM a `wal_checkpoint(TRUNCATE)` copies the rewritten
+ * (src/db/index.ts checkpointWal), so the event loop of the VACUUM job's child (./vacuum-job.ts) keeps turning
+ * during a VACUUM that may take minutes: the child still sees its IPC channel's 'disconnect' (the builder is
+ * gone) and exits then (./job-child-main.ts). After the VACUUM a `wal_checkpoint(TRUNCATE)` copies the rewritten
  * pages into the main file so it shrinks now; a reader pinning the WAL leaves that checkpoint busy, and the file
  * then shrinks at a later checkpoint.
  *

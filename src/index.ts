@@ -146,6 +146,8 @@ export interface IndexOptions {
 const PYTHON_ROOTS_METADATA_KEY = 'python_root_fingerprint';
 /** Metadata key: the digest of the workspace packages and path dependencies the index was resolved by. */
 const WORKSPACE_METADATA_KEY = 'js_workspace_fingerprint';
+/** Metadata key: where the walk that read those packages found their manifests (see ManifestStamp); '' for none. */
+const WORKSPACE_MANIFESTS_METADATA_KEY = 'js_workspace_manifests';
 /** The tsconfig / jsconfig and go.mod files the index was resolved by, with a digest of each (#2977). */
 const MODULE_CONFIG_METADATA_KEY = 'module_config_snapshot';
 /** Metadata key: the frameworks (sorted JSON names) the last full index extracted every file with. */
@@ -330,7 +332,12 @@ export class CodeGraph {
   private builtResolver: ReferenceResolver | null = null;
 
   private get orchestrator(): ExtractionOrchestrator {
-    return (this.builtOrchestrator ??= new (engine().ExtractionOrchestrator)(this.projectRoot, this.queries));
+    if (!this.builtOrchestrator) {
+      this.builtOrchestrator = new (engine().ExtractionOrchestrator)(this.projectRoot, this.queries);
+      // A graph that watches detects again as files change (see watch()).
+      if (this.watcher) this.builtOrchestrator.setKeepDetectionContents(true);
+    }
+    return this.builtOrchestrator;
   }
 
   private get resolver(): ReferenceResolver {
@@ -897,6 +904,7 @@ export class CodeGraph {
         // extraction stamp (the bulk would still be stale). See extraction-version.ts.
         if (result.success) this.stampPythonRootFingerprint();
         if (result.success) this.stampWorkspaceFingerprint();
+        if (result.success) this.stampWorkspaceManifests(this.orchestrator.takeManifestEvidence());
         if (result.success) this.stampModuleConfigSnapshot();
         if (result.success) this.stampIndexedFrameworks();
 
@@ -1040,6 +1048,20 @@ export class CodeGraph {
     } catch { /* metadata is advisory */ }
   }
 
+  /**
+   * Record where the last walk found the package manifests, with what git's
+   * listings said then (see ManifestStamp), so a sync that sees the same can
+   * read them without walking the tree. '' when there is nothing to trust.
+   */
+  private stampWorkspaceManifests(evidence: ReturnType<ExtractionOrchestrator['takeManifestEvidence']>): void {
+    try {
+      const discovery = this.resolver.getWorkspaceDiscovery();
+      const stamp = discovery ? engine().manifestStamp(evidence, discovery) : null;
+      const value = stamp ? JSON.stringify(stamp) : '';
+      if (this.queries.getMetadata(WORKSPACE_MANIFESTS_METADATA_KEY) !== value) this.queries.setMetadata(WORKSPACE_MANIFESTS_METADATA_KEY, value);
+    } catch { /* metadata is advisory */ }
+  }
+
   /** Record the frameworks a full index extracted every file with; none has come or gone since. */
   private stampIndexedFrameworks(): void {
     const names = this.orchestrator.getDetectedFrameworkNames();
@@ -1127,13 +1149,16 @@ export class CodeGraph {
       hasSynthesisPattern,
       isJsxChildCandidate,
       moduleConfigLanguages,
+      parseManifestStamp,
       parseModuleConfigSnapshot,
       reopenNameMatchedImports,
       reopenReferencesThroughAddedFiles,
       reopenReferencesThroughBarrels,
       reopenReferencesThroughChangedDefaults,
       reopenReferencesThroughDeclaredPackages,
+      reopenReferencesThroughObjectMembers,
       reopenReferencesThroughRetargetedModules,
+      trustedManifestList,
     } = engine();
     return this.indexMutex.withLock(async () => {
       const startedAt = Date.now();
@@ -1235,7 +1260,7 @@ export class CodeGraph {
         const flowChange = this.resolver.trackParameterFlows();
         const result = await this.orchestrator.sync(options.onProgress, options.paths, backpressure,
           (filePath, content) => {
-            flowChange.before(filePath);
+            flowChange.before(filePath, content);
             if (watchRoutes && routesBefore === null) routesBefore = this.queries.getNodesByKind('route');
             if (!refreshSynthesis && (this.queries.hasSynthesizedEdgesTouchingFile(filePath) ||
               this.queries.wasSynthesisInput(filePath) ||
@@ -1350,10 +1375,22 @@ export class CodeGraph {
           }
         }
 
+        // Finding the manifests takes a walk of the tree. Git's listings, which
+        // this sync's scan made anyway, tell whether the walk could find any
+        // but those it found last time; when not, they are read where they
+        // are, each one again, so an edit to one is seen all the same.
         if (fullReconcile) {
           const tWorkspace = Date.now();
           const before = this.queries.getMetadata(WORKSPACE_METADATA_KEY);
-          const now = this.resolver.refreshWorkspacePackages();
+          const evidence = this.orchestrator.takeManifestEvidence();
+          const known = before === null ? null : trustedManifestList(
+            this.projectRoot, parseManifestStamp(this.queries.getMetadata(WORKSPACE_MANIFESTS_METADATA_KEY)), evidence
+          );
+          const now = this.resolver.refreshWorkspacePackages(known ?? undefined);
+          if (!known) this.stampWorkspaceManifests(evidence);
+          if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
+            console.error(`[phase-timing] sync-workspace-manifests: ${Date.now() - tWorkspace}ms (${known ? `${known.length} read where the last walk found them` : 'walked'})`);
+          }
           if (before !== null && before !== now) {
             let reopened = 0;
             for (const language of ESM_IMPORT_LANGUAGES) reopened += this.orchestrator.resurrectResolutionEdgesForLanguage(language);
@@ -1368,12 +1405,8 @@ export class CodeGraph {
 
         // Resolve references if files were updated
         const filesChanged = result.filesAdded > 0 || result.filesModified > 0;
-        // The last edge before the failed-ref retry below: the rebind's
-        // per-name ceiling counts only edges up to it (see
-        // resurrectStaleResolutionEdges).
-        let edgesBeforeRetry: number | undefined;
-        // And the last edge before this sync resolved anything: an importer's
-        // edge up to it was bound before a module this sync adds was there.
+        // Importer edges up to this id were bound before this sync resolved
+        // anything against the newly extracted graph.
         const edgesBeforeResolution = this.queries.getMaxEdgeId();
         if (filesChanged) {
           if (result.changedFilePaths) {
@@ -1418,7 +1451,6 @@ export class CodeGraph {
             // well as an added file. On a sync where no failed ref matches,
             // this is a few indexed lookups.
             const tRetry = Date.now();
-            edgesBeforeRetry = this.queries.getMaxEdgeId();
             const retryable = this.queries.getRetryableFailedReferences([...new Set([
               ...this.queries.getNodeNamesByFiles(result.changedFilePaths),
               ...result.changedFilePaths.flatMap(moduleReferenceKeys),
@@ -1586,6 +1618,24 @@ export class CodeGraph {
             const throughRetargeted = retargeted.length === 0 ? 0
               : reopenReferencesThroughRetargetedModules(this.queries, importReader, retargeted);
             if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-retargeted-modules: ${Date.now() - tRetargeted}ms (${throughRetargeted} refs re-opened)`);
+
+            // A call through an object literal another module exports,
+            // `api.bar()` with `export const api = { foo, bar }`, binds to the
+            // member the literal names, or to the object when it names none.
+            // An edit that adds, drops or rebinds a member declares no name
+            // (`{ foo }` to `{ foo, bar }`), so nothing above re-opens the
+            // caller's unchanged file (#3015): read each edited literal and
+            // send back what its importers' references now disagree with.
+            const tMembers = Date.now();
+            const throughMembers = editedModules.length === 0 || process.env.CODEGRAPH_NO_REBIND === '1' ? 0
+              : reopenReferencesThroughObjectMembers(this.queries, importReader, editedModules, (filePath) => {
+                try {
+                  return fs.readFileSync(path.join(this.projectRoot, filePath), 'utf-8').split('\n');
+                } catch {
+                  return null;
+                }
+              });
+            if (process.env.CODEGRAPH_SYNTH_TIMINGS) console.error(`[phase-timing] sync-object-members: ${Date.now() - tMembers}ms (${throughMembers} refs re-opened)`);
           } else {
             // No git info — use batched resolution to avoid OOM
             const unresolvedCount = this.queries.getUnresolvedReferencesCount();
@@ -1633,10 +1683,9 @@ export class CodeGraph {
         // the failed-ref re-open that follows the rebind with it.
         if (result.definitionDelta && process.env.CODEGRAPH_NO_REBIND !== '1') {
           const tRebind = Date.now();
-          const rebound = this.orchestrator.resurrectStaleResolutionEdges(
+          const rebound = await this.orchestrator.resurrectStaleResolutionEdges(
             result.definitionDelta,
-            result.changedFilePaths ?? [],
-            edgesBeforeRetry
+            result.changedFilePaths ?? []
           );
           // And the failed refs under those names: a call that failed only
           // because two definitions shared its name (`x.go()` with `go` in two
@@ -1645,9 +1694,8 @@ export class CodeGraph {
           // deleted file or a name renamed away no longer has, and a sync that
           // only deletes files skips it. The sweep below resolves what this
           // re-opens.
-          const reopenedFailed = this.queries.reopenFailedReferences(
-            this.queries.getRetryableFailedReferences(result.definitionDelta).flatMap((ref) => (ref.rowId === undefined ? [] : [ref.rowId]))
-          );
+          const reopenedFailed = await this.queries.reopenFailedReferencesByName(result.definitionDelta);
+          await backpressure?.();
           if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
             console.error(
               `[phase-timing] sync-rebind: ${Date.now() - tRebind}ms (${result.definitionDelta.length} changed names, ${rebound} edges and ${reopenedFailed} failed refs re-opened)`
@@ -1777,22 +1825,23 @@ export class CodeGraph {
           result.pendingRefsUnresolved = recovery.stats.unresolved;
         }
 
-        // Python attribute types read from OTHER files — a factory's return, a
-        // base class's `__init__` — change with a body-only edit the definition
+        // Types read from OTHER files — a Python factory's return, a base
+        // class's `__init__`, the type a TS/JS callee's signature gives its
+        // callback's parameter — change with a body-only edit the definition
         // delta above cannot see. Re-open the edges whose answer was read from a
-        // touched file, and retry the failed attribute calls in files that
-        // import one; both resolve right here. After the orphan sweep, so the
-        // import edges this sync created (a caller whose `from f import make`
-        // only now resolves) are there to find the importers by.
+        // touched file, and retry the failed Python attribute calls in files
+        // that import one; both resolve right here. After the orphan sweep, so
+        // the import edges this sync created (a caller whose `from f import
+        // make` only now resolves) are there to find the importers by.
         if (process.env.CODEGRAPH_NO_REBIND !== '1') {
           const touched = [...(result.changedFilePaths ?? []), ...(result.removedFilePaths ?? [])];
           const touchedPy = touched.filter((p) => /\.pyi?$/.test(p));
-          if (touchedPy.length > 0) {
+          if (touched.length > 0) {
             const tTypes = Date.now();
-            const reopenedFiles = this.orchestrator.resurrectTypeDependentEdges(touchedPy, result.changedFilePaths ?? []);
+            const reopenedFiles = this.orchestrator.resurrectTypeDependentEdges(touched, result.changedFilePaths ?? []);
             // CODEGRAPH_PY_ATTR_RETRY_CEILING overrides the candidate ceiling (tests).
             const ceiling = Number(process.env.CODEGRAPH_PY_ATTR_RETRY_CEILING ?? '') || 2000;
-            const failed = this.resolver.pythonAttrRetryCandidates(touchedPy, ceiling);
+            const failed = touchedPy.length > 0 ? this.resolver.pythonAttrRetryCandidates(touchedPy, ceiling) : [];
             const retry = [...this.queries.getUnresolvedReferencesByFiles(reopenedFiles), ...(failed ?? [])];
             if (retry.length > 0) await this.resolver.resolveAndPersistListYielding(retry);
             if (process.env.CODEGRAPH_SYNTH_TIMINGS) {
@@ -2048,7 +2097,12 @@ export class CodeGraph {
         : undefined
     );
 
-    return this.watcher.start();
+    // A watching graph detects frameworks again as files change: keep what
+    // detection reads, so that reads only what changed (#2516).
+    this.orchestrator.setKeepDetectionContents(true);
+    const started = this.watcher.start();
+    if (!started) this.orchestrator.setKeepDetectionContents(false);
+    return started;
   }
 
   /**
@@ -2059,6 +2113,7 @@ export class CodeGraph {
       this.watcher.stop();
       this.watcher = null;
     }
+    if (this.builtOrchestrator) this.builtOrchestrator.setKeepDetectionContents(false);
   }
 
   /**

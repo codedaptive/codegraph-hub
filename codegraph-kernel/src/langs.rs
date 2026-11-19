@@ -33,11 +33,18 @@ extern "C" {
 extern "C" {
     fn tree_sitter_dart() -> *const ();
 }
-// Vendored swift grammar (build.rs-compiled C — crate 0.7.3's src/ with a
-// one-line scanner fix the crate's own build lacks on Windows; see
-// grammars/swift and docs/grammars/tree-sitter-swift.md).
+// Vendored swift grammar (build.rs-compiled C — crate 0.7.4's src/ with the
+// scanner patch the wasm needs; see grammars/swift and
+// docs/grammars/tree-sitter-swift.md).
 extern "C" {
     fn tree_sitter_swift() -> *const ();
+}
+// Vendored typescript + tsx grammars (build.rs-compiled C — v0.23.2 with
+// docs/grammars/tree-sitter-typescript.patch, regenerated; see
+// grammars/typescript and docs/grammars/tree-sitter-typescript.md).
+extern "C" {
+    fn tree_sitter_typescript() -> *const ();
+    fn tree_sitter_tsx() -> *const ();
 }
 
 /// Languages this kernel binary can extract (reported by contractInfo;
@@ -49,8 +56,12 @@ pub const LANGUAGES: [&str; 20] = [
 
 pub fn grammar_for(language: &str) -> Option<Language> {
     match language {
-        "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        // v0.23.2 + docs/grammars/tree-sitter-typescript.patch, regenerated;
+        // vendored C compiled in build.rs, same sources as the vendored wasm.
+        "typescript" => Some(
+            unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_typescript) }.into(),
+        ),
+        "tsx" => Some(unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_tsx) }.into()),
         "javascript" | "jsx" => Some(tree_sitter_javascript::LANGUAGE.into()),
         "java" => Some(tree_sitter_java::LANGUAGE.into()),
         "python" => Some(tree_sitter_python::LANGUAGE.into()),
@@ -71,9 +82,9 @@ pub fn grammar_for(language: &str) -> Option<Language> {
         // R7b: v0.24.2, the full HTML-interleaving variant — LANGUAGE_PHP,
         // NEVER LANGUAGE_PHP_ONLY (which errors on leading HTML).
         "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
-        // R7b: crate 0.7.3's src/, the sources the vendored wasm is built
-        // from (table identity by construction; see grammars.ts), compiled in
-        // build.rs with the scanner's `try!` fix (`1ULL << FAKE_TRY_BANG`).
+        // R7b: crate 0.7.4's src/ (#3212), the sources the vendored wasm is
+        // built from (table identity by construction; see grammars.ts),
+        // compiled in build.rs with the same scanner patch.
         "swift" => {
             Some(unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_swift) }.into())
         }

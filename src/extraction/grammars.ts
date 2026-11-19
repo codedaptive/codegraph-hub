@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import { Parser, Language as WasmLanguage } from 'web-tree-sitter';
 import { ExtractionError, Language } from '../types';
+import { extensionlessLanguage } from '../extensions/host/scan/extensionless-language';
 
 export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
 
@@ -235,9 +236,10 @@ export function hasMpegTsExtension(filePath: string): boolean {
 }
 
 /**
- * Whether a file is one CodeGraph can parse, based purely on its extension.
- * This is the single source of truth for "should we index this file" — derived
- * from EXTENSION_MAP so parser support and indexing selection never drift.
+ * Whether a file is one CodeGraph can parse, based on its extension, or, for a
+ * file with no extension, on its `#!` line (fork R-49). This is the single source
+ * of truth for "should we index this file" — extensions come from EXTENSION_MAP
+ * so parser support and indexing selection never drift.
  *
  * `overrides` is the project's validated custom extension → language map (from
  * `codegraph.json`); when present its extensions count as indexable in addition
@@ -251,6 +253,7 @@ export function isSourceFile(filePath: string, overrides?: Record<string, Langua
   if (isPlayRoutesFile(filePath)) return true; // Play `conf/routes` is extensionless
   if (isShopifyLiquidJson(filePath, rootDir)) return true; // Shopify OS 2.0 JSON templates / section groups
   if (isErlangAppFile(filePath)) return true; // OTP `.app`/`.app.src` resource files
+  if (extensionlessLanguage(filePath, rootDir) !== null) return true; // a `#!` script with no extension (fork R-49)
   const dot = filePath.lastIndexOf('.');
   if (dot < 0) return false;
   const ext = filePath.slice(dot).toLowerCase();
@@ -341,18 +344,22 @@ const languageCache = new Map<Language, WasmLanguage>();
 const unavailableGrammarErrors = new Map<Language, string>();
 
 let parserInitialized = false;
+let parserInitializing: Promise<void> | null = null;
+/** Every grammar load, whoever asks, joins this one queue (see loadGrammarsForLanguages). */
+let grammarLoads: Promise<void> = Promise.resolve();
 
 /**
  * Initialize the tree-sitter WASM runtime. Must be called before loading grammars.
  * Does NOT load any grammar WASM files — use loadGrammarsForLanguages() for that.
- * Idempotent — safe to call multiple times.
+ * Idempotent — safe to call multiple times, including concurrently.
  */
 export async function initGrammars(): Promise<void> {
   if (parserInitialized) return;
-
-  await Parser.init();
-
-  parserInitialized = true;
+  parserInitializing ??= Parser.init().then(
+    () => { parserInitialized = true; },
+    (error: unknown) => { parserInitializing = null; throw error; },
+  );
+  await parserInitializing;
 }
 
 /**
@@ -390,7 +397,12 @@ export async function initGrammars(): Promise<void> {
  *   - tree-sitter/tree-sitter-go v0.23.4 (3c3775f) → go
  * Built from each repo's CHECKED-IN parser.c (no `generate`) with
  * tree-sitter-cli 0.25.10 `build --wasm` — the same tables crates.io compiles
- * (parser.c sha-matched against the crates.io tarball).
+ * (parser.c sha-matched against the crates.io tarball). Exception:
+ * typescript + tsx carry docs/grammars/tree-sitter-typescript.patch (TS 4.7
+ * variance annotations), so they are
+ * REGENERATED with tree-sitter-cli 0.25.10 (ABI 15) and the kernel compiles
+ * the same generated C from codegraph-kernel/grammars/typescript instead of
+ * the crate.
  * The kernel-grammar-parity test asserts this alignment; bump the crate and
  * the vendored wasm together.
  */
@@ -419,16 +431,14 @@ const VENDORED_WASM_LANGS: ReadonlySet<GrammarLanguage> = new Set([
   // tarball. Replaces the ^0.22 tree-sitter-wasms build (ABI 14 → 15). NOT
   // graph-neutral — the classified delta list lives in the php checklist doc.
   'php',
-  // R7b (Swift kernel port prep): tree-sitter-swift crate 0.7.3. Built from
-  // the CRATE TARBALL's src/ (NOT a tag sha-match: alex-pinkus keeps
-  // generated files off main and the 0.7.3-with-generated-files tag ships an
-  // older ABI-14 generation; grammar.json rules are JSON-equal, and the
-  // kernel compiles the same tarball's src/ (codegraph-kernel/grammars/swift)
-  // — table identity by construction). Replaces the ^0.4.0 tree-sitter-wasms
-  // build (ABI 13 → 15). NOT graph-neutral — delta is error-set membership
-  // only; classified list in the swift checklist doc. The kernel's copy
-  // carries docs/grammars/tree-sitter-swift.patch (`try!` on Windows); this
-  // wasm doesn't need it — see that doc's .md.
+  // R7b (Swift kernel port prep): tree-sitter-swift crate tarball, 0.7.4
+  // since #3212 (0.7.3 read the body of `if try await f() {` as a trailing
+  // closure). Built from the CRATE TARBALL's src/ (NOT a tag sha-match:
+  // alex-pinkus keeps generated files off main), and the kernel compiles the
+  // same tarball's src/ (codegraph-kernel/grammars/swift) — table identity by
+  // construction. Both carry docs/grammars/tree-sitter-swift.patch (the
+  // scanner's out-of-memory report uses stdio, which a wasm parser lacks) —
+  // see that doc's .md.
   'swift',
   // R7b (Kotlin kernel port prep): fwcd tree-sitter-kotlin 0.3.8 (tag
   // e1a2d5a), parser.c/scanner.c sha-matched crate↔tag; behavior-IDENTICAL
@@ -522,33 +532,36 @@ export async function readGrammarWasmBytes(languages: Language[]): Promise<Recor
  * language's bytes are present they're loaded from memory instead of disk.
  */
 export async function loadGrammarsForLanguages(languages: Language[], wasmBytes?: Record<string, Uint8Array>): Promise<void> {
-  if (!parserInitialized) {
-    await initGrammars();
-  }
-
-  languages = expandGrammarLanguages(languages);
+  await initGrammars();
 
   // Deduplicate and filter to languages that have WASM grammars and aren't already loaded
-  const toLoad = [...new Set(languages)].filter(
+  const wanted = [...new Set(expandGrammarLanguages(languages))];
+  const toLoad = () => wanted.filter(
     (lang): lang is GrammarLanguage =>
       lang in WASM_GRAMMAR_FILES &&
       !languageCache.has(lang) &&
       !unavailableGrammarErrors.has(lang)
   );
+  if (!toLoad().length) return;
 
   // Load grammars sequentially to avoid web-tree-sitter WASM race condition on Node 20+
   // See: https://github.com/tree-sitter/tree-sitter/issues/2338
-  for (const lang of toLoad) {
-    try {
-      const bytes = wasmBytes?.[lang];
-      const language = await WasmLanguage.load(bytes ?? resolveWasmPath(lang));
-      languageCache.set(lang, language);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[CodeGraph] Failed to load ${lang} grammar — parsing will be unavailable: ${message}`);
-      unavailableGrammarErrors.set(lang, message);
+  // Concurrent callers queue behind each other and skip what an earlier load finished.
+  const load = grammarLoads.then(async () => {
+    for (const lang of toLoad()) {
+      try {
+        const bytes = wasmBytes?.[lang];
+        const language = await WasmLanguage.load(bytes ?? resolveWasmPath(lang));
+        languageCache.set(lang, language);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[CodeGraph] Failed to load ${lang} grammar — parsing will be unavailable: ${message}`);
+        unavailableGrammarErrors.set(lang, message);
+      }
     }
-  }
+  });
+  grammarLoads = load;
+  await load;
 }
 
 /**
@@ -588,7 +601,8 @@ export function getParser(language: Language): Parser | null {
 }
 
 /**
- * Detect language from file extension.
+ * Detect language from file extension, or from the `#!` line of a file with no
+ * extension (fork R-49).
  *
  * `overrides` is the project's validated custom extension → language map (from
  * `codegraph.json`); when present its mappings take precedence over the built-in
@@ -609,6 +623,11 @@ export function detectLanguage(filePath: string, source?: string, overrides?: Re
   // top-level expressions (last-dot ext `.src` is too generic for the map).
   if (isErlangAppFile(filePath)) return 'erlang';
   const lang = (overrides && overrides[ext]) || EXTENSION_MAP[ext] || 'unknown';
+  // An extensionless script takes its interpreter's language from its `#!` line (fork R-49).
+  if (lang === 'unknown') {
+    const scripted = extensionlessLanguage(filePath, rootDir, source);
+    if (scripted) return scripted;
+  }
 
   // A Flow-typed `.js` (`// @flow` in its leading comments) parses as TSX:
   // the JavaScript grammar can't read its annotations — `render(): React.Node`

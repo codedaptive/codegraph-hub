@@ -3,22 +3,27 @@
  * builder's queue (./queue.ts), and this class remembers which roots have one queued or running so a call for
  * such a root answers "building" instead of queuing a second.
  *
- * Two kinds of job, two lanes: a seed is a `seed` job (sync lane: a copy, short), a cold build a
- * `cold-build` job (cold lane: it indexes a whole repository, and runs beside the sync lane's jobs of other roots).
+ * Two kinds of job, both in the root's repository lane: a seed is a `seed` job (a copy, short, so it goes ahead of
+ * the repository's waiting whole-repository jobs), a cold build a `cold-build` job (it indexes a whole repository).
+ * Each runs its body in its own child process through `runJob` (./job-runner-type.ts); the checks before it, and
+ * a cold build's attempts (./cold-build-job.ts), run in the builder.
  */
 import { canonicalProjectRoot } from '../../../directory';
 import { ownIndexRootFor } from '../server/index-root';
-import { COLD_BUILD_EXIT_BUSY, COLD_BUILD_EXIT_FAILED, COLD_BUILD_EXIT_LOCKED, runColdBuild } from '../worktree-lifecycle/cold-build';
-import { admitColdBuild, isAtOrBelow, type ColdBuildApproval, type SeedHost } from '../worktree-lifecycle/seed';
+import { isAtOrBelow, type ColdBuildApproval, type SeedHost } from '../worktree-lifecycle/seed';
 import { isRebuildInProgress } from '../../../mcp/writer-lock';
+import { coldBuildJob } from './cold-build-job';
 import type { RebuildFences } from './fences';
+import type { JobRunner } from './job-runner-type';
+import type { JobSpec } from './job-spec-type';
+import { progressLogLine } from './progress-log-line';
 import type { JobQueue } from './queue';
 
 /** How long a call waits for its seed copy before it answers "building" and leaves the job queued. */
 const DEFAULT_SEED_WAIT_MS = 10_000;
 
 // Allow a competing writer time to release a transient lock, but bound the wait:
-// this job holds the COLD slot throughout the two-second delays between attempts.
+// this job holds its repository's lane throughout the two-second delays between attempts.
 const DEFAULT_COLD_BUILD_ATTEMPTS = 3;
 const DEFAULT_COLD_BUILD_RETRY_DELAY_MS = 2_000;
 
@@ -38,21 +43,23 @@ export class BuilderSeedHost implements SeedHost {
   private readonly cold = new Map<string, string>();
   /** A root stays building until every seed of it settles, including one queued behind another. */
   private readonly seeds = new Map<string, { root: string; count: number }>();
-  /** Roots whose cold build returned FAILED: remembered until this builder restarts. */
+  /** Roots whose cold build returned FAILED or was refused as ended over a limit: remembered until this builder restarts. */
   private readonly failed = new Set<string>();
 
   /**
-   * `fences`: the builder's rebuild fences (./fences.ts). Without them (a host a test builds on its own) no
-   * root is ever fenced, and only another live process's `rebuild.pid` holds a root.
+   * `runJob` runs each seed's and cold build's body. `fences`: the builder's rebuild fences (./fences.ts).
+   * Without them (a host a test builds on its own) no root is ever fenced, and only another live process's
+   * `rebuild.pid` holds a root.
    */
   constructor(
     private readonly queue: JobQueue,
     private readonly opts: {
+      runJob: JobRunner;
       seedWaitMs?: number;
       log?: (line: string) => void;
       fences?: RebuildFences;
       coldBuildRetry?: { attempts?: number; delayMs?: number };
-    } = {},
+    },
   ) {}
 
   rebuildHeld(root: string): boolean {
@@ -79,39 +86,26 @@ export class BuilderSeedHost implements SeedHost {
 
   queueColdBuild(root: string, approval: ColdBuildApproval): void {
     const key = canonicalProjectRoot(root);
-    if (this.cold.has(key)) return;
+    if (this.cold.has(key) || this.failed.has(key)) return;
     this.cold.set(key, root);
     this.queue
-      .enqueue('cold-build', root, async () => {
-        const attempts = this.opts.coldBuildRetry?.attempts ?? DEFAULT_COLD_BUILD_ATTEMPTS;
-        for (let attempt = 1; attempt <= attempts; attempt++) {
-          // Repeat admission before each attempt: the root can change while queued or during a retry delay.
-          // A removed worktree must not be re-created by the lock's mkdir, nor a root swapped for a link, or
-          // no longer a git worktree root, built. Refusal is not a failed build, so a later call asks again.
-          const admission = admitColdBuild(root, approval);
-          if (!admission.ok) throw new Error(`the cold build was not started: ${admission.reason}`);
-          // A `codegraph index` fenced the root while this job waited. runColdBuild would take the fence's own
-          // `rebuild.pid` (same pid: re-acquired), and its release at the end would end the lease under it.
-          if (this.opts.fences?.isFenced(root)) throw new Error('the cold build was not started: an index rebuild holds the root');
-          const code = await runColdBuild(root);
-          if (code === COLD_BUILD_EXIT_FAILED) {
-            this.failed.add(key);
-            throw new Error('the cold build failed');
-          }
-          // Someone else holds rebuild.pid: their build or `codegraph index` is at it. Not a failure of ours.
-          if (code === COLD_BUILD_EXIT_BUSY) throw new Error('another process holds rebuild.pid');
-          if (code !== COLD_BUILD_EXIT_LOCKED) return;
-          if (attempt < attempts) {
-            await new Promise<void>((resolve) => setTimeout(resolve, this.opts.coldBuildRetry?.delayMs ?? DEFAULT_COLD_BUILD_RETRY_DELAY_MS));
-          }
-        }
-        throw new Error(`the database stayed locked after ${attempts} attempts; a later call asks again`);
-      })
+      .enqueue('cold-build', root, ({ id }) => coldBuildJob(id, root, approval, {
+        runJob: this.opts.runJob,
+        fences: this.opts.fences,
+        attempts: this.opts.coldBuildRetry?.attempts ?? DEFAULT_COLD_BUILD_ATTEMPTS,
+        delayMs: this.opts.coldBuildRetry?.delayMs ?? DEFAULT_COLD_BUILD_RETRY_DELAY_MS,
+        onFailed: () => this.failed.add(key),
+      }))
       .catch(() => { /* the job log has it */ })
       .finally(() => this.cold.delete(key));
   }
 
-  async runSeed<T>(root: string, source: string, copy: () => Promise<T>, opts: { wait?: boolean } = {}): Promise<{ done: true; value: T } | { done: false }> {
+  async runSeed<T>(
+    root: string,
+    source: string,
+    spec: JobSpec,
+    opts: { wait?: boolean; log?: (line: string) => void } = {},
+  ): Promise<{ done: true; value: T } | { done: false }> {
     const key = canonicalProjectRoot(root);
     const entry = this.seeds.get(key) ?? { root, count: 0 };
     entry.count++;
@@ -119,11 +113,14 @@ export class BuilderSeedHost implements SeedHost {
     // The job is queued under the worktree but reads `source`'s database, so it is also a job of `source`: the
     // drain of a root being removed (queue.ts whenRootIdle) waits for it. `source` was chosen when the seed was
     // asked for, and the job may wait for minutes: when it starts it asks again, and a source or a target that
-    // is being removed (a `release` fence of `codegraph uninit`) fails the seed before anything is opened.
-    const checked = async (): Promise<T> => {
+    // is being removed (a `release` fence of `codegraph uninit`) fails the seed before its child is started.
+    const checked = async ({ id }: { id: number }): Promise<T> => {
       this.opts.fences?.refuseIfRemoving(source);
       this.opts.fences?.refuseIfRemoving(root);
-      return copy();
+      return this.opts.runJob<T>(id, spec, (payload) => {
+        const line = progressLogLine(payload);
+        if (line !== null) opts.log?.(line);
+      });
     };
     const settled = this.queue.enqueue('seed', root, checked, { alsoRoots: [source] }).finally(() => {
       if (--entry.count === 0) this.seeds.delete(key);

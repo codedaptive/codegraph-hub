@@ -394,10 +394,11 @@ function fitsPath(node: Node, path: string, context: ResolutionContext): boolean
   if (qn.includes('::')) return true;
   const head = path.slice(0, path.length - qn.length - 2);
   const parentName = head.split('::').pop()!;
-  // A member declared under `#if` in a type's body can be indexed at the top
-  // level — the grammar ends `enum NIOBSDSocket {` at an `#if` right inside
-  // it, so `typealias Handle` loses its parent. It still shares a file with a
-  // declaration or extension of the parent the site names.
+  // A member can be indexed at the top level — tree-sitter-swift 0.7.4 drops
+  // the parent of a member that follows a freestanding macro (`#Macro()`) in
+  // an extension's body (an `#if` directly inside an enum's body it parses).
+  // It still shares a file with a declaration or extension
+  // of the parent the site names.
   if (context.getNodesInFile(node.filePath).some((p) => p.name === parentName && TYPE_KINDS.has(p.kind) && p.id !== node.id)) return true;
   // `App.Build`: a top-level type under a qualifier that names no type — a module.
   return !head.includes('::') && !context.getNodesByName(head).some((n) => n.language === 'swift' && TYPE_KINDS.has(n.kind));
@@ -1409,8 +1410,6 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  * - when a later sync makes the call resolve (a new extension declares the
  *   member), the retry resolves the call but nothing takes back the parked
  *   `references` edge;
- * - a member the extraction does not index (a member of an extension the
- *   parse ends early) reads as external, so the receiver gets the edge;
  * - a supertype written with the project's own module name (`MyModule.Base`,
  *   where no qualifier segment names a project type) gets no edge:
  *   gateSwiftTypeTarget cannot tell that module from an external one, so it

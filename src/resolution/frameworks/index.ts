@@ -22,6 +22,7 @@ import { svelteResolver } from './svelte';
 import { vueResolver, nuxtResolver } from './vue';
 import { astroResolver } from './astro';
 import { djangoResolver, flaskResolver, fastapiResolver } from './python';
+import { pythonImportlibResolver } from '../../extensions/resolution/python-importlib-resolver';
 import { railsResolver } from './ruby';
 import { springResolver } from './java';
 import { playResolver } from './play';
@@ -70,6 +71,8 @@ const FRAMEWORK_RESOLVERS: FrameworkResolver[] = [
   djangoResolver,
   flaskResolver,
   fastapiResolver,
+  // importlib — `SourceFileLoader(n, path)` / `spec_from_file_location(n, path)` → imports edges to the loaded file
+  pythonImportlibResolver,
   // Ruby
   railsResolver,
   // Java

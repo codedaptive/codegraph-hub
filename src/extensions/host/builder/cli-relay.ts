@@ -66,7 +66,7 @@ export interface CliBuilder {
   unfence(root: string): Promise<void>;
   /** Run one `init`, `rebuild` (the CLI's `index`), `reindex` or `reindex-leased` job, reporting its events in order; rejects with the job's error (name preserved). */
   cliIndex(root: string, mode: CliIndexMode, onEvent: (event: IndexWriteEvent) => void, verbose: boolean): Promise<IndexResult>;
-  /** One sync job of the root in the sync lane; `onEvent` receives the sync's progress events. */
+  /** One sync job of the root in its repository's lane; `onEvent` receives the sync's progress events. */
   cliSync(root: string, onEvent: (event: IndexWriteEvent) => void): Promise<SyncResult>;
   /** Copy a sibling's index through the seed queue and wait for its outcome; never cold-build. */
   seedWorktree(root: string, opts: { wait: true }): Promise<WorktreeSeedOutcome>;
@@ -255,7 +255,7 @@ function resolveRoot(root: string): string {
 /**
  * The CLI's own refusals (src/bin/codegraph.ts: runInit and the `index`, `sync` commands), no more:
  * `init` and `index` refuse an unsafe root unless forced (a root that does not exist yet passes: init
- * creates it); `init` refuses an initialized root, the others an uninitialized one; `release` has no CLI refusal
+ * creates it); `init` refuses an initialized root (runInit rebuilds a stopped one through `index`), the others an uninitialized one; `release` has no CLI refusal
  * (`uninit` warns and exits 0 first), so its check is the server's own, worded as uninit's warning.
  * `seed` accepts an uninitialized root and leaves path validation to seedWorktreeNow in the builder.
  */

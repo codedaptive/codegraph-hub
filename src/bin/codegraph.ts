@@ -438,6 +438,25 @@ async function warnStoppedIndex(cg: import('../index').CodeGraph): Promise<void>
   if (note) console.error(`${chalk.yellow(getGlyphs().warn)} ${note}`);
 }
 
+/**
+ * Say which files of an answer changed on disk after they were last indexed
+ * (#3260). A CLI answer comes straight from the index with no watcher behind
+ * it, so the line numbers of an edited file can point at other code; `node`
+ * and `explore` already flag such a file, and `callers`, `callees` and
+ * `impact` say it too. Under `--json` the warning goes to stderr, as the
+ * rebuild notice does, so stdout stays parseable; the answer lists the files
+ * as `changedOnDisk`.
+ */
+function warnChangedOnDisk(changed: string[], json: boolean | undefined): void {
+  if (changed.length === 0) return;
+  const named = changed.slice(0, 5).join(', ') + (changed.length > 5 ? ` and ${changed.length - 5} more` : '');
+  const message = changed.length === 1
+    ? `${named} changed on disk after it was last indexed, so line numbers from it may be off. Run "codegraph sync" to update the index.`
+    : `${changed.length} files changed on disk after they were last indexed (${named}), so line numbers from them may be off. Run "codegraph sync" to update the index.`;
+  if (json) console.error(`${chalk.yellow(getGlyphs().warn)} ${message}`);
+  else warn(message);
+}
+
 /** "not found" (+ optional did-you-mean) when no exact symbol matches. */
 function formatSymbolNotFound(symbol: string, fuzzyNames: string[]): string {
   const suggestions = [...new Set(fuzzyNames.filter((n) => n !== symbol))].slice(0, 3);
@@ -758,12 +777,56 @@ function applyLocalOnlyGitignore(
 }
 
 /**
+ * What `status` and `init` say about an index whose last run didn't end well:
+ * null for a complete index, and for one another process is rebuilding right
+ * now, whose `indexing` is that run's own, not an interrupted one's.
+ */
+function unfinishedIndexWarning(indexState: string | null, rebuildInProgress: boolean): string | null {
+  if (rebuildInProgress) return null;
+  switch (indexState) {
+    case 'indexing':
+      return 'The last index run never finished (killed mid-index?) — the index is truncated. Re-run "codegraph index".';
+    case 'partial':
+      return 'The last index run silently dropped files — the index is partial. Re-run "codegraph index".';
+    case 'failed':
+      return 'The last index run failed — results may be incomplete. Re-run "codegraph index".';
+    default:
+      return null;
+  }
+}
+
+/**
+ * How the last index run of an initialized project ended, read the way
+ * `status` reads it: read-only, and with a rebuild running in another process
+ * told apart from a run that died. An index that can't be opened reads as
+ * finished, so `init` says what it always said.
+ */
+async function readLastIndexRun(projectPath: string): Promise<{ unfinished: string | null; rebuildInProgress: boolean }> {
+  const { isRebuildInProgress } = await import('../mcp/writer-lock');
+  const rebuildInProgress = isRebuildInProgress(projectPath);
+  let indexState: string | null = null;
+  try {
+    const { default: CodeGraph } = await loadCodeGraph();
+    const cg = await CodeGraph.open(projectPath, { readOnly: true });
+    try {
+      indexState = cg.getIndexState();
+    } finally {
+      cg.destroy();
+    }
+  } catch { /* unreadable index: nothing to add */ }
+  return { unfinished: unfinishedIndexWarning(indexState, rebuildInProgress), rebuildInProgress };
+}
+
+/**
  * The `init` flow — shared by `codegraph init` and `codegraph install --init`
  * (#1578): find the root to initialize (`resolveInitRoot`: a path below a git
  * worktree root or an opted-in folder initializes that root; a path in neither
  * is refused, unless `noGit` opts it in, R-50), refuse an unsafe root, create
  * `.codegraph/`, build the initial index under supervision, then the
- * post-index offers. `yes` makes every offer non-interactive (defaults only),
+ * post-index offers. An initialized root says so, unless the index builder's
+ * last job of it was stopped at a limit: that root is rebuilt as
+ * `codegraph index` rebuilds it (retryStoppedInit), and a failed rebuild sets
+ * `process.exitCode = 1`. `yes` makes every offer non-interactive (defaults only),
  * so a container / CI bootstrap never blocks on a prompt. Every refusal sets
  * `process.exitCode = 1` and returns (`--force` overrides only the unsafe-root
  * one and never opts a folder in; `install --init` passes neither `force` nor
@@ -808,8 +871,30 @@ async function runInit(
     }
 
     if (isInitialized(projectPath)) {
-      clack.log.warn(`Already initialized in ${projectPath}`);
-      clack.log.info('Use "codegraph index" to re-index or "codegraph sync" to update');
+      // A root whose last index builder job was stopped at a limit is rebuilt, as `codegraph index` would
+      // (SPEC S-69); null means it had no mark and nothing ran.
+      const retried = await (await import('../extensions/host/retryStoppedInit')).retryStoppedInit(projectPath, options, {
+        runIndexOn,
+        loadEngine: loadCodeGraph,
+        onRetry: (mark) => clack.log.info(`The index builder stopped the last ${mark.kind} job of ${projectPath} at its ${mark.limit === 'time' ? 'time' : 'memory'} limit, so init is rebuilding the index.`),
+      });
+      if (retried === false) process.exitCode = 1;
+      if (retried === null) {
+        // `.codegraph/` alone isn't a working index: a first run that was killed
+        // or failed partway leaves it behind, and "Already initialized" then reads
+        // like a setup that only needs a sync (#3228). Say how the last run ended,
+        // as `status` does.
+        const { unfinished, rebuildInProgress } = await readLastIndexRun(projectPath);
+        if (unfinished) {
+          clack.log.warn(`Initialized in ${projectPath}, but its index is incomplete.`);
+          clack.log.warn(unfinished);
+        } else {
+          clack.log.warn(`Already initialized in ${projectPath}`);
+          clack.log.info(rebuildInProgress
+            ? 'An index rebuild ("codegraph index") is running in another process.'
+            : 'Use "codegraph index" to re-index or "codegraph sync" to update');
+        }
+      }
       if (options.localOnly) applyLocalOnlyGitignore(clack, projectPath);
       try {
         const { offerWatchFallback } = await import('../installer');
@@ -992,16 +1077,16 @@ program
   });
 
 /**
- * The supervised, progress-rendered index of `codegraph index`, on `cg`: the freshly recreated CodeGraph of
- * this process, or the writer of an index the machine server's builder is rebuilding. Destroys `cg` and
- * answers whether the index succeeded; the caller exits 1 when it did not. `dbPath` is the database the
+ * The supervised, progress-rendered index of a rebuild (`codegraph index`, and `codegraph init` of a stopped
+ * root), on `cg`: the freshly recreated CodeGraph of this process, or the writer of an index the machine
+ * server's builder is rebuilding. Destroys `cg` and answers whether the index succeeded. `dbPath` is the database the
  * liveness watchdog watches for progress.
  */
 async function runIndexOn(
   cg: IndexWriter,
   dbPath: string,
   projectPath: string,
-  options: { quiet?: boolean; verbose?: boolean },
+  options: { quiet?: boolean; verbose?: boolean; yes?: boolean },
 ): Promise<boolean> {
   // Supervise the indexer: self-terminate if orphaned (parent shim killed) or if the main thread wedges (#999).
   // The DB + WAL paths let the liveness watchdog tell a slow store on
@@ -1037,9 +1122,10 @@ async function runIndexOn(
 
     // Empty graph at a git super-repo → likely `.gitignore`d child repos;
     // name them and offer to opt in instead of a silent 0-node result (#1156).
+    // `yes` (init's --yes, on a stopped root's rebuild) prints the opt-in snippet instead of prompting.
     let finalResult = result;
     if (result.nodesCreated === 0) {
-      finalResult = (await offerIndexIgnoredRepos(clack, projectPath, renderIndex, { interactive: true })) ?? result;
+      finalResult = (await offerIndexIgnoredRepos(clack, projectPath, renderIndex, { interactive: !options.yes })) ?? result;
     }
 
     if (!finalResult.success) return false;
@@ -1094,69 +1180,8 @@ program
         process.exit(1);
       }
 
-      // With a machine server whose index builder is up, the builder rebuilds the index under a lease it holds
-      // for this command, and this process takes no lock. Otherwise this process rebuilds, below.
-      const routed = await (await import('../extensions/host/builder/cli-route')).startRoutedIndex(projectPath, !!options.force, !!options.verbose && !options.quiet);
-      if (routed) {
-        let indexed: boolean;
-        try {
-          const { getDatabasePath } = await loadCodeGraph();
-          indexed = await runIndexOn(routed, getDatabasePath(projectPath), projectPath, options);
-        } finally {
-          await routed.end();
-        }
-        if (!indexed) process.exit(1);
-        return;
-      }
-
-      const { tryAcquireWriterLock, releaseWriterLock, writerLockHeldMessage } = await import('../mcp/writer-lock');
-      const rebuild = tryAcquireWriterLock(projectPath, 'rebuild', 'rebuild.pid');
-      if (rebuild.kind === 'taken') throw new Error('Another index rebuild is already in progress.');
-      try {
-        // The machine server keeps SQLite handles open on every project it has
-        // answered for. Ask it to release this one (it keeps serving every other
-        // project and reopens this one on its next call); never stop it. No server
-        // running, or one that released the project, goes on to the writer lock. A
-        // server that did not confirm may still hold the database, so the rebuild
-        // would delete files under it: refuse instead.
-        const { requestProjectRelease } = await import('../mcp/server-control');
-        const realRoot = fs.realpathSync(projectPath);
-        const released = await requestProjectRelease(realRoot);
-        if (released === 'failed') {
-          throw new Error(
-            `The CodeGraph server did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
-            'Stop it with `codegraph daemon --stop` (clients reconnect and start a fresh one), then retry `codegraph index`.'
-          );
-        }
-
-        // Keep the writer slot through recreation AND indexing. A reconnecting
-        // proxy/server must not open the replacement database halfway through.
-        const writer = tryAcquireWriterLock(projectPath, 'rebuild');
-        if (writer.kind === 'taken') throw new Error(writerLockHeldMessage(writer.existing, writer.pidPath));
-        try {
-          const { default: CodeGraph, getDatabasePath } = await loadCodeGraph();
-          // `index` is a FULL re-index — identical to a fresh `init`. RECREATE the
-          // database from scratch (discard .codegraph/codegraph.db + its WAL) rather
-          // than opening the old graph and DELETE-ing every row. The clear-then-index
-          // approach reported "0 nodes" without the clear (#874); the recreate keeps
-          // that fixed AND avoids the failure mode where, on a large or pre-fix
-          // poisoned index, the per-row FTS delete churn wedged the main thread long
-          // enough to trip the liveness watchdog before scanning even began (#1067).
-          // recreate() hands back a fresh, empty instance — no clear() needed. For
-          // fast incremental updates use `sync`.
-          const cg = await CodeGraph.recreate(projectPath);
-
-          const dbPath = getDatabasePath(projectPath);
-          if (!(await runIndexOn(cg, dbPath, projectPath, options))) process.exit(1);
-          // The rebuild succeeded, so the root's stopped-over-limit marks go. A builder started while this ran
-          // keeps its in-memory mark until it restarts.
-          clearEndedRoot(projectPath);
-        } finally {
-          releaseWriterLock(projectPath);
-        }
-      } finally {
-        releaseWriterLock(projectPath, 'rebuild.pid');
-      }
+      const { rebuildIndex } = await import('../extensions/host/rebuildIndex');
+      if (!(await rebuildIndex(projectPath, options, { runIndexOn, loadEngine: loadCodeGraph }))) process.exit(1);
     } catch (err) {
       error(`Failed to index: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
@@ -1435,14 +1460,11 @@ program
       if (worktreeMismatch) {
         warn(worktreeMismatchWarning(worktreeMismatch));
       }
+      const unfinished = unfinishedIndexWarning(indexState, rebuildInProgress);
       if (rebuildInProgress) {
         warn('An index rebuild ("codegraph index") is running in another process — the statistics below are a snapshot of it.');
-      } else if (indexState === 'indexing') {
-        warn('The last index run never finished (killed mid-index?) — the index is truncated. Re-run "codegraph index".');
-      } else if (indexState === 'partial') {
-        warn('The last index run silently dropped files — the index is partial. Re-run "codegraph index".');
-      } else if (indexState === 'failed') {
-        warn('The last index run failed — results may be incomplete. Re-run "codegraph index".');
+      } else if (unfinished) {
+        warn(unfinished);
       }
       // A running rebuild's references are its own work in progress, not an
       // interrupted run's.
@@ -2764,6 +2786,14 @@ for (const direction of ['callers', 'callees'] as const) {
             lines: callSiteLines(ownEdges(node, edges)),
             recursive,
           });
+          // The files whose lines this answer prints: each definition's and each
+          // neighbour's shown.
+          const { filesChangedSinceIndexed } = await import('../graph/file-drift');
+          const changedOnDisk = filesChangedSinceIndexed(cg, [
+            ...groups.flat().map((node) => node.filePath),
+            ...collected.flatMap(({ nodes }) => nodes.slice(0, limit).map((node) => node.filePath)),
+          ]);
+          warnChangedOnDisk(changedOnDisk, options.json);
           if (options.json) {
             const definitions = collected.map(({ group, nodes, edges, recursive }) => {
               const limited = nodes.slice(0, limit);
@@ -2791,6 +2821,7 @@ for (const direction of ['callers', 'callees'] as const) {
               file: options.file,
               filteredOut,
               note,
+              ...(changedOnDisk.length > 0 ? { changedOnDisk } : {}),
               definitions,
               [direction]: [...union.values()].slice(0, limit).map((node) =>
                 row(node, allEdges, collected.some((entry) => entry.recursive.has(node.id)))),
@@ -2899,6 +2930,12 @@ program
           return { group, nodes, edges, truncated };
         });
         const truncated = collected.some((c) => c.truncated);
+        const { filesChangedSinceIndexed } = await import('../graph/file-drift');
+        const changedOnDisk = filesChangedSinceIndexed(cg, [
+          ...groups.flat().map((node) => node.filePath),
+          ...collected.flatMap(({ nodes }) => [...nodes.values()].map((node) => node.filePath)),
+        ]);
+        warnChangedOnDisk(changedOnDisk, options.json);
 
         if (options.json) {
           const unionNodes = new Map<string, Node>();
@@ -2924,6 +2961,7 @@ program
             file: options.file,
             filteredOut,
             note,
+            ...(changedOnDisk.length > 0 ? { changedOnDisk } : {}),
             definitions,
             nodeCount: unionNodes.size,
             edgeCount: unionEdges.size,
@@ -3070,7 +3108,7 @@ program
             relation: e.relation,
             depth: e.depth,
             via: e.depth > 1 ? nameOf.get(e.parentId) : undefined,
-            test: isTestCode(e.node, e.node.language === 'rust' ? sourceOf(e.node.filePath) : undefined),
+            test: isTestCode(e.node, sourceOf),
             synthesized: e.synthesized,
           }));
           return { group, implementations, directSubtypes: hierarchy?.directSubtypes ?? 0, bounded: hierarchy?.bounded ?? false };
@@ -3423,7 +3461,8 @@ program
     // `--target none` / nothing-detected case (the installer returns normally
     // there), and shares every guard with `codegraph init`: an unsafe root
     // is refused (exit 1, no implied --force), an already-initialized
-    // project just says so. `--yes` flows through so no offer prompts.
+    // project says so, and one whose last index builder job was stopped at
+    // a limit is rebuilt. `--yes` flows through so no offer prompts.
     if (opts.init) {
       await runInit(process.cwd(), { yes: opts.yes });
     }

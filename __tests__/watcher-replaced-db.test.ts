@@ -205,17 +205,23 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
   describe('tool-call reopen through the MCP engine', () => {
     const ENGINE = path.resolve(__dirname, '../dist/mcp/engine.js');
     let prevDebounce: string | undefined;
+    let prevCatchupTimeout: string | undefined;
 
     beforeEach(() => {
       // Keep the watcher from syncing the edit on its own, so only the
       // tool-call path's catch-up can put it in the rebuilt file.
       prevDebounce = process.env.CODEGRAPH_WATCH_DEBOUNCE_MS;
       process.env.CODEGRAPH_WATCH_DEBOUNCE_MS = '60000';
+      // Wait for the builder's catch-up promise rather than a time-limited gate.
+      prevCatchupTimeout = process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS;
+      process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = '0';
     });
 
     afterEach(() => {
       if (prevDebounce === undefined) delete process.env.CODEGRAPH_WATCH_DEBOUNCE_MS;
       else process.env.CODEGRAPH_WATCH_DEBOUNCE_MS = prevDebounce;
+      if (prevCatchupTimeout === undefined) delete process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS;
+      else process.env.CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS = prevCatchupTimeout;
     });
 
     // The builder is the engine's writer: a real process, started from the built client.
@@ -243,10 +249,7 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
       return engine;
     }
 
-    // Own timeout. It starts a real builder process, rebuilds the index and runs a
-    // catch-up sync through it. On 18 CPUs, at 1-minute load average ~80-110, it ran
-    // 17-28 s (28.0 s once alone, 17-20 s with four copies). Re-measured after the change:
-    // 14.4-15.6 s. The 90 s limit is about three times the slowest run measured (32.0 s).
+    // Own timeout: this starts a real builder process and a job child.
     posixOnly('reopening a replaced database runs a catch-up sync into the new file, on the builder', async () => {
       const engine = await openEngine(true);
       try {
@@ -256,11 +259,12 @@ describe('live sync after the index is rebuilt by another process (#1902)', () =
 
         const handler = engine.getToolHandler();
         // This call reopens the replaced database and has the builder start the catch-up;
-        // the next call awaits its gate.
+        // the next call awaits its gate until the catch-up finishes.
         await handler.execute('codegraph_search', { query: 'alpha', projectPath: root }, undefined, ADMIT_ALL);
         const res = await handler.execute('codegraph_search', { query: 'foxtrot', projectPath: root }, undefined, ADMIT_ALL);
         expect(res.isError).toBeFalsy();
-        expect(res.content[0].text).toMatch(/foxtrot/);
+        expect(res.content[0].text).not.toMatch(/No results found/);
+        expect(res.content[0].text).toMatch(/\*\*foxtrot\*\* \(function\)\n(?:.*\/)?src\/b\.ts/);
         expect(await onDiskHas(root, 'foxtrot')).toBe(true);
       } finally {
         await engine.stop();

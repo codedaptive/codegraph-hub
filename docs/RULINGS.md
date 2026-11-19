@@ -785,3 +785,16 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-43's two-lane design (a sync lane beside one serial cold-build lane) and its "Cold builds stay
   serial among themselves (S-6, S-33)"; S-79 once each job runs in its own process.
 - Owner: host (src/extensions/host/builder).
+- Built: sm.17 (2026-11-18), host's builder-job-process and builder-repo-lanes with the r53-watchdog-pid fix-forwards; an
+  ended cold build's rollback as S-90 settles it.
+
+## R-54. Everything owed goes out as sm.17
+- Date: 2026-11-18 / Bob, direct ("release everything as sm.17"), after Designer-Codegraph offered sm.17 now with
+  R-51 and R-49 in an sm.18.
+- Question: release sm.17 with what has landed, or wait for R-51's four upstream PRs and R-49's two items?
+- Ruling: one release. sm.17 carries everything owed: what is on landing, the S-93 catch-up retry, R-51's #3261,
+  #3258, #3303 and #3226, and R-49 (a) and (b). Nothing is left for a later release; the full suite runs once on the
+  whole batch (rule 13), then the promote and the release. The install still waits for Bob's go (R-18).
+- Reason: Bob's word: the round is finished before the team stands down.
+- Not chosen: sm.17 now and the six items in an sm.18.
+- Work implied: Orc-Codegraph orders R-51 and R-49 at once (#4606) and holds Stage 6 for them.

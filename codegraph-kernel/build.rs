@@ -88,17 +88,15 @@ fn main() {
     println!("cargo:rerun-if-changed=grammars/dart");
 
     // Swift grammar — vendored C (fifth vendored-grammar-C language): the
-    // crates.io tree-sitter-swift 0.7.3 tarball's src/, the same sources the
-    // vendored wasm is built from (swift checklist §Grammar prep), with
-    // docs/grammars/tree-sitter-swift.patch applied to scanner.c. The crate's
-    // scanner builds `1UL << FAKE_TRY_BANG` (bit 32) into a constant table;
-    // where `unsigned long` is 32 bits that overflows — MSVC folds it to 0,
-    // so the Windows kernels read the `!` of every `try!` as a logical not
-    // and `try! Foo()` called `!Foo`. Upstream 0.7.4 writes `1ULL`; a bump to
-    // a fixed release can return to the crate (and the wasm moves with it).
-    //   parser.c  d3edff6effe31b9a507f496577407987343b101b23eb7bee7a9b050e8ab5d27a
-    //   scanner.c f3d6271d64f58c39eed544104a70ca2cf9ecbf80c5d900620f1afd38836542cb
-    //   scanner.c 8acafef098ea4a52ebfc4cdf2fe26706113a22ac8ba2faf7d952755ff350cad6 (patched)
+    // crates.io tree-sitter-swift 0.7.4 tarball's src/ (#3212), the same
+    // sources the vendored wasm is built from (swift checklist §Grammar prep),
+    // with docs/grammars/tree-sitter-swift.patch applied to scanner.c: its
+    // out-of-memory report uses stdio, which a wasm parser lacks, and both
+    // are built from one scanner. (0.7.4 also carries the `1ULL <<
+    // FAKE_TRY_BANG` fix the previous patch added for MSVC's `try!`.)
+    //   parser.c  1d332e60ec28e6b398db36e06bf05414061dfbbd3e981b33ff1edfd5159e3e08
+    //   scanner.c b0abca0bb8d9e34da210ef0fac14f67c4fb40cb2625c4e51bd42ea80ac59d1b1
+    //   scanner.c 2b78cad2a49da126388acfa67fdac585226f89cd2feaf4326e98289bc253bf87 (patched)
     // Flags crib the tarball's own bindings/rust/build.rs (c11). parser.c is
     // ~20 MB.
     let mut swift = cc::Build::new();
@@ -112,4 +110,32 @@ fn main() {
     swift.flag_if_supported("-utf-8"); // msvc
     swift.compile("tree-sitter-swift");
     println!("cargo:rerun-if-changed=grammars/swift");
+
+    // TypeScript + TSX grammars — vendored C (sixth vendored-grammar-C
+    // language): tree-sitter/tree-sitter-typescript v0.23.2 (f975a62) with
+    // docs/grammars/tree-sitter-typescript.patch applied to the grammar source,
+    // then REGENERATED with tree-sitter-cli 0.25.10 (ABI 15) — the patch
+    // touches grammar rules, so the checked-in parser.c can't be reused. The
+    // vendored wasm is built from these same generated sources. Layout mirrors
+    // the upstream repo so scanner.c's `../../common/scanner.h` resolves
+    // unedited. The patch: TS 4.7 variance annotations (`<in T>`, `<out T>`).
+    //   common/scanner.h           da66ef2bd14a3f7ea743e25ba068c6c9aae2c3509db200ff80c4a0e6116e564c (unpatched)
+    //   typescript/src/parser.c    eafc3e8cd89fbbfdcec9182b22446f19c31756f3c8c1212cfd7bffdb4b761424
+    //   tsx/src/parser.c           232fe5b8178180307a40b393713d82074920977b147638bae898874085bcee86
+    // Flags crib the crate's bindings/rust/build.rs (c11). Each parser.c is
+    // ~9 MB.
+    for dialect in ["typescript", "tsx"] {
+        let src = format!("grammars/typescript/{dialect}/src");
+        let mut ts = cc::Build::new();
+        ts.std("c11");
+        ts.include(&src);
+        ts.file(format!("{src}/parser.c"));
+        ts.file(format!("{src}/scanner.c"));
+        ts.flag_if_supported("-Wno-unused-parameter");
+        ts.flag_if_supported("-Wno-unused-but-set-variable");
+        ts.flag_if_supported("-Wno-trigraphs");
+        ts.flag_if_supported("-utf-8"); // msvc
+        ts.compile(&format!("tree-sitter-{dialect}"));
+    }
+    println!("cargo:rerun-if-changed=grammars/typescript");
 }
