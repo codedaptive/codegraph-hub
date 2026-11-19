@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as net from 'net';
+import { getServerSocketPath } from '../../../src/mcp/daemon-paths';
+import { daemonKey, daemonProof } from '../../../src/mcp/daemon-proof';
 import * as os from 'os';
 import * as path from 'path';
 import { startFakeDaemon, type FakeDaemon, type FakeProof } from '../../fake-daemon';
@@ -12,6 +15,8 @@ let daemon: FakeDaemon | undefined;
 beforeEach(() => {
   dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-route-proof-')));
   vi.stubEnv('CODEGRAPH_STATE_DIR', dir);
+  vi.stubEnv('HOME', dir);
+  vi.stubEnv('USERPROFILE', dir);
 });
 afterEach(async () => {
   await daemon?.close();
@@ -29,7 +34,75 @@ async function server(proof: FakeProof): Promise<FakeDaemon> {
   return daemon;
 }
 
+async function nullLineServer(phase: 'hello' | 'proof' | 'request') {
+  const socketPath = getServerSocketPath();
+  const key = daemonKey();
+  if (!key) throw new Error('could not create sandboxed daemon key');
+  const lines: Record<string, unknown>[] = [];
+  const sockets = new Set<net.Socket>();
+  let connections = 0;
+  const listener = net.createServer(socket => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.on('error', () => {});
+    const probe = ++connections === 1;
+    if (!probe && phase === 'hello') { socket.write('null\n'); return; }
+    socket.write(JSON.stringify({ codegraph: CodeGraphPackageVersion, pid: process.pid, socketPath, protocol: 1 }) + '\n');
+    let buffer = '';
+    socket.on('data', chunk => {
+      buffer += chunk.toString();
+      let newline: number;
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const message = JSON.parse(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        lines.push(message);
+        if (typeof message.codegraph_challenge === 'string') {
+          if (phase === 'proof') socket.write('null\n');
+          else socket.write(JSON.stringify({ codegraph_proof: daemonProof(key, message.codegraph_challenge, socketPath) }) + '\n');
+        } else if (message.method) socket.write('null\n');
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => { listener.once('error', reject); listener.listen(socketPath, resolve); });
+  fs.writeFileSync(path.join(dir, 'server.pid'), JSON.stringify({
+    pid: process.pid, version: CodeGraphPackageVersion, socketPath,
+    startedAt: 1, stateDir: dir, stateId: stateIdentityOf(dir),
+  }));
+  return { lines, disconnect: () => { for (const socket of sockets) socket.destroy(); }, close: () => new Promise<void>(resolve => {
+    for (const socket of sockets) socket.destroy();
+    listener.close(() => resolve());
+  }) };
+}
+
 describe('CLI route proof before control hello', () => {
+  it.each(['hello', 'proof', 'request'] as const)(
+    'closes without an uncaught exception on null during %s', async phase => {
+      const fake = await nullLineServer(phase);
+      const uncaught: unknown[] = [];
+      process.setUncaughtExceptionCaptureCallback(error => { uncaught.push(error); fake.disconnect(); });
+      try {
+        const route = await builderRoute();
+        if (phase === 'request') {
+          expect(route).not.toBeNull();
+          if (route === null) return;
+          await expect(route.sync(dir)).rejects.toThrow('closed the connection');
+          route.close();
+          expect(fake.lines).toEqual([
+            { codegraph_challenge: expect.any(String) },
+            { codegraph_client: 1, control: 1, pid: process.pid, hostPid: null },
+            expect.objectContaining({ method: 'codegraph/indexWrite' }),
+          ]);
+        } else {
+          expect(route).toBeNull();
+          expect(fake.lines).toEqual(phase === 'hello' ? [] : [{ codegraph_challenge: expect.any(String) }]);
+        }
+        expect(uncaught).toEqual([]);
+      } finally {
+        process.setUncaughtExceptionCaptureCallback(null);
+        await fake.close();
+      }
+    },
+  );
   it.each(['other-key', 'other-path', 'null', 'none'] as const)(
     'does not route or send control metadata when proof is %s', async (proof) => {
       const fake = await server(proof);

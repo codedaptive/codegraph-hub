@@ -8,7 +8,8 @@
  *
  * One decision point, {@link builderRoute}: a running machine server (src/mcp/server-control.ts probeServer)
  * gives a {@link BuilderRoute}, one connection to the server's existing socket; anything else gives null and the
- * command writes in its own process. builder.pid is not consulted: a direct-mode builder
+ * command goes on without the builder (writing in its own process; `index` and `uninit` refuse when a server
+ * answered but did not prove itself, as it did not release the root). builder.pid is not consulted: a direct-mode builder
  * writes the same file for its own state dir and a stale one proves nothing, so only a server that proved
  * itself by its socket hello, and then proved it runs as this user (src/mcp/daemon-proof.ts), counts, and that
  * server's own client then decides whether its builder is up (a `{routed: false}` answer).
@@ -29,10 +30,9 @@ import type { CodeGraph } from '../../../index';
 import type { IndexProgress, IndexResult, SyncResult } from '../../../extraction';
 import type { ServerLockInfo } from '../../../mcp/daemon-paths';
 import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
-import { controlClientHelloLine, isServerHello, probeServer } from '../../../mcp/server-control';
+import { probeServer } from '../../../mcp/server-control';
 import { daemonKeyPath, newDaemonChallenge } from '../../../mcp/daemon-proof';
-import { daemonAnswerProves } from '../../../mcp/daemonAnswerProves';
-import { daemonChallengeLine } from '../../../mcp/daemonChallengeLine';
+import { routeHandshakeStep } from './routeHandshakeStep';
 import {
   INDEX_WRITE_END_METHOD,
   INDEX_WRITE_EVENT_METHOD,
@@ -162,7 +162,8 @@ class RouteConnection implements BuilderRoute {
         if (!ok && connection.phase === 'proof') {
           process.stderr.write(
             `[CodeGraph] The server on ${lock.socketPath} could not prove it runs as this user ` +
-            `(with the key in ${daemonKeyPath()}); this command writes the index itself.\n`
+            `(with the key in ${daemonKeyPath()}), so nothing is sent to it: \`codegraph index\` and ` +
+            '`codegraph uninit` refuse, and init, sync, seed and the --fresh wait write the index in this process.\n'
           );
         }
         resolve(ok ? connection : null);
@@ -248,16 +249,20 @@ class RouteConnection implements BuilderRoute {
       if (newline < 0) return;
       const line = this.buffer.slice(0, newline);
       this.buffer = this.buffer.slice(newline + 1);
-      let message: Record<string, unknown>;
+      let message: Record<string, unknown> | unknown[] | string | number | boolean | null | undefined;
       try {
-        message = JSON.parse(line) as Record<string, unknown>;
+        message = JSON.parse(line);
       } catch {
-        // Not our server's protocol. Dropping the connection fails the request in flight, if there is one.
+        message = undefined;
+      }
+      if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+        // Not our server's protocol, whose every line is a JSON object (so not JSON, null, an array or a
+        // scalar). Dropping the connection fails the request in flight, if there is one.
         this.close();
         return;
       }
       if (this.phase !== 'open') {
-        if (!this.handshake(message)) return;
+        if (!this.handshake(this.phase, message)) return;
         continue;
       }
       this.dispatch(message);
@@ -265,28 +270,17 @@ class RouteConnection implements BuilderRoute {
   }
 
   /**
-   * The first line is the hello of the server `lock` names (its pid and version), else this is not that server;
-   * the challenge line goes only to that server. The next line must be its proof: only then does the control
-   * client hello go, and with it any request. False when the handshake failed (the connection is closed).
+   * Takes one handshake step ({@link routeHandshakeStep} decides it). False when the handshake failed (the
+   * connection is closed).
    */
-  private handshake(message: Record<string, unknown>): boolean {
-    if (this.phase === 'hello') {
-      const ok = isServerHello(message) && message.pid === this.lock.pid && message.codegraph === this.lock.version;
-      if (!ok) {
-        this.helloSettled?.(false);
-        return false;
-      }
-      this.phase = 'proof';
-      this.socket.write(daemonChallengeLine(this.challenge));
-      return true;
+  private handshake(phase: 'hello' | 'proof', message: Record<string, unknown>): boolean {
+    const step = routeHandshakeStep(phase, message, this.lock, this.challenge);
+    if (step !== null) {
+      this.phase = step.next;
+      this.socket.write(step.write);
     }
-    const ok = daemonAnswerProves(this.challenge, this.lock.socketPath, message.codegraph_proof);
-    if (ok) {
-      this.phase = 'open';
-      this.socket.write(controlClientHelloLine());
-    }
-    this.helloSettled?.(ok);
-    return ok;
+    if (step === null || step.next === 'open') this.helloSettled?.(step !== null);
+    return step !== null;
   }
 
   private dispatch(message: Record<string, unknown>): void {
