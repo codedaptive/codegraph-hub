@@ -139,6 +139,10 @@ describe('codegraph daemon', () => {
     expect(result.code).toBe(1);
     expect(result.stderr + result.stdout).toContain('did not answer as the CodeGraph server');
     expect(result.stderr + result.stdout).toContain('delete the stale server.pid in the state dir');
+    expect(result.stderr + result.stdout).toContain(
+      'That does not stop a process listening on the server socket; ' +
+      'if `codegraph index`, `uninit` or `init` still refuses, it names that socket.',
+    );
     expect(isProcessAlive(stranger.pid!)).toBe(true);
     expect(stranger.signalCode).toBeNull();
   });
