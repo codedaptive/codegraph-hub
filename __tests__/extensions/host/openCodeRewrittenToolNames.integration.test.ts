@@ -23,7 +23,14 @@ describe('openCodeRewrittenToolNames', () => {
     });
 
     expect(openCodeRewrittenToolNames()).toEqual(expect.arrayContaining([
+      'codegraph_search',
+      'codegraph_callers',
+      'codegraph_callees',
+      'codegraph_impact',
+      'codegraph_node',
       'codegraph_explore',
+      'codegraph_status',
+      'codegraph_files',
       'codegraph_blast',
       'codegraph_grep',
       'codegraph_orphans',

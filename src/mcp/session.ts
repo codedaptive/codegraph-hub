@@ -95,7 +95,8 @@ export function initializeInstructions(base: string, notice: string | null = get
  * of `base`, which an OpenCode client gets with every built-in and extension
  * tool name ({@link openCodeRewrittenToolNames}, read at the call) the way
  * OpenCode lists it (#1267). Exported so the proxy's local handshake gives the
- * same client the IDENTICAL text; every other client gets `base` unchanged.
+ * same client the IDENTICAL text; every other client gets `base`, plus the
+ * update notice when there is one.
  */
 export function instructionsForClient(base: string, clientName: string | undefined): string {
   return initializeInstructions(isOpenCodeClient(clientName) ? openCodeInstructions(base, openCodeRewrittenToolNames()) : base);

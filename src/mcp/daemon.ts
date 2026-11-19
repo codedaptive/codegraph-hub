@@ -74,7 +74,7 @@ import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/re
 import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { BuilderClient } from '../extensions/host/builder/client';
 import { daemonKey, daemonProof } from './daemon-proof';
-import { parseChallengeOrHello } from './parseChallengeOrHello';
+import { readPeers } from './readPeers';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -551,7 +551,7 @@ export class Daemon {
     socket.once('close', () => this.acceptedSockets.delete(socket));
     // Hello first so the proxy can verify versions before piping any
     // application bytes. The proxy reads this line and then this server's proof
-    // (see readPeers) before it forwards.
+    // (see ./readPeers) before it forwards.
     const hello: DaemonHello = {
       codegraph: CodeGraphPackageVersion,
       pid: process.pid,
@@ -565,7 +565,7 @@ export class Daemon {
     // Fail-safe: any problem — timeout, a non-hello first line, an early close —
     // yields null peers and we fall back to the socket-close lifecycle (#692);
     // the session then has no anchor.
-    void this.readPeers(socket).then(async (peers) => {
+    void readPeers((parse, none) => readClientLine(socket, parse, none), parseClientHelloLine, NO_PEERS, (challenge) => this.answerChallenge(socket, challenge)).then(async (peers) => {
       if (this.stopping || socket.destroyed) { socket.destroy(); return; }
       // The socket is paused by readClientLine until the transport starts, so
       // the anchor's git lookups cannot cost the client's first message.
@@ -598,23 +598,6 @@ export class Daemon {
       this.clientPeers.set(session, peers);
       session.start();
     });
-  }
-
-  /**
-   * The client's peers, from its client hello. Every CodeGraph client (the
-   * proxy, the CLI's builder route and its release request) first sends a
-   * challenge line and waits for the proof before it says who it is, so a first
-   * line that is a challenge is answered at once, ahead of the anchor lookup and
-   * the session, and the line after it is read as the client hello. A first line
-   * that is a client hello is still read as one, and gets no proof line.
-   */
-  private async readPeers(socket: net.Socket): Promise<ClientPeers> {
-    // The challenge is checked first: a challenge line is no client hello and
-    // would otherwise go back to the transport as JSON-RPC.
-    const first = await readClientLine(socket, (line) => parseChallengeOrHello(line, parseClientHelloLine), NO_PEERS);
-    if (!('challenge' in first)) return first;
-    this.answerChallenge(socket, first.challenge);
-    return readClientLine(socket, parseClientHelloLine, NO_PEERS);
   }
 
   /**
