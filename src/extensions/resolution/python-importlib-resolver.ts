@@ -49,7 +49,7 @@ export const pythonImportlibResolver: FrameworkResolver = {
   name: 'python-importlib',
   languages: ['python'],
 
-  // An extensionless `#!` Python script counts (R-49(a)); context.readFile records the read as a detection input.
+  // An extensionless `#!` Python script counts (R-49(a)); the extraction context's readFile records the read as a detection input.
   detect: (context) => {
     const files = context.getAllFiles();
     return files.some((file) => file.endsWith('.py'))
