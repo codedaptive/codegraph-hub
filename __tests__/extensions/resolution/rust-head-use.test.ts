@@ -78,6 +78,31 @@ describe('rustHeadUse', () => {
     });
   });
 
+  it('keeps an inner use over an outer mod without following', () => {
+    const visible = () => ({ paths: [{ segs: ['crate', 'Concrete'], at: 50 }], std: [], block: 40 });
+    expect(rustHeadUse('Alias', 70, false, visible, [
+      { name: 'Alias', scope: { open: 10, close: 100 }, parent: null },
+    ], null)).toEqual({ paths: [{ segs: ['crate', 'Concrete'], at: 50 }], std: [], block: 40 });
+  });
+
+  it('keeps an inner split-path use over an outer mod when following', () => {
+    const visible = () => ({
+      paths: [{ segs: ['crate', 'x'], at: 50 }, { segs: ['crate', 'y'], at: 55 }], std: [], block: 40,
+    });
+    expect(rustHeadUse('Alias', 70, true, visible, [
+      { name: 'Alias', scope: { open: 10, close: 100 }, parent: null },
+    ], null)).toEqual({
+      paths: [{ segs: ['crate', 'x'], at: 50 }, { segs: ['crate', 'y'], at: 55 }], std: [], block: 40,
+    });
+  });
+
+  it('declines a mod in a block nearer than the use without following', () => {
+    const visible = () => ({ paths: [{ segs: ['crate', 'Concrete'], at: 50 }], std: [], block: 40 });
+    expect(rustHeadUse('Alias', 70, false, visible, [
+      { name: 'Alias', scope: { open: 60, close: 100 }, parent: null },
+    ], null)).toBeNull();
+  });
+
   it('keeps the path of a plain self-binding without following it through itself', () => {
     const visible = (name: string, at: number): RustHeadBinding | undefined =>
       name === 'a' && (at === 70 || at === 20)
@@ -86,6 +111,17 @@ describe('rustHeadUse', () => {
     expect(rustHeadUse('a', 70, true, visible, [], null)).toEqual({
       paths: [{ segs: ['a'], at: 20 }], std: [], block: 10,
     });
+  });
+
+  it('declines a self-binding use under an outer mod of its name', () => {
+    const from = {};
+    const visible = (name: string, at: number): RustHeadBinding | undefined =>
+      name === 'a' && (at === 70 || at === 20)
+        ? { paths: [{ segs: ['a'], at: 20 }], std: [], block: 30 }
+        : undefined;
+    expect(rustHeadUse('a', 70, true, visible, [
+      { name: 'a', scope: { open: 10, close: 100 }, parent: from },
+    ], from)).toBeNull();
   });
 
   it('keeps the tail of a self-binding without repeatedly expanding it', () => {

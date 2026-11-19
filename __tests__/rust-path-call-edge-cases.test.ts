@@ -11,8 +11,8 @@
  * nor a later `pub mod a` takes the other's items. Chained local imports
  * resolve at their import sites, not where the call is written. An impl's
  * callback bounds, including `->` and nested return types, keep its methods.
- * A nearer block `mod` prevents resolving the head through a `use` of the
- * same name. An impl with a const-generic block argument, in the type or in
+ * A block `mod` nearer than a `use` prevents resolving the head through that
+ * `use` of the same name. An impl with a const-generic block argument, in the type or in
  * the impl's generics list, keeps its associated functions in these examples,
  * including blocks with shifts and a comparison.
  */
@@ -29,7 +29,7 @@ beforeAll(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-rust-path-edge-'));
   const files: Record<string, string> = {
     'Cargo.toml': '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n',
-    'src/lib.rs': 'pub mod inline;\npub mod local;\npub mod shadow;\npub mod order;\npub mod refimpl;\npub mod traits;\npub mod shapes;\npub mod store;\npub mod split;\npub mod callback;\npub mod near;\npub mod constarg;\npub mod plain;\npub mod sub2015;\npub mod util2015;\n',
+    'src/lib.rs': 'pub mod inline;\npub mod local;\npub mod shadow;\npub mod order;\npub mod refimpl;\npub mod traits;\npub mod shapes;\npub mod store;\npub mod split;\npub mod callback;\npub mod near;\npub mod constarg;\npub mod plain;\npub mod sub2015;\npub mod util2015;\npub mod inner;\n',
     'src/plain.rs': `pub mod a {
     pub fn make() -> usize { 1 }
 }
@@ -281,7 +281,7 @@ pub fn through_nested_callback() {
     crate::callback::Nested::open(|| Some(Ok(1)));
 }
 `,
-    // `near`'s block declares a `mod b` nearer the call than the `use` that binds `b`, so
+    // `near`'s block declares a `mod b` in a block nearer than the block of the `use` that binds `b`, so
     // the call must not resolve to `a::make`. `far` has no such block: its `b` is `a`.
     'src/near.rs': `pub mod a {
     pub fn make() -> usize {
@@ -305,6 +305,21 @@ pub fn far() -> usize {
     use crate::near::a as b;
     {
         b::make()
+    }
+}
+`,
+    'src/inner.rs': `pub mod a {
+    pub struct Concrete;
+    impl Concrete {
+        pub fn make() -> usize { 1 }
+    }
+}
+
+pub fn inner() -> usize {
+    mod Alias { pub fn make() -> usize { 2 } }
+    {
+        use crate::inner::a::Concrete as Alias;
+        Alias::make()
     }
 }
 `,
@@ -483,6 +498,10 @@ describe('Rust calls through a type a path names', () => {
 
   it('expand a head a `use` binds when no nearer block declares a `mod` of that name', () => {
     expect(calls('src/near.rs', 'far')).toEqual(['function make src/near.rs:2']);
+  });
+
+  it('resolves an inner use over an outer block mod of the same name', () => {
+    expect(calls('src/inner.rs', 'inner')).toEqual(['method Concrete::make src/inner.rs:4']);
   });
 
   it('keep associated functions on an impl whose type takes a const-generic block argument', () => {
