@@ -9,7 +9,7 @@ import { daemonKey, daemonProof } from '../../../src/mcp/daemon-proof';
 import { requestProjectRelease } from '../../../src/mcp/server-control';
 import { stateIdentityOf } from './state-identity';
 
-type ProofMode = 'valid' | 'other-key' | 'other-path' | 'null' | 'non-proof' | 'non-json' | 'close' | 'none';
+type ProofMode = 'valid' | 'other-key' | 'other-path' | 'null' | 'non-proof' | 'non-json' | 'close' | 'none' | 'null-hello' | 'null-proof' | 'null-reply';
 
 let dir: string;
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -36,6 +36,7 @@ async function standIn(mode: ProofMode, socketPath = getServerSocketPath()) {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     socket.on('error', () => {});
+    if (mode === 'null-hello') { socket.write('null\n'); return; }
     socket.write(JSON.stringify({ codegraph: 'fake', pid: process.pid, socketPath, protocol: 1 }) + '\n');
     let buffer = '';
     socket.setEncoding('utf8');
@@ -49,6 +50,7 @@ async function standIn(mode: ProofMode, socketPath = getServerSocketPath()) {
         if (mode === 'close') { socket.end(); continue; }
         if (typeof message.codegraph_challenge === 'string') {
           if (mode === 'none') continue;
+          if (mode === 'null-proof') { socket.write('null\n'); continue; }
           if (mode === 'non-proof') { socket.write('{"not_proof":true}\n'); continue; }
           if (mode === 'non-json') { socket.write('not JSON\n'); continue; }
           const key = mode === 'other-key' ? randomBytes(32) : daemonKey();
@@ -56,7 +58,8 @@ async function standIn(mode: ProofMode, socketPath = getServerSocketPath()) {
           const proof = mode === 'null' || !key ? null : daemonProof(key, message.codegraph_challenge, proofPath);
           socket.write(JSON.stringify({ codegraph_proof: proof }) + '\n');
         } else if (message.method === 'codegraph/releaseProject') {
-          socket.write('{"jsonrpc":"2.0","id":"release","result":{"released":true}}\n');
+          if (mode === 'null-reply') socket.write('null\n');
+          else socket.write('{"jsonrpc":"2.0","id":"release","result":{"released":true}}\n');
         }
       }
     });
@@ -66,7 +69,7 @@ async function standIn(mode: ProofMode, socketPath = getServerSocketPath()) {
     for (const socket of sockets) socket.destroy();
     server.close(() => resolve());
   }) });
-  return { lines, socketPath };
+  return { lines, socketPath, disconnect: () => { for (const socket of sockets) socket.destroy(); } };
 }
 
 function writeLock(socketPath: string) {
@@ -76,6 +79,27 @@ function writeLock(socketPath: string) {
 }
 
 describe('project release proof before control hello', () => {
+  it.each(['null-hello', 'null-proof', 'null-reply'] as const)(
+    'returns failed without an uncaught exception for %s', async (mode) => {
+      const fake = await standIn(mode);
+      writeLock(fake.socketPath);
+      const uncaught: unknown[] = [];
+      process.setUncaughtExceptionCaptureCallback(error => { uncaught.push(error); fake.disconnect(); });
+      try {
+        expect(await requestProjectRelease(root, 1000)).toBe('failed');
+        if (mode === 'null-hello') expect(fake.lines).toEqual([]);
+        if (mode === 'null-proof') expect(fake.lines).toEqual([{ codegraph_challenge: expect.any(String) }]);
+        if (mode === 'null-reply') expect(fake.lines).toEqual([
+          { codegraph_challenge: expect.any(String) },
+          { codegraph_client: 1, control: 1, pid: process.pid, hostPid: null },
+          { jsonrpc: '2.0', id: 'release', method: 'codegraph/releaseProject', params: { root } },
+        ]);
+        expect(uncaught).toEqual([]);
+      } finally {
+        process.setUncaughtExceptionCaptureCallback(null);
+      }
+    },
+  );
   it.each(['other-key', 'other-path', 'null', 'non-proof', 'non-json', 'close', 'none'] as const)(
     'sends only the challenge and returns failed for %s', async (mode) => {
       const fake = await standIn(mode);

@@ -268,7 +268,7 @@ const RELEASE_TIMEOUT_MS = 20_000;
  *     release request, and replied with a result: neither it nor its builder holds anything for `root`.
  *   - `failed`: what connected sent a line that is not a server hello, or closed, errored or timed out before
  *     its hello; or after the hello it sent anything but a matching proof (another
- *     key or socket path, a null proof, another line, a line that is not JSON), or closed, errored or timed out
+ *     key or socket path, a null proof, another line, a line that is not a JSON object), or closed, errored or timed out
  *     before its proof; or it proved itself and then answered the release with an error, something else, or
  *     nothing in time. The caller must not rebuild under a server that may still hold the database.
  */
@@ -304,6 +304,14 @@ export function isServerHello(message: Record<string, unknown>): boolean {
  */
 export function controlClientHelloLine(): string {
   return JSON.stringify({ codegraph_client: 1, control: 1, pid: process.pid, hostPid: null }) + '\n';
+}
+
+/** A line parsed as a JSON object; undefined for a line that is not JSON or is null, an array or a scalar. */
+function parseObjectLine(line: string): Record<string, unknown> | undefined {
+  let parsed: unknown;
+  try { parsed = JSON.parse(line); } catch { return undefined; }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
 }
 
 /** One {@link requestProjectRelease} attempt on one socket path. */
@@ -348,8 +356,8 @@ function releaseOverSocket(
 
     // One line read; the attempt's result once it has one.
     function releaseStep(line: string): 'released' | 'no-server' | 'failed' | undefined {
-      let message: Record<string, unknown>;
-      try { message = JSON.parse(line) as Record<string, unknown>; } catch { return 'failed'; }
+      const message = parseObjectLine(line);
+      if (!message) return 'failed';
       switch (phase) {
         case 'hello':
           // The first line is the server's hello; anything else is not our server.
