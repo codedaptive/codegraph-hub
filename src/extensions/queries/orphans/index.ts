@@ -19,7 +19,7 @@ import { getDatabasePath } from '../../../db';
 import { changedFiles, hasUnreadRanges, refExists } from '../blast/diff';
 import { GrepIndexError, searchIndexText } from '../grep/grep-core';
 import { git } from '../shared/git';
-import { validatePathWithinRoot } from '../../../utils';
+import { projectSourceReader } from '../shared/projectSourceReader';
 import { checkIndexCurrency, currencyFailure } from './freshness';
 import { findOrphans, MentionSearchIncompleteError, type OrphansIO } from './orphans';
 import { jsonReport, textReport } from './render';
@@ -97,22 +97,14 @@ export async function runOrphans(root: string, args: OrphansArgs): Promise<Orpha
   const stale = currencyFailure(currency);
   if (stale !== null) return fail(stale);
 
+  const readSource = projectSourceReader(absRoot);
   const io: OrphansIO = {
     // Pre-image read: `./` makes the path relative to the cwd, the project root, which is
     // what `--relative` diff paths are relative to.
     preImage: (file) => git(absRoot, ['show', `${mergeBase}:./${file.oldPath ?? file.path}`]),
-    // Source read: only a file whose real location is inside the project (the leak-safe
-    // policy of the content-serving reads, #527). An indexed symlink leading outside, which
-    // the indexer follows (#935), is refused like a missing file; the search refuses it too.
-    source: (rel) => {
-      const safe = validatePathWithinRoot(absRoot, rel);
-      if (safe === null) return null;
-      try {
-        return fs.readFileSync(safe, 'utf8');
-      } catch {
-        return null;
-      }
-    },
+    // Source read: `projectSourceReader` is the policy (only a file whose real location is
+    // inside the project; refused or unreadable reads as missing); the search refuses the same.
+    source: (rel) => readSource(rel) ?? null,
     // Text-mention check: grep-by-symbol's search stage (`searchIndexText`, no per-hit symbol
     // attribution) over exactly the indexed files. `truncated.files` counts the ones it refuses
     // or cannot read (missing, unreadable, not a regular file, leading outside the project),
