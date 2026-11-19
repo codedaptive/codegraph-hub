@@ -20,7 +20,6 @@ beforeEach(() => {
   vi.stubEnv('CODEGRAPH_STATE_DIR', dir);
   vi.stubEnv('HOME', dir);
   vi.stubEnv('USERPROFILE', dir);
-  vi.stubEnv('CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS', '0');
 });
 afterEach(async () => {
   await daemon?.close();

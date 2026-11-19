@@ -3,6 +3,10 @@ import { daemonAnswerProves } from '../../../src/mcp/daemonAnswerProves';
 import { routeHandshakeStep } from '../../../src/extensions/host/builder/routeHandshakeStep';
 
 vi.mock('../../../src/mcp/daemonAnswerProves', () => ({ daemonAnswerProves: vi.fn() }));
+vi.mock('../../../src/mcp/server-control', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../src/mcp/server-control')>(),
+  controlClientHelloLine: () => '{"codegraph_client":1,"control":1,"pid":1234,"hostPid":null}\n',
+}));
 
 const lock = { pid: 1234, version: '1.2.3', socketPath: '/socket/server', startedAt: 1, stateDir: '/state', stateId: 'state' };
 const hello = { protocol: 1, codegraph: '1.2.3', pid: 1234 };
@@ -31,7 +35,7 @@ describe('routeHandshakeStep', () => {
   it('opens and writes the control hello on a valid proof', () => {
     vi.mocked(daemonAnswerProves).mockReturnValue(true);
     expect(routeHandshakeStep('proof', { codegraph_proof: 'proof' }, lock, challenge)).toEqual({
-      next: 'open', write: `{"codegraph_client":1,"control":1,"pid":${process.pid},"hostPid":null}\n`,
+      next: 'open', write: '{"codegraph_client":1,"control":1,"pid":1234,"hostPid":null}\n',
     });
     expect(daemonAnswerProves).toHaveBeenCalledWith('handshake-challenge', '/socket/server', 'proof');
   });
