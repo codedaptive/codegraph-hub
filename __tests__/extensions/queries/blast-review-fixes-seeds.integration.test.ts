@@ -19,6 +19,7 @@ import { blastRadius, type BlastReport, type Seed } from '../../../src/extension
 import { jsonReport } from '../../../src/extensions/queries/blast/render';
 import { runBlast } from '../../../src/extensions/queries/blast/index';
 import { openBlastStore } from '../../../src/extensions/queries/blast/store';
+import { projectSourceReader } from '../../../src/extensions/queries/shared/projectSourceReader';
 
 const tempRoots: string[] = [];
 
@@ -78,7 +79,7 @@ function blastJson(root: string): BlastReport {
 function seedsFor(root: string, file: ChangedFile): Seed[] {
   const store = openBlastStore(root);
   try {
-    return blastRadius(store, [file], 'hand-built', 2).seeds;
+    return blastRadius(store, [file], 'hand-built', 2, { readSource: projectSourceReader(root) }).seeds;
   } finally {
     store.close();
   }
@@ -106,7 +107,7 @@ function modifiedU(): ChangedFile {
 function handBuiltReport(root: string): BlastReport {
   const store = openBlastStore(root);
   try {
-    return blastRadius(store, [modifiedU()], 'hand-built', 2);
+    return blastRadius(store, [modifiedU()], 'hand-built', 2, { readSource: projectSourceReader(root) });
   } finally {
     store.close();
   }
