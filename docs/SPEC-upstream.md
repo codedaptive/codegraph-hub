@@ -152,10 +152,10 @@ Linux and Windows, if they want it.
       stays meaningful and the next upstream merge has a base. Each of our features is one squash with a `Feature:`
       trailer, so it can still be offered upstream as a pull request. `main` is never force-pushed.
     - The backporter lane builds each batch on the `candidate` branch, cut from `main` (R-56 (3); the name `candidate` is R-58): the upstream merge the batch
-      needs, then one squash per feature changed since the last batch, cleaned (§4's exclusions, R-19's rules, the
-      README per item 3). `develop` is not cleaned (item 12), so `candidate` differs from it by exactly that cleaning.
+      needs, then one squash per feature changed since the last batch, cleaned (§4's exclusions with §6 item 1's `docs/SPEC*.md`, R-19's rules, the
+      README per item 3). `develop` is not scrubbed (item 12), so `candidate` differs from it by exactly that cleaning.
       The candidate is done when two things hold. First, its tree equals `develop`'s tree for the same `ours` once
-      that tree is cleaned the same way: §4's exclusions removed, R-19's rules applied, the README per item 3.
+      that tree is cleaned the same way: §4's exclusions and §6 item 1's `docs/SPEC*.md` removed, R-19's rules applied, the README per item 3.
       Second, the whole-suite gate passes on it. The backporter then merges it into `main` and pushes. That push is the
       publishing gate (rules/global.md rule 12): it refuses any change that still carries an open security finding.
       It is not the only one: the `develop` push (item 11) is checked the same way, so no public push carries one.
