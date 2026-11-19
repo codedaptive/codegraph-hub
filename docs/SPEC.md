@@ -219,11 +219,12 @@ On throwaway clones, never live team worktrees, and against a development server
 - Deleting a worktree frees its index within one housekeeping interval; killing the builder mid-write leaves no
   lock that blocks the next write.
 
-## 8. Status (2026-11-18)
+## 8. Status (2026-11-19)
 
 Every item of the governing spec [B1]-[B14] is built and shipped, [B1]'s "or directory" included as R-50 restores
-it (the opt-in for a folder outside git, sm.16). Installed globally: **1.6.2-sm.16** (ours 3d65edec, 2026-11-17,
-R-52); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public: `codedaptive/codegraph-hub`,
+it (the opt-in for a folder outside git, sm.16). Installed globally: **1.6.3-sm.17** (ours 987c3715, 2026-11-19,
+R-55); running sessions moved to it with `/mcp reconnect codegraph`, no restart, all but moot/Coord-CognitionKit (busy
+through the reconnect; it stays on sm.16, served in-process, until its next reconnect or restart). Public: `codedaptive/codegraph-hub`,
 release `v1.6.2-sm.12` (R-31, R-32). The last upstream main merged into ours is e879216b (ours 7355b297, after sm.17; sm.17 carries cc17b69a). What is left, in queue
 order, is the second table.
 
