@@ -1,6 +1,7 @@
 /**
- * One step of the CLI route's handshake with the machine server (./cli-route.ts RouteConnection). Pure apart
- * from reading this user's daemon key for the proof check (src/mcp/daemonAnswerProves.ts).
+ * One step of the CLI route's handshake with the machine server (./cli-route.ts RouteConnection). Reads this
+ * user's daemon key for the proof check (src/mcp/daemonAnswerProves.ts) and this process's pid for the control
+ * client hello (src/mcp/server-control.ts controlClientHelloLine); nothing else outside its arguments.
  */
 import type { ServerLockInfo } from '../../../mcp/daemon-paths';
 import { controlClientHelloLine, isServerHello } from '../../../mcp/server-control';

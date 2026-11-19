@@ -33,6 +33,7 @@ import { requestProjectRelease } from '../../mcp/server-control';
 import { releaseWriterLock, tryAcquireWriterLock } from '../../mcp/writer-lock';
 import { REBUILD_IN_PROGRESS_MESSAGE } from './builder/fences';
 import { builderRoute } from './builder/cli-route';
+import { unprovenReleaseRefusal } from './unprovenReleaseRefusal';
 
 /** Deletes the project's index. `readOnly`: open it read-only (the routed path; the CLI migrates nothing it deletes). */
 export type RemoveIndex = (readOnly: boolean) => void | Promise<void>;
@@ -73,13 +74,9 @@ export async function removeIndexReleased(projectPath: string, remove: RemoveInd
   if (rebuild.kind === 'taken') throw new Error(REBUILD_IN_PROGRESS_MESSAGE);
   try {
     const realRoot = fs.realpathSync(projectPath);
-    const released = await requestProjectRelease(realRoot);
-    if (released === 'failed') {
-      throw new Error(
-        `The CodeGraph server did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
-        'Stop it with `codegraph daemon --stop`, then retry `codegraph uninit`.',
-      );
-    }
+    let failedSocket = '';
+    const released = await requestProjectRelease(realRoot, undefined, (socketPath) => { failedSocket = socketPath; });
+    if (released === 'failed') throw new Error(unprovenReleaseRefusal(realRoot, failedSocket, '`codegraph uninit`'));
     await remove(false);
   } finally {
     // Deleted with the directory when the uninit succeeded; released here when it did not.
