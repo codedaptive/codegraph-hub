@@ -2,6 +2,10 @@
  * Blast on a real index of a Rust git fixture. C2 edits two functions; callers
  * live in separate out-of-line modules declared with and without cfg(test).
  * Fixture checks establish the indexed call edges before classification checks.
+ * Module cases read the blast run on C2; area cases read it too (unchanged cfg-test
+ * caller: its area's tests are 'stale'). A second blast run follows an edit to
+ * src/store/tests.rs in the working tree (never committed): that file is then a
+ * changed test ('changed'), not an area seed.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
