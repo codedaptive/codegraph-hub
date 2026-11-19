@@ -12,8 +12,8 @@
  * launcher hears an older server's hello on the state dir's socket, or — when it
  * listens elsewhere — finds it by the state dir's lock. A server of the same, a
  * newer or an unknown version is never touched, so two installed versions
- * cannot fight over the server. (The stop primitive itself is unit-tested in
- * extensions/host/server-control.unit.test.ts.)
+ * cannot fight over the server. (The stop primitive itself is tested in
+ * extensions/host/server-control.validation.test.ts.)
  *
  * The end-to-end cases run real servers of other versions: this build's dist/
  * linked into a temp "install" whose package.json carries another version. A
