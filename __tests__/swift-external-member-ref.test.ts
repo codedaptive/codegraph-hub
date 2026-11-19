@@ -19,10 +19,10 @@
  * Known limits, pinned here: an alias receiver gets no edge (an `it.todo` holds
  * the edge it should get); a local or parameter that shadows a project type's
  * name cannot be told from the type, since Swift locals/params are not indexed
- * (`it.fails`); a sync that makes the call resolve leaves the parked
- * `references` edge in place (`it.fails`); and a member of an extension the
- * extraction ends early reads as external (`it.fails`). Every case of a
- * comma-separated enum case list is declared.
+ * (`it.fails`); and a sync that makes the call resolve leaves the parked
+ * `references` edge in place (`it.fails`). Every case of a comma-separated
+ * enum case list is declared, and so is a member of an extension continued on
+ * a `|` line.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -568,7 +568,7 @@ struct LifeTool: ParsableCommand {}
   });
 });
 
-describe('Swift: comma-separated enum cases, and members the index does not hold yet', () => {
+describe('Swift: comma-separated enum cases, and a member of a `|`-continued extension', () => {
   const GAPS: Record<string, string> = {
     // A comma-separated case list: every case is declared.
     'Sources/Kit/CompleteJSON.swift': `enum CompleteJSON {
@@ -577,8 +577,8 @@ describe('Swift: comma-separated enum cases, and members the index does not hold
     static func first() { _ = Value.object([]) }
 }
 `,
-    // The grammar drops this extension (a `static let` continued on a `|` line),
-    // indexing `accessFloor` as a top-level function.
+    // A `static let` continued on a `|` line stays inside the extension, so
+    // `accessFloor` is a method of KGFact.
     'Sources/Kit/Fact.swift': `public struct KGFact { var operationalBitmap: Int64 = 0 }
 `,
     'Sources/Kit/FactOperational.swift': `public extension KGFact {
@@ -595,11 +595,10 @@ describe('Swift: comma-separated enum cases, and members the index does not hold
 `,
   };
 
-  // The first test pins the fixture: every enum case indexed, and the dropped
-  // extension indexed as the extension gap expects, so a broken fixture cannot
-  // pass as that gap's expected failure. The extension gap is pinned with
-  // it.fails; resolution cannot see a declaration the index does not hold.
-  it('the fixture indexes every enum case and the dropped extension as the gates expect', async () => {
+  // The first test pins the fixture: every enum case indexed, and the
+  // `|`-continued extension's member indexed as a method of KGFact, so a broken
+  // fixture cannot pass the extension case.
+  it('the fixture indexes every enum case and the `|`-continued extension member as a method of KGFact', async () => {
     const root = makeProjectOf('cg-swift-ext-member-gaps-', GAPS);
     const cg = await CodeGraph.init(root, { index: true });
     try {
@@ -607,7 +606,7 @@ describe('Swift: comma-separated enum cases, and members the index does not hold
         expect(cg.getNodesByName(name).map((n) => `${n.kind} ${n.qualifiedName}`), name).toEqual([`enum_member CompleteJSON::Value::${name}`]);
       }
       expect(edgesFromMethod(cg, 'CompleteJSON::first', 'Value', ['references'])).toEqual([]);
-      expect(cg.getNodesByName('accessFloor').map((n) => `${n.kind} ${n.qualifiedName}`)).toEqual(['function accessFloor']);
+      expect(cg.getNodesByName('accessFloor').map((n) => `${n.kind} ${n.qualifiedName}`)).toEqual(['method KGFact::accessFloor']);
     } finally {
       cg.close();
     }
@@ -622,12 +621,12 @@ describe('Swift: comma-separated enum cases, and members the index does not hold
       cg.close();
     }
   });
-  // Extraction gap: Swift extension parsing in src/extraction/tree-sitter.ts — a `|` continuation line ends the extension.
-  it.fails('a member of an extension the grammar drops is declared (extraction: the `|` continuation ends the extension)', async () => {
+  it('a member of an extension continued on a `|` line is declared', async () => {
     const root = makeProjectOf('cg-swift-ext-member-gaps-', GAPS);
     const cg = await CodeGraph.init(root, { index: true });
     try {
       expect(edgesFromMethod(cg, 'Uses::floor', 'KGFact', ['references'])).toEqual([]);
+      expect(edgesFromMethod(cg, 'Uses::floor', 'accessFloor', ['calls'])).toEqual(['calls -> method KGFact::accessFloor']);
     } finally {
       cg.close();
     }
