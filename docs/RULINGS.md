@@ -706,7 +706,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
   src/extraction/grammars.ts (`isSourceFile`), orc-approved, and an upstream PR candidate; (b) is resolution's.
 - Basis: Orc-Codeteam #3515; team-codeteam/design/Orc-Codeteam/ledger/reports/codegraph-gaps-20261117.md section 2.
 - Work implied: Orc-Codegraph orders both after the incident set.
-- Built: sm.17 (ours d57e5d7e, 2026-11-18). (a) host's extensionless-file language read with orc's hook-ins in
+- Built: sm.17 (ours 987c3715, 2026-11-18). (a) host's extensionless-file language read with orc's hook-ins in
   grammars.ts and detectLanguage; only languages CodeGraph parses, shell scripts and binaries stay out (S-96, S-97).
   (b) resolution's Python loader: a literal path given to `SourceFileLoader` or `spec_from_file_location` is an
   imports edge to that file.
@@ -747,7 +747,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
   the owning lanes, each commit message naming its upstream PR number, through the usual landing and the next
   release. If upstream merges one of them first, it comes in with the main merge instead.
 - Work implied: Orc-Codegraph orders them in that place in the queue.
-- Done: sm.17 (ours d57e5d7e, 2026-11-18). #3256 came in with the upstream main merge as upstream's #3365 (S-91);
+- Done: sm.17 (ours 987c3715, 2026-11-18). #3256 came in with the upstream main merge as upstream's #3365 (S-91);
   #3303, #3226 and #3261 taken in orc work orders, #3258 by resolution with its test and changelog line from orc
   (S-95); each commit names its upstream PR.
 
