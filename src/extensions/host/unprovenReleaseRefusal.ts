@@ -1,6 +1,7 @@
 /**
  * The refusal `codegraph index`, `codegraph uninit` and the `codegraph init` of a root the builder stopped at a limit
- * give when something answered on a server socket but did not confirm it released the root (`requestProjectRelease` answered 'failed'), so the database may still be open.
+ * give when the CLI connected to a server socket but the process on it did not confirm it released the root
+ * (`requestProjectRelease` returned 'failed'), so the database may still be open.
  *
  * `codegraph daemon --stop` (stopServer, src/mcp/server-control.ts) acts only on the pid its lock (server.pid) names,
  * after the hello on the lock's socket names that pid. 'busy', 'not-running' and 'unverified' leave the holder of
