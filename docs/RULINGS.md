@@ -805,3 +805,15 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Reason: Bob's word: the round is finished before the team stands down.
 - Not chosen: sm.17 now and the six items in an sm.18.
 - Work implied: Orc-Codegraph orders R-51 and R-49 at once (#4606) and holds Stage 6 for them.
+
+## R-55. Q-44: install 1.6.3-sm.17
+- Date: 2026-11-19 / Bob, direct ("a"), on Q-44 (option a), in chat with Designer-Codegraph.
+- Question: sm.17 is proven (ours 987c3715, Stage 6 passed) and packed as
+  `releases/colbymchenry-codegraph-1.6.3-sm.17.tgz` (sha256 560edae5…aa6e2; 1.6.3, since the base follows the
+  merged upstream, S-102). Under R-18 and R-54 it replaces the running 1.6.2-sm.16 only on Bob's go. Install it now
+  or hold until he is back?
+- Ruling: go. Orc-Codegraph installs it by the sm.16 path (R-52: tarball check, global install, verify-teams;
+  running sessions reconnect). The install follows only a release gate that passes. Then the team stands down.
+- Not chosen: holding the install until Bob is back in person.
+- Work implied: Orc-Codegraph installs sm.17 and reports the release record (RULING #5220); SPEC §8's "Installed
+  globally" line then names 1.6.3-sm.17.
