@@ -24,6 +24,7 @@ import { BLAST_WALK_KINDS, blastRadius, type BlastReport } from '../../../src/ex
 import { markdownReport, textReport } from '../../../src/extensions/queries/blast/render';
 import { blastToolHandler, parseBlastArgv, runBlast } from '../../../src/extensions/queries/blast/index';
 import { openBlastStore } from '../../../src/extensions/queries/blast/store';
+import { projectSourceReader } from '../../../src/extensions/queries/shared/projectSourceReader';
 
 /** Run git in `root` with a local identity; throws on failure so a broken fixture is loud. */
 function git(root: string, ...args: string[]): string {
@@ -228,7 +229,7 @@ describe('blast on repo A (C2 edits the body of helper)', () => {
     try {
       const cs = changedFiles(root, 'C1');
       expect(cs).not.toBeNull();
-      expect(textReport(blastRadius(store, cs!.files, cs!.basis, 2))).toBe(r.output);
+      expect(textReport(blastRadius(store, cs!.files, cs!.basis, 2, { readSource: projectSourceReader(root) }))).toBe(r.output);
     } finally {
       store.close();
     }
@@ -278,7 +279,7 @@ describe('blast on repo A (C2 edits the body of helper)', () => {
       expect(cs).not.toBeNull();
       const spy = vi.spyOn(store, 'incomingEdges');
       const depth = 2;
-      const r = blastRadius(store, cs!.files, cs!.basis, depth);
+      const r = blastRadius(store, cs!.files, cs!.basis, depth, { readSource: projectSourceReader(root) });
       expect(r.impacted.length).toBeGreaterThan(0);
       expect(spy).toHaveBeenCalled();
       expect(spy.mock.calls.length).toBeLessThanOrEqual(depth * cs!.files.length);

@@ -77,7 +77,7 @@ describe('builder job limit', { timeout: 90_000 }, () => {
     expect(fs.existsSync(path.join(root, '.codegraph', 'rebuild.pid'))).toBe(false);
     expect(await service.queue.enqueue('sync', other, ({ id: nextId }) => supervisor.run(nextId, {
       kind: 'sync', root: other, writerPid: process.pid,
-      module: path.resolve(__dirname, '../../fixtures/job-process-bodies.cjs'), export: 'progress', args: null,
+      module: path.resolve(__dirname, 'fixtures/job-process-bodies.cjs'), export: 'progress', args: null,
     }))).toEqual({ answer: 42 });
   });
 });
