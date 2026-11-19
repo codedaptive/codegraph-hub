@@ -8,10 +8,11 @@
  * in the system temp folder on Linux (/tmp; macOS's is per-user), and on Windows the named pipe,
  * whose name lives in one namespace every user can create in. Node can read
  * neither the peer's user on a socket nor a pipe's owner. What a stand-in can't
- * do is read a file only this user can read. So the client sends a fresh random
- * challenge in its client-hello, and this user's daemon answers with an HMAC of
- * it, and of the path it listens on, under a key kept in that file. A proof
- * from the real daemon for another path, relayed, does not match.
+ * do is read a file only this user can read. So after the daemon's hello the
+ * client sends a line holding only a fresh random challenge, and this user's
+ * daemon answers with an HMAC of it, and of the path it listens on, under a key
+ * kept in that file; the client sends its client hello only once that matches.
+ * A proof from the real daemon for another path, relayed, does not match.
  *
  * The key is per user, `~/.codegraph/daemon.key`, made on first use with mode
  * 0600. On macOS and Linux a key another user owns, or that others can read,

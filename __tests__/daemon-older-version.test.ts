@@ -119,7 +119,7 @@ describe('connectWithHello', () => {
     }
   });
 
-  it('sends its pids and the launch directory in the client hello, right after verifying the server hello', async () => {
+  it('sends its pids and launch directory only after verifying the server proof', async () => {
     const socketPath = listenPath(dir, 'daemon');
     const received: string[] = [];
     server = net.createServer((socket) => {
@@ -131,9 +131,8 @@ describe('connectWithHello', () => {
         const all = received.join('');
         if (proved || !all.includes('\n')) return;
         proved = true;
-        // Answer the hello's challenge as this user's server does, so the connect succeeds.
-        const hello = JSON.parse(all.slice(0, all.indexOf('\n')));
-        socket.write(JSON.stringify({ codegraph_proof: daemonProof(daemonKey()!, hello.challenge, socketPath) }) + '\n');
+        const challenge = JSON.parse(all.slice(0, all.indexOf('\n')));
+        socket.write(JSON.stringify({ codegraph_proof: daemonProof(daemonKey()!, challenge.codegraph_challenge, socketPath) }) + '\n');
       });
     });
     await listen(server, socketPath);
@@ -141,11 +140,13 @@ describe('connectWithHello', () => {
     const socket = await connectWithHello(socketPath, '1.6.2', 3_000, launchDir);
     expect(typeof socket).toBe('object');
     const line = await vi.waitFor(() => {
-      const first = received.join('').split('\n')[0];
-      if (!first) throw new Error('no client hello yet');
-      return first;
+      const second = received.join('').split('\n')[1];
+      if (!second) throw new Error('no client hello yet');
+      return second;
     });
-    expect(JSON.parse(line)).toMatchObject({ codegraph_client: 1, pid: process.pid, launchDir, challenge: expect.any(String) });
+    expect(JSON.parse(received.join('').split('\n')[0])).toEqual({ codegraph_challenge: expect.any(String) });
+    expect(JSON.parse(line)).toMatchObject({ codegraph_client: 1, pid: process.pid, launchDir });
+    expect(JSON.parse(line)).not.toHaveProperty('challenge');
     (socket as net.Socket).destroy();
   });
 });

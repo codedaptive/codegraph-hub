@@ -23,6 +23,7 @@ import { getStateDir } from '../../../src/extensions/host/server/state-dir';
 import { installFirmlinkAlias } from './firmlink-alias';
 import { encodeServerLock, getServerPidPath, getServerSocketCandidates, getServerSocketPath, type ServerLockInfo } from '../../../src/mcp/daemon-paths';
 import { tryAcquireDaemonLock } from '../../../src/mcp/daemon';
+import { daemonKey, daemonProof } from '../../../src/mcp/daemon-proof';
 import * as serverControl from '../../../src/mcp/server-control';
 import {
   isProcessAlive,
@@ -519,6 +520,10 @@ async function startServerProcessReleasing(socketPath: string): Promise<{ close(
       for (let nl = buffer.indexOf('\n'); nl >= 0; nl = buffer.indexOf('\n')) {
         const line = JSON.parse(buffer.slice(0, nl)) as Record<string, unknown>;
         buffer = buffer.slice(nl + 1);
+        if (typeof line.codegraph_challenge === 'string') {
+          const key = daemonKey();
+          socket.write(JSON.stringify({ codegraph_proof: key ? daemonProof(key, line.codegraph_challenge, socketPath) : null }) + '\n');
+        }
         if (line.method === 'codegraph/releaseProject') {
           socket.write(JSON.stringify({ jsonrpc: '2.0', id: line.id, result: { released: true } }) + '\n');
         }
