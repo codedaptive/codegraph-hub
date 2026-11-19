@@ -122,11 +122,20 @@ describe('unproven release from a socket squatter', () => {
           loadEngine: () => import('../../../src/index'),
         })
         : removeIndexReleased(root, () => fs.rmSync(indexDir, { recursive: true, force: true }));
-      await expect(result).rejects.toThrow('did not confirm that it released');
+      const message = await result.then(() => '', (error: Error) => error.message);
+      const realRoot = fs.realpathSync(root);
+      const retry = operation === 'index' ? '`codegraph index`' : '`codegraph uninit`';
+      expect(message.startsWith(`The process on ${socketPath} did not confirm that it released ${realRoot}`)).toBe(true);
+      expect(message).toBe(
+        `The process on ${socketPath} did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
+        `Run \`codegraph daemon --stop\`, then retry ${retry}. ` +
+        'The stop acts only on the process the server lock (server.pid) names, ' +
+        "and only when the hello on the lock's socket names that process. " +
+        `If the stop does not report that it stopped the server, or ${retry} refuses again, ` +
+        `find the process listening on ${socketPath}, check it is nothing you need, stop it, then retry ${retry}.`,
+      );
+      if (operation === 'uninit') expect(message).not.toContain('`codegraph index`');
       expect(fs.readFileSync(dbPath)).toEqual(original);
-      await expect(result).rejects.toThrow('`codegraph daemon --stop`');
-      await expect(result).rejects.toThrow(socketPath);
-      if (operation === 'index') await expect(result).rejects.toThrow('`codegraph index`');
     },
   );
 
@@ -147,12 +156,20 @@ describe('unproven release from a socket squatter', () => {
       loadEngine: () => import('../../../src/index'),
       onRetry,
     });
-    await expect(result).rejects.toThrow(socketPath);
-    await expect(result).rejects.toThrow('did not confirm that it released');
-    await expect(result).rejects.toThrow('`codegraph daemon --stop`');
+    const message = await result.then(() => '', (error: Error) => error.message);
+    const realRoot = fs.realpathSync(root);
+    expect(message.startsWith(`The process on ${socketPath} did not confirm that it released ${realRoot}`)).toBe(true);
+    expect(message).toBe(
+      `The process on ${socketPath} did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
+      'Run `codegraph daemon --stop`, then retry `codegraph init`. ' +
+      'The stop acts only on the process the server lock (server.pid) names, ' +
+      "and only when the hello on the lock's socket names that process. " +
+      'If the stop does not report that it stopped the server, or `codegraph init` refuses again, ' +
+      `find the process listening on ${socketPath}, check it is nothing you need, stop it, then retry \`codegraph init\`.`,
+    );
+    expect(message).not.toContain('`codegraph index`');
+    expect(message).not.toContain('`codegraph uninit`');
     expect(onRetry).toHaveBeenCalledOnce();
-    await expect(result).rejects.toThrow('`codegraph init`');
-    await expect(result).rejects.not.toThrow('`codegraph index`');
   });
 
   it('reports the socket path of the failed release attempt to the callback', async () => {
