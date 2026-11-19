@@ -2350,7 +2350,7 @@ program
             `Process ${stop.pid} holds the server lock but did not answer as the CodeGraph server, so it was left running. ` +
             'If it is not a CodeGraph server, delete the stale server.pid in the state dir. ' +
             'That does not stop a process listening on the server socket; ' +
-            'if `codegraph index` or `codegraph uninit` still refuses, it names that socket.'
+            'if `codegraph index`, `uninit` or `init` still refuses, it names that socket.'
           );
           process.exit(1);
         }

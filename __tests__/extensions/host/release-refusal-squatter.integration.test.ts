@@ -38,7 +38,7 @@ afterEach(async () => {
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
-async function startSquatter(): Promise<{ child: ChildProcess; socketPath: string }> {
+async function startSquatter(silent = false): Promise<{ child: ChildProcess; socketPath: string }> {
   const socketPath = path.join(stateDir, 'server.sock');
   const source = `
     const net = require('net');
@@ -46,6 +46,7 @@ async function startSquatter(): Promise<{ child: ChildProcess; socketPath: strin
     const version = process.argv[2];
     net.createServer(socket => {
       socket.on('error', () => {});
+      if (process.argv[3] === 'silent') return;
       socket.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath, protocol: 1 }) + '\\n');
       let buffer = '';
       socket.on('data', chunk => {
@@ -61,7 +62,7 @@ async function startSquatter(): Promise<{ child: ChildProcess; socketPath: strin
       });
     }).listen(socketPath, () => console.log('ready'));
   `;
-  const child = spawn(process.execPath, ['-e', source, socketPath, CodeGraphPackageVersion], {
+  const child = spawn(process.execPath, ['-e', source, socketPath, CodeGraphPackageVersion, silent ? 'silent' : 'hello'], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   children.push(child);
@@ -147,6 +148,8 @@ describe('unproven release from a socket squatter', () => {
       onRetry,
     });
     await expect(result).rejects.toThrow(socketPath);
+    await expect(result).rejects.toThrow('did not confirm that it released');
+    await expect(result).rejects.toThrow('`codegraph daemon --stop`');
     expect(onRetry).toHaveBeenCalledOnce();
     await expect(result).rejects.toThrow('`codegraph init`');
     await expect(result).rejects.not.toThrow('`codegraph index`');
@@ -179,6 +182,26 @@ describe('unproven release from a socket squatter', () => {
       outcome: 'not-running', pid: dead.pid, version: CodeGraphPackageVersion,
     });
     await expectSquatterAlive(child, socketPath);
+  });
+
+  it('reports busy for a silent squatter without signalling either process', async () => {
+    const { child, socketPath } = await startSquatter(true);
+    const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)']);
+    children.push(other);
+    if (child.pid === undefined || other.pid === undefined) throw new Error('child did not start');
+    expect(child.pid).not.toBe(other.pid);
+    writeLock(other.pid, socketPath);
+
+    expect(await stopServer({ graceMs: 200 })).toEqual({
+      outcome: 'busy', pid: other.pid, version: CodeGraphPackageVersion,
+    });
+    expect(isProcessAlive(child.pid)).toBe(true);
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+    expect(isProcessAlive(other.pid)).toBe(true);
+    expect(other.exitCode).toBeNull();
+    expect(other.signalCode).toBeNull();
+    expect(fs.existsSync(socketPath)).toBe(true);
   });
 
   it('does not signal either process when a live lock pid is not the socket holder', async () => {
