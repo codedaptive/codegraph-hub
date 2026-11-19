@@ -176,8 +176,8 @@ export interface DaemonHello {
 }
 
 /**
- * Optional reverse-handshake line a proxy sends right after it verifies the
- * server hello. It carries the proxy's own pids, so the server can reap the
+ * Optional reverse-handshake line a proxy sends once the server has proved it
+ * runs as this user (after the server hello and the challenge line). It carries the proxy's own pids, so the server can reap the
  * client if its process dies WITHOUT the socket ever signalling close (the
  * Windows named-pipe hazard behind #692), and the directory the session was
  * launched in, which fixes the session's repo anchor, and the session's own

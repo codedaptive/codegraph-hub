@@ -261,9 +261,9 @@ describe('the server answers a challenge in its handshake', () => {
     expect(answer.result.content[0].text).toContain('outside it');
   });
 
-  // A client hello without a challenge (the codegraph CLI's control hello sends
-  // none) gets its session with no line ahead of it.
-  it('sends no proof line to a client hello without a challenge', async () => {
+  // A first line that is a client hello (the codegraph CLI's control hello) gets
+  // its session with no proof line ahead of it.
+  it('sends no proof line to a first line that is a client hello', async () => {
     const socketPath = uniqueSocketPath();
     await serverOn(socketPath);
     const { socket, next } = await connect(socketPath);
