@@ -12,8 +12,40 @@ describe('unproven release refusal', () => {
       expect(message).toContain('`codegraph daemon --stop`');
       expect(message).toContain(retry);
       expect(message).toContain('server.pid');
-      expect(message).toContain('busy');
-      expect(message).toContain('no server running');
+    },
+  );
+
+  it.each(['`codegraph index`', '`codegraph uninit`'])(
+    'gives stop-outcome advice without conflating outcomes for %s', (retry) => {
+      const message = unprovenReleaseRefusal('/example/project', '/example/state/server.sock', retry);
+      expect(message).toContain('If the stop reports the server busy, retry the stop in a moment');
+      expect(message).toContain('if it reports the server did not exit, stop that pid as it says');
+      expect(message).toContain('If it reports no server running, or a process that holds the server lock but did not answer as the server');
+      expect(message).toContain('is not this state dir\'s server');
+    },
+  );
+
+  it.each(['`codegraph index`', '`codegraph uninit`'])(
+    'does not infer a squatter just because the refusal comes back for %s', (retry) => {
+      const message = unprovenReleaseRefusal('/example/project', '/example/state/server.sock', retry);
+      expect(message).not.toContain('comes back');
+    },
+  );
+
+  it.each(['`codegraph index`', '`codegraph uninit`'])(
+    'separates busy and still-running advice from the squatter conclusion for %s', (retry) => {
+      const message = unprovenReleaseRefusal('/example/project', '/example/state/server.sock', retry);
+      const busy = message.indexOf('If the stop reports the server busy, retry the stop in a moment');
+      const stillRunning = message.indexOf('if it reports the server did not exit, stop that pid as it says');
+      const noServer = message.indexOf('no server running');
+      const conclusion = message.indexOf('is not this state dir\'s server');
+      expect(busy).toBeGreaterThanOrEqual(0);
+      expect(stillRunning).toBeGreaterThan(busy);
+      expect(noServer).toBeGreaterThan(stillRunning);
+      expect(conclusion).toBeGreaterThan(noServer);
+      expect(message.slice(stillRunning, noServer)).toContain('.');
+      expect(message.slice(noServer, conclusion)).not.toContain('busy');
+      expect(message.slice(noServer, conclusion)).not.toContain('did not exit');
     },
   );
 });

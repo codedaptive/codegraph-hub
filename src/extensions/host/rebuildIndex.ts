@@ -3,8 +3,9 @@
  * `codegraph init` of a root the index builder stopped at a limit runs it (./retryStoppedInit.ts). The caller passes
  * `runIndexOn`, the CLI's supervised, progress-rendered index (it destroys the writer it is given and answers
  * whether the index succeeded), and `loadEngine`, its engine loader, so a module that fails to load is reported
- * as the CLI reports it. Throws when another rebuild holds the root, another process holds its writer lock, or a running
- * server did not release it.
+ * as the CLI reports it. `retryCommand` is the backticked command the unproven-release refusal tells the user to retry
+ * (default `codegraph index`; ./retryStoppedInit.ts passes `codegraph init`). Throws when another rebuild holds the
+ * root, another process holds its writer lock, or a running server did not release it.
  */
 import * as fs from 'node:fs';
 import type { IndexWriter } from './builder/cli-route';
@@ -17,6 +18,7 @@ export async function rebuildIndex(
   deps: {
     runIndexOn: (writer: IndexWriter, dbPath: string, projectPath: string, options: { quiet?: boolean; verbose?: boolean; yes?: boolean }) => Promise<boolean>;
     loadEngine: () => Promise<typeof import('../../index')>;
+    retryCommand?: string;
   },
 ): Promise<boolean> {
   // With a machine server whose index builder is up, the builder rebuilds the index under a lease it holds
@@ -45,7 +47,7 @@ export async function rebuildIndex(
     const realRoot = fs.realpathSync(projectPath);
     let failedSocket = '';
     const released = await requestProjectRelease(realRoot, undefined, (socketPath) => { failedSocket = socketPath; });
-    if (released === 'failed') throw new Error(unprovenReleaseRefusal(realRoot, failedSocket, '`codegraph index`'));
+    if (released === 'failed') throw new Error(unprovenReleaseRefusal(realRoot, failedSocket, deps.retryCommand ?? '`codegraph index`'));
 
     // Keep the writer slot through recreation AND indexing. A reconnecting
     // proxy/server must not open the replacement database halfway through.

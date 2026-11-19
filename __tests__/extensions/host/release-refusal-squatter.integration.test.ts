@@ -6,7 +6,9 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import { DatabaseSync } from 'node:sqlite';
+import { EndedJobsFile } from '../../../src/extensions/host/builder/ended-jobs-file';
 import { rebuildIndex } from '../../../src/extensions/host/rebuildIndex';
+import { retryStoppedInit } from '../../../src/extensions/host/retryStoppedInit';
 import { removeIndexReleased } from '../../../src/extensions/host/uninit';
 import { encodeServerLock } from '../../../src/mcp/daemon-paths';
 import { isProcessAlive, requestProjectRelease, stopServer } from '../../../src/mcp/server-control';
@@ -123,8 +125,32 @@ describe('unproven release from a socket squatter', () => {
       expect(fs.readFileSync(dbPath)).toEqual(original);
       await expect(result).rejects.toThrow('`codegraph daemon --stop`');
       await expect(result).rejects.toThrow(socketPath);
+      if (operation === 'index') await expect(result).rejects.toThrow('`codegraph index`');
     },
   );
+
+  it('tells a stopped init to retry init when a squatter refuses release', async () => {
+    const { socketPath } = await startSquatter();
+    const root = path.join(stateDir, 'project');
+    const indexDir = path.join(root, '.codegraph');
+    fs.mkdirSync(indexDir, { recursive: true });
+    const db = new DatabaseSync(path.join(indexDir, 'codegraph.db'));
+    db.exec('CREATE TABLE sentinel (value TEXT)');
+    db.close();
+    new EndedJobsFile(path.join(stateDir, 'builder-ended-jobs.jsonl')).append({
+      root, kind: 'sync', limit: 'time', at: '2026-11-17T10:00:00Z',
+    });
+    const onRetry = vi.fn();
+    const result = retryStoppedInit(root, {}, {
+      runIndexOn: async () => false,
+      loadEngine: () => import('../../../src/index'),
+      onRetry,
+    });
+    await expect(result).rejects.toThrow(socketPath);
+    expect(onRetry).toHaveBeenCalledOnce();
+    await expect(result).rejects.toThrow('`codegraph init`');
+    await expect(result).rejects.not.toThrow('`codegraph index`');
+  });
 
   it('reports the socket path of the failed release attempt to the callback', async () => {
     const { socketPath } = await startSquatter();
