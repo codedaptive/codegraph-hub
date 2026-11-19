@@ -1410,8 +1410,6 @@ function nearestOverrides(inherited: Node[], chain: ReadonlyMap<string, Node[]>,
  * - when a later sync makes the call resolve (a new extension declares the
  *   member), the retry resolves the call but nothing takes back the parked
  *   `references` edge;
- * - a member the extraction does not index (a member of an extension the
- *   parse ends early) reads as external, so the receiver gets the edge;
  * - a supertype written with the project's own module name (`MyModule.Base`,
  *   where no qualifier segment names a project type) gets no edge:
  *   gateSwiftTypeTarget cannot tell that module from an external one, so it
