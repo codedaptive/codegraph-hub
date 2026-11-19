@@ -4,8 +4,8 @@
  * (`requestProjectRelease` returned 'failed'), so the database may still be open.
  *
  * `codegraph daemon --stop` (stopServer, src/mcp/server-control.ts) acts only on the pid its lock (server.pid) names,
- * after the hello on the lock's socket names that pid. 'busy', 'not-running' and 'unverified' leave the holder of
- * that socket unknown ('busy' is inconclusive, server-control.ts:134-136), and the socket that failed may not be the
+ * after the server on the lock's socket proves itself. 'busy', 'not-running', 'unverified' and 'unproven' leave the
+ * holder of that socket unknown ('busy' is inconclusive; see StopOutcome), and the socket that failed may not be the
  * lock's, so every outcome but a stop that clears the refusal gets the same next step: find and stop whatever listens
  * on the named socket.
  */
@@ -16,7 +16,7 @@ export function unprovenReleaseRefusal(realRoot: string, socketPath: string, ret
     'so it may still hold the database open. ' +
     `Run \`codegraph daemon --stop\`, then retry ${retry}. ` +
     'The stop acts only on the process the server lock (server.pid) names, ' +
-    "and only when the hello on the lock's socket names that process. " +
+    "and only when the server on the lock's socket proves it runs as this user. " +
     `If the stop does not report that it stopped the server, or ${retry} refuses again, ` +
     `find the process listening on ${socketPath}, check it is nothing you need, stop it, then retry ${retry}.`;
 }

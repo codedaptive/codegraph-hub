@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
+import { randomBytes } from 'crypto';
 import { once } from 'events';
 import * as fs from 'fs';
 import * as net from 'net';
@@ -38,15 +39,39 @@ afterEach(async () => {
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
-async function startSquatter(silent = false): Promise<{ child: ChildProcess; socketPath: string }> {
+/**
+ * How the stand-in answers a challenge: 'null' with `codegraph_proof: null`, 'wrong' with 64 '0' hex chars,
+ * 'prove' with the HMAC a server holding $HOME/.codegraph/daemon.key gives (src/mcp/daemon-proof.ts daemonProof),
+ * 'silent' sends not even a hello.
+ */
+type SquatterMode = 'silent' | 'null' | 'wrong' | 'prove';
+
+/** An owner-only key in the sandbox HOME, as a server of this user would have made it. */
+function writeSandboxDaemonKey(): string {
+  const dir = path.join(stateDir, '.codegraph');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const keyPath = path.join(dir, 'daemon.key');
+  fs.writeFileSync(keyPath, randomBytes(32), { mode: 0o600 });
+  return keyPath;
+}
+
+async function startSquatter(mode: SquatterMode = 'null'): Promise<{ child: ChildProcess; socketPath: string }> {
   const socketPath = path.join(stateDir, 'server.sock');
+  const keyPath = mode === 'prove' ? writeSandboxDaemonKey() : '';
   const source = `
+    const crypto = require('crypto');
+    const fs = require('fs');
     const net = require('net');
-    const socketPath = process.argv[1];
-    const version = process.argv[2];
+    const [socketPath, version, mode, keyPath] = process.argv.slice(1);
+    const proofFor = challenge => {
+      if (mode === 'null') return null;
+      if (mode === 'wrong') return '0'.repeat(64);
+      return crypto.createHmac('sha256', fs.readFileSync(keyPath))
+        .update('codegraph-daemon-proof-v1\\0' + challenge + '\\0' + socketPath).digest('hex');
+    };
     net.createServer(socket => {
       socket.on('error', () => {});
-      if (process.argv[3] === 'silent') return;
+      if (mode === 'silent') return;
       socket.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath, protocol: 1 }) + '\\n');
       let buffer = '';
       socket.on('data', chunk => {
@@ -56,13 +81,13 @@ async function startSquatter(silent = false): Promise<{ child: ChildProcess; soc
           const message = JSON.parse(buffer.slice(0, newline));
           buffer = buffer.slice(newline + 1);
           if (typeof message.codegraph_challenge === 'string') {
-            socket.write(JSON.stringify({ codegraph_proof: null }) + '\\n');
+            socket.write(JSON.stringify({ codegraph_proof: proofFor(message.codegraph_challenge) }) + '\\n');
           }
         }
       });
     }).listen(socketPath, () => console.log('ready'));
   `;
-  const child = spawn(process.execPath, ['-e', source, socketPath, CodeGraphPackageVersion, silent ? 'silent' : 'hello'], {
+  const child = spawn(process.execPath, ['-e', source, socketPath, CodeGraphPackageVersion, mode, keyPath], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   children.push(child);
@@ -130,7 +155,7 @@ describe('unproven release from a socket squatter', () => {
         `The process on ${socketPath} did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
         `Run \`codegraph daemon --stop\`, then retry ${retry}. ` +
         'The stop acts only on the process the server lock (server.pid) names, ' +
-        "and only when the hello on the lock's socket names that process. " +
+        "and only when the server on the lock's socket proves it runs as this user. " +
         `If the stop does not report that it stopped the server, or ${retry} refuses again, ` +
         `find the process listening on ${socketPath}, check it is nothing you need, stop it, then retry ${retry}.`,
       );
@@ -163,7 +188,7 @@ describe('unproven release from a socket squatter', () => {
       `The process on ${socketPath} did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
       'Run `codegraph daemon --stop`, then retry `codegraph init`. ' +
       'The stop acts only on the process the server lock (server.pid) names, ' +
-      "and only when the hello on the lock's socket names that process. " +
+      "and only when the server on the lock's socket proves it runs as this user. " +
       'If the stop does not report that it stopped the server, or `codegraph init` refuses again, ' +
       `find the process listening on ${socketPath}, check it is nothing you need, stop it, then retry \`codegraph init\`.`,
     );
@@ -202,7 +227,7 @@ describe('unproven release from a socket squatter', () => {
   });
 
   it('reports busy for a silent squatter without signalling either process', async () => {
-    const { child, socketPath } = await startSquatter(true);
+    const { child, socketPath } = await startSquatter('silent');
     const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)']);
     children.push(other);
     if (child.pid === undefined || other.pid === undefined) throw new Error('child did not start');
@@ -234,5 +259,31 @@ describe('unproven release from a socket squatter', () => {
     expect(other.exitCode).toBeNull();
     expect(other.signalCode).toBeNull();
     await expectSquatterAlive(child, socketPath);
+  });
+
+  it.each(['null', 'wrong'] as const)(
+    'reports unproven and signals nothing when the lock pid says hello but answers the challenge with a %s proof',
+    async mode => {
+      const { child, socketPath } = await startSquatter(mode);
+      if (child.pid === undefined) throw new Error('squatter has no pid');
+      writeLock(child.pid, socketPath);
+      expect(await stopServer({ graceMs: 200 })).toEqual({
+        outcome: 'unproven', pid: child.pid, version: CodeGraphPackageVersion, socketPath,
+      });
+      await expectSquatterAlive(child, socketPath);
+    },
+  );
+
+  it('stops a server that proves it runs as this user', async () => {
+    const { child, socketPath } = await startSquatter('prove');
+    if (child.pid === undefined) throw new Error('stand-in has no pid');
+    writeLock(child.pid, socketPath);
+    const exited = once(child, 'exit');
+    expect(await stopServer({ graceMs: 10_000 })).toEqual({
+      outcome: 'stopped', pid: child.pid, version: CodeGraphPackageVersion,
+    });
+    await exited;
+    expect(child.signalCode).toBe('SIGTERM');
+    expect(isProcessAlive(child.pid)).toBe(false);
   });
 });
