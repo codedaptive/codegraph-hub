@@ -161,5 +161,7 @@ Linux and Windows, if they want it.
       packed `package.json` version, e.g. `v1.6.3-sm.17`; the base follows the merged upstream, S-102), with the
       packed build attached. `develop` gets no releases, so `codegraph upgrade` and the update notice (item 9) offer
       only stable builds.
-    - The first candidate builds `main` from the upstream base sm.17 carries (cc17b69a) and `ours` at sm.17
-      (987c3715), and its release is `v1.6.3-sm.17`. The `pr/<feature>` branches (§3) are left as they are.
+    - The first candidate builds `main` from the newest promoted `ours` that carries no open security finding, and
+      the upstream base that `ours` merged; its release is that build's own version (S-109). sm.17 (987c3715) is
+      not it, because it carries an open security finding. The first is the build after host's `daemon --stop` fix
+      (S-106) promotes, sm.18. The `pr/<feature>` branches (§3) are left as they are.

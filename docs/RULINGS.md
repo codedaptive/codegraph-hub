@@ -847,5 +847,8 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Supersedes: R-36 (the backporter runs the hub's updates, not Bob); R-35 and S-56 for `main` (they govern
   `develop`); R-32 (1)'s tag `v1.6.2-sm.N` (the tag is the build's version, as S-102 found it must be).
 - Expanded in docs/SPEC-upstream.md §7 items 5 and 10. Work implied: Orc-Codegraph asks team codeteam for the
-  backporter lane. The lane's first candidate builds the new `main` from the upstream base sm.17 carries (cc17b69a)
-  and `ours` at sm.17 (987c3715), and publishes `v1.6.3-sm.17` from it.
+  backporter lane. The lane's first candidate builds the new `main` from the newest promoted `ours` with no open
+  security finding, and publishes that build's release from it. That is sm.18, after host's S-106 fix; sm.17 carries
+  an open finding (S-109, correcting this line's first text, which named sm.17).
+- Done in part: Orc-Codeteam made the `backporter` lane in team codegraph as this ruling orders (#5267, via Orc
+  #5270), replacing a snapshot-release home that differed from it.
