@@ -123,14 +123,12 @@ Linux and Windows, if they want it.
      monthly update regenerates it.
 4. **License.** The hub carries upstream's license unchanged (MIT; upstream's `LICENSE` file as is), and the README
    says so.
-5. **Monthly update.** *Superseded for `develop` by item 11 (R-57, S-111): `develop` is `ours` published as it is,
-   history included, with no scrubbing, and its upstream syncs are real merges; the squashed, force-pushed `develop`
-   below is retired.* Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
+5. **Monthly update.** *Superseded for `develop` by items 11 and 12 (R-57, R-58, S-111, S-112): `develop` is `ours`
+   pushed as it is, with no scrubbing, and its history is not guarded; the squashed, force-pushed `develop` below is
+   retired.* Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
    then the hub's `develop` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
    bob-codedaptive identity); the stable `main` and the release follow from it as item 10 says (R-56). The backporter
-   lane runs the update (R-56, superseding R-36). The hub is public, so the `develop` push publishes too: like the
-   push to `main` (item 10), it refuses while the `ours` it takes still carries an open security finding (rules/global.md
-   rule 12), and that `ours` waits for the fix to promote. Each `develop` update is one commit whose tree is `ours` minus
+   lane runs the update (R-56, superseding R-36). Each `develop` update is one commit whose tree is `ours` minus
    §4's exclusions plus the README. While the hub has no outside users (no stars, forks, or issues or pull requests
    from anyone else), its only parent is the upstream `main` that update merged and it is force-pushed over the
    previous `develop`, kept first as a backup ref on our private origin (R-35); after that it has two parents, that
@@ -148,17 +146,17 @@ Linux and Windows, if they want it.
    named) and never upstream's package or install script; a source checkout keeps "git pull && npm run build". The
    update check reads the hub's releases. Versions keep the `-sm.N` suffix, compared by its number.
 10. **Stable `main` and `develop` (R-56).** The hub has two long-lived branches:
-    - `develop` is the line item 5 updates: `ours` as published, its history as it comes.
+    - `develop` is `ours` pushed as it is (items 11 and 12), its history not guarded.
     - `main` is the stable branch and the hub's default. It takes only cleaned-up commits. Upstream comes in as a
       real merge, with the upstream commit a parent and never squashed in, so GitHub's compare against upstream
       stays meaningful and the next upstream merge has a base. Each of our features is one squash with a `Feature:`
       trailer, so it can still be offered upstream as a pull request. `main` is never force-pushed.
-    - The backporter lane builds each batch on a candidate branch cut from `main`: the upstream merge the batch
+    - The backporter lane builds each batch on the `candidate` branch, cut from `main` (R-58): the upstream merge the batch
       needs, then one squash per feature changed since the last batch, cleaned (§4's exclusions, R-19's rules, the
       README per item 3). The candidate is done when its tree equals `develop`'s tree for the same `ours` and the
       whole-suite gate passes on it. The backporter then merges it into `main` and pushes. That push is the
       publishing gate (rules/global.md rule 12): it refuses any change that still carries an open security finding.
-      It is not the only one: the `develop` push (item 5) is checked the same way, so no public push carries one.
+      It is not the only one: the `develop` push (item 11) is checked the same way, so no public push carries one.
     - Releases are cut from `main` only, as GitHub releases of the hub tagged `v` plus the build's own version (the
       packed `package.json` version, e.g. `v1.6.3-sm.17`; the base follows the merged upstream, S-102), with the
       packed build attached. `develop` gets no releases, so `codegraph upgrade` and the update notice (item 9) offer
@@ -167,10 +165,13 @@ Linux and Windows, if they want it.
       the upstream base that `ours` merged; its release is that build's own version (S-109). sm.17 (987c3715) is
       not it, because it carries an open security finding. The first is the build after host's `daemon --stop` fix
       (S-106) promotes, sm.18. The `pr/<feature>` branches (§3) are left as they are.
-11. **The hub stays a descendant of upstream (R-57).** Every build of `develop` and `main` keeps
-    `colbymchenry/codegraph` in its ancestry:
-    - Each upstream sync is a real merge commit, on `develop` and on `main`, never squashed or rebased away.
-    - A candidate batch is the last `main`, then the upstream merge if there is one, then one squash per feature on
+11. **The hub stays a descendant of upstream (R-57, as S-112 reads it with R-58).** Every `candidate` and every
+    `main` keeps `colbymchenry/codegraph` in its ancestry; `develop`'s history is not guarded (item 12):
+    - `develop` is `ours` pushed as it is. The hub is public, so the `develop` push publishes too: like the push to
+      `main` (item 10), it refuses while the `ours` it takes still carries an open security finding (rules/global.md
+      rule 12), and that `ours` waits for the fix to promote.
+    - Each upstream sync into `candidate` and `main` is a real merge commit, never squashed or rebased away.
+    - A batch is built on `candidate`: the last `main`, then the upstream merge if there is one, then one squash per feature on
       top. A squash never spans an upstream merge.
     - The backporter's push refuses unless `git merge-base --is-ancestor upstream/main <main>` holds at the
       upstream commit last merged.
@@ -182,8 +183,8 @@ Linux and Windows, if they want it.
     - `candidate` is where the next `main` is prepared.
     - `develop` is "a hive of scum and villainy": `ours` published as it is, with no scrubbing. Nobody but us should
       base work on it; our work trees are cut from it, and we may leave a mess, squash or delete history there. Anyone
-      outside who forks it does so at their own peril. Its upstream syncs still come in as real merges (item 11), so
-      it stays a descendant of upstream; beyond that its history carries no promise.
+      outside who forks it does so at their own peril. Its history carries no promise; upstream ancestry is guaranteed on
+      `candidate` and `main` (item 11).
     - The backporter runs `develop` → `candidate` → `main`. It fixes and cleans things in `develop` as they appear,
       and does not worry about `develop`'s history.
     - No scrubbing. If a hard boundary is ever needed, the hub adopts the "-ce" pattern of codeteam-ce (a separate

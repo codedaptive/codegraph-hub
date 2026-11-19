@@ -866,6 +866,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
   upstream ancestry as it is.
 - Reason: Bob's word: the fork must stay a descendant of upstream, so it can merge upstream and offer PRs to it.
 - Not chosen: squashed upstream syncs; PR branches cut from our lines.
+- Amended by R-58 as S-112 reads it: rule (1) holds on `candidate` and `main`; `develop`'s history is not guarded.
 - Extends R-56; supersedes §7 item 5's squashed, force-pushed `develop` (R-35, S-56 for `develop`). Expanded in
   docs/SPEC-upstream.md §7 item 11. Q-46 is closed by Bob's own words (#5301: "Publish as it is, history included,
   with no scrubbing"; #5306 (1)): `develop` is `ours` as it is, with history (S-111).
@@ -881,5 +882,5 @@ General as a RULING line. Decisions already settled by a document live in `team/
   "-ce" pattern used for codeteam-ce (a separate scrubbed repo).
 - Reason: Bob's word.
 - Not chosen: a scrubbed `develop` (retired by R-57/S-111); a separate scrubbed repository now.
-- Governs R-56 and R-57 on branch names and purposes; R-57's upstream-ancestry rules stand for `main`, and `develop`'s
-  upstream syncs stay real merges. Expanded in docs/SPEC-upstream.md §7 item 12.
+- Governs R-56 and R-57 on branch names and purposes; R-57's upstream-ancestry rules hold on `candidate` and `main`;
+  `develop`'s history is not guarded (S-112). Expanded in docs/SPEC-upstream.md §7 item 12.
