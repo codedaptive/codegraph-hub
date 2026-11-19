@@ -821,3 +821,31 @@ General as a RULING line. Decisions already settled by a document live in `team/
   the tarball check passed as sm.16's did, 1.6.3-sm.17 was installed globally, the server runs v1.6.3-sm.17, all 8
   teams answered verify-teams with 10 tools each, and 58 sessions reconnected. moot/Coord-CognitionKit was busy
   throughout and is served in-process until its next reconnect. The team stands down.
+
+## R-56. The hub gets a stable `main` from a backporter lane; today's line becomes `develop`
+- Date: 2026-11-19 / Bob, direct: "Have Codeteam make you a backporter lane"; the hub's new `main` is the stable
+  branch and gets the cleaned-up squashes; the current version becomes `develop` and stays messy; the backporter
+  cleans up on a candidate branch and merges that into `main`. Then "you have the shape of it; go." on
+  Designer-Codegraph's three readings (items 2, 4 and 5 below).
+- Question: how does the public hub get a stable branch with clean history, while the working line stays as it is?
+- Ruling:
+  1. On `codedaptive/codegraph-hub`, today's `main` becomes `develop` and is updated as `main` is today
+     (SPEC-upstream §7 item 5: `ours` minus §4's exclusions). R-35 and S-56 on force pushes govern `develop` only.
+  2. A new `main` is the stable branch and the hub's default. It takes only cleaned-up commits: upstream comes in as
+     a real merge (an upstream commit is a parent, never squashed in), and each of our features is one squash with
+     a `Feature:` trailer, so any feature can still be offered upstream as a pull request.
+  3. A backporter lane does the cleanup. It builds each batch on a candidate branch cut from `main`, cleans it
+     (§4's exclusions, R-19's rules, the README per §7 item 3), runs the whole-suite gate on it, and merges it into
+     `main`. `main` is never force-pushed.
+  4. Releases are cut from `main` only, tagged `v` plus the build's own version (e.g. `v1.6.3-sm.17`), so
+     `codegraph upgrade` and the update notice (R-32) offer only stable builds.
+  5. The backporter pushes to `main` itself. That push is the publishing gate (rules/global.md rule 12): it refuses
+     any change that still carries an open security finding.
+- Reason: Bob's word: a stable public branch with clean history, and the working line left as it is.
+- Not chosen: squashing upstream into our commits (every monthly refresh would then conflict by hand); releases
+  from `develop`; Bob pushing each candidate himself.
+- Supersedes: R-36 (the backporter runs the hub's updates, not Bob); R-35 and S-56 for `main` (they govern
+  `develop`); R-32 (1)'s tag `v1.6.2-sm.N` (the tag is the build's version, as S-102 found it must be).
+- Expanded in docs/SPEC-upstream.md §7 items 5 and 10. Work implied: Orc-Codegraph asks team codeteam for the
+  backporter lane. The lane's first candidate builds the new `main` from the upstream base sm.17 carries (cc17b69a)
+  and `ours` at sm.17 (987c3715), and publishes `v1.6.3-sm.17` from it.
