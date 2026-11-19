@@ -3,8 +3,8 @@
  * `requestProjectRelease` (src/mcp/server-control.ts): `codegraph index` and
  * the unit tests of server-control itself. It binds the first socket candidate
  * of the current state dir (so the process under test finds it exactly where it
- * looks for the real server), sends the server hello, records the client-hello
- * and every JSON-RPC request line, and answers each request as the test says.
+ * looks for the real server), sends the server hello and proof, records the
+ * client hello and every JSON-RPC request line, and answers as the test says.
  *
  * Needs `CODEGRAPH_STATE_DIR` set in this process (the candidate list is keyed
  * on it) and, for a spawned CLI to find the same socket, in the child's env.
@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import * as net from 'net';
 import { getServerSocketPath } from '../src/mcp/daemon-paths';
+import { daemonKey, daemonProof } from '../src/mcp/daemon-proof';
 
 export interface FakeServer {
   socketPath: string;
@@ -59,6 +60,11 @@ export async function startFakeServer(options: FakeServerOptions = {}): Promise<
         buffer = buffer.slice(newline + 1);
         let message: Record<string, unknown>;
         try { message = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+        if (typeof message.codegraph_challenge === 'string') {
+          const key = daemonKey();
+          socket.write(JSON.stringify({ codegraph_proof: key ? daemonProof(key, message.codegraph_challenge, socketPath) : null }) + '\n');
+          continue;
+        }
         if (message.codegraph_client === 1) { clientHellos.push(message); continue; }
         requests.push(message);
         const answer = reply(message);

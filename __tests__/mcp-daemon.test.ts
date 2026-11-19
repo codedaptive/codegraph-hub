@@ -726,11 +726,10 @@ describe('The machine server', () => {
           const line = buffer.slice(0, newline);
           buffer = buffer.slice(newline + 1);
           const message = JSON.parse(line);
-          if (message.codegraph_client) {
-            if (proof === 'wrong') sock.write(JSON.stringify({ codegraph_proof: 'ab'.repeat(32) }) + '\n');
-            continue;
-          }
           received.push(line);
+          if (typeof message.codegraph_challenge === 'string' && proof === 'wrong') {
+            sock.write(JSON.stringify({ codegraph_proof: 'ab'.repeat(32) }) + '\n');
+          }
         }
       });
     });
@@ -749,7 +748,7 @@ describe('The machine server', () => {
       expect(toolResponse.error).toBeUndefined();
       expect(JSON.stringify(toolResponse.result)).toContain('CodeGraph Status');
       // None of the session reached the stand-in: not the initialize, not the call.
-      expect(received).toEqual([]);
+      expect(received.map((line) => JSON.parse(line))).toEqual([{ codegraph_challenge: expect.any(String) }]);
       server.child.stdin.end();
       await waitFor(() => server.child.exitCode !== null, 5000);
     } finally {
