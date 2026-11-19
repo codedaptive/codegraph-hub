@@ -281,7 +281,7 @@ pub fn through_nested_callback() {
     crate::callback::Nested::open(|| Some(Ok(1)));
 }
 `,
-    // `near`'s block declares a `mod b` nearer the call than the `use` that binds `b`, so
+    // `near`'s block declares a `mod b` in a block nearer than the block of the `use` that binds `b`, so
     // the call must not resolve to `a::make`. `far` has no such block: its `b` is `a`.
     'src/near.rs': `pub mod a {
     pub fn make() -> usize {
