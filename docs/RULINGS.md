@@ -884,3 +884,12 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: a scrubbed `develop` (retired by R-57/S-111); a separate scrubbed repository now.
 - Governs R-56 and R-57 on branch names and purposes; R-57's upstream-ancestry rules hold on `candidate` and `main`;
   `develop`'s history is not guarded (S-112). Expanded in docs/SPEC-upstream.md §7 item 12.
+
+## R-59. The backporter owns the hub's GitHub settings
+- Date: 2026-11-19 / Bob, direct: "backporter own github settings" (also his tool-repo publishing rule, creator #5300).
+- Question: who owns the public hub's GitHub settings, public status and security?
+- Ruling: the backporter lane owns `codedaptive/codegraph-hub`'s GitHub settings, its public status and its security;
+  not Orc, not the other lanes.
+- Reason: Bob's word; the lane that publishes owns the repository it publishes to.
+- Not chosen: Orc owning them; leaving them unassigned (R-56 as first written).
+- Extends R-56. Expanded in docs/SPEC-upstream.md §7 item 13.

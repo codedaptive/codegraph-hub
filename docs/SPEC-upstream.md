@@ -189,3 +189,6 @@ Linux and Windows, if they want it.
       and does not worry about `develop`'s history.
     - No scrubbing. If a hard boundary is ever needed, the hub adopts the "-ce" pattern of codeteam-ce (a separate
       scrubbed repository); until then there is none.
+13. **The backporter owns the hub (R-59).** The backporter lane owns `codedaptive/codegraph-hub`'s GitHub settings,
+    its public status and its security (branch protection, default branch, visibility, security alerts). Orc and the
+    other lanes do not change them.
