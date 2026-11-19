@@ -140,7 +140,8 @@ export async function probeServer(): Promise<ServerLockInfo | null> {
  *     but sent no bytes through the hello timeout. Inconclusive, not identity
  *     proof; it was not signalled.
  *   - `unverified`: the lock names a live process, but the hello did not match,
- *     the socket failed, or the lock disappeared or changed during the probe.
+ *     the socket failed before the hello, or the lock disappeared or changed
+ *     during the probe.
  *     The process is not signalled: identity was not proven for the current lock.
  *   - `unproven`: the hello on the lock's socket matched, but what answered did
  *     not prove it runs as this user (a wrong or missing proof, or none in

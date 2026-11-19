@@ -7,7 +7,7 @@
  * launcher that found it could only serve its own session in-process, read-only.
  * Servers from before the fix cannot notice the upgrade themselves, so the
  * launcher acts: a server of an OLDER release is stopped the way `codegraph
- * daemon` stops one (`stopServer`: identity-checked SIGTERM, a graceful shutdown
+ * daemon` stops one (`stopServer`: SIGTERM only after the daemon proof, a graceful shutdown
  * on POSIX) and one from the launcher's own install takes its place. The
  * launcher hears an older server's hello on the state dir's socket, or — when it
  * listens elsewhere — finds it by the state dir's lock. A server of the same, a

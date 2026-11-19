@@ -15,11 +15,11 @@ const MAX_BUFFERED_BYTES = 4096;
  * The hello alone names a pid and version anyone can copy; the proof answers a fresh challenge with the
  * owner-only key (src/mcp/daemon-proof.ts), so only a server of this user can give it.
  *
- *   - `mismatch`: an invalid lock, a socket that fails or closes, or a first line that is not a hello naming
- *     protocol 1, the lock's pid and its version (the check of probeServerHello).
+ *   - `mismatch`: an invalid lock, a socket that fails or closes before the hello, or a first line that is not
+ *     a hello naming protocol 1, the lock's pid and its version (the check of probeServerHello).
  *   - `no-answer`: connected, and no byte arrived within `timeoutMs`; inconclusive.
- *   - `unproven`: the hello matched, and the next line was not this user's proof for this socket path, or
- *     nothing came within a fresh `timeoutMs`.
+ *   - `unproven`: the hello matched, and the next line was not this user's proof for this socket path, the
+ *     socket failed or closed first, or nothing came within a fresh `timeoutMs`.
  *   - `proven`: the hello matched and the server proved itself.
  *
  * Nothing is written before the hello, and after it only the challenge line, never a client hello.

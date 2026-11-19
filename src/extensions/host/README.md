@@ -122,7 +122,8 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   beside the live one: two state dirs never share a socket, a lock or a registry record, and stopping
   one leaves the other.
 - **Control** (`src/mcp/server-control.ts`): `probeServer`, `stopServer` (identity verified by the
-  server's socket hello before any signal), `requestProjectRelease` (what `codegraph index` and `codegraph uninit` call
+  daemon proof before any signal: a hello naming the lock's pid and version, then the proof answering a fresh
+  challenge; a hello without the proof is 'unproven' and is not signalled), `requestProjectRelease` (what `codegraph index` and `codegraph uninit` call
   before they rebuild or delete a project's index in their own process, when no server routes the write to its
   builder: the server closes its handle and the builder drops its hold, and 'released' is answered
   after both). Before its control hello and request it sends only the challenge line, and a socket whose answer is
