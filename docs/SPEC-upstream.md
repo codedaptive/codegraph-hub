@@ -165,3 +165,13 @@ Linux and Windows, if they want it.
       the upstream base that `ours` merged; its release is that build's own version (S-109). sm.17 (987c3715) is
       not it, because it carries an open security finding. The first is the build after host's `daemon --stop` fix
       (S-106) promotes, sm.18. The `pr/<feature>` branches (§3) are left as they are.
+11. **The hub stays a descendant of upstream (R-57).** Every build of `develop` and `main` keeps
+    `colbymchenry/codegraph` in its ancestry:
+    - Each upstream sync is a real merge commit, on `develop` and on `main`, never squashed or rebased away.
+    - A candidate batch is the last `main`, then the upstream merge if there is one, then one squash per feature on
+      top. A squash never spans an upstream merge.
+    - The backporter's push refuses unless `git merge-base --is-ancestor upstream/main <main>` holds at the
+      upstream commit last merged.
+    - `pr/*` branches for upstream are cut from `upstream/main`, never from our `main` or `develop`, so our history
+      never rides into a pull request.
+    - Renaming today's `main` to `develop` keeps its upstream ancestry as it is.

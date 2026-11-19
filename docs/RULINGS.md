@@ -853,3 +853,18 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Done in part: Orc-Codeteam reports the `backporter` lane made in team codegraph as this ruling orders (#5267, via Orc
   #5270), replacing a snapshot-release home that differed from it. At this commit codeteam/teams/codegraph.toml lists no
   backporter lane (its lanes: host, queries, resolution, fleet, upstream-prs); the codeteam record of #5267 is not on disk to check.
+
+## R-57. The hub stays a descendant of upstream
+- Date: 2026-11-19 / Bob, via the creator (#5305): "codegraph's extra challenge under the publishing rule is staying a
+  descendant of upstream (colbymchenry/codegraph)."
+- Question: how does the backporter's build of `develop` and the clean `main` keep upstream in their ancestry every time?
+- Ruling: (1) each upstream sync is a real merge commit, on `develop` and on `main`, never squashed or rebased away;
+  (2) a candidate batch is the last `main`, plus the upstream merge if there is one, plus one squash per feature on
+  top, and a squash never spans an upstream merge; (3) the backporter's push refuses unless
+  `git merge-base --is-ancestor upstream/main <main>` holds at the upstream commit last merged; (4) `pr/*` branches
+  are cut from `upstream/main`, never from our `main` or `develop`; (5) renaming today's `main` to `develop` keeps its
+  upstream ancestry as it is.
+- Reason: Bob's word: the fork must stay a descendant of upstream, so it can merge upstream and offer PRs to it.
+- Not chosen: squashed upstream syncs; PR branches cut from our lines.
+- Extends R-56. Expanded in docs/SPEC-upstream.md §7 item 11. Conflicts with §7 item 5 as written (one squashed
+  `develop` commit force-pushed over the last, R-35/S-56): reported to the creator, open with Q-46.
