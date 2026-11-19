@@ -15,6 +15,8 @@
  *     every launcher's process group.
  *   - A stale lockfile (dead pid) is cleared; `CODEGRAPH_NO_DAEMON=1` opts out.
  *     A newer server leaves the session in-process; an older one is replaced.
+ *     A listener of this version that cannot prove it runs as this user
+ *     gets none of the session, which is served in-process.
  *     A session with no server serves in-process, read-only, until one answers
  *     again (#662, #2277).
  *   - The server never exits because it is idle (gate G2 in
@@ -53,6 +55,7 @@ import { once } from 'events';
 import { EXTRACTION_VERSION } from '../src/extraction/extraction-version';
 import { WASM_RUNTIME_FLAGS } from '../src/extraction/wasm-runtime-flags';
 import { SERVER_INFO } from '../src/mcp/session';
+import { CodeGraphPackageVersion } from '../src/mcp/version';
 import { recordSpawns, removeSpawnLog, settleLosingCandidates } from './daemon-candidates';
 import { gitInitTempRoot } from './helpers/git-init-temp-root';
 
@@ -688,6 +691,70 @@ describe('The machine server', () => {
       if (mode) expect(fs.readFileSync(writerPath, 'utf8')).toBe(writer);
     } finally {
       await new Promise<void>((resolve) => miniServer.close(() => resolve()));
+    }
+  }, 30000);
+
+  // Something of this very version answers where the server listens but can't
+  // prove it runs as this user: a stand-in another user put there first (on
+  // Windows, a pipe name anyone can take), or one that answers no challenge.
+  // The proxy sends it none of the session and serves in-process. The lock
+  // record names a live holder of this version, so nothing tries to replace it.
+  it.each(['wrong', 'none'] as const)('proxy serves in-process when the server cannot prove it runs as this user (proof: %s)', async (proof) => {
+    const sockPath = getServerSocketPath();
+    fs.writeFileSync(
+      path.join(stateDir, 'server.pid'),
+      JSON.stringify({
+        pid: process.pid,
+        version: CodeGraphPackageVersion,
+        socketPath: sockPath,
+        startedAt: Date.now(),
+        stateDir,
+        stateId: stateIdentityOf(stateDir),
+      }),
+    );
+    const received: string[] = [];
+    const sockets = new Set<net.Socket>();
+    const standIn = net.createServer((sock) => {
+      sockets.add(sock);
+      sock.on('error', () => { /* the proxy hung up */ });
+      sock.write(JSON.stringify({ codegraph: CodeGraphPackageVersion, pid: process.pid, socketPath: sockPath, protocol: 1 }) + '\n');
+      let buffer = '';
+      sock.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        let newline: number;
+        while ((newline = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          const message = JSON.parse(line);
+          if (message.codegraph_client) {
+            if (proof === 'wrong') sock.write(JSON.stringify({ codegraph_proof: 'ab'.repeat(32) }) + '\n');
+            continue;
+          }
+          received.push(line);
+        }
+      });
+    });
+    await new Promise<void>((resolve) => standIn.listen(sockPath, () => resolve()));
+
+    try {
+      const server = spawnServer(tempDir);
+      servers.push(server);
+      sendInitialize(server.child, 1);
+      const resp = await waitFor(() => findResponse(server.stdout, 1), 10000);
+      expect(resp.result.serverInfo.name).toBe('codegraph');
+      await waitFor(() => server.stderr.some((l) => l.includes('could not prove it runs as this user')), 10000);
+
+      sendToolCall(server.child, 2, 'codegraph_status', tempDir);
+      const toolResponse = await waitFor(() => findResponse(server.stdout, 2), 5000);
+      expect(toolResponse.error).toBeUndefined();
+      expect(JSON.stringify(toolResponse.result)).toContain('CodeGraph Status');
+      // None of the session reached the stand-in: not the initialize, not the call.
+      expect(received).toEqual([]);
+      server.child.stdin.end();
+      await waitFor(() => server.child.exitCode !== null, 5000);
+    } finally {
+      for (const sock of sockets) sock.destroy();
+      await new Promise<void>((resolve) => standIn.close(() => resolve()));
     }
   }, 30000);
 
