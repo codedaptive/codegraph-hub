@@ -224,7 +224,7 @@ On throwaway clones, never live team worktrees, and against a development server
 Every item of the governing spec [B1]-[B14] is built and shipped, [B1]'s "or directory" included as R-50 restores
 it (the opt-in for a folder outside git, sm.16). Installed globally: **1.6.2-sm.16** (ours 3d65edec, 2026-11-17,
 R-52); running sessions moved to it with `/mcp reconnect codegraph`, no restart. Public: `codedaptive/codegraph-hub`,
-release `v1.6.2-sm.12` (R-31, R-32). The last upstream main merged into ours is cc17b69a (1.6.3, sm.17). What is left, in queue
+release `v1.6.2-sm.12` (R-31, R-32). The last upstream main merged into ours is e879216b (ours 7355b297, after sm.17; sm.17 carries cc17b69a). What is left, in queue
 order, is the second table.
 
 | Release | What it shipped |
