@@ -371,7 +371,7 @@ Bob's call to confirm, not the lane's).
 | C3 | Carried #3215, #3249 | 329dd12f, 7f6e4348 | Full | 4.1 |
 | C4 | Our PR #3203 (`rust-path-call-edge-cases`) and its carry-back cf921c51 | 1ddbe699 (#3334) function-scoped `use` heads; be3a0e08 (#3383) | Partial: the function-local `use` head case | 3.10; #3203 head conflicts with cc17b69a in NM |
 | C5 | `machine-server` housekeeping, `split-server-fix` ownership-checked removal | 96abf099 (#3356, fixes #3245) | Upstream fixes #3245 for its per-project daemon; ours already releases a gone project and keeps the server; nothing taken | 3.3, 3.4 |
-| C6 | queries' blast test counting (`src/extensions/queries/shared/test-path.ts`, path-based) | 98d722a4 (#3265): Rust `#[cfg(test)]` and tests.rs callers count as tests in explore's blast radius | Covered, landed (987c3715, not yet promoted): `codegraph_blast` and `orphans` count Rust `cfg(test)` out-of-line modules and `cfg(all(test, ..))` modules as test code, through upstream's `inCfgTestFile` / `inCfgTestModule`, as well as by path | section 5 |
+| C6 | queries' blast test counting (`src/extensions/queries/shared/test-path.ts`, path-based) | 98d722a4 (#3265): Rust `#[cfg(test)]` and tests.rs callers count as tests in explore's blast radius | Covered, landed (987c3715): `codegraph_blast` and `orphans` count Rust `cfg(test)` out-of-line modules and `cfg(all(test, ..))` modules as test code, through upstream's `inCfgTestFile` / `inCfgTestModule`, as well as by path | section 5 |
 
 ### 4.4 Our open PRs on upstream (the custody list plus #3329)
 
@@ -416,7 +416,7 @@ Test paths are run with `make zone-test-one DIR=<path>` in the owning lane's tre
 | resolution | 3.10 NM | `__tests__/resolution-order-independence.test.ts`, `__tests__/alias-chain-length.test.ts`, `__tests__/lua-local-alias-calls.test.ts`, `__tests__/ts-alias-typed-receivers.test.ts`, `__tests__/rust-glob-module-paths.test.ts`, `__tests__/rust-path-call-edge-cases.test.ts`, `__tests__/rust-path-super-glob.test.ts`, `__tests__/java-class-visibility.test.ts`, `__tests__/swift-static-calls.test.ts`, `__tests__/js-unimported-global-calls.test.ts`; then `__tests__/extensions/resolution` whole. A failing #3203 case after taking theirs in `rustPathTarget` is a fix-forward order |
 | resolution | 3.11 pascal-scope | `__tests__/pascal-chained-calls.test.ts` and the other `__tests__/pascal-*.test.ts` |
 | resolution | 3.12 Swift inheritance (C1) | `__tests__/swift-type-visibility.test.ts` (theirs' two new cases), `__tests__/swift-qualified-inheritance.test.ts`, `__tests__/extensions/resolution/swift-nested-supertypes.integration.test.ts` |
-| queries | C6 blast test counting | whether `codegraph_blast` and `orphans` should count Rust `#[cfg(test)]` callers as tests through `isTestCode` (now taking a `SourceReader`); `__tests__/extensions/queries` after the merge |
+| queries | C6 blast test counting | landed (987c3715), through `inCfgTestFile` / `inCfgTestModule`; `__tests__/extensions/queries` after the merge |
 | upstream-prs | 4.2, 4.4 | for Orc and the designer: #3256 redundant; #3202, #3203, #3205, #3206 need a rebase before any further push; #3249's code is on upstream main while its page says OPEN; GitHub's CONFLICTING on the clean ones (all fifteen show it) unexplained. All public steps wait on R-25 and the rule-12 publishing gate |
 
 ## 6. What was not read or not done
