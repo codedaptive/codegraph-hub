@@ -215,10 +215,11 @@ type-check fails or dead code lands (`git diff -U0 ours 43f88f8d -- <file>` give
   `WAL_VALVE_ABORT`), the project waits 5 s, doubling to 5 minutes, before the next attempt.
 - **Resolution: keep the deletion** (`git rm src/mcp/project-lifecycle.ts`), and **do not take**
   `__tests__/project-lifecycle-valve-backoff.test.ts` (it imports `acquireProject` from the deleted file).
-- Re-apply elsewhere: open question for host, not part of the merge. `rg` finds no `WAL_VALVE_ABORT` or
-  `WalValveAbortError` handling in `src/extensions/host/builder/` (only `src/db/wal-valve.ts`, which throws it). If
-  the builder's catch-up for a held root retries at once after a valve stop, ours has #3273's symptom (each retry
-  rescans and grows the WAL), and the 5 s to 5 min backoff belongs in the builder's catch-up path. Section 5.
+- Re-apply elsewhere: settled by S-93 (Designer, 2026-11-18, on Orc #4590), not part of the merge. The builder
+  re-queues a catch-up the WAL valve stopped (`WalValveAbortError`, code `WAL_VALVE_ABORT`) with #3354's backoff: 5 s,
+  doubling per stop in a row, capped at 5 minutes, no attempt cap while the hold lasts. Host's WO valve-catchup-retry
+  is landed (569d95ec, e0102231, a718ef83; handling in `src/extensions/host/builder/holder.ts`, `queueCatchUp`).
+  #3273 is not an open question for us. Section 5.
 
 ### 3.6 `src/mcp/engine.ts` (owner: host)
 
@@ -370,7 +371,7 @@ Bob's call to confirm, not the lane's).
 | C3 | Carried #3215, #3249 | 329dd12f, 7f6e4348 | Full | 4.1 |
 | C4 | Our PR #3203 (`rust-path-call-edge-cases`) and its carry-back cf921c51 | 1ddbe699 (#3334) function-scoped `use` heads; be3a0e08 (#3383) | Partial: the function-local `use` head case | 3.10; #3203 head conflicts with cc17b69a in NM |
 | C5 | `machine-server` housekeeping, `split-server-fix` ownership-checked removal | 96abf099 (#3356, fixes #3245) | Upstream fixes #3245 for its per-project daemon; ours already releases a gone project and keeps the server; nothing taken | 3.3, 3.4 |
-| C6 | queries' blast test counting (`src/extensions/queries/shared/test-path.ts`, path-based) | 98d722a4 (#3265): Rust `#[cfg(test)]` and tests.rs callers count as tests in explore's blast radius | Not covered: upstream's change is to explore's blast section only; ours' `codegraph_blast` still classifies by path | section 5 |
+| C6 | queries' blast test counting (`src/extensions/queries/shared/test-path.ts`, path-based) | 98d722a4 (#3265): Rust `#[cfg(test)]` and tests.rs callers count as tests in explore's blast radius | Covered, landed (987c3715, not yet promoted): `codegraph_blast` and `orphans` count Rust `cfg(test)` out-of-line modules and `cfg(all(test, ..))` modules as test code, through upstream's `inCfgTestFile` / `inCfgTestModule`, as well as by path | section 5 |
 
 ### 4.4 Our open PRs on upstream (the custody list plus #3329)
 
@@ -408,7 +409,7 @@ Test paths are run with `make zone-test-one DIR=<path>` in the owning lane's tre
 |---|---|---|
 | Orc (upstream-owned `src/extraction/`, `codegraph-kernel/`) | 3.2 TS; 7efa65b6 grammar; cc17b69a parse deadline | `npx --no-install tsc --noEmit -p .`; rebuild the kernel (ours and theirs both changed `codegraph-kernel/src/swift.rs` and `rustlang.rs`); `__tests__/kernel-swift-parity.test.ts`, `__tests__/kernel-rustlang-parity.test.ts`, `__tests__/rust-macro-calls.test.ts`, `__tests__/parse-deadline.test.ts`, `__tests__/rust-impl-in-fn-body.test.ts`, `__tests__/rust-impl-review-parity.test.ts` |
 | host | 3.1 CLI | `__tests__/cli-install-init.test.ts`, `__tests__/cli-line-drift.test.ts`, `__tests__/extensions/host` (stopped note); `codegraph init` on an initialized root, on a root outside git and not opted in, and on a stopped root: confirm `readLastIndexRun` neither opens what S-82 refuses nor loses the stopped note |
-| host | 3.3-3.5 daemon, registry, lifecycle | the merge drops `daemon-project-gone.test.ts` and `project-lifecycle-valve-backoff.test.ts`; confirm ours has a test that a removed worktree is released by the server (C5); then decide #3273: does the builder retry a catch-up the WAL valve stopped at once? If yes, port the 5 s to 5 min backoff into `src/extensions/host/builder/` as a fix-forward order |
+| host | 3.3-3.5 daemon, registry, lifecycle | the merge drops `daemon-project-gone.test.ts` and `project-lifecycle-valve-backoff.test.ts`; confirm ours has a test that a removed worktree is released by the server (C5); the valve-stop retry (#3273) is settled by S-93 and landed (valve-catchup-retry) |
 | host | 3.6-3.8 engine, index, session | `__tests__/extensions/host` whole; the merged tree has no `onWorkBegins`, `noteToolCall`, `workBegins` or `livenessWatchdogArmed` left (`git grep`); decide whether to port #3250 (lazy watchdog in direct mode) later |
 | host | 3.9 tools | `__tests__/explore-blast-radius.test.ts`, `__tests__/rust-cfg-test-file.test.ts`, `__tests__/mcp-stale-slice.test.ts` (drift parity through `fileDrift`), and ours' focus tests for explore's blast section (focused `indirectTestNote`) |
 | host | 3.13 Swift try-await test | the combined file on both backends |
