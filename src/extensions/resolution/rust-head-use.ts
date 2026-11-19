@@ -6,9 +6,11 @@
  * the reference does not change what an earlier import names. A `use` never
  * binds its own head (`use a;` names the module `a`), so following stops at a
  * binding that holds the `use` being read. A `mod` of the head's name declared
- * in a nearer block of the same module is that block's own item, so the path
- * is the `mod`'s, not the `use`'s, and the head is declined. Pure: the caller
- * supplies the bindings and the inline modules.
+ * in a block of the same module nearer than the use's own block is that
+ * block's own item, so the path is the `mod`'s, not the `use`'s, and the head
+ * is declined; with no local `use` binding the head, or only the `use` being
+ * read (`use a;`), any enclosing block-local `mod` of its name declines it. Pure: the caller supplies the bindings and the
+ * inline modules.
  */
 
 interface Path { segs: string[]; at: number }
@@ -21,6 +23,8 @@ interface Walk<P extends Path> { path: string[]; head: string; at: number; via?:
 const isPathRoot = (s: string): boolean => s === 'crate' || s === 'self' || s === 'super';
 
 const stdOnly = (b: Binding<Path>): boolean => b.std.length > 0 && b.paths.length === 0;
+
+const localUse = <B extends Binding<Path>>(b: B | undefined): b is B => b !== undefined && b.block >= 0 && b.paths.length > 0;
 
 /** A `mod` named `head` declared in a block of `fromBlock` that opens after `after` and encloses `at`. */
 function nearerMod(blocks: readonly ModBlock[], fromBlock: unknown, head: string, after: number, at: number): boolean {
@@ -64,10 +68,27 @@ function followAliases<P extends Path>(
 }
 
 /**
+ * The block of the local `use` binding `end.head` at `end.at` (`first` when the
+ * walk never moved), or -1: a path root has no such `use`, and a `use` holding
+ * a path at `end.at` is the one being read, which never binds its own head.
+ */
+function useBlock<P extends Path>(
+  end: Walk<P>, first: Binding<P> | undefined, visible: (name: string, at: number) => Binding<P> | undefined,
+): number {
+  if (isPathRoot(end.head)) return -1;
+  const own = end.via ? visible(end.head, end.at) : first;
+  return localUse(own) && !own.paths.some((p) => p.at === end.at) ? own.block : -1;
+}
+
+/**
  * The binding a bare head `head` at `offset` takes from a local `use`, with
  * its local aliases expanded when `follow`: null when the head must not
- * resolve (bound to std alone, a nearer `mod` of its name, an alias cycle, a
- * later alias that splits), undefined when no local `use` binds it.
+ * resolve (bound to std alone, directly or through a later alias; a `mod` of
+ * its name nearer than the use's own block, or any enclosing block-local `mod`
+ * of its name when no local `use` binds it (a `use` of the module does not
+ * count) or the only use is the one being read (`use a;`); an alias cycle; a
+ * later alias that splits), undefined when no local `use` binds it and none
+ * of those applies.
  */
 export function rustHeadUse<P extends { segs: string[]; at: number }>(
   head: string, offset: number, follow: boolean,
@@ -78,7 +99,7 @@ export function rustHeadUse<P extends { segs: string[]; at: number }>(
   if (first && stdOnly(first)) return null;
   const start: Walk<P> = { path: [head], head, at: offset };
   const end = follow ? followAliases(start, first, visible, blocks, fromBlock) : start;
-  if (end === null || nearerMod(blocks, fromBlock, end.head, -1, end.at)) return null;
+  if (end === null || nearerMod(blocks, fromBlock, end.head, useBlock(end, first, visible), end.at)) return null;
   if (end.via && first) return { paths: [{ ...end.via, segs: end.path }], std: [], block: first.block };
-  return first && first.block >= 0 && first.paths.length > 0 ? first : undefined;
+  return localUse(first) ? first : undefined;
 }

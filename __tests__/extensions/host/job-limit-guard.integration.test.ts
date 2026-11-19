@@ -88,7 +88,7 @@ describe('endOverLimit with a child', () => {
 
 describe('endOverLimit with a real supervisor', { timeout: 90_000 }, () => {
   const supervisor = testJobSupervisor();
-  const returning = path.resolve(__dirname, '../../fixtures/job-process-bodies.cjs');
+  const returning = path.resolve(__dirname, 'fixtures/job-process-bodies.cjs');
   const hanging = path.resolve(__dirname, 'fixtures/hanging-leftovers.cjs');
   const spec = (module: string, name: string) =>
     ({ kind: 'cold-build' as const, root, module, export: name, args: { root }, writerPid: process.pid });

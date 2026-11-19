@@ -4,10 +4,10 @@ import { JobSupervisor } from '../../../src/extensions/host/builder/job-supervis
 import { readProcessRssBytes } from '../../../src/extensions/host/builder/read-process-rss';
 
 async function readsChildThenNull(): Promise<void> {
-  const supervisor = new JobSupervisor({ entry: path.resolve(__dirname, '../../fixtures/job-process-entry.cjs'), execArgv: [] });
+  const supervisor = new JobSupervisor({ entry: path.resolve(__dirname, 'fixtures/job-process-entry.cjs'), execArgv: [] });
   let ready: () => void = () => undefined;
   const started = new Promise<void>((resolve) => { ready = resolve; });
-  const job = supervisor.run(1, { kind: 'sync', root: '/root', module: path.resolve(__dirname, '../../fixtures/job-process-bodies.cjs'), export: 'memory', args: null, writerPid: 123 }, () => ready());
+  const job = supervisor.run(1, { kind: 'sync', root: '/root', module: path.resolve(__dirname, 'fixtures/job-process-bodies.cjs'), export: 'memory', args: null, writerPid: 123 }, () => ready());
   const rejected = expect(job).rejects.toThrow();
   try {
     await started;
