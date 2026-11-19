@@ -12497,7 +12497,8 @@ const RUST_PATH_TARGETS = new WeakMap<ResolutionContext, Map<string, string | nu
  * through the `use` itself
  * (`use a;` names the module `a`); a `mod` of the head's name declared in a
  * block nearer than the `use`'s own makes the path that `mod`'s, not the `use`'s, and so null
- * (an outer block's `mod` leaves an inner `use` binding the head).
+ * (an outer block's `mod` leaves an inner `use` binding the head), but `use a;`
+ * binds nothing, so any enclosing block-local `mod a` makes it that `mod`'s.
  */
 export function rustPathTarget(ref: UnresolvedRef, context: ResolutionContext): Node | null {
   let segs = ref.referenceName.replace(/^::/, '').split('::');

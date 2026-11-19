@@ -8,8 +8,8 @@
  * binding that holds the `use` being read. A `mod` of the head's name declared
  * in a block of the same module nearer than the use's own block is that
  * block's own item, so the path is the `mod`'s, not the `use`'s, and the head
- * is declined; with no local `use` binding the head, any enclosing block-local
- * `mod` of its name declines it. Pure: the caller supplies the bindings and the
+ * is declined; with no local `use` binding the head, or only the `use` being
+ * read (`use a;`), any enclosing block-local `mod` of its name declines it. Pure: the caller supplies the bindings and the
  * inline modules.
  */
 
@@ -84,7 +84,8 @@ function useBlock<P extends Path>(
  * The binding a bare head `head` at `offset` takes from a local `use`, with
  * its local aliases expanded when `follow`: null when the head must not
  * resolve (bound to std alone, a `mod` of its name nearer than the use's own
- * block, an alias cycle, a later alias that splits), undefined when no local
+ * block, or any enclosing block-local `mod` when the only `use` is the one being
+ * read (`use a;`), an alias cycle, a later alias that splits), undefined when no local
  * `use` binds it.
  */
 export function rustHeadUse<P extends { segs: string[]; at: number }>(
