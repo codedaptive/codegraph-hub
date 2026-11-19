@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { JobSupervisor } from '../../../src/extensions/host/builder/job-supervisor';
 
-const fixture = path.resolve(__dirname, '../../fixtures/job-process-bodies.cjs');
-const entry = path.resolve(__dirname, '../../fixtures/job-process-entry.cjs');
+const fixture = path.resolve(__dirname, 'fixtures/job-process-bodies.cjs');
+const entry = path.resolve(__dirname, 'fixtures/job-process-entry.cjs');
 const spec = (name: string) => ({ kind: 'sync' as const, root: '/root', module: fixture, export: name, args: null, writerPid: 123 });
 const supervisor = new JobSupervisor({ entry, execArgv: [] });
 afterEach(async () => { await supervisor.killAll(); });
