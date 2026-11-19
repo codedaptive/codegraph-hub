@@ -177,6 +177,19 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
     } finally {
       db0.close();
     }
+    // Distance 0, but initialised and never indexed: a database with no
+    // index_state row, so not a source.
+    const sibInit = path.join(workspace, 'sib-init');
+    addWorktree(main, sibInit, 'sib-init', base);
+    CodeGraph.initSync(sibInit).close();
+    const dbInit = new DatabaseSync(dbPath(sibInit), { readOnly: true });
+    try {
+      const hasTable = dbInit.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_metadata'").get() !== undefined;
+      const state = hasTable ? dbInit.prepare("SELECT value FROM project_metadata WHERE key = 'index_state'").get() : undefined;
+      expect(state).toBeUndefined();
+    } finally {
+      dbInit.close();
+    }
 
     expect(await indexDir(sibB)).toMatchObject({ success: true, filesIndexed: 0 });
     expect(await indexDir(sib3)).toMatchObject({ success: true, filesIndexed: 0 });
