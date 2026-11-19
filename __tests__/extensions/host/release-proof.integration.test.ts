@@ -9,7 +9,7 @@ import { daemonKey, daemonProof } from '../../../src/mcp/daemon-proof';
 import { requestProjectRelease } from '../../../src/mcp/server-control';
 import { stateIdentityOf } from './state-identity';
 
-type ProofMode = 'valid' | 'other-key' | 'other-path' | 'null' | 'non-proof' | 'close' | 'none';
+type ProofMode = 'valid' | 'other-key' | 'other-path' | 'null' | 'non-proof' | 'non-json' | 'close' | 'none';
 
 let dir: string;
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -50,6 +50,7 @@ async function standIn(mode: ProofMode, socketPath = getServerSocketPath()) {
         if (typeof message.codegraph_challenge === 'string') {
           if (mode === 'none') continue;
           if (mode === 'non-proof') { socket.write('{"not_proof":true}\n'); continue; }
+          if (mode === 'non-json') { socket.write('not JSON\n'); continue; }
           const key = mode === 'other-key' ? randomBytes(32) : daemonKey();
           const proofPath = mode === 'other-path' ? `${socketPath}-other` : socketPath;
           const proof = mode === 'null' || !key ? null : daemonProof(key, message.codegraph_challenge, proofPath);
@@ -75,13 +76,13 @@ function writeLock(socketPath: string) {
 }
 
 describe('project release proof before control hello', () => {
-  it.each(['other-key', 'other-path', 'null', 'non-proof', 'close', 'none'] as const)(
-    'sends only the challenge and returns no-server for %s', async (mode) => {
+  it.each(['other-key', 'other-path', 'null', 'non-proof', 'non-json', 'close', 'none'] as const)(
+    'sends only the challenge and returns failed for %s', async (mode) => {
       const fake = await standIn(mode);
       writeLock(fake.socketPath);
       const result = await requestProjectRelease(root, 300);
       expect(fake.lines).toEqual([{ codegraph_challenge: expect.any(String) }]);
-      expect(result).toBe('no-server');
+      expect(result).toBe('failed');
     },
   );
 
@@ -97,17 +98,13 @@ describe('project release proof before control hello', () => {
     expect(result).toBe('released');
   });
 
-  it('tries the next candidate after an unproven lock socket', async () => {
+  it('returns failed without trying the next candidate after an unproven lock socket', async () => {
     const first = await standIn('other-key', `${getServerSocketPath()}-lock`);
     const second = await standIn('valid');
     writeLock(first.socketPath);
     const result = await requestProjectRelease(root, 1_000);
     expect(first.lines).toEqual([{ codegraph_challenge: expect.any(String) }]);
-    expect(second.lines).toEqual([
-      { codegraph_challenge: expect.any(String) },
-      { codegraph_client: 1, control: 1, pid: process.pid, hostPid: null },
-      { jsonrpc: '2.0', id: 'release', method: 'codegraph/releaseProject', params: { root } },
-    ]);
-    expect(result).toBe('released');
+    expect(result).toBe('failed');
+    expect(second.lines).toEqual([]);
   });
 });

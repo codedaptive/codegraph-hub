@@ -258,13 +258,19 @@ const RELEASE_TIMEOUT_MS = 20_000;
  * Only then send a client-hello `{codegraph_client:1, control:1, pid, hostPid: null}` carrying no
  * `launchDir` (this is not a session), then one JSON-RPC request
  * `{"jsonrpc":"2.0","id":"release","method":"codegraph/releaseProject","params":{"root":<root>}}`
- * and wait for the reply with that id. Each candidate socket is tried in turn until one is not `no-server`.
+ * and wait for the reply with that id. Each candidate socket is tried in turn until one is not `no-server`:
+ * the first `failed` ends the search, because a socket that answered but did not prove itself may be a live
+ * server holding the database (its key unreadable, its proof slow, or an older server without proofs).
  *
- *   - `no-server`: on every candidate socket (the lock's own first), nothing answers, or what answers does
- *     not prove it runs as this user: its proof does not match, is missing, or does not come in time.
- *   - `released`: the proven server replied with a result: neither it nor its builder holds anything for `root`.
- *   - `failed`: what answered sent no server hello, or the proven server answered something else, an error,
- *     or nothing in time. The caller must not rebuild under a server that may still hold the database.
+ *   - `no-server`: no candidate socket (the lock's own first) accepts a connection before it errors, closes
+ *     or times out.
+ *   - `released`: the server proved it runs as this user, and only then was sent the control hello and the
+ *     release request, and replied with a result: neither it nor its builder holds anything for `root`.
+ *   - `failed`: what connected sent a line that is not a server hello, or closed, errored or timed out before
+ *     its hello; or after the hello it sent anything but a matching proof (another
+ *     key or socket path, a null proof, another line, a line that is not JSON), or closed, errored or timed out
+ *     before its proof; or it proved itself and then answered the release with an error, something else, or
+ *     nothing in time. The caller must not rebuild under a server that may still hold the database.
  */
 export async function requestProjectRelease(
   root: string,
@@ -320,10 +326,10 @@ function releaseOverSocket(
       socket.destroy();
       resolve(result);
     };
-    // Waiting for the proof, what answered is not proven to be this user's server: 'no-server', and the next
-    // candidate is tried. Before the hello a connection that answers nothing is 'failed', as is a proven server
-    // that does not answer the release: either may hold the database, so the caller must not rebuild.
-    const unanswered = () => finish(phase === 'proof' || !connected ? 'no-server' : 'failed');
+    // A socket that never connected is 'no-server', and the next candidate is tried. Anything that connected
+    // and then stops answering, before its hello, before its proof or before its release reply, is 'failed':
+    // an unproven socket may still be a live server holding the database, so the caller must not rebuild.
+    const unanswered = () => finish(connected ? 'failed' : 'no-server');
     const timer = setTimeout(unanswered, timeoutMs);
     timer.unref?.();
     socket.setEncoding('utf8');
@@ -343,7 +349,7 @@ function releaseOverSocket(
     // One line read; the attempt's result once it has one.
     function releaseStep(line: string): 'released' | 'no-server' | 'failed' | undefined {
       let message: Record<string, unknown>;
-      try { message = JSON.parse(line) as Record<string, unknown>; } catch { return phase === 'proof' ? 'no-server' : 'failed'; }
+      try { message = JSON.parse(line) as Record<string, unknown>; } catch { return 'failed'; }
       switch (phase) {
         case 'hello':
           // The first line is the server's hello; anything else is not our server.
@@ -352,7 +358,7 @@ function releaseOverSocket(
           socket.write(daemonChallengeLine(challenge));
           return undefined;
         case 'proof':
-          if (!daemonAnswerProves(challenge, socketPath, message.codegraph_proof)) return 'no-server';
+          if (!daemonAnswerProves(challenge, socketPath, message.codegraph_proof)) return 'failed';
           phase = 'open';
           socket.write(controlClientHelloLine());
           socket.write(JSON.stringify({

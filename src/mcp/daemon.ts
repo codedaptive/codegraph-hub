@@ -74,7 +74,7 @@ import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/re
 import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { BuilderClient } from '../extensions/host/builder/client';
 import { daemonKey, daemonProof } from './daemon-proof';
-import { parseDaemonChallengeLine } from './parseDaemonChallengeLine';
+import { parseChallengeOrHello } from './parseChallengeOrHello';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -611,11 +611,7 @@ export class Daemon {
   private async readPeers(socket: net.Socket): Promise<ClientPeers> {
     // The challenge is checked first: a challenge line is no client hello and
     // would otherwise go back to the transport as JSON-RPC.
-    const challengeOrHello = (line: string): { challenge: string } | ClientPeers | null => {
-      const challenge = parseDaemonChallengeLine(line);
-      return challenge === null ? parseClientHelloLine(line) : { challenge };
-    };
-    const first = await readClientLine(socket, challengeOrHello, NO_PEERS);
+    const first = await readClientLine(socket, (line) => parseChallengeOrHello(line, parseClientHelloLine), NO_PEERS);
     if (!('challenge' in first)) return first;
     this.answerChallenge(socket, first.challenge);
     return readClientLine(socket, parseClientHelloLine, NO_PEERS);
