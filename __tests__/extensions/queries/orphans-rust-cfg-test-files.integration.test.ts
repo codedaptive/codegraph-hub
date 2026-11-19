@@ -1,7 +1,7 @@
 /**
  * Orphans on a real index of a Rust git fixture. C2 adds unreferenced functions
- * in a cfg(test) out-of-line module, a plain module and an inline cfg(all)
- * module. Fixture checks establish the nodes before classification checks.
+ * in cfg(test) and plain out-of-line modules, and in cfg(all) and plain inline
+ * modules. Fixture checks establish the nodes before classification checks.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
@@ -48,7 +48,7 @@ describe('orphans Rust test configuration', () => {
     git(root, 'tag', 'C1');
     write(root, 'src/store/tests.rs', 'fn fixture_helper() -> u32 {\n    1\n}\n');
     write(root, 'src/plain/tests.rs', 'fn plain_helper() -> u32 {\n    2\n}\n');
-    write(root, 'src/inline.rs', '#[cfg(all(test, feature = "x"))]\nmod t {\n    fn inline_helper() -> u32 {\n        3\n    }\n}\n');
+    write(root, 'src/inline.rs', '#[cfg(all(test, feature = "x"))]\nmod t {\n    fn inline_helper() -> u32 {\n        3\n    }\n}\nmod u {\n    fn inline_plain_helper() -> u32 {\n        4\n    }\n}\n');
     git(root, 'add', '-A');
     git(root, 'commit', '-q', '-m', 'C2');
 
@@ -70,11 +70,12 @@ describe('orphans Rust test configuration', () => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('fixture: all three unreferenced functions are indexed at their Rust paths', () => {
+  it('fixture: all four unreferenced functions are indexed at their Rust paths', () => {
     expect(nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'fixture_helper', kind: 'function', file_path: 'src/store/tests.rs' }),
       expect.objectContaining({ name: 'plain_helper', kind: 'function', file_path: 'src/plain/tests.rs' }),
       expect.objectContaining({ name: 'inline_helper', kind: 'function', file_path: 'src/inline.rs' }),
+      expect.objectContaining({ name: 'inline_plain_helper', kind: 'function', file_path: 'src/inline.rs' }),
     ]));
   });
 
@@ -87,6 +88,12 @@ describe('orphans Rust test configuration', () => {
   it('excludes an unreferenced function in an inline cfg(all(test, ...)) module', () => {
     expect([...report.orphans, ...report.guessed]).not.toContainEqual(
       expect.objectContaining({ name: 'inline_helper', path: 'src/inline.rs' }),
+    );
+  });
+
+  it('lists an unreferenced function in a plain inline module', () => {
+    expect(report.orphans).toContainEqual(
+      expect.objectContaining({ name: 'inline_plain_helper', path: 'src/inline.rs', kind: 'function' }),
     );
   });
 
