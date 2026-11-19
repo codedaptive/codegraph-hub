@@ -126,8 +126,9 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   before they rebuild or delete a project's index in their own process, when no server routes the write to its
   builder: the server closes its handle and the builder drops its hold, and 'released' is answered
   after both). Before its control hello and request it sends only the challenge line, and a socket whose answer is
-  not a proof that it runs as this user (`src/mcp/daemon-proof.ts`) counts as no server there: the next socket is
-  tried. Paths and the lock record are in `src/mcp/daemon-paths.ts`.
+  not a proof that it runs as this user (`src/mcp/daemon-proof.ts`) is a failed release: the search stops there, and
+  `index` and `uninit` refuse rather than rebuild under a server that may still hold the database. Only a socket that
+  does not answer at all passes the search on to the next one. Paths and the lock record are in `src/mcp/daemon-paths.ts`.
 - **CLI writes** (`builder/cli-route.ts`, wire in `builder/cli-wire.ts`). `codegraph init`, `index`
   and `sync`, and the `--fresh` wait of the commands that answer from the index, and `uninit`'s release (see below), ask a running
   server whose index builder is up to have that builder do the write. The CLI reaches the server by two routes, and
@@ -135,7 +136,8 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
   gives no route (or the builder is not up), `requestProjectRelease` above, which `index` and `uninit` call before
   writing in their own process (`rebuildIndex.ts`, `uninit.ts`). `builderRoute()` gives a route when `probeServer()` proved
   a server (a live `server.pid` whose socket hello names its pid and version), the server answered the CLI's challenge
-  line with a proof that it runs as this user (`src/mcp/daemon-proof.ts`; else the command writes the index itself), and
+  line with a proof that it runs as this user (`src/mcp/daemon-proof.ts`; else no route is taken and the command falls back
+  to its own write, except that `index` and `uninit` refuse when the release is not confirmed), and
   the CLI holds one connection to its socket, with a client hello that carries `control: 1` and no `launchDir` (a control
   client, not an agent session; the server refuses these requests to any other peer, and `--verbose`
   returns the engine's console lines as `log` events). `builder.pid` is not consulted:
