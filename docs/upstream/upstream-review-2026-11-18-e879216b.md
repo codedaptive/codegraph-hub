@@ -30,7 +30,7 @@ The merge itself waits for sm.17's promote, so none of this range reaches the sm
 | Ours past the base | 1044 commits | `git rev-list --count cc17b69a..d57e5d7e` |
 | Trial merge | tree c341a4c9, 8 conflicting files, all content conflicts | `git merge-tree --write-tree --name-only --messages integration upstream/main` |
 | Trial merge onto landing | tree 394b83f1 (landing 141ba492b736), the same 8 files; landing's #3258 take auto-merges with b66de29e in `src/resolution/callback-synthesizer.ts` | `git merge-tree --write-tree --name-only landing upstream/main` |
-| Trial merge onto the moved integration | `integration` at 987c3715 (26 commits past d57e5d7e from several lanes: queries, orc, resolution, host, Nagatha, and one Stage 3 doc-fix; none in `src/mcp`, `src/bin` or `__tests__/mcp-daemon.test.ts`): tree ec70ffe2, the same 8 conflicting files | `git diff --stat d57e5d7e integration -- src/mcp src/bin __tests__/mcp-daemon.test.ts` (empty); `git merge-tree --write-tree --name-only integration upstream/main` |
+| Trial merge onto the moved integration | `integration` at 987c3715 (26 commits past d57e5d7e from several lanes: queries, orc, resolution, host, Nagatha, and two Stage 3 doc-fixes; none in `src/mcp`, `src/bin` or `__tests__/mcp-daemon.test.ts`): tree ec70ffe2, the same 8 conflicting files | `git diff --stat d57e5d7e integration -- src/mcp src/bin __tests__/mcp-daemon.test.ts` (empty); `git merge-tree --write-tree --name-only integration upstream/main` |
 
 Every conflict is in host's MCP layer; no resolution, queries, fleet or upstream-owned file conflicts.
 
