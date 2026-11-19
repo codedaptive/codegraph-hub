@@ -11,7 +11,7 @@ import {
   listTestFiles,
   parseTestGroup,
   readTestGroupManifest,
-} from '../../../test-groups.mts';
+} from '../../../fleet/test-groups.mts';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const emptyManifest = { integration: [], validation: [] };
