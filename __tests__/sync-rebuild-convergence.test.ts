@@ -714,6 +714,39 @@ export function onPing(): void {}
     await converges();
   });
 
+  it('links an unchanged C dispatcher to registrations added, widened and removed in another file', async () => {
+    write('ops.h', 'struct ops { int (*fn)(void); int (*idle)(void); };\n');
+    write('handlers.c', 'int first(void) { return 1; }\nint spare(void) { return 2; }\n');
+    write('dispatch.c', '#include "ops.h"\nint dispatch(struct ops *p) { return p->idle() + p->fn(); }\n');
+    await load();
+    expect(readEdges()).toHaveLength(0);
+    const via = () => readEdges().map(e => JSON.parse(e.metadata).via).sort();
+    // Which handler each edge reaches: a label alone passes a dispatch wired to the wrong handler.
+    const pairs = () => {
+      const { db } = createDatabase(path.join(dir, '.codegraph', 'codegraph.db'), { readOnly: true });
+      try {
+        return (db.prepare(`SELECT s.name AS source, t.name AS target, json_extract(e.metadata, '$.via') AS via
+          FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE json_extract(e.metadata, '$.synthesizedBy') IS NOT NULL`).all() as Array<{ source: string; target: string; via: string }>)
+          .map(r => `${r.source} -> ${r.target} via ${r.via}`).sort();
+      } finally { db.close(); }
+    };
+    write('table.c', '#include "ops.h"\nextern int first(void);\nstruct ops table = { .fn = first };\n');
+    await cg.sync({ paths: ['table.c'] });
+    expect(via()).toEqual(['ops.fn']);
+    expect(pairs()).toEqual(['dispatch -> first via ops.fn']);
+    await converges();
+    write('table.c', '#include "ops.h"\nextern int first(void);\nextern int spare(void);\nstruct ops table = { .fn = first, .idle = spare };\n');
+    await cg.sync({ paths: ['table.c'] });
+    expect(via()).toEqual(['ops.fn', 'ops.idle']);
+    expect(pairs()).toEqual(['dispatch -> first via ops.fn', 'dispatch -> spare via ops.idle']);
+    await converges();
+    fs.unlinkSync(path.join(dir, 'table.c'));
+    await cg.sync({ paths: ['table.c'] });
+    expect(readEdges()).toHaveLength(0);
+    await converges();
+  });
+
   it('keeps C layout precedence independent of file insertion order', async () => {
     write('alpha.c', 'struct ops { int (*first)(void); };\nint a(void) { return 1; }\nstruct ops one = { .first = a };\nint runA(struct ops *p) { return p->first(); }\n');
     write('zeta.c', 'struct ops { int (*second)(void); };\nint z(void) { return 2; }\nstruct ops two = { .second = z };\nint runZ(struct ops *p) { return p->second(); }\n');
