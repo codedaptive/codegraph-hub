@@ -1,6 +1,6 @@
 /**
- * The project-file read the queries commands share: orphans reads every project file it needs through
- * it, and blast reads Rust parent modules through it to find out-of-line `#[cfg(test)]` modules.
+ * The project-file read the queries commands share: orphans reads the source `OrphansIO.source` asks for
+ * through it, and blast reads Rust parent modules through it to find out-of-line `#[cfg(test)]` modules.
  */
 import * as fs from 'fs';
 import type { SourceReader } from '../../../graph/test-code';
