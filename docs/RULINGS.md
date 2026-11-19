@@ -850,5 +850,6 @@ General as a RULING line. Decisions already settled by a document live in `team/
   backporter lane. The lane's first candidate builds the new `main` from the newest promoted `ours` with no open
   security finding, and publishes that build's release from it. That is sm.18, after host's S-106 fix; sm.17 carries
   an open finding (S-109, correcting this line's first text, which named sm.17).
-- Done in part: Orc-Codeteam made the `backporter` lane in team codegraph as this ruling orders (#5267, via Orc
-  #5270), replacing a snapshot-release home that differed from it.
+- Done in part: Orc-Codeteam reports the `backporter` lane made in team codegraph as this ruling orders (#5267, via Orc
+  #5270), replacing a snapshot-release home that differed from it. At this commit codeteam/teams/codegraph.toml lists no
+  backporter lane (its lanes: host, queries, resolution, fleet, upstream-prs); the codeteam record of #5267 is not on disk to check.
