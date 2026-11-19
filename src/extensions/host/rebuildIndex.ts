@@ -9,6 +9,7 @@
 import * as fs from 'node:fs';
 import type { IndexWriter } from './builder/cli-route';
 import { clearEndedRoot } from './builder/clear-ended-root';
+import { unprovenReleaseRefusal } from './unprovenReleaseRefusal';
 
 export async function rebuildIndex(
   projectPath: string,
@@ -42,13 +43,9 @@ export async function rebuildIndex(
     // would delete files under it: refuse instead.
     const { requestProjectRelease } = await import('../../mcp/server-control');
     const realRoot = fs.realpathSync(projectPath);
-    const released = await requestProjectRelease(realRoot);
-    if (released === 'failed') {
-      throw new Error(
-        `The CodeGraph server did not confirm that it released ${realRoot}, so it may still hold the database open. ` +
-        'Stop it with `codegraph daemon --stop` (clients reconnect and start a fresh one), then retry `codegraph index`.'
-      );
-    }
+    let failedSocket = '';
+    const released = await requestProjectRelease(realRoot, undefined, (socketPath) => { failedSocket = socketPath; });
+    if (released === 'failed') throw new Error(unprovenReleaseRefusal(realRoot, failedSocket, '`codegraph index`'));
 
     // Keep the writer slot through recreation AND indexing. A reconnecting
     // proxy/server must not open the replacement database halfway through.

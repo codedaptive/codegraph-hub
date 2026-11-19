@@ -272,16 +272,21 @@ const RELEASE_TIMEOUT_MS = 20_000;
  *     key or socket path, a null proof, another line, a line that is not a JSON object), or closed, errored or timed out
  *     before its proof; or it proved itself and then answered the release with an error, something else, or
  *     nothing in time. The caller must not rebuild under a server that may still hold the database.
+ *
+ * `onFailed`, when given, is called with the socket path of the `failed` attempt before `failed` is returned, so
+ * the caller can name the socket in its refusal.
  */
 export async function requestProjectRelease(
   root: string,
   timeoutMs = RELEASE_TIMEOUT_MS,
+  onFailed?: (socketPath: string) => void,
 ): Promise<'released' | 'no-server' | 'failed'> {
   const lock = readServerLock();
   const candidates = [...new Set([...(lock ? [lock.socketPath] : []), ...getServerSocketCandidates()])]
     .filter((p) => p.length > 0);
   for (const socketPath of candidates) {
     const result = await releaseOverSocket(socketPath, root, timeoutMs);
+    if (result === 'failed') onFailed?.(socketPath);
     if (result !== 'no-server') return result;
   }
   return 'no-server';
