@@ -49,7 +49,7 @@ export const pythonImportlibResolver: FrameworkResolver = {
   name: 'python-importlib',
   languages: ['python'],
 
-  // An extensionless shebang script is Python too (R-49(a)); it is read through the context so the read is recorded as a detection input.
+  // An extensionless `#!` Python script counts (R-49(a)); context.readFile records the read as a detection input.
   detect: (context) => {
     const files = context.getAllFiles();
     return files.some((file) => file.endsWith('.py'))

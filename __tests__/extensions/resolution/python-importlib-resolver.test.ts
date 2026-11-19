@@ -1,6 +1,7 @@
 /**
  * Tests of pythonImportlibResolver with a context that throws on any lookup a test does
- * not stub: detect Python files and extensionless Python scripts, extract (file-level `imports` references named by the path),
+ * not stub: detect (`.py` files and extensionless Python scripts), extract (file-level
+ * `imports` references named by the path),
  * claimsReference, ownsReference, and resolve (root-relative candidate before
  * loader-relative; none for an anchored name whose root candidate is absent; a
  * root-escaping name drops its root candidate and still tries the loader-relative one;
