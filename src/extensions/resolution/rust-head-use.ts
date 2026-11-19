@@ -85,9 +85,10 @@ function useBlock<P extends Path>(
  * its local aliases expanded when `follow`: null when the head must not
  * resolve (bound to std alone, directly or through a later alias; a `mod` of
  * its name nearer than the use's own block, or any enclosing block-local `mod`
- * of its name when no use binds it or the only use is the one being read
- * (`use a;`); an alias cycle; a later alias that splits), undefined when no
- * local `use` binds it and none of those applies.
+ * of its name when no local `use` binds it (a `use` of the module does not
+ * count) or the only use is the one being read (`use a;`); an alias cycle; a
+ * later alias that splits), undefined when no local `use` binds it and none
+ * of those applies.
  */
 export function rustHeadUse<P extends { segs: string[]; at: number }>(
   head: string, offset: number, follow: boolean,
