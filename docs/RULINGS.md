@@ -817,3 +817,7 @@ General as a RULING line. Decisions already settled by a document live in `team/
 - Not chosen: holding the install until Bob is back in person.
 - Work implied: Orc-Codegraph installs sm.17 and reports the release record (RULING #5220); SPEC §8's "Installed
   globally" line then names 1.6.3-sm.17.
+- Done: 2026-11-19 ~09:35 CST, Orc-Codegraph (#5230; design/Orc-Codegraph/ledger/reports/release-gate-sm17.md):
+  the tarball check passed as sm.16's did, 1.6.3-sm.17 was installed globally, the server runs v1.6.3-sm.17, all 8
+  teams answered verify-teams with 10 tools each, and 58 sessions reconnected. moot/Coord-CognitionKit was busy
+  throughout and is served in-process until its next reconnect. The team stands down.
