@@ -18,9 +18,10 @@
 
 import { JsonRpcRequest, JsonRpcNotification, JsonRpcTransport, ErrorCodes } from './transport';
 import { MCPEngine } from './engine';
-import { tools, type ToolDefinition } from './tools';
+import type { ToolDefinition } from './tools';
 import { SERVER_INSTRUCTIONS, openCodeInstructions } from './server-instructions';
 import { isOpenCodeClient, withOpenCodeToolNames } from './opencode-tool-names';
+import { openCodeRewrittenToolNames } from './openCodeRewrittenToolNames';
 import { CodeGraphPackageVersion } from './version';
 import type { RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { dispatchToolCall } from '../extensions/host/server/tool-call';
@@ -89,30 +90,30 @@ export function initializeInstructions(base: string, notice: string | null = get
   );
 }
 
-/** The built-in tools, by name: the names a client's rewrite may touch (the extension tools are not in it). */
-const TOOL_NAMES: readonly string[] = tools.map((t) => t.name);
-
 /**
  * The instructions `initialize` answers a client with: {@link initializeInstructions}
- * of `base`, which an OpenCode client gets with our tool names the way OpenCode
- * lists them (#1267). Exported so the proxy's local handshake gives the same
- * client the IDENTICAL text; every other client gets today's bytes.
+ * of `base`, which an OpenCode client gets with every built-in and extension
+ * tool name ({@link openCodeRewrittenToolNames}, read at the call) the way
+ * OpenCode lists it (#1267). Exported so the proxy's local handshake gives the
+ * same client the IDENTICAL text; every other client gets `base` unchanged.
  */
 export function instructionsForClient(base: string, clientName: string | undefined): string {
-  return initializeInstructions(isOpenCodeClient(clientName) ? openCodeInstructions(base, TOOL_NAMES) : base);
+  return initializeInstructions(isOpenCodeClient(clientName) ? openCodeInstructions(base, openCodeRewrittenToolNames()) : base);
 }
 
 /**
  * The `tools/list` answer for a client: `defs` as they are, except that an
- * OpenCode client gets every description naming our tools the way OpenCode
- * lists them (#1267). Each tool keeps its `name`, since OpenCode adds the
+ * OpenCode client gets every description naming a built-in or extension tool
+ * ({@link openCodeRewrittenToolNames}, read at the call) the way OpenCode
+ * lists it (#1267). Each tool keeps its `name`, since OpenCode adds the
  * prefix itself. Copies, never edits: the daemon serves every client from one
  * tool handler, and `defs` may be the module's own definitions. Exported for
  * the proxy, like {@link instructionsForClient}.
  */
 export function toolsForClient(defs: ToolDefinition[], clientName: string | undefined): ToolDefinition[] {
   if (!isOpenCodeClient(clientName)) return defs;
-  const rename = (text: string): string => withOpenCodeToolNames(text, TOOL_NAMES);
+  const names = openCodeRewrittenToolNames();
+  const rename = (text: string): string => withOpenCodeToolNames(text, names);
   return defs.map((tool) => ({
     ...tool,
     description: rename(tool.description),
