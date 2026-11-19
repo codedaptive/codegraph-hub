@@ -18,6 +18,7 @@
  */
 import * as path from 'path';
 import type { FrameworkResolver, ResolutionContext, UnresolvedRef } from '../../resolution/types';
+import { extensionlessLanguage } from '../host/scan/extensionless-language';
 import { pythonLoaderPaths } from './python-loader-paths';
 
 function isLoaderRef(ref: UnresolvedRef): boolean {
@@ -40,11 +41,20 @@ function fileNodeId(candidate: string, context: ResolutionContext): string | und
   return context.getNodesInFile(candidate).find((node) => node.kind === 'file')?.id;
 }
 
+function isPythonScript(file: string, source: string | null): boolean {
+  return source !== null && extensionlessLanguage(file, undefined, source) === 'python';
+}
+
 export const pythonImportlibResolver: FrameworkResolver = {
   name: 'python-importlib',
   languages: ['python'],
 
-  detect: (context) => context.getAllFiles().some((file) => file.endsWith('.py')),
+  // An extensionless shebang script is Python too (R-49(a)); it is read through the context so the read is recorded as a detection input.
+  detect: (context) => {
+    const files = context.getAllFiles();
+    return files.some((file) => file.endsWith('.py'))
+      || files.some((file) => path.posix.extname(file) === '' && isPythonScript(file, context.readFile(file)));
+  },
 
   extract: (filePath, content) => ({
     nodes: [],

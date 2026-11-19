@@ -1,6 +1,6 @@
 /**
  * Tests of pythonImportlibResolver with a context that throws on any lookup a test does
- * not stub: detect, extract (file-level `imports` references named by the path),
+ * not stub: detect Python files and extensionless Python scripts, extract (file-level `imports` references named by the path),
  * claimsReference, ownsReference, and resolve (root-relative candidate before
  * loader-relative; none for an anchored name whose root candidate is absent; a
  * root-escaping name drops its root candidate and still tries the loader-relative one;
@@ -37,11 +37,35 @@ const ref: UnresolvedRef = {
 };
 
 describe('pythonImportlibResolver', () => {
-  it('identifies itself and detects Python files only', () => {
+  it('identifies itself and detects .py files without reading sources', () => {
     expect(pythonImportlibResolver.name).toBe('python-importlib');
     expect(pythonImportlibResolver.languages).toEqual(['python']);
-    expect(pythonImportlibResolver.detect({ ...context(), getAllFiles: () => ['src/a.ts', 'tests/a.py'] })).toBe(true);
+    expect(pythonImportlibResolver.detect({ ...context(), getAllFiles: () => ['bin/tool', 'src/a.ts', 'tests/a.py'] })).toBe(true);
     expect(pythonImportlibResolver.detect({ ...context(), getAllFiles: () => ['src/a.ts', 'a.py.txt'] })).toBe(false);
+  });
+
+  it('detects an extensionless-only Python project', () => {
+    const sources: Record<string, string> = {
+      'tests/test_tool': '#!/usr/bin/env python3\nfrom importlib.machinery import SourceFileLoader\nSourceFileLoader("subject", "bin/subject").load_module()\n',
+      'bin/subject': '#!/usr/bin/env python3\nprint("hi")\n',
+    };
+    expect(pythonImportlibResolver.detect({
+      ...context(), getAllFiles: () => ['tests/test_tool', 'bin/subject'],
+      readFile: (file) => sources[file] ?? null,
+    })).toBe(true);
+  });
+
+  it('rejects extensionless non-Python and unreadable scripts', () => {
+    expect(pythonImportlibResolver.detect({
+      ...context(), getAllFiles: () => ['bin/run', 'bin/missing'],
+      readFile: (file) => file === 'bin/run' ? '#!/bin/sh\necho hi\n' : null,
+    })).toBe(false);
+  });
+
+  it('does not read files with extensions during detection', () => {
+    expect(pythonImportlibResolver.detect({
+      ...context(), getAllFiles: () => ['src/a.ts', 'README.md'],
+    })).toBe(false);
   });
 
   it('extracts file-level import references without candidates', () => {

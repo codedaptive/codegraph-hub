@@ -4,7 +4,8 @@
  * `__file__`, root-relative, loader-relative), that a path from a function parameter
  * links nothing even when it shadows a module name, and that the dependency returns after
  * the target is deleted and re-added across syncs. A local bound once in a function is
- * read like a module name; a parameter links nothing.
+ * read like a module name; a parameter links nothing. An extensionless-only Python
+ * project also links a path-loaded script to its loader.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
@@ -12,51 +13,51 @@ import * as os from 'os';
 import * as path from 'path';
 import { CodeGraph } from '../../../src';
 
-let root: string;
-let cg: CodeGraph;
-const xContent = 'def x():\n    return 1\n';
+describe('Python path-loaded file dependents', () => {
+  let root: string;
+  let cg: CodeGraph;
+  const xContent = 'def x():\n    return 1\n';
 
-beforeAll(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-python-path-loaded-'));
-  fs.mkdirSync(path.join(root, 'share'), { recursive: true });
-  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
-  fs.mkdirSync(path.join(root, 'tests/unit'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'share/x.py'), xContent);
-  fs.writeFileSync(path.join(root, 'share/y.py'), 'def y():\n    return 2\n');
-  fs.writeFileSync(path.join(root, 'share/z.py'), 'def z():\n    return 3\n');
-  fs.writeFileSync(path.join(root, 'share/v.py'), 'def v():\n    return 5\n');
-  fs.writeFileSync(path.join(root, 'lib/w.py'), 'def w():\n    return 4\n');
-  fs.writeFileSync(path.join(root, 'tests/unit/test_a.py'), `from pathlib import Path
+  beforeAll(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-python-path-loaded-'));
+    fs.mkdirSync(path.join(root, 'share'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'tests/unit'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'share/x.py'), xContent);
+    fs.writeFileSync(path.join(root, 'share/y.py'), 'def y():\n    return 2\n');
+    fs.writeFileSync(path.join(root, 'share/z.py'), 'def z():\n    return 3\n');
+    fs.writeFileSync(path.join(root, 'share/v.py'), 'def v():\n    return 5\n');
+    fs.writeFileSync(path.join(root, 'lib/w.py'), 'def w():\n    return 4\n');
+    fs.writeFileSync(path.join(root, 'tests/unit/test_a.py'), `from pathlib import Path
 import importlib.machinery
 ROOT = Path(__file__).resolve().parents[2]
 loader = importlib.machinery.SourceFileLoader("x", str(ROOT / "share" / "x.py"))
 mod = loader.load_module()
 `);
-  fs.writeFileSync(path.join(root, 'tests/test_b.py'), `import importlib.util
+    fs.writeFileSync(path.join(root, 'tests/test_b.py'), `import importlib.util
 spec = importlib.util.spec_from_file_location("y", "share/y.py")
 `);
-  fs.writeFileSync(path.join(root, 'tests/test_c.py'), `import importlib.util
+    fs.writeFileSync(path.join(root, 'tests/test_c.py'), `import importlib.util
 spec = importlib.util.spec_from_file_location("w", "../lib/w.py")
 `);
-  fs.writeFileSync(path.join(root, 'tests/test_d.py'), `import importlib.machinery, sys
+    fs.writeFileSync(path.join(root, 'tests/test_d.py'), `import importlib.machinery, sys
 def load(p):
     return importlib.machinery.SourceFileLoader("z", p).load_module()
 `);
-  fs.writeFileSync(path.join(root, 'tests/test_e.py'), `import importlib.machinery
+    fs.writeFileSync(path.join(root, 'tests/test_e.py'), `import importlib.machinery
 from pathlib import Path
 path = str(Path(__file__).resolve().parents[1] / "share" / "v.py")
 def load(path):
     return importlib.machinery.SourceFileLoader("v", path).load_module()
 `);
-  cg = await CodeGraph.init(root, { index: true });
-});
+    cg = await CodeGraph.init(root, { index: true });
+  });
 
-afterAll(() => {
-  cg?.close();
-  if (root) fs.rmSync(root, { recursive: true, force: true });
-});
+  afterAll(() => {
+    cg?.close();
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  });
 
-describe('Python path-loaded file dependents', () => {
   it('finds the loader for an anchored SourceFileLoader path', () => {
     expect(cg.getFileDependents('share/x.py')).toContain('tests/unit/test_a.py');
   });
@@ -83,5 +84,28 @@ describe('Python path-loaded file dependents', () => {
     fs.writeFileSync(path.join(root, 'share/x.py'), xContent);
     await cg.sync();
     expect(cg.getFileDependents('share/x.py')).toContain('tests/unit/test_a.py');
+  });
+});
+
+describe('extensionless-only Python path-loaded file dependents', () => {
+  let root: string;
+  let cg: CodeGraph;
+
+  beforeAll(async () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-python-extensionless-loaded-'));
+    fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tests/test_tool'), '#!/usr/bin/env python3\nfrom importlib.machinery import SourceFileLoader\nSourceFileLoader("subject", "bin/subject").load_module()\n');
+    fs.writeFileSync(path.join(root, 'bin/subject'), '#!/usr/bin/env python3\nprint("hi")\n');
+    cg = await CodeGraph.init(root, { index: true });
+  });
+
+  afterAll(() => {
+    cg?.close();
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('finds the extensionless loader of an extensionless Python script', () => {
+    expect(cg.getFileDependents('bin/subject')).toContain('tests/test_tool');
   });
 });
