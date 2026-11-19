@@ -151,7 +151,7 @@ Linux and Windows, if they want it.
       real merge, with the upstream commit a parent and never squashed in, so GitHub's compare against upstream
       stays meaningful and the next upstream merge has a base. Each of our features is one squash with a `Feature:`
       trailer, so it can still be offered upstream as a pull request. `main` is never force-pushed.
-    - The backporter lane builds each batch on the `candidate` branch, cut from `main` (R-58): the upstream merge the batch
+    - The backporter lane builds each batch on the `candidate` branch, cut from `main` (R-56 (3); the name `candidate` is R-58): the upstream merge the batch
       needs, then one squash per feature changed since the last batch, cleaned (§4's exclusions, R-19's rules, the
       README per item 3). The candidate is done when its tree equals `develop`'s tree for the same `ours` and the
       whole-suite gate passes on it. The backporter then merges it into `main` and pushes. That push is the
