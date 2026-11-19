@@ -8,8 +8,10 @@
  *
  * One decision point, {@link builderRoute}: a running machine server (src/mcp/server-control.ts probeServer)
  * gives a {@link BuilderRoute}, one connection to the server's existing socket; anything else gives null and the
- * command goes on without the builder (writing in its own process; `index` and `uninit` refuse when a server
- * answered but did not prove itself, as it did not release the root). builder.pid is not consulted: a direct-mode builder
+ * command goes on without the builder (writing in its own process). When a server answered but did not prove
+ * itself, `index`, `uninit` and the `init` of an initialized root the builder stopped at a limit (which rebuilds as
+ * `index` does, ../retryStoppedInit.ts) refuse, as the server did not confirm it released the root; the `init` of a
+ * new root, `sync`, `seed` and the `--fresh` wait write in this process. builder.pid is not consulted: a direct-mode builder
  * writes the same file for its own state dir and a stale one proves nothing, so only a server that proved
  * itself by its socket hello, and then proved it runs as this user (src/mcp/daemon-proof.ts), counts, and that
  * server's own client then decides whether its builder is up (a `{routed: false}` answer).
@@ -32,6 +34,7 @@ import type { ServerLockInfo } from '../../../mcp/daemon-paths';
 import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 import { probeServer } from '../../../mcp/server-control';
 import { daemonKeyPath, newDaemonChallenge } from '../../../mcp/daemon-proof';
+import { isJsonObject } from '../server/isJsonObject';
 import { routeHandshakeStep } from './routeHandshakeStep';
 import {
   INDEX_WRITE_END_METHOD,
@@ -162,8 +165,10 @@ class RouteConnection implements BuilderRoute {
         if (!ok && connection.phase === 'proof') {
           process.stderr.write(
             `[CodeGraph] The server on ${lock.socketPath} could not prove it runs as this user ` +
-            `(with the key in ${daemonKeyPath()}), so nothing is sent to it: \`codegraph index\` and ` +
-            '`codegraph uninit` refuse, and init, sync, seed and the --fresh wait write the index in this process.\n'
+            `(with the key in ${daemonKeyPath()}), so nothing more is sent to it: \`codegraph index\`, ` +
+            '`codegraph uninit` and `codegraph init` of an initialized root the builder stopped at a limit refuse, ' +
+            'as the server did not confirm it released the root; init of a new root, sync, seed and the --fresh wait ' +
+            'write the index in this process.\n'
           );
         }
         resolve(ok ? connection : null);
@@ -249,13 +254,13 @@ class RouteConnection implements BuilderRoute {
       if (newline < 0) return;
       const line = this.buffer.slice(0, newline);
       this.buffer = this.buffer.slice(newline + 1);
-      let message: Record<string, unknown> | unknown[] | string | number | boolean | null | undefined;
+      let message: unknown;
       try {
         message = JSON.parse(line);
       } catch {
         message = undefined;
       }
-      if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+      if (!isJsonObject(message)) {
         // Not our server's protocol, whose every line is a JSON object (so not JSON, null, an array or a
         // scalar). Dropping the connection fails the request in flight, if there is one.
         this.close();

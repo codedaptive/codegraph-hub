@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readPeers } from '../../../src/mcp/readPeers';
+import { readPeers } from '../../../src/extensions/host/server/readPeers';
 
 type Peers = { name: string };
 const none: Peers = { name: 'none' };

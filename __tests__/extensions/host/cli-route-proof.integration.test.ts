@@ -5,6 +5,9 @@ import { getServerSocketPath } from '../../../src/mcp/daemon-paths';
 import { daemonKey, daemonProof } from '../../../src/mcp/daemon-proof';
 import * as os from 'os';
 import * as path from 'path';
+import { DatabaseSync } from 'node:sqlite';
+import { rebuildIndex } from '../../../src/extensions/host/rebuildIndex';
+import { removeIndexReleased } from '../../../src/extensions/host/uninit';
 import { startFakeDaemon, type FakeDaemon, type FakeProof } from '../../fake-daemon';
 import { builderRoute, openRoutedSync, startRoutedIndex, startRoutedInit } from '../../../src/extensions/host/builder/cli-route';
 import { CodeGraphPackageVersion } from '../../../src/mcp/version';
@@ -17,6 +20,7 @@ beforeEach(() => {
   vi.stubEnv('CODEGRAPH_STATE_DIR', dir);
   vi.stubEnv('HOME', dir);
   vi.stubEnv('USERPROFILE', dir);
+  vi.stubEnv('CODEGRAPH_CATCHUP_GATE_TIMEOUT_MS', '0');
 });
 afterEach(async () => {
   await daemon?.close();
@@ -133,9 +137,33 @@ describe('CLI route proof before control hello', () => {
     ['init', (root: string) => startRoutedInit(root, false, false)],
     ['index', (root: string) => startRoutedIndex(root, false, false)],
     ['sync', (root: string) => openRoutedSync(root)],
-  ])('%s falls back when proof is wrong', async (_name, open) => {
+  ])('%s opens no route when proof is wrong', async (_name, open) => {
     const fake = await server('other-key');
     expect(await open(dir)).toBeNull();
     expect(fake.lines).toEqual([{ codegraph_challenge: expect.any(String) }]);
+  });
+
+  it.each(['index', 'uninit'] as const)('%s refuses an unproven server and preserves the database', async operation => {
+    const fake = await server('other-key');
+    const root = path.join(dir, 'project');
+    const indexDir = path.join(root, '.codegraph');
+    const dbPath = path.join(indexDir, 'codegraph.db');
+    fs.mkdirSync(indexDir, { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE sentinel (value TEXT); INSERT INTO sentinel VALUES ('keep me');");
+    db.close();
+    const original = fs.readFileSync(dbPath);
+
+    if (operation === 'index') {
+      await expect(rebuildIndex(root, {}, {
+        runIndexOn: async () => false,
+        loadEngine: () => import('../../../src/index'),
+      })).rejects.toThrow('did not confirm that it released');
+    } else {
+      await expect(removeIndexReleased(root, () => fs.rmSync(indexDir, { recursive: true, force: true })))
+        .rejects.toThrow('did not confirm that it released');
+    }
+    expect(fs.readFileSync(dbPath)).toEqual(original);
+    expect(fake.requests).toEqual([]);
   });
 });

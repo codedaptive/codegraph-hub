@@ -74,7 +74,7 @@ import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/re
 import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { BuilderClient } from '../extensions/host/builder/client';
 import { daemonKey, daemonProof } from './daemon-proof';
-import { readPeers } from './readPeers';
+import { readPeers } from '../extensions/host/server/readPeers';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -551,7 +551,7 @@ export class Daemon {
     socket.once('close', () => this.acceptedSockets.delete(socket));
     // Hello first so the proxy can verify versions before piping any
     // application bytes. The proxy reads this line and then this server's proof
-    // (see ./readPeers) before it forwards.
+    // (see ../extensions/host/server/readPeers.ts) before it forwards.
     const hello: DaemonHello = {
       codegraph: CodeGraphPackageVersion,
       pid: process.pid,

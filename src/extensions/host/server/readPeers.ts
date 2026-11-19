@@ -1,4 +1,4 @@
-import { parseChallengeOrHello } from './parseChallengeOrHello';
+import { parseChallengeOrHello } from '../../../mcp/parseChallengeOrHello';
 
 /**
  * A client's peers, from its client hello. Every CodeGraph client (the proxy,

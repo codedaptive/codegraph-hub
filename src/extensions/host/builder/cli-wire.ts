@@ -5,8 +5,9 @@
  *
  * The CLI connects to the server's existing socket, reads the server hello, sends a challenge line and checks the
  * server's proof (src/mcp/daemon-proof.ts; a server that cannot prove it runs as this user is sent nothing more:
- * `index` and `uninit` then refuse, as the server did not confirm it released the root, and `init`, `sync`, `project seed`
- * and the `--fresh` wait write in their own process), sends a client hello with the `codegraph_client` and `control` markers and no
+ * `index`, `uninit` and the `init` of an initialized root the builder stopped at a limit then refuse, as the server did
+ * not confirm it released the root, and the `init` of a new root, `sync`, `project seed` and the `--fresh` wait write in
+ * their own process), sends a client hello with the `codegraph_client` and `control` markers and no
  * `launchDir` (a control client, not an agent session), then requests on that one connection:
  *
  *   → {"jsonrpc":"2.0","id":<n>,"method":"codegraph/indexWrite","params":IndexWriteParams}
