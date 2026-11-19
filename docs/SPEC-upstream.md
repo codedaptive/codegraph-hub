@@ -123,7 +123,9 @@ Linux and Windows, if they want it.
      monthly update regenerates it.
 4. **License.** The hub carries upstream's license unchanged (MIT; upstream's `LICENSE` file as is), and the README
    says so.
-5. **Monthly update.** Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
+5. **Monthly update.** *Superseded for `develop` by item 11 (R-57, S-111): `develop` is `ours` published as it is,
+   history included, with no scrubbing, and its upstream syncs are real merges; the squashed, force-pushed `develop`
+   below is retired.* Once a month: current upstream merged into `ours` through integration, the whole-suite gate,
    then the hub's `develop` brought to that `ours` with §4's exclusions and R-19's rules (no graft references, the
    bob-codedaptive identity); the stable `main` and the release follow from it as item 10 says (R-56). The backporter
    lane runs the update (R-56, superseding R-36). The hub is public, so the `develop` push publishes too: like the

@@ -866,5 +866,6 @@ General as a RULING line. Decisions already settled by a document live in `team/
   upstream ancestry as it is.
 - Reason: Bob's word: the fork must stay a descendant of upstream, so it can merge upstream and offer PRs to it.
 - Not chosen: squashed upstream syncs; PR branches cut from our lines.
-- Extends R-56. Expanded in docs/SPEC-upstream.md §7 item 11. Conflicts with §7 item 5 as written (one squashed
-  `develop` commit force-pushed over the last, R-35/S-56): reported to the creator, open with Q-46.
+- Extends R-56; supersedes §7 item 5's squashed, force-pushed `develop` (R-35, S-56 for `develop`). Expanded in
+  docs/SPEC-upstream.md §7 item 11. Q-46 is closed by Bob's own words (#5301: "Publish as it is, history included,
+  with no scrubbing"; #5306 (1)): `develop` is `ours` as it is, with history (S-111).
