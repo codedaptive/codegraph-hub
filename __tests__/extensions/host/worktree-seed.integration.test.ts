@@ -15,7 +15,7 @@ import { inProcessJobRunner } from './helpers/in-process-job-runner';
  * ToolHandler entry point (the gate a tool call goes through) is covered in
  * worktree-seed.gate.test.ts.
  *
- * Vectors (contract.md): G1 determinism, G4 copy set, G5 source choice,
+ * Vectors: G1 determinism, G4 copy set, G5 source choice,
  * G6 fence.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -164,10 +164,19 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
     const sibA = path.join(workspace, 'sib-a'); // distance 1, lexicographically first of the two
     addWorktree(main, sibA, 'sib-a', base);
     commitN(sibA, 1, 'a');
-    // Distance 0, but its index never completed (init, no indexAll): not a source.
+    // Distance 0, but its aborted build left a failed index: not a source.
     const sib0 = path.join(workspace, 'sib-0');
     addWorktree(main, sib0, 'sib-0', base);
-    CodeGraph.initSync(sib0).close();
+    const cg0 = await CodeGraph.init(sib0);
+    const aborted = await cg0.indexAll({ signal: AbortSignal.abort() });
+    cg0.close();
+    expect(aborted).toMatchObject({ success: false });
+    const db0 = new DatabaseSync(dbPath(sib0), { readOnly: true });
+    try {
+      expect(db0.prepare("SELECT value FROM project_metadata WHERE key = 'index_state'").get()).toMatchObject({ value: 'failed' });
+    } finally {
+      db0.close();
+    }
 
     expect(await indexDir(sibB)).toMatchObject({ success: true, filesIndexed: 0 });
     expect(await indexDir(sib3)).toMatchObject({ success: true, filesIndexed: 0 });
@@ -260,6 +269,7 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
   // G6. A writer child process commits to the source's database in a tight
   // loop while the source is seeded five times. Each seed must be a sound
   // database, whichever path (clone under the fence, or backup) it took.
+  // The explicit 20 s timeout is a hang limit, not a speed claim.
   it('G6: seeds taken while a writer commits to the source all pass integrity_check', async () => {
     const writerScript = [
       "const { DatabaseSync } = require('node:sqlite');",
@@ -305,5 +315,5 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
         db.close();
       }
     }
-  });
+  }, 20_000);
 });
