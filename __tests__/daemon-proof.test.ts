@@ -7,7 +7,7 @@
  * named pipe lives in a namespace every user can create in, and on macOS and
  * Linux one socket candidate sits in the temp folder, shared on Linux; Node can
  * read neither a pipe's owner nor a socket peer's user. So the proxy sends a
- * fresh challenge in its client hello, and only a server holding this user's
+ * fresh challenge before its client hello, and only a server holding this user's
  * key, which only this user can read, answers it with the right HMAC. The
  * proxy's side is in proxy-connect.test.ts.
  */
@@ -129,26 +129,16 @@ describe('a daemon proof', () => {
     expect(newDaemonChallenge()).not.toBe(newDaemonChallenge());
   });
 
-  it('rides the client hello the server parses, which still parses without one', () => {
-    const c = newDaemonChallenge();
+  it('ignores an old challenge field in the client hello', () => {
     const noScope = { pid: 7, hostPid: null, launchDir: null, hasLaunchDir: false, control: false };
-    expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 7, hostPid: null, challenge: c })))
-      .toEqual({ ...noScope, challenge: c });
+    expect(parseClientHelloLine('{"codegraph_client":1,"pid":7,"hostPid":null,"challenge":"abc"}')).toEqual(noScope);
     expect(parseClientHelloLine('{"codegraph_client":1,"pid":7,"hostPid":null}')).toEqual(noScope);
-    // An empty, oversized or non-string challenge is no challenge.
-    for (const challenge of ['', 'x'.repeat(257), 5]) {
-      expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 7, challenge }))).toEqual(noScope);
-    }
-    // The longest challenge the server answers is 256 characters.
-    expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 7, challenge: 'x'.repeat(256) }))?.challenge)
-      .toBe('x'.repeat(256));
   });
 
-  it('rides the same hello as the launch directory, focus and tools', () => {
-    const c = newDaemonChallenge();
+  it('keeps launch directory, focus and tools while ignoring an old challenge', () => {
     const launchDir = path.resolve(os.tmpdir(), 'some project');
-    expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 7, hostPid: 8, launchDir, focus: ['src'], tools: '', challenge: c })))
-      .toEqual({ pid: 7, hostPid: 8, launchDir, hasLaunchDir: true, control: false, focus: ['src'], tools: '', challenge: c });
+    expect(parseClientHelloLine(JSON.stringify({ codegraph_client: 1, pid: 7, hostPid: 8, launchDir, focus: ['src'], tools: '', challenge: 'abc' })))
+      .toEqual({ pid: 7, hostPid: 8, launchDir, hasLaunchDir: true, control: false, focus: ['src'], tools: '' });
   });
 });
 
@@ -234,11 +224,11 @@ describe('the server answers a challenge in its handshake', () => {
     const hello = JSON.parse(await next());
     expect(hello.protocol).toBe(1);
     const challenge = newDaemonChallenge();
-    socket.write(JSON.stringify({ codegraph_client: 1, pid: process.pid, hostPid: null, challenge }) + '\n');
+    socket.write(JSON.stringify({ codegraph_challenge: challenge }) + '\n');
     const { codegraph_proof: proof } = JSON.parse(await next());
 
     expect(daemonProofMatches(readDaemonKey()!, challenge, socketPath, proof)).toBe(true);
-    // The session follows, as on any connection.
+    socket.write(JSON.stringify({ codegraph_client: 1, pid: process.pid, hostPid: null }) + '\n');
     socket.write(JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'ping' }) + '\n');
     expect(JSON.parse(await next())).toMatchObject({ id: 5, result: {} });
   });
@@ -250,16 +240,25 @@ describe('the server answers a challenge in its handshake', () => {
 
     await next(); // hello
     const challenge = newDaemonChallenge();
-    socket.write(JSON.stringify({
-      codegraph_client: 1, pid: process.pid, hostPid: null,
-      launchDir: tempDir('cg-prooflaunch-'), focus: [], tools: '', challenge,
-    }) + '\n');
-    socket.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'ping' }) + '\n');
-
-    // The proof is the first line after the hello, ahead of the session's answer.
+    socket.write(JSON.stringify({ codegraph_challenge: challenge }) + '\n');
     const { codegraph_proof: proof } = JSON.parse(await next());
     expect(daemonProofMatches(readDaemonKey()!, challenge, socketPath, proof)).toBe(true);
+    const launchDir = tempDir('cg-prooflaunch-');
+    const outside = tempDir('cg-proofoutside-');
+    socket.write(JSON.stringify({
+      codegraph_client: 1, pid: process.pid, hostPid: null,
+      launchDir, focus: [], tools: '',
+    }) + '\n');
+    socket.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'ping' }) + '\n');
     expect(JSON.parse(await next())).toMatchObject({ id: 7, result: {} });
+    socket.write(JSON.stringify({
+      jsonrpc: '2.0', id: 8, method: 'tools/call',
+      params: { name: 'codegraph_explore', arguments: { query: 'example', projectPath: outside } },
+    }) + '\n');
+    const answer = JSON.parse(await next());
+    expect(answer.id).toBe(8);
+    expect(answer.result.content[0].text).toContain(launchDir);
+    expect(answer.result.content[0].text).toContain('outside it');
   });
 
   // A client hello without a challenge (the codegraph CLI's control hello sends

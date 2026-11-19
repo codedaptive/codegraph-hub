@@ -30,6 +30,7 @@ import { startFakeDaemon, type FakeProof } from './fake-daemon';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   while (cleanups.length) {
     try { await cleanups.pop()!(); } catch { /* best-effort */ }
   }
@@ -73,11 +74,12 @@ describe('connectWithHello — socket is never left without an error listener (#
 
   it('still reports version-mismatch (and that path does not throw)', async () => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    const { socketPath, challenges } = await fakeDaemon('0.0.0-not-our-version');
+    const { socketPath, challenges, lines } = await fakeDaemon('0.0.0-not-our-version');
     const result = await connectWithHello(socketPath);
     expect(result).toBe('version-mismatch');
     // Another version is told apart by its hello; it is never asked for a proof.
     expect(challenges).toEqual([]);
+    expect(lines).toEqual([]);
   });
 
   it('returns null when no daemon is listening', async () => {
@@ -88,8 +90,9 @@ describe('connectWithHello — socket is never left without an error listener (#
 
 describe('connectWithHello — the daemon proves it runs as this user (#3396)', () => {
   it('hands over the session stream intact once the proof matches', async () => {
+    vi.stubEnv('CODEGRAPH_MCP_TOOLS', 'explore,search');
     const daemon = await fakeDaemon(CodeGraphPackageVersion);
-    const socket = await connectWithHello(daemon.socketPath) as net.Socket;
+    const socket = await connectWithHello(daemon.socketPath, CodeGraphPackageVersion, 3_000, '/private/project', ['src']) as net.Socket;
     cleanups.push(() => { socket.destroy(); });
     expect(daemon.challenges).toHaveLength(1);
 
@@ -104,19 +107,25 @@ describe('connectWithHello — the daemon proves it runs as this user (#3396)', 
     });
     socket.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'ping' }) + '\n');
     expect(JSON.parse(await line)).toEqual({ jsonrpc: '2.0', id: 7, result: { echoed: 'ping' } });
+    expect(daemon.lines[0]).toEqual({ codegraph_challenge: expect.any(String) });
+    expect(daemon.lines[1]).toMatchObject({ codegraph_client: 1, pid: process.pid, launchDir: '/private/project', focus: ['src'], tools: 'explore,search' });
+    expect(daemon.lines[1]).toHaveProperty('hostPid');
+    expect(daemon.lines[1]).not.toHaveProperty('challenge');
   });
 
   it.each([
     ['answers under another key, as a stand-in another user put there would', 'other-key'],
     ['answers with this user\'s proof for another path, relayed from elsewhere', 'other-path'],
     ['answers no challenge', 'none'],
+    ['answers with a null proof', 'null'],
   ] as const)('is unproven, and gets no session, when the daemon %s', async (_why, proof) => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const daemon = await fakeDaemon(CodeGraphPackageVersion, proof);
 
-    const result = await connectWithHello(daemon.socketPath, CodeGraphPackageVersion, 500);
+    const result = await connectWithHello(daemon.socketPath, CodeGraphPackageVersion, 500, '/private/project', ['src']);
 
     expect(result).toBe('unproven');
+    expect(daemon.lines).toEqual([{ codegraph_challenge: expect.any(String) }]);
     expect(daemon.challenges).toHaveLength(1);
     expect(daemon.requests).toEqual([]);
     expect(stderr.mock.calls.some(([line]) => String(line).includes('could not prove it runs as this user'))).toBe(true);

@@ -10,8 +10,8 @@
  * gives a {@link BuilderRoute}, one connection to the server's existing socket; anything else gives null and the
  * command writes in its own process. builder.pid is not consulted: a direct-mode builder
  * writes the same file for its own state dir and a stale one proves nothing, so only a server that proved
- * itself by its socket hello counts, and that server's own client then decides whether its builder is up (a
- * `{routed: false}` answer).
+ * itself by its socket hello, and then proved it runs as this user (src/mcp/daemon-proof.ts), counts, and that
+ * server's own client then decides whether its builder is up (a `{routed: false}` answer).
  *
  * Nothing here creates a file or a directory, starts a process, or waits on a timer once connected: an index
  * runs for minutes.
@@ -30,6 +30,8 @@ import type { IndexProgress, IndexResult, SyncResult } from '../../../extraction
 import type { ServerLockInfo } from '../../../mcp/daemon-paths';
 import type { WorktreeSeedOutcome } from '../worktree-lifecycle/seed';
 import { controlClientHelloLine, isServerHello, probeServer } from '../../../mcp/server-control';
+import { daemonKeyPath, daemonProofMatches, newDaemonChallenge, readDaemonKey } from '../../../mcp/daemon-proof';
+import { daemonChallengeLine } from '../../../mcp/daemonChallengeLine';
 import {
   INDEX_WRITE_END_METHOD,
   INDEX_WRITE_EVENT_METHOD,
@@ -92,8 +94,9 @@ export interface BuilderRoute {
 }
 
 /**
- * Reading the server hello. The server writes it as soon as the socket accepts, so 5 s is ample even on a
- * loaded machine; silence longer than that means this is not a live CodeGraph server.
+ * Reading the server hello and then its proof. The server writes the hello as soon as the socket accepts and
+ * the proof as soon as it reads the challenge, so 5 s for both is ample even on a loaded machine; silence
+ * longer than that means this is not a live CodeGraph server of this user.
  */
 const HELLO_TIMEOUT_MS = 5_000;
 
@@ -110,10 +113,17 @@ interface Pending {
 /** What {@link RouteConnection.rpc} saw: the request was never sent, or the server's result. */
 type RpcOutcome = { sent: false } | { sent: true; result: unknown };
 
+/**
+ * Where a connection's handshake stands: waiting for the server hello, then for the proof answering the
+ * challenge line sent after it, then open for requests.
+ */
+type HandshakePhase = 'hello' | 'proof' | 'open';
+
 /** The route over one socket to `lock`'s server. */
 class RouteConnection implements BuilderRoute {
   private buffer = '';
-  private greeted = false;
+  private phase: HandshakePhase = 'hello';
+  private readonly challenge = newDaemonChallenge();
   private closed = false;
   private nextId = 1;
   private pending: Pending | null = null;
@@ -131,7 +141,10 @@ class RouteConnection implements BuilderRoute {
     socket.on('close', () => this.onClosed());
   }
 
-  /** Connect and read the hello: null when the socket does not answer, or answers as another server than `lock`'s. */
+  /**
+   * Connect, read the hello and have the server prove it runs as this user: null when the socket does not
+   * answer, answers as another server than `lock`'s, or cannot prove it (then with one line on stderr).
+   */
   static open(lock: ServerLockInfo): Promise<RouteConnection | null> {
     return new Promise((resolve) => {
       let connection: RouteConnection;
@@ -147,6 +160,12 @@ class RouteConnection implements BuilderRoute {
         clearTimeout(timer);
         connection.helloSettled = null;
         if (!ok) connection.close();
+        if (!ok && connection.phase === 'proof') {
+          process.stderr.write(
+            `[CodeGraph] The server on ${lock.socketPath} could not prove it runs as this user ` +
+            `(with the key in ${daemonKeyPath()}); this command writes the index itself.\n`
+          );
+        }
         resolve(ok ? connection : null);
       };
     });
@@ -238,23 +257,39 @@ class RouteConnection implements BuilderRoute {
         this.close();
         return;
       }
-      if (!this.greeted) {
-        this.greet(message);
-        if (!this.greeted) return;
+      if (this.phase !== 'open') {
+        if (!this.handshake(message)) return;
         continue;
       }
       this.dispatch(message);
     }
   }
 
-  /** The first line is the hello of the server `lock` names (its pid and version), else this is not that server. */
-  private greet(message: Record<string, unknown>): void {
-    const ok = isServerHello(message) && message.pid === this.lock.pid && message.codegraph === this.lock.version;
+  /**
+   * The first line is the hello of the server `lock` names (its pid and version), else this is not that server;
+   * the challenge line goes only to that server. The next line must be its proof: only then does the control
+   * client hello go, and with it any request. False when the handshake failed (the connection is closed).
+   */
+  private handshake(message: Record<string, unknown>): boolean {
+    if (this.phase === 'hello') {
+      const ok = isServerHello(message) && message.pid === this.lock.pid && message.codegraph === this.lock.version;
+      if (!ok) {
+        this.helloSettled?.(false);
+        return false;
+      }
+      this.phase = 'proof';
+      this.socket.write(daemonChallengeLine(this.challenge));
+      return true;
+    }
+    // Read once the proof is in: the server answering the first challenge makes the key.
+    const key = readDaemonKey();
+    const ok = key !== null && daemonProofMatches(key, this.challenge, this.lock.socketPath, message.codegraph_proof);
     if (ok) {
-      this.greeted = true;
+      this.phase = 'open';
       this.socket.write(controlClientHelloLine());
     }
     this.helloSettled?.(ok);
+    return ok;
   }
 
   private dispatch(message: Record<string, unknown>): void {

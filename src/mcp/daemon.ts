@@ -73,7 +73,8 @@ import { ensureStateDir, getStateDir, getStateDirIdentity } from '../extensions/
 import { resolveRepoAnchor, type RepoAnchor } from '../extensions/host/server/repo-anchor';
 import { MAX_FOCUS_ENTRIES, parseToolAllowlist, sessionFocusEntries } from '../extensions/host/server/session-scope';
 import { BuilderClient } from '../extensions/host/builder/client';
-import { MAX_CHALLENGE_LENGTH, daemonKey, daemonProof } from './daemon-proof';
+import { daemonKey, daemonProof } from './daemon-proof';
+import { parseDaemonChallengeLine } from './parseDaemonChallengeLine';
 
 /**
  * Windows-only shutdown backstop. On Windows, calling `process.exit()` while a
@@ -219,13 +220,6 @@ export interface DaemonClientHello {
    * never inherits the server process's.
    */
   tools?: string;
-  /**
-   * A fresh random string from a proxy that wants this user's server to prove
-   * it is one before the session starts (the hello itself goes first). The server answers with one
-   * `{"codegraph_proof": …}` line before the session starts; a client hello
-   * without it gets no such line. See `./daemon-proof`.
-   */
-  challenge?: string;
 }
 
 /**
@@ -253,8 +247,6 @@ export interface ClientPeers {
   control: boolean;
   focus?: string[];
   tools?: string;
-  /** The hello's proof challenge, absent when it carried none (see DaemonClientHello.challenge). */
-  challenge?: string;
 }
 
 const NO_PEERS: ClientPeers = { pid: null, hostPid: null, launchDir: null, hasLaunchDir: false, control: false };
@@ -558,7 +550,8 @@ export class Daemon {
     this.acceptedSockets.add(socket);
     socket.once('close', () => this.acceptedSockets.delete(socket));
     // Hello first so the proxy can verify versions before piping any
-    // application bytes. The proxy reads exactly one line, then forwards.
+    // application bytes. The proxy reads this line and then this server's proof
+    // (see readPeers) before it forwards.
     const hello: DaemonHello = {
       codegraph: CodeGraphPackageVersion,
       pid: process.pid,
@@ -572,13 +565,9 @@ export class Daemon {
     // Fail-safe: any problem — timeout, a non-hello first line, an early close —
     // yields null peers and we fall back to the socket-close lifecycle (#692);
     // the session then has no anchor.
-    void readClientHello(socket).then(async ({ challenge, ...peers }) => {
+    void this.readPeers(socket).then(async (peers) => {
       if (this.stopping || socket.destroyed) { socket.destroy(); return; }
-      // A client that asked gets its proof first: it waits for it with its
-      // hello timeout, so the anchor's git lookups stay out of that wait, and
-      // the proof still precedes the session's first byte.
-      if (challenge !== undefined) this.answerChallenge(socket, challenge);
-      // The socket is paused by readClientHello until the transport starts, so
+      // The socket is paused by readClientLine until the transport starts, so
       // the anchor's git lookups cannot cost the client's first message.
       let anchor: RepoAnchor | null = null;
       if (peers.launchDir !== null) {
@@ -612,11 +601,26 @@ export class Daemon {
   }
 
   /**
-   * Answer a client hello's challenge with this user's proof (see
+   * The client's peers, from its client hello. A proxy first sends a challenge
+   * line and waits for the proof before it says who it is, so a first line
+   * that is a challenge is answered at once, ahead of the anchor lookup and the
+   * session, and the line after it is read as the client hello. A first line
+   * that is a client hello (the codegraph CLI's control and release
+   * connections) gets no proof line.
+   */
+  private async readPeers(socket: net.Socket): Promise<ClientPeers> {
+    const first = await readClientLine(socket, parseChallengeOrHello, NO_PEERS);
+    if (!('challenge' in first)) return first;
+    this.answerChallenge(socket, first.challenge);
+    return readClientLine(socket, parseClientHelloLine, NO_PEERS);
+  }
+
+  /**
+   * Answer a client's challenge line with this user's proof (see
    * `./daemon-proof`) over the socket path this server bound, so the client can
-   * tell this server from a stand-in at its socket before the session's first byte.
-   * `null` when no key only this user can read can be had: the client then
-   * serves the session in-process.
+   * tell this server from a stand-in at its socket before it sends its client
+   * hello. `null` when no key only this user can read can be had: the client
+   * then serves the session in-process.
    */
   private answerChallenge(socket: net.Socket, challenge: string): void {
     const key = daemonKey();
@@ -1108,8 +1112,7 @@ function resolveInstallCheckMs(): number {
  * on a relative path. `focus` is kept only as an array of at most
  * `MAX_FOCUS_ENTRIES` strings and `tools` only as a string; any other shape
  * (including a longer focus list, which the CLI never sends) leaves the property
- * absent, as if the hello had not sent it. A `challenge` is kept only as a
- * string of 1 to `MAX_CHALLENGE_LENGTH` characters.
+ * absent, as if the hello had not sent it.
  */
 export function parseClientHelloLine(line: string): ClientPeers | null {
   let parsed: unknown;
@@ -1128,9 +1131,6 @@ export function parseClientHelloLine(line: string): ClientPeers | null {
     peers.focus = o.focus as string[];
   }
   if (typeof o.tools === 'string') peers.tools = o.tools;
-  if (typeof o.challenge === 'string' && o.challenge.length > 0 && o.challenge.length <= MAX_CHALLENGE_LENGTH) {
-    peers.challenge = o.challenge;
-  }
   return peers;
 }
 
@@ -1150,20 +1150,30 @@ export function peerIsDead(
 }
 
 /**
- * Read the optional client-hello line a proxy sends after the server hello.
- * Always resolves (never rejects) — fail-safe by design, since every connection
- * funnels through here. Resolves with the peer pids, launch directory, session scope and challenge when
- * the first line is a client-hello; otherwise resolves with null peers and unshifts the already-read
- * bytes so the transport parses them as the client's first JSON-RPC message(s).
- * Accumulates as Buffers and splits on the newline byte so a UTF-8 sequence
- * straddling a chunk boundary in the unshifted tail is never corrupted.
+ * A client's first line: its challenge, checked first since a challenge line is
+ * no client hello and would otherwise go back as JSON-RPC; else its client hello.
  */
-function readClientHello(socket: net.Socket): Promise<ClientPeers> {
+function parseChallengeOrHello(line: string): { challenge: string } | ClientPeers | null {
+  const challenge = parseDaemonChallengeLine(line);
+  return challenge === null ? parseClientHelloLine(line) : { challenge };
+}
+
+/**
+ * Read the next line a client sends and resolve what `parse` makes of it; bytes
+ * after the line are unshifted. A line `parse` rejects resolves `none` and
+ * unshifts the already-read bytes so the transport parses them as the client's
+ * first JSON-RPC message(s). Always resolves (never rejects) — fail-safe by
+ * design, since every connection funnels through here. The socket is left
+ * paused; a later read resumes it. Accumulates as Buffers and splits on the
+ * newline byte so a UTF-8 sequence straddling a chunk boundary in the unshifted
+ * tail is never corrupted.
+ */
+function readClientLine<T>(socket: net.Socket, parse: (line: string) => T | null, none: T): Promise<T> {
   return new Promise((resolve) => {
     let chunks: Buffer[] = [];
     let total = 0;
     let settled = false;
-    const finish = (peers: ClientPeers, putBack?: Buffer) => {
+    const finish = (line: T, putBack?: Buffer) => {
       if (settled) return;
       settled = true;
       // PAUSE before detaching: removing the last 'data' listener does NOT
@@ -1182,12 +1192,12 @@ function readClientHello(socket: net.Socket): Promise<ClientPeers> {
       socket.removeListener('close', onEnd);
       clearTimeout(timer);
       if (process.env.CODEGRAPH_MCP_DEBUG) {
-        process.stderr.write(`[mcp-debug] clientHello finish pid=${String(peers.pid)} putBack=${putBack ? putBack.length : 0} flowing=${String(socket.readableFlowing)}\n`);
+        process.stderr.write(`[mcp-debug] clientHello finish parsed=${String(line !== none)} putBack=${putBack ? putBack.length : 0} flowing=${String(socket.readableFlowing)}\n`);
       }
       if (putBack && putBack.length > 0 && !socket.destroyed) {
         try { socket.unshift(putBack); } catch { /* stream already gone */ }
       }
-      resolve(peers);
+      resolve(line);
     };
     const onData = (chunk: Buffer | string) => {
       const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
@@ -1198,31 +1208,30 @@ function readClientHello(socket: net.Socket): Promise<ClientPeers> {
       if (nl === -1) {
         // No newline yet. If it's already too long to be a hello, it isn't one —
         // hand the bytes back as data; otherwise keep accumulating.
-        if (total > MAX_HELLO_LINE_BYTES) finish(NO_PEERS, all);
+        if (total > MAX_HELLO_LINE_BYTES) finish(none, all);
         else chunks = [all];
         return;
       }
-      const peers = parseClientHelloLine(all.subarray(0, nl).toString('utf8'));
-      if (peers) {
-        const tail = all.subarray(nl + 1);
-        finish(peers, tail.length > 0 ? tail : undefined);
-      } else {
-        // First line is not a client-hello (legacy/direct client) — hand the
-        // whole buffer back so the transport sees the message verbatim.
-        finish(NO_PEERS, all);
-      }
+      const parsed = parse(all.subarray(0, nl).toString('utf8'));
+      const tail = all.subarray(nl + 1);
+      // A line `parse` rejects (a legacy/direct client's JSON-RPC): hand the
+      // whole buffer back so the transport sees the message verbatim.
+      if (parsed === null) finish(none, all);
+      else finish(parsed, tail.length > 0 ? tail : undefined);
     };
-    const onEnd = () => finish(NO_PEERS);
+    const onEnd = () => finish(none);
     // On timeout, hand back whatever partial bytes accumulated — discarding
     // them would tear the first message the transport parses.
     const timer = setTimeout(() => {
       const partial = chunks.length === 0 ? undefined : (chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total));
-      finish(NO_PEERS, partial);
+      finish(none, partial);
     }, CLIENT_HELLO_TIMEOUT_MS);
     timer.unref?.();
     socket.on('data', onData);
     socket.on('error', onEnd);
     socket.on('close', onEnd);
+    // A read after a challenge line finds the socket paused by the first read's finish.
+    socket.resume();
   });
 }
 

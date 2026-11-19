@@ -23,6 +23,7 @@ import { findNearestCodeGraphRoot } from '../directory';
 import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
 import { DaemonClientHello, DaemonHello, MAX_HELLO_LINE_BYTES } from './daemon';
 import { daemonKeyPath, daemonProofMatches, newDaemonChallenge, readDaemonKey } from './daemon-proof';
+import { daemonChallengeLine } from './daemonChallengeLine';
 import { EARLY_PPID } from './early-ppid';
 import { supervisionLostReason } from './ppid-watchdog';
 import { armStartupHandshakeTimeout } from './startup-handshake';
@@ -152,11 +153,10 @@ export async function connectWithHello(
     );
     return 'version-mismatch';
   }
-  // Before any byte of the session, the server proves it holds this user's key.
-  // The one client hello carries the anchor, the scope and the challenge: the
-  // server reads one hello only.
+  // Before the client hello and any byte of the session, the server proves it
+  // holds this user's key: the challenge line is all an unproven server sees.
   const challenge = newDaemonChallenge();
-  sendClientHello(socket, launchDir, focus, challenge);
+  socket.write(daemonChallengeLine(challenge));
   const proof = await readProofLine(socket, helloTimeoutMs).catch(() => undefined);
   // Read once the proof is in: the server answering the first challenge makes the key.
   const key = proof === undefined ? null : readDaemonKey();
@@ -168,28 +168,28 @@ export async function connectWithHello(
     );
     return 'unproven';
   }
+  sendClientHello(socket, launchDir, focus);
   logAttachedDaemon(socketPath, hello);
   return socket;
 }
 
 /**
- * Tell the server our pids, launch directory and session scope right after we
- * verify its hello, with the proof challenge when one is passed (the server
- * then answers one proof line before the session starts). The pids let its liveness sweep reap this client if our
+ * Tell the server our pids, launch directory and session scope once it has
+ * proved it runs as this user. The pids let its liveness sweep reap this client if our
  * process dies without the socket ever signalling close (the Windows
  * named-pipe hazard); the launch directory fixes the session's
  * repo anchor, so without it every call on this session is answered with
  * guidance to restart it. The scope is this client's own: its `--focus`
  * directories, and its raw CODEGRAPH_MCP_TOOLS, which is sent even when empty
  * so the server never answers this client from the environment of whichever
- * client started it. Sent before any piped bytes so it's always the server's first line from
- * us; a write failure here is harmless (the server just falls back to the
+ * client started it. Sent before any piped bytes, so it's the line the server reads
+ * after our challenge line; a write failure here is harmless (the server just falls back to the
  * socket-close lifecycle). `hostPid` mirrors the PPID watchdog: the threaded
  * host pid if set, else our own parent (the host, on a no-relaunch bundle).
  * Never send the `control` marker from an agent session: the server takes a hello with it and no `launchDir`
  * for a control client (daemon.ts ClientPeers.control), which may send codegraph/indexWrite.
  */
-function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[], challenge?: string): void {
+function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonly string[]): void {
   const clientHello: DaemonClientHello = {
     codegraph_client: 1,
     pid: process.pid,
@@ -197,7 +197,6 @@ function sendClientHello(socket: net.Socket, launchDir?: string, focus?: readonl
     ...(launchDir !== undefined ? { launchDir } : {}),
     focus: [...(focus ?? [])],
     tools: process.env.CODEGRAPH_MCP_TOOLS ?? '',
-    ...(challenge !== undefined ? { challenge } : {}),
   };
   try { socket.write(JSON.stringify(clientHello) + '\n'); } catch { /* best-effort */ }
 }
@@ -716,7 +715,7 @@ function readHelloLine(socket: net.Socket, timeoutMs: number = DAEMON_HELLO_TIME
 }
 
 /**
- * Read the server's answer to our client hello's challenge: one
+ * Read the server's answer to our challenge line: one
  * `{"codegraph_proof": …}` line (see `./daemon-proof`), the line the server
  * sends before the session's first byte. Resolves the proof (null from a server
  * that holds no key); rejects on anything else, a close, or no line within

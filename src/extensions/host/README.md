@@ -129,8 +129,9 @@ keep (holds, cold-build and seed state, registry records, writer locks) are keye
 - **CLI writes** (`builder/cli-route.ts`, wire in `builder/cli-wire.ts`). `codegraph init`, `index`
   and `sync`, and the `--fresh` wait of the commands that answer from the index, and `uninit`'s release (see below), ask a running
   server whose index builder is up to have that builder do the write. `builderRoute()` is the one decision: `probeServer()` proved
-  a server (a live `server.pid` whose socket hello names its pid and version), and the CLI holds one
-  connection to its socket, with a client hello that carries `control: 1` and no `launchDir` (a control
+  a server (a live `server.pid` whose socket hello names its pid and version), the server answered the CLI's challenge
+  line with a proof that it runs as this user (`src/mcp/daemon-proof.ts`; else the command writes the index itself), and
+  the CLI holds one connection to its socket, with a client hello that carries `control: 1` and no `launchDir` (a control
   client, not an agent session; the server refuses these requests to any other peer, and `--verbose`
   returns the engine's console lines as `log` events). `builder.pid` is not consulted:
   a direct-mode builder writes the same file for its own state dir, so it proves nothing about a
