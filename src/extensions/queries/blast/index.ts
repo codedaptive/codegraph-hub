@@ -21,6 +21,7 @@ import { getDatabasePath } from '../../../db';
 import { blastRadius } from './blast';
 import { changedFiles, refExists } from './diff';
 import { focusDirsText, focusPrefixesOfTool } from '../shared/focus';
+import { projectSourceReader } from '../shared/projectSourceReader';
 import { splitReportByFocus } from './focus';
 import { jsonReport, markdownReport, textReport } from './render';
 import { openBlastStore } from './store';
@@ -107,7 +108,9 @@ export function runBlast(root: string, args: BlastArgs): BlastResult {
 
   const store = openBlastStore(absRoot);
   try {
-    const whole = blastRadius(store, diff.files, diff.basis, depth, { strict: args.strict === true });
+    const whole = blastRadius(store, diff.files, diff.basis, depth, {
+      strict: args.strict === true, readSource: projectSourceReader(absRoot),
+    });
     const report = args.focus ? splitReportByFocus(whole, args.focus.prefixes, args.focus.dirs) : whole;
     // JSON gets a trailing newline; text and markdown already end in one.
     const output = format === 'json' ? `${jsonReport(report)}\n`

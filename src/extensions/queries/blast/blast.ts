@@ -42,6 +42,7 @@
  * `labelSource` is always "symbol". The report does not assign reviewers or
  * owners, generate names with an LLM, or export visualizations.
  */
+import { inCfgTestFile, type SourceReader } from '../../../graph/test-code';
 import { TEST_PATH } from '../shared/test-path';
 import { hunkShape, type ChangedFile } from './diff';
 import type { BlastStore, IncomingEdge } from './store';
@@ -143,6 +144,12 @@ export interface BlastReport {
 export interface BlastOptions {
   /** Walk only certain edges: dependents reached only through questionable call edges drop out. */
   strict?: boolean;
+  /**
+   * Reads project files, so a Rust module file its parent declares under a test `cfg`
+   * (`src/store/tests.rs` behind `#[cfg(test)] mod tests;`) counts as a test file wherever
+   * blast asks: test modules, the areas and the test signal. Absent, only `TEST_PATH` decides.
+   */
+  readSource?: SourceReader;
 }
 
 const SPAN_RE = /^L(\d+)-L(\d+)$/;
@@ -400,7 +407,7 @@ export function blastRadius(
   // Marked after the merge, so a certain reach from any changed file clears the mark.
   if (!strict) for (const hit of impacted) if (!certain.has(hit.id)) hit.questionable = true;
   const origins = new Map([...merged].map(([id, m]) => [id, m.from]));
-  const grouped = groupByModule(impacted, changed, origins);
+  const grouped = groupByModule(impacted, changed, origins, opts.readSource);
   const report: BlastReport = {
     basis,
     depth,
@@ -411,7 +418,7 @@ export function blastRadius(
     impacted,
     modules: grouped.modules,
     testModules: grouped.testModules,
-    areas: changedAreas(store, changed, seedNodes, grouped.modules),
+    areas: changedAreas(store, changed, seedNodes, grouped.modules, opts.readSource),
   };
   if (strict) report.strict = true;
   return report;
@@ -433,13 +440,14 @@ function changedAreas(
   changed: ChangedFile[],
   seedNodes: Map<string, BlastNode[]>,
   modules: Module[],
+  readSource: SourceReader | undefined,
 ): Area[] {
-  const changedTests = new Set(changed.filter((c) => TEST_PATH.test(c.path)).map((c) => c.path));
+  const changedTests = new Set(changed.filter((c) => isTestFilePath(c.path, readSource)).map((c) => c.path));
 
   const groups = new Map<string, string[]>();
   for (const path of seedNodes.keys()) {
     // A changed test file is the signal, not a source of blast radius.
-    if (TEST_PATH.test(path)) continue;
+    if (isTestFilePath(path, readSource)) continue;
     const dir = dirLabel(path);
     groups.set(dir, [...(groups.get(dir) ?? []), path]);
   }
@@ -449,7 +457,7 @@ function changedAreas(
   const inDegree = store.inDegree(seedIds);
   const incoming = new Map<string, Set<string>>();
   for (const [target, paths] of store.incomingSourcePaths(seedIds)) {
-    const tests = new Set([...paths].filter((p) => TEST_PATH.test(p)));
+    const tests = new Set([...paths].filter((p) => isTestFilePath(p, readSource)));
     if (tests.size > 0) incoming.set(target, tests);
   }
 
@@ -519,6 +527,7 @@ function groupByModule(
   impacted: Impacted[],
   changed: ChangedFile[],
   origins: Map<string, Set<string>>,
+  readSource: SourceReader | undefined,
 ): { modules: Module[]; testModules: Module[] } {
   const changedPaths = new Set(changed.map((c) => c.path));
   const byKey = new Map<string, Module>();
@@ -549,8 +558,8 @@ function groupByModule(
   const bySize = (a: Module, b: Module): number => b.symbols.length - a.symbols.length || a.label.localeCompare(b.label);
   const all = [...byKey.values()];
   return {
-    modules: all.filter((m) => !isTestOnly(m)).sort(bySize),
-    testModules: all.filter(isTestOnly).sort(bySize),
+    modules: all.filter((m) => !isTestOnly(m, readSource)).sort(bySize),
+    testModules: all.filter((m) => isTestOnly(m, readSource)).sort(bySize),
   };
 }
 
@@ -581,9 +590,17 @@ function coarsen(groups: Map<string, string[]>, max: number): void {
   }
 }
 
-/** True when every file in the module is a test file. */
-function isTestOnly(mod: Module): boolean {
-  return mod.files.length > 0 && mod.files.every((f) => TEST_PATH.test(f));
+/** True when every file in the module is a test file (`isTestFilePath`). */
+function isTestOnly(mod: Module, readSource: SourceReader | undefined): boolean {
+  return mod.files.length > 0 && mod.files.every((f) => isTestFilePath(f, readSource));
+}
+
+/**
+ * `path` is a test file: `TEST_PATH` matches it, or, given `readSource`, it is a Rust module
+ * file its parent declares under a test `cfg` (`inCfgTestFile`).
+ */
+function isTestFilePath(path: string, readSource: SourceReader | undefined): boolean {
+  return TEST_PATH.test(path) || (readSource !== undefined && inCfgTestFile(path, readSource));
 }
 
 // --- Directory and symbol label helpers ---
