@@ -30,7 +30,7 @@ The merge itself waits for sm.17's promote, so none of this range reaches the sm
 | Ours past the base | 1044 commits | `git rev-list --count cc17b69a..d57e5d7e` |
 | Trial merge | tree c341a4c9, 8 conflicting files, all content conflicts | `git merge-tree --write-tree --name-only --messages integration upstream/main` |
 | Trial merge onto landing | tree 394b83f1 (landing 141ba492b736), the same 8 files; landing's #3258 take auto-merges with b66de29e in `src/resolution/callback-synthesizer.ts` | `git merge-tree --write-tree --name-only landing upstream/main` |
-| Trial merge onto the moved integration | `integration` at 987c3715 (26 queries-lane commits past d57e5d7e, none in `src/mcp`, `src/bin` or `__tests__/mcp-daemon.test.ts`): tree ec70ffe2, the same 8 conflicting files | `git diff --stat d57e5d7e integration -- src/mcp src/bin __tests__/mcp-daemon.test.ts` (empty); `git merge-tree --write-tree --name-only integration upstream/main` |
+| Trial merge onto the moved integration | `integration` at 987c3715 (26 commits past d57e5d7e from several lanes: queries, orc, resolution, host, Nagatha, and one Stage 3 doc-fix; none in `src/mcp`, `src/bin` or `__tests__/mcp-daemon.test.ts`): tree ec70ffe2, the same 8 conflicting files | `git diff --stat d57e5d7e integration -- src/mcp src/bin __tests__/mcp-daemon.test.ts` (empty); `git merge-tree --write-tree --name-only integration upstream/main` |
 
 Every conflict is in host's MCP layer; no resolution, queries, fleet or upstream-owned file conflicts.
 
@@ -199,7 +199,7 @@ The range has two separate host topics, and the resolutions depend on one decisi
   `session-focus`, `build-guidance`, R-46 and R-50 texts.
 - Block 30-43 (header comment): **both**: ours' focus-paragraph note, then theirs' OpenCode note.
 - Block 115-173: **theirs, trimmed**: take `OPENCODE_SERVER_KEY_NOTE` and `openCodeInstructions`; drop
-  `SERVER_INSTRUCTIONS_NO_ROOT_INDEX` (ours removed it: one instructions text, no default project). The import of
+  `SERVER_INSTRUCTIONS_NO_ROOT_INDEX` (ours removed it: one instructions text, no default project). The test that imports it, `__tests__/mcp-opencode-tool-names.test.ts` (taken with c4ecf345; import at line 26 of the trial tree), has a 'no index at the root' case that uses it (lines 129 and 150): that case goes, for the same reason. The import of
   `withOpenCodeToolNames` at line 1 auto-merged.
 
 ### 3.7 `src/mcp/tools.ts` (owner: host; the blast text is read by queries)
@@ -226,8 +226,9 @@ The range has two separate host topics, and the resolutions depend on one decisi
 ### 3.9 Clean merges that change ours' behaviour or break the build
 
 - `src/bin/codegraph.ts` 1896-1909 (hook): the prompt hook now calls `exploreViaDaemon` before its own explore.
-  **Restore ours' lines** (ours: 1896-1899, the hook's own `ToolHandler` explore): with the hook topic not taken there
+  **Restore ours' whole explore block**: from `if (keyworded || tokenVerified) {` (ours 1895) through the end of that `if` (ours' `if (!result.isError && text.trim())` at 1900, its cap and its write), so the trial's `exploreViaDaemon` lines and its `if (text.trim())` go. With the hook topic not taken there
   is no `hook-client.ts` to import. Its stopped note is unchanged either way (it comes from the explore's own answer).
+- `CHANGELOG.md`, **not taken** (hook): the trial tree's Unreleased New Features bullet for the prompt hook (#3284, from 6e4fd767 and 101059a4: the hook gets its context from the running server) describes a path that is not merged. Drop that bullet. The Security bullet (#3396, the proof) stays.
 - New files of the hook topic, **not taken** (hook): `src/mcp/hook-client.ts` (it imports `getDaemonSocketCandidates`,
   absent from ours' `daemon-paths.ts`, so the type-check fails at its line 22 if it stays), `src/mcp/prompt-explore.ts`,
   `__tests__/prompt-hook-daemon.test.ts`, `__tests__/prompt-hook-daemon-busy.test.ts`; and `QueryPool.tryRun`
@@ -250,7 +251,7 @@ The range has two separate host topics, and the resolutions depend on one decisi
 `src/mcp/daemon-proof.ts` (584c03fe, ff5e73a5): the client sends a fresh 32-byte random challenge (base64) in its
 client hello; the daemon answers one line `{"codegraph_proof": hmac}` before the session's first byte, where the HMAC
 is SHA-256 under a per-user key over `codegraph-daemon-proof-v1`, the challenge and the socket path it listens on. The
-key is `~/.codegraph/daemon.key` (`os.homedir()`), 32 bytes, made on first use with mode 0600 in a 0700 folder; a key
+key is `~/.codegraph/daemon.key` (`os.homedir()`), 32 bytes, made on first use with mode 0600, in a folder that is created with mode 0700 when it is missing; a key
 another user owns or others can read is refused, and one of this user's that others can read is replaced. A daemon
 that can get no such key answers `null`. The client reads the key after the proof arrives and compares in constant
 time. The hook adds `boundByThisUser` (socket owned by this user, folder owned by this user or root and not writable
@@ -323,8 +324,8 @@ Not touched: no commit in the range changes `src/db/wal-valve.ts`, `src/sync/` o
 
 - f2fad8c1: II, RI and `types.ts`; a folder's `package.json` `main` for JS/TS only, through a BOM, followed by sync.
 - b66de29e (#3400): II, NM (7 lines), `callback-synthesizer.ts`, `module-importers.ts`; plus TS and the kernel's
-  `tsjs/`. Landing's #3258 take (a52e328f, not yet on integration) also changes `callback-synthesizer.ts`; the landing
-  trial merge (394b83f1) auto-merges it.
+  `tsjs/`. #3258's take (a52e328f, on integration and on landing) also changes `callback-synthesizer.ts`; the trial merges
+  onto integration (ec70ffe2) and onto landing (394b83f1) auto-merge it.
 - 8e38e7c3: II and `src/extraction/languages/php.ts`; 6dea2fb5: the kernel's `php.rs`.
 - e879216b (#3405): new `src/resolution/frameworks/elysia.ts`, plus `express.ts` and `frameworks/index.ts`.
 
@@ -385,7 +386,7 @@ None is covered by the range.
 | #3249 (R-40) | CLOSED, not merged (its change is upstream's 7f6e4348, in ours since the cc17b69a merge) | yes | n/a | not tried |
 | #3256 (dropped from R-51, S-91) | CLOSED, not merged | no (#3365 came with the cc17b69a merge) | n/a | not tried |
 | #3261 | OPEN | yes, 3e48e426 (orc r51-3261-rebind-callers) | no | clean; overlap `src/db/queries.ts`, SI (532a3657) |
-| #3258 | OPEN | on landing only, a52e328f | no | clean; overlap `callback-synthesizer.ts` (b66de29e) |
+| #3258 | OPEN | on integration and landing, a52e328f | no | clean; overlap `callback-synthesizer.ts` (b66de29e) |
 | #3303 | OPEN | yes, a17ecbbb | no | clean; overlap `grammars.ts` (c12cf610) |
 | #3226 | OPEN; head now 8d55142b | yes, e38a37ee | no | clean; overlap `grammars.ts` (c12cf610) |
 
@@ -407,7 +408,7 @@ Test paths are run with `make zone-test-one DIR=<path>` in the owning lane's tre
 | queries | 5.1 | `__tests__/extensions/queries`; whether `codegraph_blast` should leave tier edges out of its test counts as `affected` does |
 | resolution | 5.2 | `__tests__/require-directory-package-main.test.ts`, `__tests__/sync-module-config-change.test.ts`, `__tests__/js-default-export-object-members.test.ts`, `__tests__/vuex-dispatch-synthesizer.test.ts`, `__tests__/php-dir-includes.test.ts`, `__tests__/elysia-routes.test.ts`; then `__tests__/extensions/resolution` whole; with landing's #3258, the `callback-synthesizer.ts` auto-merge |
 | Orc (upstream-owned) | 5.3 | rebuild the kernel; `__tests__/kernel-tsjs-parity.test.ts`, `__tests__/kernel-php-parity.test.ts`, `__tests__/cpp-declaration-only-headers.test.ts`, `__tests__/extraction.test.ts`, `__tests__/extensions/host/installer-block.gate.test.ts`, orc's `__tests__/extensions/orc/shebang-hookin.integration.test.ts` |
-| Orc and Nagatha | new upstream tests | unlisted test files run in the unit group (vitest.config.mts: "unlisted files are unit"); these new ones are not in `test-groups.json` and need a group before landing (S-98): `daemon-proof`, `proxy-connect` (already in ours, unlisted), `cli-affected-cross-tier`, `elysia-routes`, `php-dir-includes`, `cpp-declaration-only-headers`, `js-default-export-object-members`, `mcp-opencode-tool-names`, `kernel-php-parity` |
+| Orc and Nagatha | new upstream tests | unlisted test files run in the unit group (vitest.config.mts: "unlisted files are unit"); these new ones are not in `test-groups.json` and need a group before landing (S-98): `daemon-proof`, `proxy-connect` (already in ours, unlisted), `cli-affected-cross-tier`, `elysia-routes`, `php-dir-includes`, `cpp-declaration-only-headers`, `js-default-export-object-members`, `mcp-opencode-tool-names` (`kernel-php-parity` is already in ours, changed by 6dea2fb5) |
 | fleet | none | no fleet file in the range |
 | upstream-prs | 6.2, 6.3 | nothing to push (R-25, rule 12); #3202, #3203, #3205, #3206 still need a rebase before any further push, as before this range |
 
