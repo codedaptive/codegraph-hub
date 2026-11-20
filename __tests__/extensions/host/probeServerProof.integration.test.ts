@@ -7,6 +7,7 @@ import * as path from 'path';
 import type { ServerLockInfo } from '../../../src/mcp/daemon-paths';
 import { daemonProof } from '../../../src/mcp/daemon-proof';
 import { probeServerProof } from '../../../src/extensions/host/server/probeServerProof';
+import { listenPath } from '../../helpers/listenPath';
 
 const VERSION = '1.2.3-standin';
 /** Wider than any test runs, so a line or a close decides every case here, never the probe's timer. */
@@ -19,7 +20,7 @@ let sockets: net.Socket[];
 
 beforeEach(() => {
   home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-psp-')));
-  socketPath = path.join(home, 's.sock');
+  socketPath = listenPath(home, 's');
   servers = [];
   sockets = [];
   vi.stubEnv('HOME', home);
