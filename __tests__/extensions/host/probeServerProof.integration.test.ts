@@ -46,8 +46,8 @@ function lockInfo(pid = process.pid): ServerLockInfo {
   return { pid, version: VERSION, socketPath, startedAt: 1, stateDir: home, stateId: 'standin' };
 }
 
-function helloLine(pid = process.pid): string {
-  return JSON.stringify({ codegraph: VERSION, pid, socketPath, protocol: 1 }) + '\n';
+function helloLine({ pid = process.pid, codegraph = VERSION, protocol = 1 } = {}): string {
+  return JSON.stringify({ codegraph, pid, socketPath, protocol }) + '\n';
 }
 
 /** A stand-in on `socketPath` that runs `onConnect` for each connection and records every byte it receives. */
@@ -67,10 +67,10 @@ async function startStandIn(onConnect: (socket: net.Socket) => void): Promise<{ 
   return { received: () => received };
 }
 
-/** After the hello, answer the first challenge line with `{codegraph_proof: proofFor(challenge)}`. */
-function answeringStandIn(proofFor: (challenge: string) => unknown): (socket: net.Socket) => void {
+/** After `hello`, answer the first challenge line with `{codegraph_proof: proofFor(challenge)}`. */
+function answeringStandIn(proofFor: (challenge: string) => unknown, hello = helloLine()): (socket: net.Socket) => void {
   return socket => {
-    socket.write(helloLine());
+    socket.write(hello);
     let buffer = '';
     socket.on('data', chunk => {
       buffer += chunk.toString('utf8');
@@ -118,7 +118,25 @@ describe('probeServerProof', () => {
 
   it('is a mismatch when the hello names another pid', async () => {
     writeSandboxDaemonKey();
-    await startStandIn(socket => { socket.write(helloLine(process.pid + 1)); });
+    await startStandIn(socket => { socket.write(helloLine({ pid: process.pid + 1 })); });
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('mismatch');
+  });
+
+  it('is a mismatch when the hello names the lock\'s pid and protocol 1 but another version, even with a valid proof', async () => {
+    const key = writeSandboxDaemonKey();
+    await startStandIn(answeringStandIn(
+      challenge => daemonProof(key, challenge, socketPath),
+      helloLine({ codegraph: '9.9.9-other' }),
+    ));
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('mismatch');
+  });
+
+  it('is a mismatch when the hello names the lock\'s pid and version but protocol 2, even with a valid proof', async () => {
+    const key = writeSandboxDaemonKey();
+    await startStandIn(answeringStandIn(
+      challenge => daemonProof(key, challenge, socketPath),
+      helloLine({ protocol: 2 }),
+    ));
     expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('mismatch');
   });
 
