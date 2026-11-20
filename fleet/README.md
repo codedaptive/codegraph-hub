@@ -17,7 +17,7 @@ Every upstream file a feature on `ours` changes, by feature, from each feature's
 own code (`src/extensions/<zone>/`, `__tests__/extensions/<zone>/`, `fleet/`) is not counted; where a row names
 it, it is marked fork-only.
 
-**Total: 189 upstream files** (170 modified, 19 deleted), counted at landing `0994fe27` (2026-11-20; host's validation#19 fix, not yet in integration) against upstream `e879216b`. An upstream file is one
+**Total: 189 upstream files** (170 modified, 19 deleted), counted at landing `0994fe27` (2026-11-20; it carries host's validation#19 fix and eleven other landings not yet in integration) against upstream `e879216b`. An upstream file is one
 that exists in upstream `e879216b` and that the counted commit modifies or deletes. The basis is the upstream commit the fork last merged, the merge base of
 integration and `upstream/main` (S-100): `e879216b`, merged in `63ea0742` (landing `217b333b`); it moves with each upstream merge. Before it the fork
 merged `cc17b69a` (in `d4b6e369`, landing `856545bc`), `f72c9d2e` (in `f4f8a03f`), `5cd8a9a8` (in `bb0a5dd3`) and `4499d007` (in `e10a983e`), and before that its base was `60b0d7a9`. Recount with
