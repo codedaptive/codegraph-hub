@@ -8,7 +8,7 @@
 #   make typecheck                                                                                        the push gate (tsc --noEmit)
 #   make test-times DIR=<test file or folder> [GROUP=unit|integration|validation|all]                     tests over 5 s, slowest first
 #
-# GROUP defaults to unit; a file's group comes from its suffix or test-groups.json (fleet/test-groups.mts).
+# GROUP defaults to unit; a file's group comes from its suffix or test-groups.json (test-groups.mts).
 # A worktree needs `npm ci` once before its first test; every target says so instead of failing in npx.
 
 .PHONY: test-one typecheck test-times
