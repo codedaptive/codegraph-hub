@@ -1,6 +1,6 @@
 import { inProcessJobRunner } from './helpers/in-process-job-runner';
 /**
- * Worktree seeding, unit level.
+ * Worktree seeding, integration level.
  *
  * A fresh git worktree of a repository that already has an index in one of
  * its other worktrees gets its own index by copying that sibling's database
@@ -15,7 +15,7 @@ import { inProcessJobRunner } from './helpers/in-process-job-runner';
  * ToolHandler entry point (the gate a tool call goes through) is covered in
  * worktree-seed.gate.test.ts.
  *
- * Vectors (contract.md): G1 determinism, G4 copy set, G5 source choice,
+ * Vectors: G1 determinism, G4 copy set, G5 source choice,
  * G6 fence.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -43,25 +43,31 @@ function real(p: string): string {
   return fs.realpathSync(path.resolve(p));
 }
 
-/** A repository with three tiny TypeScript files, one commit, at `dir`. */
-function makeRepo(dir: string): void {
-  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+/** A repository at `dir` with one commit: three TypeScript files or one non-source file. */
+function makeRepo(dir: string, sources = true): void {
+  fs.mkdirSync(dir, { recursive: true });
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 'test@example.com');
   git(dir, 'config', 'user.name', 'Test');
   git(dir, 'config', 'commit.gpgsign', 'false');
-  fs.writeFileSync(path.join(dir, 'src', 'alpha.ts'), 'export function alphaSymbol() { return betaSymbol(); }\nimport { betaSymbol } from "./beta";\n');
-  fs.writeFileSync(path.join(dir, 'src', 'beta.ts'), 'export function betaSymbol() { return 2; }\n');
-  fs.writeFileSync(path.join(dir, 'src', 'gamma.ts'), 'export class Gamma { run() { return 3; } }\n');
+  if (sources) {
+    fs.mkdirSync(path.join(dir, 'src'));
+    fs.writeFileSync(path.join(dir, 'src', 'alpha.ts'), 'export function alphaSymbol() { return betaSymbol(); }\nimport { betaSymbol } from "./beta";\n');
+    fs.writeFileSync(path.join(dir, 'src', 'beta.ts'), 'export function betaSymbol() { return 2; }\n');
+    fs.writeFileSync(path.join(dir, 'src', 'gamma.ts'), 'export class Gamma { run() { return 3; } }\n');
+  } else {
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'notes\n');
+  }
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'init');
 }
 
 /** Build a complete index at `dir`. */
-async function indexDir(dir: string): Promise<void> {
+async function indexDir(dir: string) {
   const cg = await CodeGraph.init(dir);
-  await cg.indexAll();
+  const result = await cg.indexAll();
   cg.close();
+  return result;
 }
 
 /** Add a linked worktree at `dir` on a new branch from `from` (default HEAD). */
@@ -69,12 +75,10 @@ function addWorktree(repo: string, dir: string, branch: string, from = 'HEAD'): 
   git(repo, 'worktree', 'add', '-q', '-b', branch, dir, from);
 }
 
-/** Add `n` commits in the worktree at `dir`, each touching its own file. */
+/** Add `n` empty commits in the worktree at `dir`. */
 function commitN(dir: string, n: number, tag: string): void {
   for (let i = 0; i < n; i++) {
-    fs.writeFileSync(path.join(dir, `${tag}-${i}.txt`), `${tag} ${i}\n`);
-    git(dir, 'add', '.');
-    git(dir, 'commit', '-q', '-m', `${tag} ${i}`);
+    git(dir, 'commit', '-q', '--allow-empty', '-m', `${tag} ${i}`);
   }
 }
 
@@ -103,7 +107,7 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
   beforeEach(() => {
     workspace = real(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-seed-unit-')));
     main = path.join(workspace, 'main');
-    makeRepo(main);
+    makeRepo(main, false);
   });
 
   afterEach(() => {
@@ -142,9 +146,8 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
     expect(await commitDistance(main, a, '0123456789abcdef0123456789abcdef01234567')).toBeNull();
   });
 
-  // G5. Over 5 s under load: it adds four git worktrees, makes five commits and
-  // builds three real indexes (sib-b, sib-3, sib-a), each a few hundred ms on an
-  // idle machine. The 30 s bound only catches a hang on a loaded one.
+  // G5 builds three complete sibling indexes and excludes incomplete or absent indexes
+  // when choosing the nearest sibling, with realpath order breaking ties.
   it('G5: picks the nearest complete sibling, ties broken by realpath ascending', async () => {
     const base = git(main, 'rev-parse', 'HEAD');
     const target = path.join(workspace, 'wt-target');
@@ -161,18 +164,40 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
     const sibA = path.join(workspace, 'sib-a'); // distance 1, lexicographically first of the two
     addWorktree(main, sibA, 'sib-a', base);
     commitN(sibA, 1, 'a');
-    // Distance 0, but its index never completed (init, no indexAll): not a source.
+    // Distance 0, but its aborted build left a failed index: not a source.
     const sib0 = path.join(workspace, 'sib-0');
     addWorktree(main, sib0, 'sib-0', base);
-    CodeGraph.initSync(sib0).close();
+    const cg0 = await CodeGraph.init(sib0);
+    const aborted = await cg0.indexAll({ signal: AbortSignal.abort() });
+    cg0.close();
+    expect(aborted).toMatchObject({ success: false });
+    const db0 = new DatabaseSync(dbPath(sib0), { readOnly: true });
+    try {
+      expect(db0.prepare("SELECT value FROM project_metadata WHERE key = 'index_state'").get()).toMatchObject({ value: 'failed' });
+    } finally {
+      db0.close();
+    }
+    // Distance 0, but initialised and never indexed: a database with no
+    // index_state row, so not a source.
+    const sibInit = path.join(workspace, 'sib-init');
+    addWorktree(main, sibInit, 'sib-init', base);
+    CodeGraph.initSync(sibInit).close();
+    const dbInit = new DatabaseSync(dbPath(sibInit), { readOnly: true });
+    try {
+      const hasTable = dbInit.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_metadata'").get() !== undefined;
+      const state = hasTable ? dbInit.prepare("SELECT value FROM project_metadata WHERE key = 'index_state'").get() : undefined;
+      expect(state).toBeUndefined();
+    } finally {
+      dbInit.close();
+    }
 
-    await indexDir(sibB);
-    await indexDir(sib3);
-    await indexDir(sibA);
+    expect(await indexDir(sibB)).toMatchObject({ success: true, filesIndexed: 0 });
+    expect(await indexDir(sib3)).toMatchObject({ success: true, filesIndexed: 0 });
+    expect(await indexDir(sibA)).toMatchObject({ success: true, filesIndexed: 0 });
     // `main` (distance 0) has no index at all: not a source either.
 
     expect(await pickSeedSource(target)).toBe(real(sibA));
-  }, 30_000);
+  });
 
   it('pickSeedSource answers null when no sibling has a complete index', async () => {
     const target = path.join(workspace, 'wt-target');
@@ -257,8 +282,7 @@ describe('worktree seeding: what a seed copies (G1, G4, G6)', () => {
   // G6. A writer child process commits to the source's database in a tight
   // loop while the source is seeded five times. Each seed must be a sound
   // database, whichever path (clone under the fence, or backup) it took.
-  // Five tiny seeds plus a node child start: about 2 s on an idle machine. Five seeds against a busy writer child
-  // can pass 5 s under load, so the test has an explicit 20 s timeout rather than the 5 s default.
+  // The explicit 20 s timeout is a hang limit, not a speed claim.
   it('G6: seeds taken while a writer commits to the source all pass integrity_check', async () => {
     const writerScript = [
       "const { DatabaseSync } = require('node:sqlite');",
