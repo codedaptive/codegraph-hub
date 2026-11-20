@@ -38,8 +38,10 @@ codegraph daemon               # after the reconnect: pid P  v1.6.2-sm.<prev>  u
 codegraph daemon --stop        # still sm.N: "Stopped the CodeGraph server (pid P, vX)."
 #    A server built before ec171901 (2026-11-19) cannot answer the daemon proof's challenge and is not stopped:
 #    --stop says it did not prove it runs as this user (outcome `unproven`), names the socket and the pid it
-#    claims, and sends no signal. Check that the pid is the process listening on that socket
-#    (`lsof -a -p <pid> -U`), then stop it once by hand: `kill <pid>` (SIGTERM is right for the socket's owner;
+#    claims, and sends no signal. Check that the pid is the process listening on that socket: `ps -p <pid> -o command=`
+#    shows a `codegraph.js serve` command, and `lsof -a -p <pid> -U` lists the socket path the `--stop` message names.
+#    If either check fails, do not kill anything: stop there and report the pid and the socket. If both pass, stop it
+#    once by hand with `kill <pid>`, then go on (SIGTERM is right for the socket's owner;
 #    global-install.md "Undo"). Installing one sm.N over another (step 1 above) needs no such step: the old
 #    server's install check stops it by itself (global-install.md step 4).
 npm uninstall -g --ignore-scripts @colbymchenry/codegraph

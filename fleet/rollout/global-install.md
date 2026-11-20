@@ -91,7 +91,10 @@ so stop the sm.N server first, then reconnect the sessions and check as `rollbac
 If the running server is from a build that cannot answer the daemon proof's challenge (built before ec171901,
 2026-11-19), `--stop` does not stop it: it says the server did not prove it runs as this user (outcome `unproven`),
 names the socket and the pid the server claims, and sends no signal. Check that this pid is the process listening on
-that socket (`lsof -a -p <pid> -U`), stop it once by hand with `kill <pid>`, then go on. SIGTERM is right here,
+that socket: `ps -p <pid> -o command=` shows a `codegraph.js serve` command, and `lsof -a -p <pid> -U` lists the
+socket path the `--stop` message names. If either check fails, do not kill anything: stop there and report the pid
+and the socket. If both pass, stop it once by hand with `kill <pid>`, wait until `ps -p <pid>` shows it gone, then
+go on. SIGTERM is right here,
 unlike step 4's stale servers: this pid owns the socket, so the socket its graceful stop removes is its own.
 Installing a new sm.N over the old one needs no such step: the old server's install check stops it by itself
 (step 4).
