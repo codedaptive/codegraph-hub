@@ -33,12 +33,19 @@ describe('bounded freshness validation (#1959)', () => {
 
   it('marks a file beyond the byte budget unchecked instead of fresh', async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-freshness-bounds-'));
-    const content = 'x'.repeat(9 * 1024 * 1024);
-    fs.writeFileSync(path.join(root, 'large.ts'), content);
-    const result = await validateAnswerFiles(root, [{
-      path: 'large.ts', contentHash: createHash('sha256').update(content).digest('hex'),
-    }]);
-    expect(result).toEqual({ stale: [], unchecked: ['large.ts'] });
+    const chunk = 'x'.repeat(64 * 1024);
+    const contentHash = createHash('sha256').update(chunk.repeat(16)).digest('hex');
+    const files = Array.from({ length: 9 }, (_, i) => ({ path: `file${i + 1}.ts`, contentHash }));
+    for (const file of files) {
+      const fd = fs.openSync(path.join(root, file.path), 'w');
+      fs.ftruncateSync(fd, 1024 * 1024);
+      fs.closeSync(fd);
+    }
+    vi.mocked(fs.createReadStream).mockImplementation(() =>
+      Readable.from(Array(16).fill(chunk)) as fs.ReadStream,
+    );
+    const result = await validateAnswerFiles(root, files);
+    expect(result).toEqual({ stale: [], unchecked: ['file9.ts'] });
   });
 
   it('bounds a stuck measurement, shares concurrent probes, and terminates its worker', async () => {
