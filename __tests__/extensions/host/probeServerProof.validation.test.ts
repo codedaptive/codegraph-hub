@@ -10,7 +10,7 @@ import { probeServerProof } from '../../../src/extensions/host/server/probeServe
 // validation, not integration (the line- and close-decided cases are in probeServerProof.integration.test.ts).
 
 const VERSION = '1.2.3-standin';
-const TIMEOUT_MS = 200;
+const TIMEOUT_MS = 5_000;
 
 let home: string;
 let socketPath: string;

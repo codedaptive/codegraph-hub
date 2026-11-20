@@ -21,6 +21,7 @@ import * as net from 'net';
 import { getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { isJsonObject } from '../extensions/host/server/isJsonObject';
 import { probeServerProof } from '../extensions/host/server/probeServerProof';
+import { signalProvenServer } from '../extensions/host/server/signalProvenServer';
 import { stopOutcomeOfProof } from '../extensions/host/server/stopOutcomeOfProof';
 import {
   decodeServerLock,
@@ -32,7 +33,7 @@ import {
 import { newDaemonChallenge } from './daemon-proof';
 import { daemonAnswerProves } from './daemonAnswerProves';
 import { daemonChallengeLine } from './daemonChallengeLine';
-import { removeLockIfUnchanged, snapshotLock } from './lock-takeover';
+import { snapshotLock } from './lock-takeover';
 import { isOlderRelease } from './version';
 import { WORKER_START_SETTLE_MS } from '../worker-teardown';
 
@@ -165,17 +166,6 @@ export function resolveServerStopGraceMs(env: NodeJS.ProcessEnv = process.env): 
     : WORKER_START_SETTLE_MS;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true;
-    await sleep(50);
-  }
-  return !isProcessAlive(pid);
-}
-
 /**
  * Stop the server of this state dir: prove its identity with the daemon proof on
  * the lock's socket ({@link probeServerProof}), send SIGTERM, then wait for the
@@ -189,10 +179,11 @@ async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
  * ({@link isOlderRelease}); one of the same, a newer or an unknown version is
  * `kept`, so two installs cannot take turns stopping each other's server.
  *
- * A stopped server removes its own lock and socket on a graceful exit; when it
- * could not (Windows, where SIGTERM is TerminateProcess), the sweep below removes
- * the lock and, on POSIX, the socket candidates, but only while the lock is still
- * the stopped record.
+ * The proven record is re-read before the signal, and the signal, the wait and
+ * the sweep are {@link signalProvenServer}'s. A stopped server removes its own
+ * lock and socket on a graceful exit; when it could not (Windows, where SIGTERM
+ * is TerminateProcess), that sweep removes the lock and, on POSIX, the socket
+ * candidates, but only while the lock is still the stopped record.
  */
 export async function stopServer(
   opts: { onlyIfOlderThan?: string; graceMs?: number } = {},
@@ -211,42 +202,12 @@ export async function stopServer(
   if (opts.onlyIfOlderThan !== undefined && !isOlderRelease(version, opts.onlyIfOlderThan)) {
     return { outcome: 'kept', pid, version };
   }
-  // The probe awaited I/O: act only on the record that was proven.
-  const current = snapshotLock(pidPath);
-  if (current === null || current.raw !== snapshot.raw) return { outcome: 'unverified', pid, version };
-
-  try { process.kill(pid, 'SIGTERM'); } catch { /* raced to exit */ }
   // Resolve at call time: grace + the builder's 5 s cap + 2 s margin (also
   // covering Windows' drain backstop). This controller reads its own env,
   // which may differ from the running server's; explicit callers keep theirs.
   const waitMs = opts.graceMs ?? (resolveServerStopGraceMs() + 5_000 + 2_000);
-  if (!await waitForDeath(pid, waitMs)) {
-    return { outcome: 'still-running', pid, version };
-  }
-  sweepStoppedServer(pidPath, snapshot.raw);
-  return { outcome: 'stopped', pid, version };
-}
-
-/**
- * Remove what a stopped server left behind, when the lock is still the record
- * that was stopped. Sockets go BEFORE the lock, so no successor can take the
- * lock and bind a socket this sweep then removes; a lock that changed meanwhile
- * is a successor's and everything stays.
- */
-function sweepStoppedServer(pidPath: string, stoppedRaw: string): void {
-  try {
-    const left = snapshotLock(pidPath);
-    if (left === null || left.raw !== stoppedRaw) return;
-    // POSIX sockets are real files; Windows named pipes vanish with the process.
-    if (process.platform !== 'win32') {
-      for (const candidate of getServerSocketCandidates()) {
-        try { fs.unlinkSync(candidate); } catch { /* gone */ }
-      }
-    }
-    removeLockIfUnchanged(pidPath, left);
-  } catch {
-    /* best effort: the next server start clears a stale lock itself */
-  }
+  const outcome = await signalProvenServer(pid, pidPath, snapshot.raw, waitMs, isProcessAlive);
+  return { outcome, pid, version };
 }
 
 /**

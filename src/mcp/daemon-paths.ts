@@ -157,7 +157,8 @@ export function getServerLogPath(): string {
  * copy's foreign record, never this state dir's server
  * (src/mcp/server-control.ts readServerLock drops it). A cloned disk image can
  * keep `dev:ino`, so the identity does not prove who serves: the pid's liveness
- * and the socket hello ({@link probeServerIdentity}) decide the server's status,
+ * and the socket hello ({@link probeServerHello}) decide the server's status
+ * (probeServerStatus in src/mcp/server-control.ts),
  * and a signal needs the daemon proof as well (stopServer in
  * src/mcp/server-control.ts). Identity,
  * not path: one directory reached by two spellings is one state dir. `stateDir`
