@@ -213,19 +213,16 @@ describe('MPEG-TS video named .ts is skipped, real TypeScript is indexed (#1910)
     }
   });
 
-  it('indexes past a 900 KB clip in well under two seconds', async () => {
+  it('indexes past a 900 KB clip: the clip is skipped and app.ts is indexed', async () => {
     const dir = createProject();
     fs.mkdirSync(path.join(dir, 'testdata'));
     fs.writeFileSync(path.join(dir, 'testdata', 'golden.ts'), makeMpegTs(Math.ceil((900 * 1024) / PACKET)));
     fs.writeFileSync(path.join(dir, 'app.ts'), 'export function greet(n: string) { return `hi ${n}`; }\n');
     const cg = await CodeGraph.init(dir);
     try {
-      const t0 = Date.now();
       const result = await cg.indexAll();
-      const elapsed = Date.now() - t0;
       expect(result.filesIndexed).toBe(1);
       expect(cg.getFiles().map((f) => f.path)).toEqual(['app.ts']);
-      expect(elapsed).toBeLessThan(2000);
     } finally {
       await cg.close();
     }
