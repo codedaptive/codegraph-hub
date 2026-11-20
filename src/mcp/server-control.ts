@@ -7,8 +7,9 @@
  * ({@link ServerLockInfo}); there is no separate registry. The lock says who the
  * server is, never that it is alive and never that it is CodeGraph: a SIGKILL'd
  * server leaves its record behind, and the OS reuses pids. So every action that
- * signals a process first proves the lock with the server's socket hello
- * ({@link probeServerHello}: the hello must name the lock's pid and version).
+ * signals a process first proves the lock with the daemon proof on the lock's
+ * socket ({@link probeServerProof}: a hello naming the lock's pid and version,
+ * then the answer to a fresh challenge that only this user's server can give).
  * A pid that fails the proof is never signalled.
  *
  * Cross-platform by construction: files, sockets and `process.kill(pid,
@@ -19,6 +20,9 @@ import * as fs from 'fs';
 import * as net from 'net';
 import { getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { isJsonObject } from '../extensions/host/server/isJsonObject';
+import { probeServerProof } from '../extensions/host/server/probeServerProof';
+import { signalProvenServer } from '../extensions/host/server/signalProvenServer';
+import { stopOutcomeOfProof } from '../extensions/host/server/stopOutcomeOfProof';
 import {
   decodeServerLock,
   getServerPidPath,
@@ -29,7 +33,7 @@ import {
 import { newDaemonChallenge } from './daemon-proof';
 import { daemonAnswerProves } from './daemonAnswerProves';
 import { daemonChallengeLine } from './daemonChallengeLine';
-import { removeLockIfUnchanged, snapshotLock } from './lock-takeover';
+import { snapshotLock } from './lock-takeover';
 import { isOlderRelease } from './version';
 import { WORKER_START_SETTLE_MS } from '../worker-teardown';
 
@@ -112,9 +116,11 @@ export async function probeServerStatus(): Promise<ServerStatus> {
 }
 
 /**
- * The server of this state dir, proven alive: the lock's pid is a live process
- * and its socket hello names that pid and the lock's version. Null when there
- * is no lock, the process is gone, or it does not answer as the server,
+ * The server of this state dir, by its hello alone: the lock's pid is a live
+ * process and its socket hello names that pid and the lock's version. The hello
+ * does not prove the process runs as this user (only the daemon proof of
+ * {@link stopServer} does), so this is never grounds for a signal. Null when
+ * there is no lock, the process is gone, or it does not answer as the server,
  * including an inconclusive silent connection.
  */
 export async function probeServer(): Promise<ServerLockInfo | null> {
@@ -126,19 +132,25 @@ export async function probeServer(): Promise<ServerLockInfo | null> {
  * What {@link stopServer} found:
  *   - `not-running`: no readable, valid lock for this state dir, or its process
  *     is gone (the next server start clears a leftover lock).
- *   - `stopped`: SIGTERM was attempted and the pid is no longer alive.
- *   - `kept`: `onlyIfOlderThan` was given and the server is the same, a newer or
- *     an unknown release; it was not signalled.
- *   - `still-running`: SIGTERM was attempted, but the pid is still alive after the wait. Never
- *     escalated to SIGKILL: the server holds open databases, and its builder holds the writer locks.
+ *   - `stopped`: the server proved itself, SIGTERM was attempted and the pid is
+ *     no longer alive.
+ *   - `kept`: the server proved itself, `onlyIfOlderThan` was given and the
+ *     server is the same, a newer or an unknown release; it was not signalled.
+ *   - `still-running`: the server proved itself and SIGTERM was attempted, but the pid is still alive after
+ *     the wait. Never escalated to SIGKILL: the server holds open databases, and its builder holds the writer locks.
  *   - `busy`: the lock names a live pid and its socket accepted the connection
  *     but sent no bytes through the hello timeout. Inconclusive, not identity
  *     proof; it was not signalled.
  *   - `unverified`: the lock names a live process, but the hello did not match,
- *     the socket failed, or the lock disappeared or changed during the probe.
+ *     the socket failed before the hello, or the lock disappeared or changed
+ *     during the probe.
  *     The process is not signalled: identity was not proven for the current lock.
+ *   - `unproven`: the hello on the lock's socket matched, but what answered did
+ *     not prove it runs as this user (a wrong or missing proof, or none in
+ *     time). Nothing was signalled; the result carries that `socketPath`.
  */
-export type StopOutcome = 'not-running' | 'stopped' | 'kept' | 'still-running' | 'busy' | 'unverified';
+export type StopOutcome =
+  'not-running' | 'stopped' | 'kept' | 'still-running' | 'busy' | 'unverified' | 'unproven';
 
 /**
  * Grace for sessions, sockets and the engine to stop before stopping the builder.
@@ -154,20 +166,10 @@ export function resolveServerStopGraceMs(env: NodeJS.ProcessEnv = process.env): 
     : WORKER_START_SETTLE_MS;
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) return true;
-    await sleep(50);
-  }
-  return !isProcessAlive(pid);
-}
-
 /**
- * Stop the server of this state dir: verify its identity by socket hello, send
- * SIGTERM, then wait for the pid to go. `graceMs` overrides the controller's
+ * Stop the server of this state dir: prove its identity with the daemon proof on
+ * the lock's socket ({@link probeServerProof}), send SIGTERM, then wait for the
+ * pid to go. `graceMs` overrides the controller's
  * wait; by default it reads the controller's own environment for the server
  * grace and adds the builder's 5 s cap and a 2 s margin. The server may have a
  * different environment. Windows shutdown timing is untested for sm.14 (R-21).
@@ -177,66 +179,35 @@ async function waitForDeath(pid: number, timeoutMs: number): Promise<boolean> {
  * ({@link isOlderRelease}); one of the same, a newer or an unknown version is
  * `kept`, so two installs cannot take turns stopping each other's server.
  *
- * A stopped server removes its own lock and socket on a graceful exit; when it
- * could not (Windows, where SIGTERM is TerminateProcess), the sweep below removes
- * the lock and, on POSIX, the socket candidates, but only while the lock is still
- * the stopped record.
+ * The proven record is re-read before the signal, and the signal, the wait and
+ * the sweep are {@link signalProvenServer}'s. A stopped server removes its own
+ * lock and socket on a graceful exit; when it could not (Windows, where SIGTERM
+ * is TerminateProcess), that sweep removes the lock and, on POSIX, the socket
+ * candidates, but only while the lock is still the stopped record.
  */
 export async function stopServer(
   opts: { onlyIfOlderThan?: string; graceMs?: number } = {},
-): Promise<{ outcome: StopOutcome; pid?: number; version?: string }> {
+): Promise<{ outcome: StopOutcome; pid?: number; version?: string; socketPath?: string }> {
   const pidPath = getServerPidPath();
   const snapshot = snapshotLock(pidPath);
-  const info = snapshot === null ? null : judgeLock(snapshot.raw);
-  if (snapshot === null || info === null) return { outcome: 'not-running' };
+  if (snapshot === null) return { outcome: 'not-running' };
+  const info = judgeLock(snapshot.raw);
+  if (info === null) return { outcome: 'not-running' };
   const { pid, version } = info;
   if (!isProcessAlive(pid)) return { outcome: 'not-running', pid, version };
-  // Never signal a process merely because it reuses a stale server pid: the
-  // server's own hello is the identity proof (#1553).
-  switch (await probeServerHello(info)) {
-    case 'no-answer': return { outcome: 'busy', pid, version };
-    case 'mismatch': return { outcome: 'unverified', pid, version };
-    case 'match': break;
-  }
+  // Never signal a process merely because it reuses a stale server pid (#1553)
+  // or copies the server's hello: only this user's server can give the proof.
+  const notProven = stopOutcomeOfProof(await probeServerProof(info), info);
+  if (notProven !== null) return notProven;
   if (opts.onlyIfOlderThan !== undefined && !isOlderRelease(version, opts.onlyIfOlderThan)) {
     return { outcome: 'kept', pid, version };
   }
-  // The probe awaited I/O: act only on the record that was proven.
-  const current = snapshotLock(pidPath);
-  if (current === null || current.raw !== snapshot.raw) return { outcome: 'unverified', pid, version };
-
-  try { process.kill(pid, 'SIGTERM'); } catch { /* raced to exit */ }
   // Resolve at call time: grace + the builder's 5 s cap + 2 s margin (also
   // covering Windows' drain backstop). This controller reads its own env,
   // which may differ from the running server's; explicit callers keep theirs.
   const waitMs = opts.graceMs ?? (resolveServerStopGraceMs() + 5_000 + 2_000);
-  if (!await waitForDeath(pid, waitMs)) {
-    return { outcome: 'still-running', pid, version };
-  }
-  sweepStoppedServer(pidPath, snapshot.raw);
-  return { outcome: 'stopped', pid, version };
-}
-
-/**
- * Remove what a stopped server left behind, when the lock is still the record
- * that was stopped. Sockets go BEFORE the lock, so no successor can take the
- * lock and bind a socket this sweep then removes; a lock that changed meanwhile
- * is a successor's and everything stays.
- */
-function sweepStoppedServer(pidPath: string, stoppedRaw: string): void {
-  try {
-    const left = snapshotLock(pidPath);
-    if (left === null || left.raw !== stoppedRaw) return;
-    // POSIX sockets are real files; Windows named pipes vanish with the process.
-    if (process.platform !== 'win32') {
-      for (const candidate of getServerSocketCandidates()) {
-        try { fs.unlinkSync(candidate); } catch { /* gone */ }
-      }
-    }
-    removeLockIfUnchanged(pidPath, left);
-  } catch {
-    /* best effort: the next server start clears a stale lock itself */
-  }
+  const outcome = await signalProvenServer(pid, pidPath, snapshot.raw, waitMs, isProcessAlive);
+  return { outcome, pid, version };
 }
 
 /**

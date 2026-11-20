@@ -2,11 +2,13 @@
  * Control of the machine server from outside it: src/mcp/server-control.ts.
  *
  * `stopServer` is exercised against real child processes that bind the state
- * dir's socket and answer the server hello, so the signal, the wait and the
- * sweep are real. A stand-in for the server that proves identity is a node
- * child (below); one that does NOT prove it is a bare `sleep`-like process. The
- * rule under test: a pid is signalled only after its socket hello names the
- * lock's pid and version.
+ * dir's socket and answer the server hello and its challenge, so the signal,
+ * the wait and the sweep are real. A stand-in for the server that proves
+ * identity is a node child (__tests__/helpers/spawnStandInServer.ts); one
+ * that does NOT prove it is a bare `sleep`-like process. The rule under test:
+ * a pid is signalled only after its socket hello names the lock's pid and
+ * version and it then answers the daemon proof (src/mcp/daemon-proof.ts) for
+ * the lock's socket path.
  * `requestProjectRelease` runs against a fake socket server in this process
  * (__tests__/fake-release-server.ts).
  *
@@ -21,7 +23,7 @@ import * as path from 'path';
 import { statInode } from '../../../src/directory';
 import { getStateDir } from '../../../src/extensions/host/server/state-dir';
 import { installFirmlinkAlias } from './firmlink-alias';
-import { encodeServerLock, getServerPidPath, getServerSocketCandidates, getServerSocketPath, type ServerLockInfo } from '../../../src/mcp/daemon-paths';
+import { encodeServerLock, getServerPidPath, getServerSocketPath, type ServerLockInfo } from '../../../src/mcp/daemon-paths';
 import { tryAcquireDaemonLock } from '../../../src/mcp/daemon';
 import { daemonKey, daemonProof } from '../../../src/mcp/daemon-proof';
 import * as serverControl from '../../../src/mcp/server-control';
@@ -34,37 +36,17 @@ import {
   stopServer,
 } from '../../../src/mcp/server-control';
 import { startFakeServer, type FakeServer } from '../../fake-release-server';
+import { spawnStandInServer } from '../../helpers/spawnStandInServer';
 
 let savedStateDir: string | undefined;
 let stateDir: string;
 const children: ChildProcess[] = [];
 let fake: FakeServer | null = null;
 
-/**
- * A node process that binds `socketPath` and answers every connection with the
- * server hello naming its own pid and `version`; `ignoreTerm` makes it survive
- * SIGTERM. Resolves once it listens.
- */
+/** The proving stand-in, killed after the test. */
 async function startServerProcess(socketPath: string, version: string, ignoreTerm = false): Promise<ChildProcess> {
-  const source = [
-    "const net = require('net');",
-    'const [sock, version, ignoreTerm] = process.argv.slice(1);',
-    "if (ignoreTerm === '1') process.on('SIGTERM', () => {});",
-    'const server = net.createServer((c) => {',
-    "  c.on('error', () => {});",
-    "  c.write(JSON.stringify({ codegraph: version, pid: process.pid, socketPath: sock, protocol: 1 }) + '\\n');",
-    '});',
-    "server.listen(sock, () => console.log('ready'));",
-  ].join('\n');
-  const child = spawn(process.execPath, ['-e', source, socketPath, version, ignoreTerm ? '1' : '0'], {
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  const child = await spawnStandInServer(socketPath, version, { ignoreTerm });
   children.push(child);
-  await new Promise<void>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', () => reject(new Error('server process exited before listening')));
-    child.stdout!.on('data', (chunk) => { if (String(chunk).includes('ready')) resolve(); });
-  });
   return child;
 }
 
