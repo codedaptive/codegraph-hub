@@ -149,9 +149,8 @@ describe('worktree seeding: git helpers and source choice (G5)', () => {
   // G5 builds three complete sibling indexes and excludes incomplete or absent indexes
   // when choosing the nearest sibling, with realpath order breaking ties.
   // The 120 s limit guards a hang (a git or index call that never returns). It sits well
-  // above what load does to this test (about 40 s at load 150-180 on 18 CPUs, under 5 s at
-  // load 55), since the test runs about 25 git processes and five CodeGraph opens, so a
-  // busy machine cannot fail it.
+  // above what load did to this test (about 40 s at load 150-180 on 18 CPUs, under 5 s at
+  // load 55); the test runs about 25 git processes and five CodeGraph opens.
   it('G5: picks the nearest complete sibling, ties broken by realpath ascending', async () => {
     const base = git(main, 'rev-parse', 'HEAD');
     const target = path.join(workspace, 'wt-target');
