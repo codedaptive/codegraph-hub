@@ -28,6 +28,7 @@ afterEach(async () => {
       await exited;
     }
   }
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
@@ -86,8 +87,11 @@ describe('signalProvenServer', () => {
     const proven = writeLock(child.pid, 1);
     const successor = writeLock(child.pid, 2);
     expect(successor).not.toBe(proven);
+    // Liveness alone can't see a SIGTERM the child has not acted on yet; the spy sees the call itself.
+    const kill = vi.spyOn(process, 'kill');
 
     expect(await signalProvenServer(child.pid, pidPath, proven, 300, isProcessAlive)).toBe('unverified');
+    expect(kill).not.toHaveBeenCalledWith(child.pid, 'SIGTERM');
     expect(isProcessAlive(child.pid)).toBe(true);
     expect(child.exitCode).toBeNull();
     expect(child.signalCode).toBeNull();
