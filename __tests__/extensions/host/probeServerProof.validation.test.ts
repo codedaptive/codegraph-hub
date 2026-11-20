@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { ServerLockInfo } from '../../../src/mcp/daemon-paths';
 import { probeServerProof } from '../../../src/extensions/host/server/probeServerProof';
+import { listenPath } from '../../helpers/listenPath';
 
 // The two answers the probe's timer decides: a late byte on a busy machine changes them, so they are
 // validation, not integration (the line- and close-decided cases are in probeServerProof.integration.test.ts).
@@ -19,7 +20,7 @@ let sockets: net.Socket[];
 
 beforeEach(() => {
   home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cg-pspv-')));
-  socketPath = path.join(home, 's.sock');
+  socketPath = listenPath(home, 's');
   servers = [];
   sockets = [];
 });

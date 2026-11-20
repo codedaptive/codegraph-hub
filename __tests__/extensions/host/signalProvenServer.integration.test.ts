@@ -9,6 +9,8 @@ import { encodeServerLock } from '../../../src/mcp/daemon-paths';
 import { isProcessAlive } from '../../../src/mcp/server-control';
 import { stateIdentityOf } from './state-identity';
 
+const POSIX = process.platform !== 'win32';
+
 let stateDir: string;
 let pidPath: string;
 let children: ChildProcess[];
@@ -66,12 +68,14 @@ describe('signalProvenServer', () => {
 
     expect(await signalProvenServer(child.pid, pidPath, raw, 10_000, isProcessAlive)).toBe('stopped');
     await exited;
-    expect(child.signalCode).toBe('SIGTERM');
+    // On Windows process.kill(pid) ends the child with exit code 1 and no signal, so signalCode stays null there.
+    if (POSIX) expect(child.signalCode).toBe('SIGTERM');
     expect(isProcessAlive(child.pid)).toBe(false);
     expect(fs.existsSync(pidPath)).toBe(false);
   });
 
-  it('reports still-running for a pid that ignores SIGTERM and keeps its lock', async () => {
+  // On Windows process.kill ends the process whatever handler it installs, so a pid cannot ignore SIGTERM there.
+  it.runIf(POSIX)('reports still-running for a pid that ignores SIGTERM and keeps its lock', async () => {
     const child = await startChild("process.on('SIGTERM', () => {}); setInterval(() => {}, 1e9)");
     const raw = writeLock(child.pid, 1);
 
