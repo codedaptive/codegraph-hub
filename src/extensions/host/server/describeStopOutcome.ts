@@ -3,7 +3,7 @@ import type { StopOutcome } from '../../../mcp/server-control';
 /**
  * What `codegraph daemon --stop` tells the user about a {@link StopOutcome}, and its exit code:
  *   - `not-running`: there was no server to stop; exit 0.
- *   - `stopped`: the server proved itself, was sent SIGTERM and exited; exit 0.
+ *   - `stopped`: SIGTERM was attempted and the pid is no longer alive; exit 0.
  *   - `busy`: the server accepted the connection but said nothing in time; retry later.
  *   - `unverified`: the lock's process did not answer as the server; the stale lock may be deleted.
  *   - `unproven`: something answered as the server but did not prove it runs as this user, so nothing was
