@@ -38,11 +38,14 @@ export async function validateAnswerFiles(root: string, files: AnswerFile[]): Pr
       const absolute = validatePathWithinRoot(root, file.path);
       if (!absolute) { stale.push(file.path); continue; }
       // A file over the index's size limit is stored as its size stamp
-      // (#1910): when the stamp still matches, the file is current without
-      // being read. Anything else falls through to the bounded read below.
+      // (#1910), so it is decided by size alone and never read: a matching
+      // stamp is current, any other stored hash is stale (no read of the
+      // content could equal a stamp's hash).
       const { size } = await stat(absolute);
-      if (size > MAX_SOURCE_FILE_SIZE_BYTES &&
-          createHash('sha256').update(oversizeStamp(size)).digest('hex') === file.contentHash) {
+      if (size > MAX_SOURCE_FILE_SIZE_BYTES) {
+        if (createHash('sha256').update(oversizeStamp(size)).digest('hex') !== file.contentHash) {
+          stale.push(file.path);
+        }
         continue;
       }
       const stream = createReadStream(absolute, {
