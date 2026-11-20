@@ -705,6 +705,7 @@
     "__tests__/oversize-file-not-read.test.ts",
     "__tests__/ui-server-api.test.ts",
     "__tests__/mcp-status-freshness.test.ts",
+    "__tests__/mcp-freshness-bounds.test.ts",
     "__tests__/extensions/fleet/test-groups.test.ts",
     "__tests__/aspnet-attribute-routes.test.ts",
     "__tests__/csharp-call-result-receiver.test.ts",
