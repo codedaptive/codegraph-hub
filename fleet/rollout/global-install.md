@@ -88,8 +88,17 @@ to 6: check, wait and clear stale servers, reconnect, every team answers.
 Back to 1.5.0 (to the previous sm.N instead: `rollback.md`, step 1). 1.5.0's `codegraph daemon` has no `--stop`,
 so stop the sm.N server first, then reconnect the sessions and check as `rollback.md` step 1 does.
 
+If the running server is from a build that cannot answer the daemon proof's challenge (built before ec171901,
+2026-11-19), `--stop` does not stop it: it says the server did not prove it runs as this user (outcome `unproven`),
+names the socket and the pid the server claims, and sends no signal. Check that this pid is the process listening on
+that socket (`lsof -a -p <pid> -U`), stop it once by hand with `kill <pid>`, then go on. SIGTERM is right here,
+unlike step 4's stale servers: this pid owns the socket, so the socket its graceful stop removes is its own.
+Installing a new sm.N over the old one needs no such step: the old server's install check stops it by itself
+(step 4).
+
 ```bash
 codegraph daemon --stop                                     # still sm.N: stop its server before the uninstall
+#                                                             not proven (pre-proof server): see above
 npm uninstall -g --ignore-scripts @colbymchenry/codegraph   # --ignore-scripts: keep the agents' global entries
 npm install -g @colbymchenry/codegraph@1.5.0                # from the registry (checked: 1.5.0 is published)
 codegraph --version                                         # 1.5.0

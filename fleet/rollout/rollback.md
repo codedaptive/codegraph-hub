@@ -36,6 +36,12 @@ codegraph daemon               # after the reconnect: pid P  v1.6.2-sm.<prev>  u
 #    BEFORE the uninstall. A helper that respawns it before the uninstall starts sm.N again; its install check
 #    runs every 30 s by default and stops it when it detects that its install was removed or replaced.
 codegraph daemon --stop        # still sm.N: "Stopped the CodeGraph server (pid P, vX)."
+#    A server built before ec171901 (2026-11-19) cannot answer the daemon proof's challenge and is not stopped:
+#    --stop says it did not prove it runs as this user (outcome `unproven`), names the socket and the pid it
+#    claims, and sends no signal. Check that the pid is the process listening on that socket
+#    (`lsof -a -p <pid> -U`), then stop it once by hand: `kill <pid>` (SIGTERM is right for the socket's owner;
+#    global-install.md "Undo"). Installing one sm.N over another (step 1 above) needs no such step: the old
+#    server's install check stops it by itself (global-install.md step 4).
 npm uninstall -g --ignore-scripts @colbymchenry/codegraph
 npm install -g @colbymchenry/codegraph@1.5.0
 ~/devlop/codeteam/bin/codeteam-type-all --dry-run "/mcp reconnect codegraph"   # who would get it; types nothing
