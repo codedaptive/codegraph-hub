@@ -2326,34 +2326,13 @@ program
   .action(async (options: { stop?: boolean }) => {
     try {
       const { probeServerStatus, stopServer } = await import('../mcp/server-control');
+      const { describeStopOutcome } = await import('../extensions/host/server/describeStopOutcome');
 
       if (options.stop) {
         const stop = await stopServer();
-        if (stop.outcome === 'stopped') {
-          success(`Stopped the CodeGraph server (pid ${stop.pid}, v${stop.version}).`);
-        } else if (stop.outcome === 'not-running') {
-          info('No CodeGraph server running.');
-        } else if (stop.outcome === 'still-running') {
-          const kill = process.platform === 'win32' ? `taskkill /PID ${stop.pid} /F` : `kill -9 ${stop.pid}`;
-          error(`The CodeGraph server (pid ${stop.pid}) did not exit when asked to stop. Stop it with \`${kill}\`.`);
-          process.exit(1);
-        } else if (stop.outcome === 'busy') {
-          error(
-            `The CodeGraph server is running but busy (pid ${stop.pid}, v${stop.version}): ` +
-            'it accepted the connection and sent no hello within 1 s, so it was left running. ' +
-            'Retry `codegraph daemon --stop` in a moment, or wait for it to finish.'
-          );
-          process.exit(1);
-        } else {
-          // 'unverified'; 'kept' requires `onlyIfOlderThan`, which this command never passes.
-          error(
-            `Process ${stop.pid} holds the server lock but did not answer as the CodeGraph server, so it was left running. ` +
-            'If it is not a CodeGraph server, delete the stale server.pid in the state dir. ' +
-            'That does not stop a process listening on the server socket; ' +
-            'if `codegraph index`, `uninit` or `init` still refuses, it names that socket.'
-          );
-          process.exit(1);
-        }
+        const report = describeStopOutcome(stop);
+        ({ success, info, error })[report.level](report.text);
+        if (report.exitCode === 1) process.exit(1);
         return;
       }
 
