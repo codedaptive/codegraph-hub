@@ -1,5 +1,5 @@
 {
-  "$comment": "Test groups for upstream files without renaming them, to keep merges clean. Our own tests use a suffix instead: .integration.test.ts, .gate.test.ts (integration), .validation.test.ts. Read by fleet/test-groups.mts.",
+  "$comment": "Test groups for upstream files without renaming them, to keep merges clean. Our own tests use a suffix instead: .integration.test.ts, .gate.test.ts (integration), .validation.test.ts, except __tests__/extensions/fleet/test-groups.test.ts, listed here. Read by test-groups.mts.",
   "integration": [
     "__tests__/absent-member-calls.test.ts",
     "__tests__/adaptive-explore-sizing.test.ts",
@@ -215,6 +215,7 @@
     "__tests__/field-name-retrieval.test.ts",
     "__tests__/file-cycles.test.ts",
     "__tests__/file-routed-page-component.test.ts",
+    "__tests__/filelock-stale-takeover.test.ts",
     "__tests__/flask-url-rules.test.ts",
     "__tests__/flow-directed-exact-names.test.ts",
     "__tests__/flow-js.test.ts",

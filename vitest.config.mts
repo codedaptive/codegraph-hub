@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 import { WASM_RUNTIME_FLAGS } from './src/extraction/wasm-runtime-flags';
-import { engineSelection, listTestFiles, parseTestGroup, readTestGroupManifest } from './fleet/test-groups.mts';
+import { engineSelection, listTestFiles, parseTestGroup, readTestGroupManifest } from './test-groups.mts';
 
 /**
  * Engine test groups select unit, integration, validation or all; Makefile's
