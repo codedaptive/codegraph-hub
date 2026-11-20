@@ -21,6 +21,7 @@ import * as net from 'net';
 import { getStateDirIdentity } from '../extensions/host/server/state-dir';
 import { isJsonObject } from '../extensions/host/server/isJsonObject';
 import { probeServerProof } from '../extensions/host/server/probeServerProof';
+import { stopOutcomeOfProof } from '../extensions/host/server/stopOutcomeOfProof';
 import {
   decodeServerLock,
   getServerPidPath,
@@ -198,18 +199,15 @@ export async function stopServer(
 ): Promise<{ outcome: StopOutcome; pid?: number; version?: string; socketPath?: string }> {
   const pidPath = getServerPidPath();
   const snapshot = snapshotLock(pidPath);
-  const info = snapshot === null ? null : judgeLock(snapshot.raw);
-  if (snapshot === null || info === null) return { outcome: 'not-running' };
+  if (snapshot === null) return { outcome: 'not-running' };
+  const info = judgeLock(snapshot.raw);
+  if (info === null) return { outcome: 'not-running' };
   const { pid, version } = info;
   if (!isProcessAlive(pid)) return { outcome: 'not-running', pid, version };
   // Never signal a process merely because it reuses a stale server pid (#1553)
   // or copies the server's hello: only this user's server can give the proof.
-  switch (await probeServerProof(info)) {
-    case 'no-answer': return { outcome: 'busy', pid, version };
-    case 'mismatch': return { outcome: 'unverified', pid, version };
-    case 'unproven': return { outcome: 'unproven', pid, version, socketPath: info.socketPath };
-    case 'proven': break;
-  }
+  const notProven = stopOutcomeOfProof(await probeServerProof(info), info);
+  if (notProven !== null) return notProven;
   if (opts.onlyIfOlderThan !== undefined && !isOlderRelease(version, opts.onlyIfOlderThan)) {
     return { outcome: 'kept', pid, version };
   }

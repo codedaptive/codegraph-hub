@@ -8,7 +8,8 @@ import type { StopOutcome } from '../../../mcp/server-control';
  *   - `unverified`: the lock's process did not answer as the server; the stale lock may be deleted.
  *   - `unproven`: something answered as the server but did not prove it runs as this user, so nothing was
  *     signalled and no kill command is offered; the user checks who listens on the socket.
- *   - `kept`: the server was left running.
+ *   - `kept`: the server was left running. Only the launcher's `onlyIfOlderThan` path of stopServer returns it,
+ *     and `daemon --stop` never passes that option; the case is here so the switch stays exhaustive.
  *   - `still-running`: the proven server did not exit after SIGTERM; the forced kill for `platform` is named.
  */
 export function describeStopOutcome(

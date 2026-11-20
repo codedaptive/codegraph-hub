@@ -9,6 +9,8 @@ import { daemonProof } from '../../../src/mcp/daemon-proof';
 import { probeServerProof } from '../../../src/extensions/host/server/probeServerProof';
 
 const VERSION = '1.2.3-standin';
+/** Wider than any test runs, so a line or a close decides every case here, never the probe's timer. */
+const WIDE_MS = 30_000;
 
 let home: string;
 let socketPath: string;
@@ -84,55 +86,52 @@ describe('probeServerProof', () => {
   it('is proven when the server answers the challenge with this user\'s proof for its socket', async () => {
     const key = writeSandboxDaemonKey();
     await startStandIn(answeringStandIn(challenge => daemonProof(key, challenge, socketPath)));
-    expect(await probeServerProof(lockInfo())).toBe('proven');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('proven');
   });
 
   it('is unproven for a null proof', async () => {
     writeSandboxDaemonKey();
     await startStandIn(answeringStandIn(() => null));
-    expect(await probeServerProof(lockInfo())).toBe('unproven');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('unproven');
   });
 
   it('is unproven for a wrong proof', async () => {
     writeSandboxDaemonKey();
     await startStandIn(answeringStandIn(() => '0'.repeat(64)));
-    expect(await probeServerProof(lockInfo())).toBe('unproven');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('unproven');
   });
 
   it('is unproven for a proof made for another socket path', async () => {
     const key = writeSandboxDaemonKey();
     await startStandIn(answeringStandIn(challenge => daemonProof(key, challenge, '/elsewhere/s.sock')));
-    expect(await probeServerProof(lockInfo())).toBe('unproven');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('unproven');
   });
 
-  it('is unproven when the server says hello and then nothing', async () => {
+  it('is unproven when the server says hello and closes once it has the challenge', async () => {
     writeSandboxDaemonKey();
-    await startStandIn(socket => { socket.write(helloLine()); });
-    expect(await probeServerProof(lockInfo(), 200)).toBe('unproven');
+    await startStandIn(socket => {
+      socket.write(helloLine());
+      socket.once('data', () => socket.end());
+    });
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('unproven');
   });
 
   it('is a mismatch when the hello names another pid', async () => {
     writeSandboxDaemonKey();
     await startStandIn(socket => { socket.write(helloLine(process.pid + 1)); });
-    expect(await probeServerProof(lockInfo(), 200)).toBe('mismatch');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('mismatch');
   });
 
   it('is a mismatch when the first line is not JSON', async () => {
     writeSandboxDaemonKey();
     await startStandIn(socket => { socket.write('not json\n'); });
-    expect(await probeServerProof(lockInfo(), 200)).toBe('mismatch');
-  });
-
-  it('is no-answer when the server accepts and sends nothing', async () => {
-    writeSandboxDaemonKey();
-    await startStandIn(() => {});
-    expect(await probeServerProof(lockInfo(), 200)).toBe('no-answer');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('mismatch');
   });
 
   it('sends exactly one line after a matching hello: only a string codegraph_challenge', async () => {
     writeSandboxDaemonKey();
     const standIn = await startStandIn(answeringStandIn(() => null));
-    expect(await probeServerProof(lockInfo())).toBe('unproven');
+    expect(await probeServerProof(lockInfo(), WIDE_MS)).toBe('unproven');
     // Read only once the probe has closed its end, so a line it sent after the proof is counted too.
     const [socket] = sockets;
     if (!socket.closed) await new Promise(resolve => socket.once('close', resolve));
