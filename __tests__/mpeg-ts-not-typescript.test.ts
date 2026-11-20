@@ -232,9 +232,8 @@ describe('MPEG-TS video named .ts is skipped, real TypeScript is indexed (#1910)
   });
 });
 
-// Each case builds a git repository and indexes it, the last one twice over. On
-// Windows every git process costs ~100 ms, which puts these cases at 5–6 s there,
-// past vitest's 5 s default.
+// Each case builds a git repository and indexes it. On Windows every git process
+// costs ~100 ms, which puts these cases at 5–6 s there, past vitest's 5 s default.
 describe('a video .ts never stays pending (#1910)', { timeout: 30_000 }, () => {
   const dirs: string[] = [];
   afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
@@ -262,22 +261,23 @@ describe('a video .ts never stays pending (#1910)', { timeout: 30_000 }, () => {
     }
   });
 
-  it('a tracked TypeScript file that becomes a clip is removed, on the git path and on a scoped sync', async () => {
-    for (const scoped of [false, true]) {
-      const dir = gitProject();
-      fs.writeFileSync(path.join(dir, 'clip.ts'), 'export const clip = 1;\n');
-      const cg = await CodeGraph.init(dir, { index: true });
-      try {
-        expect(cg.getNodesInFile('clip.ts').some((n) => n.name === 'clip')).toBe(true);
-        fs.writeFileSync(path.join(dir, 'clip.ts'), makeMpegTs(40));
-        if (!scoped) expect(cg.getChangedFiles()).toEqual({ added: [], modified: [], removed: ['clip.ts'] });
-        await (scoped ? cg.sync({ paths: ['clip.ts'] }) : cg.sync());
-        expect(cg.getFiles().map((f) => f.path)).toEqual(['app.ts']);
-        expect(cg.getNodesInFile('clip.ts')).toEqual([]);
-        expect(cg.getChangedFiles()).toEqual({ added: [], modified: [], removed: [] });
-      } finally {
-        cg.close();
-      }
+  it.each([
+    { path: 'the git path', scoped: false },
+    { path: 'a scoped sync', scoped: true },
+  ])('a tracked TypeScript file that becomes a clip is removed, on $path', async ({ scoped }) => {
+    const dir = gitProject();
+    fs.writeFileSync(path.join(dir, 'clip.ts'), 'export const clip = 1;\n');
+    const cg = await CodeGraph.init(dir, { index: true });
+    try {
+      expect(cg.getNodesInFile('clip.ts').some((n) => n.name === 'clip')).toBe(true);
+      fs.writeFileSync(path.join(dir, 'clip.ts'), makeMpegTs(40));
+      if (!scoped) expect(cg.getChangedFiles()).toEqual({ added: [], modified: [], removed: ['clip.ts'] });
+      await (scoped ? cg.sync({ paths: ['clip.ts'] }) : cg.sync());
+      expect(cg.getFiles().map((f) => f.path)).toEqual(['app.ts']);
+      expect(cg.getNodesInFile('clip.ts')).toEqual([]);
+      expect(cg.getChangedFiles()).toEqual({ added: [], modified: [], removed: [] });
+    } finally {
+      cg.close();
     }
   });
 });
